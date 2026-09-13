@@ -82,7 +82,9 @@
   --color-border-warning: light-dark(#d3a25d, #9b753f);
   --color-border-disabled: light-dark(rgb(42 55 75 / 0.08), rgb(200 212 230 / 0.08));
 
-  --color-ring-primary: light-dark(rgb(255 107 53 / 0.72), rgb(255 126 82 / 0.72));
+  /* 焦点环跟随主题色（--accent-bright 由 styles.css 定义、外观偏好可覆盖）；
+     回退值即出厂橙，观感与原 rgb(255 107 53 / .72) / rgb(255 126 82 / .72) 一致。 */
+  --color-ring-primary: color-mix(in srgb, var(--accent-bright, light-dark(#ff6b35, #ff7e52)) 72%, transparent);
   --color-ring-secondary: light-dark(rgb(77 125 242 / 0.55), rgb(108 145 246 / 0.58));
   --color-ring-info: rgb(77 125 242 / 0.5);
   --color-ring-danger: light-dark(rgb(167 61 57 / 0.5), rgb(205 92 88 / 0.5));

@@ -1,5 +1,7 @@
+import { Fragment, useEffect, useMemo, useRef } from 'react'
 import { conversationEntryProcessBlocks, type ConversationEntry, type ProcessBlock } from '../../../domain/conversation-entry'
 import type { LiveProcessState } from '../../../shared/desktop-api'
+import { TodoIndicator, todoTone, type TodoTone } from '../TodoIndicator'
 import { PlanIcon, TargetGlyph } from './InspectorIcons'
 import type { InspectorTabId } from './InspectorShell'
 import { InspectorSectionHeader, InspectorState, InspectorToast, useTransientFeedback } from './InspectorState'
@@ -45,23 +47,83 @@ export function currentCursorTodos(
   return { items: [], live: false }
 }
 
-export function todoTone(status: string): 'completed' | 'running' | 'pending' | 'cancelled' {
-  if (status === 'completed') return 'completed'
-  if (status === 'in_progress' || status === 'running') return 'running'
-  if (status === 'pending') return 'pending'
-  return 'cancelled'
+export interface TodoContentSegment {
+  text: string
+  code: boolean
+}
+
+/**
+ * todo 正文里的代码样 token（反引号包裹、ASCII 路径、带常见扩展名的文件名）以 mono 呈现。
+ * 字符类只收 ASCII：中文叙述里的顿号式斜杠（「设置/默认/归一化」）不会被误判为路径。
+ */
+const CODE_TOKEN = /`([^`]+)`|[A-Za-z0-9_.@-]+(?:\/[A-Za-z0-9_.@*-]+)+|\b[\w.-]+\.(?:tsx|ts|mjs|cjs|jsx|css|json|md|py|rs|go|sh|yml|yaml|html|sqlite3|sqlite|vsix)\b/g
+
+export function todoContentSegments(content: string): TodoContentSegment[] {
+  const segments: TodoContentSegment[] = []
+  let cursor = 0
+  for (const match of content.matchAll(CODE_TOKEN)) {
+    const index = match.index ?? 0
+    if (index > cursor) segments.push({ text: content.slice(cursor, index), code: false })
+    segments.push({ text: match[1] ?? match[0], code: true })
+    cursor = index + match[0].length
+  }
+  if (cursor < content.length) segments.push({ text: content.slice(cursor), code: false })
+  return segments.length ? segments : [{ text: content, code: false }]
+}
+
+const todoKey = (todo: CursorTodoItem, index: number): string => `${index}:${todo.content}`
+
+/**
+ * 状态微动效的记忆体：仅当同一条目（index+内容同键）的状态发生变化时打「刚刚完成 / 刚刚开始」标记，
+ * 首次挂载与整单替换不重播。标记随 items 引用变化重算，期间保持稳定，动画只播一次。
+ */
+interface ToneMemory {
+  source?: readonly CursorTodoItem[]
+  memory: Map<string, TodoTone>
+  just: Map<string, TodoTone>
+}
+
+function refreshToneMemory(state: ToneMemory, items: readonly CursorTodoItem[]): void {
+  if (state.source === items) return
+  const next = new Map<string, TodoTone>()
+  const just = new Map<string, TodoTone>()
+  items.forEach((todo, index) => {
+    const key = todoKey(todo, index)
+    const tone = todoTone(todo.status)
+    next.set(key, tone)
+    const before = state.source ? state.memory.get(key) : undefined
+    if (before !== undefined && before !== tone) just.set(key, tone)
+  })
+  state.source = items
+  state.memory = next
+  state.just = just
 }
 
 export function PlanPanel({ todos, onOpenTab }: { todos: CursorTodoSnapshot; onOpenTab?: (tab: InspectorTabId) => void }): React.JSX.Element {
   const [feedback, flash] = useTransientFeedback()
   const actions = useWorkspaceFileActions(flash)
   const items = todos.items
-  const completed = items.filter((todo) => todoTone(todo.status) === 'completed').length
-  const running = items.find((todo) => todoTone(todo.status) === 'running')
-  // 「正在进行」只在小节头说一次；列表里的当前项以高亮行承担，不再另起横幅重复。
-  const hint = running
-    ? `正在进行：${running.content}`
-    : todos.live ? '来自当前 Composer 的实时任务状态' : '来自当前 Composer 的原生任务状态'
+  const tones = useMemo(() => items.map((todo) => todoTone(todo.status)), [items])
+  const completed = tones.filter((tone) => tone === 'completed').length
+  const runningIndex = tones.indexOf('in_progress')
+
+  const toneMemory = useRef<ToneMemory>({ memory: new Map(), just: new Map() })
+  refreshToneMemory(toneMemory.current, items)
+  const justMarks = toneMemory.current.just
+
+  // 长清单里当前项保持可见：进行中的条目换人时滚到最近可视位置。
+  const runningRef = useRef<HTMLLIElement | null>(null)
+  const runningKey = runningIndex >= 0 ? todoKey(items[runningIndex]!, runningIndex) : undefined
+  useEffect(() => {
+    if (!runningKey) return
+    const node = runningRef.current
+    if (!node || typeof node.scrollIntoView !== 'function') return
+    const reduced = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    node.scrollIntoView({ block: 'nearest', behavior: reduced ? 'auto' : 'smooth' })
+  }, [runningKey])
+
+  // 当前项只在列表行标注一次（spinner + 左缘指示）；小节头保持安静的来源说明。
+  const hint = todos.live ? '来自当前 Composer 的实时任务状态' : '来自最近一轮对话的任务清单'
   return (
     <section className="inspector-plan" aria-label="Cursor 任务清单">
       <InspectorSectionHeader
@@ -80,17 +142,38 @@ export function PlanPanel({ todos, onOpenTab }: { todos: CursorTodoSnapshot; onO
       />
       {items.length ? (
         <>
-          <div className="inspector-plan__progress" role="progressbar" aria-label={`任务进度 ${completed}/${items.length}`} aria-valuemin={0} aria-valuemax={items.length} aria-valuenow={completed}>
-            <i style={{ width: `${Math.round((completed / items.length) * 100)}%` }} />
+          <div className="inspector-plan__progress">
+            <div
+              className="todo-progress"
+              role="progressbar"
+              aria-label={`任务进度 ${completed}/${items.length}`}
+              aria-valuemin={0}
+              aria-valuemax={items.length}
+              aria-valuenow={completed}
+            >
+              {items.map((todo, index) => <i key={`seg:${todoKey(todo, index)}`} className={`is-${tones[index]}`} />)}
+            </div>
           </div>
           <ol className="inspector-plan__list">
             {items.map((todo, index) => {
-              const tone = todoTone(todo.status)
+              const tone = tones[index]!
+              const key = todoKey(todo, index)
+              const just = justMarks.get(key)
+              const settled = tone === 'completed' || tone === 'cancelled'
+              const justClass = just === 'completed' ? ' is-just-completed' : just === 'in_progress' ? ' is-just-started' : ''
               return (
-                <li className={`is-${tone}`} key={`${index}:${todo.content}`} aria-current={tone === 'running' ? 'step' : undefined}>
-                  <i aria-hidden="true">{tone === 'completed' ? '✓' : ''}</i>
-                  <span>{todo.content}</span>
-                  {tone === 'running' ? <em>进行中</em> : null}
+                <li
+                  key={key}
+                  className={`is-${tone}${justClass}`}
+                  aria-current={tone === 'in_progress' ? 'step' : undefined}
+                  ref={tone === 'in_progress' ? runningRef : undefined}
+                >
+                  <TodoIndicator tone={tone} />
+                  <span className="inspector-plan__text" title={settled ? todo.content : undefined}>
+                    {todoContentSegments(todo.content).map((segment, segmentIndex) => segment.code
+                      ? <code key={segmentIndex}>{segment.text}</code>
+                      : <Fragment key={segmentIndex}>{segment.text}</Fragment>)}
+                  </span>
                 </li>
               )
             })}

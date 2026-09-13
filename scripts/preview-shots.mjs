@@ -36,14 +36,14 @@ const INSPECTOR_WIDTH_KEY = 'sg-team.layout:v1:shell.workspace-inspector'
 const REVIEW_SCOPE_KEY = 'sg-team.inspector:review-scope'
 const APPEARANCE_KEY = 'shiguang.appearance.v1'
 
-/** 基础存储：右栏展开、CH-2 会话、默认宽度。 */
-function baseStorage({ tab = 'review', width = 420, cardOpacity = 0.9, colorMode = 'light', scope = 'uncommitted' } = {}) {
+/** 基础存储：右栏展开、CH-2 会话、默认宽度；accent 为主题色预设 id（缺省拾光橙）。 */
+function baseStorage({ tab = 'review', width = 420, cardOpacity = 0.9, colorMode = 'light', scope = 'uncommitted', accent = 'sg-orange' } = {}) {
   return {
     [INSPECTOR_OPEN_KEY]: '1',
     [INSPECTOR_TAB_KEY]: tab,
     [INSPECTOR_WIDTH_KEY]: JSON.stringify([width]),
     [REVIEW_SCOPE_KEY]: scope,
-    [APPEARANCE_KEY]: JSON.stringify({ cardOpacity, colorMode }),
+    [APPEARANCE_KEY]: JSON.stringify({ cardOpacity, colorMode, accent }),
     'shiguang.lastSessionChannel.v1': '2'
   }
 }
@@ -153,6 +153,9 @@ const scenes = [
   { name: 'artifacts-hover-card', width: 1440, height: 900, colorScheme: 'light', storage: baseStorage({ tab: 'artifacts' }), actions: [{ hover: '.artifact-card' }] },
   // 空态：CH-1 没有过程块 / Todo / 图片。
   { name: 'plan-empty', width: 1440, height: 900, colorScheme: 'light', channel: '1', storage: { ...baseStorage({ tab: 'plan' }), 'shiguang.lastSessionChannel.v1': '1' } },
+  // 长清单（?plan=long）：10 项真实颗粒度任务，检验单行收拢、mono token、分段进度与当前项示位。
+  { name: 'plan-long-light', width: 1440, height: 900, colorScheme: 'light', query: 'plan=long', storage: baseStorage({ tab: 'plan' }) },
+  { name: 'plan-long-dark', width: 1440, height: 900, colorScheme: 'dark', query: 'plan=long', storage: baseStorage({ tab: 'plan', colorMode: 'dark' }) },
   { name: 'activity-empty', width: 1440, height: 900, colorScheme: 'light', channel: '1', storage: { ...baseStorage({ tab: 'activity' }), 'shiguang.lastSessionChannel.v1': '1' } },
   { name: 'artifacts-empty-dark', width: 1440, height: 900, colorScheme: 'dark', channel: '1', storage: { ...baseStorage({ tab: 'artifacts', colorMode: 'dark' }), 'shiguang.lastSessionChannel.v1': '1' } },
   // 变更面板的其它状态（预览参数 ?review=…）。
@@ -248,6 +251,30 @@ const scenes = [
       width: 1440, height: 900, colorScheme, storage: baseStorage({ colorMode: colorScheme }), clip: null
     }))
   ),
+  // 统计页：账本铺满 30 天的富数据场景（深浅色 + 7 天范围 + 席位筛选后的联动）。
+  ...['light', 'dark'].map((colorMode) => ({
+    name: `settings-stats-${colorMode}`, hash: 'account:stats', query: 'stats=1',
+    width: 1440, height: 1240, colorScheme: colorMode, storage: baseStorage({ colorMode }), clip: null
+  })),
+  {
+    name: 'settings-stats-7d-filtered-light', hash: 'account:stats', query: 'stats=1', width: 1440, height: 1240, colorScheme: 'light', storage: baseStorage({ colorMode: 'light' }), clip: null,
+    actions: [{ wait: 250 }, { click: '.stats-range button:nth-child(2)' }, { click: '.stats-spectrum__segment:nth-child(2)' }, { wait: 400 }]
+  },
+  {
+    name: 'settings-stats-tokens-dark', hash: 'account:stats', query: 'stats=1', width: 1440, height: 1240, colorScheme: 'dark', storage: baseStorage({ colorMode: 'dark' }), clip: null,
+    actions: [{ wait: 250 }, { click: '.stats-controls .stats-range:nth-of-type(2) button:nth-child(2)' }, { wait: 400 }]
+  },
+  // 主题色：外观弹层的色卡行（洛神紫选中），以及整页换装后的派生链效果（统计页 · 深色）。
+  {
+    name: 'appearance-accent-popover-light', hash: 'account:stats', query: 'stats=1', width: 1440, height: 900, colorScheme: 'light',
+    storage: baseStorage({ colorMode: 'light', accent: 'luoshen-violet' }), clip: null,
+    actions: [{ wait: 250 }, { click: '.appearance-button' }, { wait: 250 }]
+  },
+  {
+    name: 'settings-stats-accent-violet-dark', hash: 'account:stats', query: 'stats=1', width: 1440, height: 1240, colorScheme: 'dark',
+    storage: baseStorage({ colorMode: 'dark', accent: 'luoshen-violet' }), clip: null,
+    actions: [{ wait: 250 }, { click: '.stats-spectrum__segment:nth-child(2)' }, { wait: 300 }]
+  },
   { name: 'settings-maintenance-compatible-pump', hash: 'account:maintenance', query: 'pump=external', width: 1440, height: 900, colorScheme: 'dark', storage: baseStorage({ colorMode: 'dark' }), clip: null },
   { name: 'settings-maintenance-missing-pump', hash: 'account:maintenance', query: 'pump=missing', width: 1440, height: 900, colorScheme: 'light', storage: baseStorage({ colorMode: 'light' }), clip: null },
   // 存储清理：Cursor 已退出（全部可清，默认预选含缓存/日志；高窗一次看全八项）、勾上对话历史后的

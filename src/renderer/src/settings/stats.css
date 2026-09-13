@@ -1,0 +1,579 @@
+/* ============================================================
+   拾光 · 设置页「统计」组
+   语言：排版即界面（静默度量）、边框优先、数据即装饰——
+   光谱带与堆叠柱是数据本体，不引入独立的 KPI 卡。
+   动效预算：hover 120ms / 数值与几何 300-400ms / 全部尊重
+   prefers-reduced-motion。分类色板仅用于数据系列，不与状态色混用。
+   ============================================================ */
+
+.settings-stats {
+  --stats-c0: light-dark(#5b74c4, #8ba0e8);
+  --stats-c1: light-dark(#3f9187, #6cc0b5);
+  --stats-c2: light-dark(#c08a4a, #dcae74);
+  --stats-c3: light-dark(#8a6fbe, #b09ae0);
+  --stats-c4: light-dark(#bc6a80, #d998ab);
+  --stats-c5: light-dark(#8a9a4e, #b3c47a);
+  --stats-c6: light-dark(#4a8ab8, #7cb5da);
+  --stats-c7: light-dark(#a97960, #c9a08a);
+  --stats-history: light-dark(#9aa3b0, #6b7686);
+  min-width: 0;
+  display: grid;
+  gap: 16px;
+  align-content: start;
+}
+
+.settings-stats .is-c0 { --seat-color: var(--stats-c0); }
+.settings-stats .is-c1 { --seat-color: var(--stats-c1); }
+.settings-stats .is-c2 { --seat-color: var(--stats-c2); }
+.settings-stats .is-c3 { --seat-color: var(--stats-c3); }
+.settings-stats .is-c4 { --seat-color: var(--stats-c4); }
+.settings-stats .is-c5 { --seat-color: var(--stats-c5); }
+.settings-stats .is-c6 { --seat-color: var(--stats-c6); }
+.settings-stats .is-c7 { --seat-color: var(--stats-c7); }
+.settings-stats .is-history { --seat-color: var(--stats-history); }
+
+.stats-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ---------- 控制行 ---------- */
+.stats-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.stats-range {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+}
+
+.stats-range button {
+  border: 0;
+  background: transparent;
+  border-radius: 7px;
+  padding: 4px 13px;
+  font-size: var(--fs-11);
+  font-weight: 550;
+  color: var(--text-soft);
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.stats-range button:hover:not(.is-active) { background: var(--color-background-secondary); }
+
+.stats-range button.is-active {
+  background: var(--color-background-secondary);
+  color: var(--text);
+  font-weight: 650;
+}
+
+.stats-controls__meta {
+  color: var(--faint);
+  font-size: var(--fs-10);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ---------- 光谱带与账本行 ---------- */
+.stats-spectrum-block {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.stats-spectrum {
+  display: flex;
+  gap: 2px;
+  height: 14px;
+  border-radius: 7px;
+}
+
+.stats-spectrum__segment {
+  flex-basis: 0;
+  min-width: 7px;
+  border: 0;
+  padding: 0;
+  border-radius: 4px;
+  background: var(--seat-color);
+  cursor: pointer;
+  transition: flex-grow 320ms ease, opacity 200ms ease, transform 120ms ease;
+}
+
+.stats-spectrum__segment:first-child { border-start-start-radius: 7px; border-end-start-radius: 7px; }
+.stats-spectrum__segment:last-child { border-start-end-radius: 7px; border-end-end-radius: 7px; }
+.stats-spectrum__segment:hover { transform: scaleY(1.16); }
+.stats-spectrum__segment.is-dimmed { opacity: 0.28; }
+.stats-spectrum__segment.is-selected { box-shadow: 0 0 0 1.5px var(--color-background-primary), 0 0 0 3px var(--seat-color); }
+
+.stats-spectrum__ghost {
+  flex: 1;
+  border: 1px dashed var(--line-strong);
+  border-radius: 7px;
+  background: var(--color-background-secondary);
+}
+
+.stats-ledger {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 10px;
+  row-gap: 4px;
+  font-size: var(--fs-11);
+  color: var(--text-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.stats-ledger__cost {
+  font-family: var(--font-numeric);
+  font-size: 23px;
+  line-height: 1.1;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.stats-ledger__cost small {
+  font-size: var(--fs-11);
+  font-weight: 550;
+  color: var(--text-soft);
+  margin-left: 3px;
+}
+
+.stats-ledger__sep {
+  align-self: center;
+  width: 1px;
+  height: 11px;
+  background: var(--line-strong);
+}
+
+.stats-ledger__cumulative {
+  margin-left: auto;
+  color: var(--faint);
+  font-size: var(--fs-10);
+}
+
+.stats-filter-chip {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--accent-border-soft);
+  background: var(--accent-wash);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 3px 11px;
+  font-size: var(--fs-11);
+  transition: background 120ms ease;
+}
+
+.stats-filter-chip:hover { background: var(--accent-soft); }
+.stats-filter-chip i { font-style: normal; color: var(--faint); }
+
+/* ---------- 卡片网格 ---------- */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+  min-width: 0;
+}
+
+.stats-card {
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--color-border-tertiary);
+  border-radius: 14px;
+  box-shadow: var(--shadow-hairline);
+  padding: 13px 15px 15px;
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+html[data-card-transparency="clear"] .stats-card { background: color-mix(in srgb, var(--surface-solid) 74%, transparent); }
+
+.stats-card > header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.stats-card > header strong { font-size: var(--fs-12); font-weight: 650; }
+
+.stats-card > header span {
+  color: var(--faint);
+  font-size: var(--fs-10);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.stats-card__empty {
+  margin: 0;
+  padding: 30px 0;
+  text-align: center;
+  color: var(--faint);
+  font-size: var(--fs-11);
+}
+
+.stats-card__note {
+  margin: 0;
+  font-size: var(--fs-10);
+  color: var(--text-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 成本节奏（堆叠柱） ---------- */
+.stats-card--rhythm { grid-column: 1 / -1; }
+
+.stats-bars {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  height: 150px;
+  border-radius: 9px;
+  outline-offset: 3px;
+}
+
+.stats-bars__col {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) 14px;
+  border-radius: 4px;
+  transition: background 120ms ease;
+}
+
+.stats-bars__col.is-active { background: var(--color-background-secondary); }
+
+.stats-bars__stack {
+  display: flex;
+  flex-direction: column-reverse;
+  justify-content: flex-start;
+  gap: 1px;
+  min-height: 0;
+  padding: 2px 1px 0;
+}
+
+.stats-bars__stack i {
+  display: block;
+  border-radius: 2px;
+  background: var(--seat-color);
+  transition: height 300ms ease;
+}
+
+.stats-bars__tick {
+  font-size: var(--fs-10);
+  color: var(--faint);
+  text-align: center;
+  white-space: nowrap;
+  align-self: end;
+}
+
+.stats-bars__tip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  z-index: 3;
+  min-width: 150px;
+  pointer-events: none;
+  background: var(--color-background-primary);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  padding: 8px 11px;
+  display: grid;
+  gap: 3px;
+  font-size: var(--fs-10);
+  color: var(--text-soft);
+  box-shadow: 0 8px 22px rgb(9 14 22 / 0.12);
+}
+
+.stats-bars__tip.is-center { transform: translateX(-50%); }
+.stats-bars__tip.is-end { transform: translateX(-100%); }
+.stats-bars__tip strong { font-size: var(--fs-11); color: var(--text); }
+.stats-bars__tip span { font-variant-numeric: tabular-nums; }
+
+.stats-bars__tip-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.stats-bars__tip-row i {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--seat-color);
+}
+
+/* ---------- Token 构成 ---------- */
+.stats-mix {
+  display: flex;
+  gap: 1px;
+  height: 12px;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.stats-mix i { flex-basis: 0; min-width: 3px; }
+.settings-stats .is-input { background: var(--color-text-info); }
+.settings-stats .is-output { background: var(--usage-output); }
+.settings-stats .is-cacheread { background: var(--color-text-tertiary); }
+.settings-stats .is-cachewrite { background: var(--color-border-secondary); }
+
+.stats-mix__legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 7px;
+}
+
+.stats-mix__legend li {
+  display: grid;
+  grid-template-columns: 9px minmax(0, 1fr) auto 42px;
+  align-items: center;
+  gap: 9px;
+  font-size: var(--fs-11);
+}
+
+.stats-mix__legend li i { width: 9px; height: 9px; border-radius: 3px; }
+.stats-mix__label { color: var(--text-soft); }
+.stats-mix__value { font-variant-numeric: tabular-nums; }
+.stats-mix__share { color: var(--faint); text-align: right; font-variant-numeric: tabular-nums; }
+
+/* 每席位 token 构成：色点 + 名称 + 四桶迷你条 + 总量 + 缓存命中率。 */
+.stats-seatmix {
+  list-style: none;
+  margin: 0;
+  padding: 9px 0 0;
+  border-top: 1px solid var(--line-faint);
+  display: grid;
+  gap: 8px;
+}
+
+.stats-seatmix li {
+  display: grid;
+  grid-template-columns: 8px minmax(56px, auto) minmax(0, 1fr) auto 64px;
+  align-items: center;
+  gap: 9px;
+  font-size: var(--fs-11);
+}
+
+.stats-seatmix__dot { width: 8px; height: 8px; border-radius: 50%; background: var(--seat-color); }
+
+.stats-seatmix__name {
+  color: var(--text-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stats-seatmix__bar {
+  display: flex;
+  gap: 1px;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.stats-seatmix__bar b { flex-basis: 0; min-width: 2px; transition: flex-grow 320ms ease; }
+.stats-seatmix__tokens { font-variant-numeric: tabular-nums; text-align: right; }
+.stats-seatmix__hit { color: var(--faint); font-size: var(--fs-10); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* ---------- 模型分布 ---------- */
+.stats-models {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 11px;
+}
+
+.stats-models li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-areas:
+    'name meta cost'
+    'bar bar bar';
+  column-gap: 10px;
+  row-gap: 5px;
+  align-items: baseline;
+  font-size: var(--fs-11);
+}
+
+.stats-models__name {
+  grid-area: name;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stats-models__meta { grid-area: meta; color: var(--faint); font-size: var(--fs-10); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.stats-models__cost { grid-area: cost; font-weight: 650; font-variant-numeric: tabular-nums; }
+
+.stats-models__bar {
+  grid-area: bar;
+  display: block;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--color-background-secondary);
+  overflow: hidden;
+}
+
+.stats-models__bar b {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--accent) 62%, var(--color-background-secondary));
+  transition: width 320ms ease;
+}
+
+.stats-models__rest {
+  display: block;
+  color: var(--faint);
+  font-size: var(--fs-10);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 会话明细表 ---------- */
+.stats-card--table { overflow-x: auto; }
+
+.stats-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-11);
+}
+
+.stats-table th {
+  text-align: left;
+  padding: 5px 9px;
+  border-bottom: 1px solid var(--line-strong);
+  color: var(--faint);
+  font-size: var(--fs-10);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* 数字列表头与单元格同为右对齐，同一根轴线。 */
+.stats-table th.is-num { text-align: right; }
+
+.stats-table td {
+  padding: 8px 9px;
+  border-bottom: 1px solid var(--line-faint);
+  vertical-align: middle;
+}
+
+.stats-table tbody tr { transition: background 120ms ease; }
+.stats-table tbody tr:hover { background: var(--color-background-secondary); }
+.stats-table tbody tr:last-child td { border-bottom: 0; }
+
+.stats-table__sort {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  cursor: pointer;
+}
+
+.stats-table__sort.is-active { color: var(--text); }
+.stats-table__sort i { font-style: normal; }
+.stats-table__sort i::before { content: '↓'; font-size: 9px; opacity: 0; transition: opacity 120ms ease; }
+.stats-table__sort.is-active i::before { opacity: 1; }
+.stats-table__sort.is-active i.is-asc::before { content: '↑'; }
+
+.stats-table__seat {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.stats-table__seat-name { display: grid; min-width: 0; }
+.stats-table__seat-name strong { font-size: var(--fs-11); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stats-table__seat-name small { font-size: var(--fs-10); color: var(--faint); }
+
+.stats-table__model {
+  max-width: 132px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-soft);
+}
+
+.stats-table__num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.stats-table__num.is-cost { font-weight: 650; }
+
+.stats-table__quality {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  font-size: var(--fs-10);
+  color: var(--text-soft);
+  white-space: nowrap;
+}
+
+.stats-table__quality.is-exact { color: var(--color-text-success); border-color: color-mix(in srgb, var(--color-border-success) 55%, transparent); }
+.stats-table__quality.is-estimated { color: var(--color-text-warning); border-color: color-mix(in srgb, var(--color-border-warning) 55%, transparent); }
+.stats-table__quality.is-legacy { color: var(--faint); }
+
+.stats-table__time { color: var(--faint); white-space: nowrap; }
+
+.stats-table__rest td {
+  text-align: center;
+  color: var(--faint);
+  padding: 11px 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 空态 ---------- */
+.stats-empty {
+  border: 1px dashed var(--line-strong);
+  border-radius: 14px;
+  padding: 48px 24px;
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+  text-align: center;
+}
+
+.stats-empty strong { font-size: var(--fs-13); }
+
+.stats-empty p {
+  margin: 0;
+  max-width: 430px;
+  font-size: var(--fs-11);
+  color: var(--text-soft);
+  line-height: 1.55;
+}
+
+/* ---------- 动效尊重系统减弱设置 ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .settings-stats *,
+  .settings-stats *::before {
+    transition: none !important;
+  }
+}

@@ -40,6 +40,16 @@ export function SettingsMaintenanceIcon(props: IconProps): React.JSX.Element {
   return <Icon {...props}><path d="m14.8 6.2 3 3M4.5 19.5l1.2-4.2L14.9 6a1.9 1.9 0 0 1 2.7 0l.3.3a1.9 1.9 0 0 1 0 2.7l-9.2 9.2-4.2 1.3Z" {...stroke} /></Icon>
 }
 
+/** 统计：基线上三根节奏柱，与其余导航图标同一笔画语言。 */
+export function SettingsStatsIcon(props: IconProps): React.JSX.Element {
+  return (
+    <Icon {...props}>
+      <path d="M4.5 19.5h15" {...stroke} />
+      <path d="M7.5 16.2v-4.4M12 16.2V6.8M16.5 16.2v-6.9" {...stroke} />
+    </Icon>
+  )
+}
+
 /** 存储清理：带盖整理箱（两道格线），与「维护」的扳手同一笔画语言。 */
 export function SettingsCleanupIcon(props: IconProps): React.JSX.Element {
   return (

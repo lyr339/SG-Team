@@ -7,16 +7,18 @@ import { SettingsAutomation } from './SettingsAutomation'
 import { SettingsAozai } from './SettingsAozai'
 import { SettingsMaintenance } from './SettingsMaintenance'
 import { SettingsCleanup } from './SettingsCleanup'
+import { SettingsStats } from './SettingsStats'
 import {
   SettingsAccountsIcon,
   SettingsAozaiIcon,
   SettingsAutomationIcon,
   SettingsCleanupIcon,
   SettingsImportIcon,
-  SettingsMaintenanceIcon
+  SettingsMaintenanceIcon,
+  SettingsStatsIcon
 } from './icons'
 
-export type SettingsGroupId = 'accounts' | 'import' | 'automation' | 'aozai' | 'maintenance' | 'cleanup'
+export type SettingsGroupId = 'stats' | 'accounts' | 'import' | 'automation' | 'aozai' | 'maintenance' | 'cleanup'
 
 interface SettingsGroupDef {
   id: SettingsGroupId
@@ -26,6 +28,7 @@ interface SettingsGroupDef {
 }
 
 const GROUPS = [
+  { id: 'stats', label: '统计', description: '用量、成本与会话产出的全景', icon: SettingsStatsIcon },
   { id: 'accounts', label: '账号', description: '已保存的 Cursor 账号与当前活跃选择', icon: SettingsAccountsIcon },
   { id: 'import', label: '导入来源', description: 'Token 的获取方式与执行浏览器', icon: SettingsImportIcon },
   { id: 'automation', label: '自动化', description: '会话创建后的账号自动处理流程', icon: SettingsAutomationIcon },
@@ -107,6 +110,7 @@ export function SettingsPage(props: SettingsPageProps): React.JSX.Element {
           <p>{active.description}</p>
         </header>
         <div className="settings-groups">
+          <div hidden={group !== 'stats'}><SettingsStats {...props} active={group === 'stats'} /></div>
           <div hidden={group !== 'accounts'}><SettingsAccounts {...props} active={group === 'accounts'} onNavigateToImport={() => selectGroup('import')} /></div>
           <div hidden={group !== 'import'}><SettingsImportSource {...props} phase={phase} /></div>
           <div hidden={group !== 'automation'}><SettingsAutomation {...props} /></div>

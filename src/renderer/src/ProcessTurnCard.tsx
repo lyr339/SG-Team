@@ -7,6 +7,7 @@ import { StepIcon } from './process-step-icon'
 import { buildProcessTurnView, type ProcessTurnStep } from './process-turn-view'
 import { QuestionCard, type QuestionActions } from './QuestionCard'
 import { tokenizeShellCommand } from './shell-command-tokens'
+import { TodoIndicator, todoTone } from './TodoIndicator'
 import { useStreamingText } from './use-streaming-text'
 
 interface ProcessTurnCardProps {
@@ -117,30 +118,6 @@ function editFileMeta(path: string): { name: string; language: string } {
 function compactStateText(step: ProcessTurnStep): string {
   if (step.question) return step.stateText
   return step.status === 'done' ? '' : step.stateText
-}
-
-/** todo 状态归一：Cursor 原生四态之外的任意字符串归入 cancelled（划线桶），
-    同时避免未清洗的 status 直接拼进 className。 */
-function todoTone(status: string): 'completed' | 'in_progress' | 'pending' | 'cancelled' {
-  if (status === 'completed' || status === 'in_progress' || status === 'pending') return status
-  return 'cancelled'
-}
-
-/** Cursor 原生三态指示器：完成=描边勾 / 进行=12px 实心圆反色旋转弧 / 其余=空心圆。 */
-function TodoIndicator({ tone }: { tone: ReturnType<typeof todoTone> }): React.JSX.Element {
-  return (
-    <span className="todo-indicator" aria-hidden="true">
-      {tone === 'completed' ? (
-        <svg viewBox="0 0 14 14"><path d="m3.2 7.6 2.7 2.7 5-6.6" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" /></svg>
-      ) : tone === 'in_progress' ? (
-        <span className="todo-spinner">
-          <svg viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.6" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeDasharray="21.7 29" /></svg>
-        </span>
-      ) : (
-        <svg viewBox="0 0 14 14"><circle cx="7" cy="7" r="5.5" fill="none" stroke="currentColor" strokeWidth="1.4" /></svg>
-      )}
-    </span>
-  )
 }
 
 /**

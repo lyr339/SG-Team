@@ -1,8 +1,13 @@
+import { ACCENT_PRESETS, DEFAULT_ACCENT_ID } from './appearance-preferences'
+
 interface AppearanceSettingsProps {
   cardOpacity: number
   colorMode: 'system' | 'light' | 'dark'
+  /** 主题色预设 id；缺省按拾光橙。 */
+  accent?: string
   onCardOpacityChange: (value: number) => void
   onColorModeChange: (value: 'system' | 'light' | 'dark') => void
+  onAccentChange?: (accent: string) => void
   onClose: () => void
 }
 
@@ -16,11 +21,15 @@ const PRESETS = [
 export function AppearanceSettings({
   cardOpacity,
   colorMode,
+  accent = DEFAULT_ACCENT_ID,
   onCardOpacityChange,
   onColorModeChange,
+  onAccentChange,
   onClose
 }: AppearanceSettingsProps): React.JSX.Element {
   const percentage = Math.round(cardOpacity * 100)
+  // 未知 id 与默认同待遇：选中环与右侧名字始终指向同一个预设。
+  const activeAccent = ACCENT_PRESETS.find((preset) => preset.id === accent) ?? ACCENT_PRESETS[0]!
 
   return (
     <section className="appearance-popover" aria-label="外观设置">
@@ -50,6 +59,28 @@ export function AppearanceSettings({
           ))}
         </div>
       </div>
+
+      {onAccentChange ? (
+        <div className="appearance-accent">
+          <div>
+            <span>主题色</span>
+            <em>{activeAccent.label}</em>
+          </div>
+          <div role="group" aria-label="主题色">
+            {ACCENT_PRESETS.map((preset) => (
+              <button
+                key={preset.id}
+                className={`appearance-accent__swatch${activeAccent.id === preset.id ? ' is-active' : ''}`}
+                style={{ '--swatch': preset.base } as React.CSSProperties}
+                title={preset.label}
+                aria-label={preset.label}
+                aria-pressed={activeAccent.id === preset.id}
+                onClick={() => onAccentChange(preset.id)}
+              />
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <div className="appearance-opacity">
         <div>

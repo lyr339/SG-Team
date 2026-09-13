@@ -73,7 +73,9 @@ describe('WorkspaceInspector shell', () => {
     expect(document.activeElement?.textContent).toBe('计划1')
     expect(localStorage.getItem(INSPECTOR_TAB_STORAGE_KEY)).toBe('plan')
     expect(container.textContent).toContain('Cursor Todos')
-    expect(container.textContent).toContain('正在进行：写测试')
+    // 当前项只在列表行标注（spinner + aria-current），小节头是安静的来源说明，不复读任务全文。
+    expect(container.textContent).toContain('写测试')
+    expect(container.querySelector('.inspector-plan__list li.is-in_progress')!.getAttribute('aria-current')).toBe('step')
 
     await act(async () => {
       document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }))

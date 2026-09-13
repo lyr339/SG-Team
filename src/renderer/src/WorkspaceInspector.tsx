@@ -9,9 +9,10 @@ import { ArtifactsPanel } from './inspector/ArtifactsPanel'
 import { projectArtifacts } from './inspector/artifacts-view'
 import { ActivityIcon, ArtifactIcon, DiffIcon, PlanIcon } from './inspector/InspectorIcons'
 import { InspectorPanel, InspectorShell, readStoredInspectorTab, type InspectorTabId, type InspectorTabSpec } from './inspector/InspectorShell'
-import { currentCursorTodos, PlanPanel, todoTone } from './inspector/PlanPanel'
+import { currentCursorTodos, PlanPanel } from './inspector/PlanPanel'
 import { ReviewPanel } from './inspector/ReviewPanel'
 import { turnMutatedPaths } from './inspector/review-scope'
+import { todoTone } from './TodoIndicator'
 
 export type { CursorTodoItem } from './inspector/PlanPanel'
 
@@ -57,7 +58,7 @@ export function WorkspaceInspector({
   const onSummary = useCallback((summary: WorkspaceReviewSummary | undefined) => setReviewSummary(summary), [])
 
   const liveActivity = Boolean(liveProcess?.generating || liveProcess?.blocks.some((block) => block.status === 'running'))
-  const runningTodos = todos.items.some((todo) => todoTone(todo.status) === 'running')
+  const runningTodos = todos.items.some((todo) => todoTone(todo.status) === 'in_progress')
   const activityItems = activity.totals.files + activity.totals.commands + activity.totals.sources + activity.totals.tools
   const tabs: InspectorTabSpec[] = [
     { id: 'review', label: '变更', icon: <DiffIcon />, badge: reviewSummary?.state === 'ready' ? reviewSummary.files.length : undefined, title: '工作区 Git 变更审查' },
