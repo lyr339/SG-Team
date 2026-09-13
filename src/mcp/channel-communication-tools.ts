@@ -26,9 +26,8 @@ export interface ChannelCommunicationDeps {
   /**
    * 会话围栏：解析通道在当前活动 run 内的归属（缺省 = 不围栏，全部放行）。
    * 调用携带 session 令牌时才校验；不携带保持旧语义。
-   */
+  */
   ownershipFor?(channelId: string): ChannelSessionOwnership | undefined
-  workspacePath?: string
   keepaliveTimeoutMs?: number
   /** record_reply 撞上存储瞬断时的重试间隔；测试可注入短值。 */
   recordReplyRetryDelayMs?: number
@@ -264,12 +263,8 @@ export function registerChannelCommunicationTools(
     switch (result.type) {
       case 'delivered': {
         const suffix = result.message.silent
-          ? buildSilentDeliverySuffix({ channelId })
-          : buildDeliverySuffix({
-              isFirstDelivery: result.deliveredCount === 1,
-              workspacePath: deps.workspacePath,
-              channelId
-            })
+          ? buildSilentDeliverySuffix({ channelId, tick: result.turnCount })
+          : buildDeliverySuffix({ channelId, tick: result.turnCount })
         const imageBlocks = inlineImageContentBlocks(result.message.attachments)
         const fileText = inlineFileText(result.message.attachments)
         return {
@@ -286,7 +281,12 @@ export function registerChannelCommunicationTools(
         }
       }
       case 'keepalive':
-        return { content: [{ type: 'text' as const, text: buildKeepaliveText(result.round) }] }
+        return {
+          content: [{
+            type: 'text' as const,
+            text: buildKeepaliveText({ channelId, session: input.session, round: result.round, tick: result.turnCount })
+          }]
+        }
       case 'reply_sync_required':
         return toolJson({
           ok: false,
@@ -355,9 +355,13 @@ export function registerChannelCommunicationTools(
     'check_messages',
     {
       title: '检查新消息',
-      description: '长轮询等待并获取下一条用户消息；返回 <sg_team_keepalive/> 表示正常在岗，静默继续调用即可。只有收到 need_reply_sync 时才补 record_reply。',
+      description: '长轮询等待并获取下一条用户消息；返回 <sg_team_keepalive/> 表示正常在岗，按返回提示带上最新 tick 静默继续调用即可。只有收到 need_reply_sync 时才补 record_reply。',
       inputSchema: z.object(channelSchema).extend({
-        reply: z.string().max(100_000).optional()
+        reply: z.string().max(100_000).optional(),
+        // tick 不参与业务语义（服务端不校验）：只为让每次长轮询调用参数不同，
+        // 规避宿主 IDE 反循环保护对「相同参数重复调用」的误报。
+        tick: z.string().regex(/^\d{1,12}$/).optional()
+          .describe('长轮询游标：上一次 check_messages 返回中提示的 tick 值，每次调用必须更新为最新提示（首次或没有提示时省略），使每次调用参数不同')
       }),
       annotations: { readOnlyHint: false, idempotentHint: false }
     },

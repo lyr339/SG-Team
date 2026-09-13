@@ -1,6 +1,6 @@
 /**
  * 一体化 S3-1 统一通道 MCP 冒烟（真实 stdio + 构建产物）：
- * - unified 角色（SG Team 单条目）：通信三工具 + 团队工具同服，
+ * - unified 角色（SG Team 单条目）：两项通信工具 + 团队工具同服，
  *   投递/守门/同步/再投递全链路，身份按 channelId 实时解析；
  * - 活性钩子：团队工具调用同样刷新通道 presence（S2 红利保留）。
  *
@@ -82,7 +82,7 @@ function textOf(result: Awaited<ReturnType<Client['callTool']>>): string {
     .join('\n')
 }
 
-// ── 统一服务器：通信三工具 + 团队工具同服 ────────────────────────────
+// ── 统一服务器：两项通信工具 + 团队工具同服 ──────────────────────────
 const repository = new SqliteChannelMessageRepository(databasePath)
 repository.enqueueOutbound('1', '冒烟：请审查统一通道服务器', 1_000)
 
@@ -97,8 +97,8 @@ const delivered = await channel.client.callTool({ name: 'check_messages', argume
 if (delivered.isError) throw new Error(`投递失败：${textOf(delivered)}`)
 const deliveredText = textOf(delivered)
 if (!deliveredText.includes('冒烟：请审查统一通道服务器')) throw new Error('投递正文缺失')
-if (!deliveredText.includes('持续对话协议')) throw new Error('首投协议后缀缺失')
-if (!deliveredText.includes('SG Team · CH-1')) throw new Error('统一服务器名未进入投递后缀')
+if (!deliveredText.includes('【真实用户消息处理完后进入 check_messages 待命】')) throw new Error('真实消息回合标记缺失')
+if (!deliveredText.includes('CH-1：可见回复后 record_reply')) throw new Error('紧凑回复循环提醒缺失')
 if (!deliveredText.includes('[轮次 #1 · 队列剩余 0 条]')) throw new Error('轮次后缀缺失')
 
 repository.enqueueOutbound('1', '第二条消息', 2_000)
@@ -146,8 +146,8 @@ repository.close()
 process.stdout.write(JSON.stringify({
   ok: true,
   unifiedTools: toolNames,
-  deliveredWithProtocolSuffix: true,
-  unifiedServerNameInSuffix: true,
+  deliveredWithCompactSuffix: true,
+  channelIdentityInSuffix: true,
   replySyncGateEnforced: true,
   recordReplyReleased: true,
   secondDeliveryOk: true,

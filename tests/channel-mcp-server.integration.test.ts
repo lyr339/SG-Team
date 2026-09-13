@@ -16,7 +16,6 @@ async function fixture(options: { ownershipFor?: (channelId: string) => ChannelS
     runtimeFor: () => { throw new Error('通道测试不应触达团队运行时') },
     channelServiceFor: () => service,
     ownershipFor: options.ownershipFor,
-    workspacePath: '/workspace/alpha',
     keepaliveTimeoutMs: 1_200
   })
   const client = new Client({ name: 'sg-channel-test', version: '1.0.0' })
@@ -43,9 +42,9 @@ type ToolContentBlock = { type: string; text?: string; data?: string; mimeType?:
 
 const ch = { channel_id: '1' }
 
-describe('SG Team unified MCP (通信三工具契约)', () => {
+describe('SG Team unified MCP (两项通信工具契约)', () => {
 
-  it('delivers a queued user message with first-delivery protocol suffix and turn note', async () => {
+  it('delivers a queued user message with the compact reply-loop suffix and turn note', async () => {
     const { repository, client, close } = await fixture()
     try {
       repository.enqueueOutbound('1', '帮我审查这个模块', 1_000)
@@ -53,8 +52,8 @@ describe('SG Team unified MCP (通信三工具契约)', () => {
       expect(result.isError).not.toBe(true)
       const text = textOf(result)
       expect(text).toContain('帮我审查这个模块')
-      expect(text).toContain('持续对话协议')
-      expect(text).toContain('SG Team · CH-1')
+      expect(text).toContain('【真实用户消息处理完后进入 check_messages 待命】')
+      expect(text).toContain('CH-1：可见回复后 record_reply')
       expect(text).toContain('[轮次 #1 · 队列剩余 0 条]')
       // 投递后置守门：未 record_reply 前不得再取新消息
       repository.enqueueOutbound('1', '第二条', 2_000)
@@ -161,7 +160,7 @@ describe('SG Team unified MCP (通信三工具契约)', () => {
       expect(content[0]?.text).toContain('请识别这张截图')
       expect(content[0]?.text).toContain('1 个图片附件作为本次 MCP image 内容块直接附加')
       expect(content[0]?.text).toContain('必须改用下方路径读取原图后再判断')
-      expect(content[0]?.text).toContain('持续对话协议')
+      expect(content[0]?.text).toContain('【真实用户消息处理完后进入 check_messages 待命】')
       expect(content.at(-1)).toMatchObject({ type: 'image', data: pngBase64, mimeType: 'image/png' })
       expect(text).toContain('请识别这张截图')
       expect(text).toContain('1 个图片附件作为本次 MCP image 内容块直接附加')
@@ -211,13 +210,13 @@ describe('SG Team unified MCP (通信三工具契约)', () => {
       expect(text).toContain('1 个附件')
       expect(text).toContain('截图.png（image/png · 15.0 KB）')
       expect(text).toContain('/tmp/sg-team/截图.png')
-      expect(text).toContain('持续对话协议')
+      expect(text).toContain('【真实用户消息处理完后进入 check_messages 待命】')
     } finally {
       await close()
     }
   })
 
-  it('later deliveries use the compact reminder instead of the full protocol', async () => {
+  it('later deliveries use the same compact reminder without re-expanding the protocol', async () => {
     const { repository, client, close } = await fixture()
     try {
       repository.enqueueOutbound('1', '第一条', 1_000)
@@ -228,16 +227,15 @@ describe('SG Team unified MCP (通信三工具契约)', () => {
       const text = textOf(second)
       expect(text).toContain('第二条')
       expect(text).not.toContain('持续对话协议')
-      // 后续投递只带两行提醒：回合收尾动作 + 静默规则，其余协议不重复。
-      expect(text).toContain('先 record_reply 同步同一份完整回复，再 check_messages 待命')
-      expect(text).toContain('必须静默续等')
-      expect(text.split('\n').filter((line) => line.startsWith('- '))).toHaveLength(2)
+      expect(text).toContain('可见回复后 record_reply 同步完整正文，再 check_messages')
+      expect(text).toContain('keepalive 直接再调')
+      expect(text).toContain('误报')
     } finally {
       await close()
     }
   })
 
-  it('returns the keepalive marker after the idle timeout', async () => {
+  it('returns the keepalive marker after the idle timeout with the exact next call and a fresh tick', async () => {
     const { client, close } = await fixture()
     try {
       const result = await client.callTool(
@@ -245,11 +243,23 @@ describe('SG Team unified MCP (通信三工具契约)', () => {
         { timeout: 15_000 }
       )
       expect(result.isError).not.toBe(true)
-      expect(textOf(result)).toMatch(/<sg_team_keepalive n="1"\s*\/>/)
+      const text = textOf(result)
+      expect(text).toMatch(/<sg_team_keepalive n="1"\s*\/>/)
+      // 反循环根治：keepalive 必须给出下一次调用的完整参数（含单调递增的 tick）。
+      expect(text).toContain("check_messages({channel_id:'1', tick:'1'})")
+      expect(text).toContain('误报')
+
+      // tick 透传：schema 接受数字字符串游标；下一次 keepalive 提示的 tick 随轮次递增。
+      const next = await client.callTool(
+        { name: 'check_messages', arguments: { ...ch, tick: '1' } },
+        { timeout: 15_000 }
+      )
+      expect(next.isError).not.toBe(true)
+      expect(textOf(next)).toContain("tick:'2'")
     } finally {
       await close()
     }
-  }, 20_000)
+  }, 30_000)
 
   it('rejects invalid record_reply input through schema validation', async () => {
     const { client, close } = await fixture()
@@ -371,6 +381,20 @@ describe('SG Team unified MCP 会话围栏（session 令牌）', () => {
       await close()
     }
   })
+
+  it('echoes the seat token in the keepalive next-call hint so fenced seats keep polling with identical params plus a fresh tick', async () => {
+    const { client, close } = await fixture({ ownershipFor: () => owner() })
+    try {
+      const result = await client.callTool(
+        { name: 'check_messages', arguments: { ...ch, session: CURRENT } },
+        { timeout: 15_000 }
+      )
+      expect(result.isError).not.toBe(true)
+      expect(textOf(result)).toContain(`check_messages({channel_id:'1', session:'${CURRENT}', tick:'1'})`)
+    } finally {
+      await close()
+    }
+  }, 20_000)
 })
 
 /**
@@ -405,7 +429,6 @@ describe('SG Team unified MCP 桌面端重启续接（restart continuity）', ()
       runtimeFor: () => { throw new Error('通道测试不应触达团队运行时') },
       channelServiceFor: () => service,
       ownershipFor: () => ({ runId: 'session-run:alpha:run-9', runStatus: 'running', bound: true, sessionToken: SEAT, solo: true }),
-      workspacePath: '/workspace/alpha',
       keepaliveTimeoutMs: 6_000,
       recordReplyRetryDelayMs: options.recordReplyRetryDelayMs ?? 20
     })

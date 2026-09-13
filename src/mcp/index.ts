@@ -33,7 +33,6 @@ function databasePathOf(): string {
  * 运行时按通道懒加载缓存，身份每次调用前实时解析（团队换届零配置重写）。
  */
 async function serveUnified(databasePath: string): Promise<void> {
-  const workspacePath = process.env.SG_TEAM_WORKSPACE_PATH?.trim() || undefined
   const repository = new SqliteTaskPoolRepository(databasePath)
   const teamRepository = new SqliteTeamControlRepository(databasePath)
   const collaborationRepository = new SqliteTeamCollaborationRepository(databasePath)
@@ -147,8 +146,7 @@ async function serveUnified(databasePath: string): Promise<void> {
         }
       }
     },
-    briefingFor,
-    workspacePath
+    briefingFor
   }), {
     onerror: (error) => process.stderr.write(`[sg-team-mcp] ${error.stack ?? error.message}\n`)
   })

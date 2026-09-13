@@ -21,7 +21,6 @@ export interface UnifiedChannelServerOptions {
   refreshIdentity?: (channelId: string) => void
   /** team_check_in 返回的角色简报（S4 底层注入）。 */
   briefingFor?: (channelId: string) => string | undefined
-  workspacePath?: string
   /** keepalive 返回前的空队列等待时长；测试可注入短值，生产用默认 60s。 */
   keepaliveTimeoutMs?: number
   /** record_reply 存储瞬断重试间隔；测试可注入短值。 */
@@ -46,7 +45,6 @@ export function createUnifiedChannelServer(options: UnifiedChannelServerOptions)
   registerChannelCommunicationTools(server, {
     serviceFor: options.channelServiceFor,
     ownershipFor: options.ownershipFor,
-    workspacePath: options.workspacePath,
     keepaliveTimeoutMs: options.keepaliveTimeoutMs,
     recordReplyRetryDelayMs: options.recordReplyRetryDelayMs
   })
