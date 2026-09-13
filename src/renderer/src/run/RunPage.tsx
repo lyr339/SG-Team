@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AgentLaunchPlan, AgentLaunchRequest } from '../../../domain/agent-launch'
+import type { SessionWarmupRun } from '../../../domain/session-warmup'
 import type { CdpAutoHealEvent } from '../../../domain/cursor-cdp'
 import type { CursorModelOption, CursorModelSelection } from '../../../domain/cursor-model'
 import type { DetectedCursorWorkspace } from '../../../domain/cursor-workspace'
@@ -43,6 +44,11 @@ export interface RunPageProps {
   onLaunch: () => Promise<TeamControlSnapshot>
   onCreateNextRun: () => Promise<{ snapshot: TeamControlSnapshot; issue?: string }>
   onLaunchAgentSessions: (requests: AgentLaunchRequest[]) => Promise<AgentLaunchPlan>
+  /** 会话预热探针状态与开关（批量发起前自动执行；也可单独手动触发）。 */
+  sessionWarmupRun?: SessionWarmupRun
+  sessionWarmupEnabled?: boolean
+  onToggleSessionWarmup?: (enabled: boolean) => void
+  onRunSessionWarmup?: () => Promise<void>
   onCreateIndependentSessions: (input: CreateIndependentSessionsInput) => Promise<AgentLaunchPlan>
   onChooseIndependentWorkspace: () => Promise<IndependentWorkspaceSelection | undefined>
   onEndActiveRun: () => Promise<void>
@@ -87,6 +93,10 @@ export function RunPage({
   onLaunch,
   onCreateNextRun,
   onLaunchAgentSessions,
+  sessionWarmupRun,
+  sessionWarmupEnabled = true,
+  onToggleSessionWarmup,
+  onRunSessionWarmup,
   onCreateIndependentSessions,
   onChooseIndependentWorkspace,
   onEndActiveRun,
@@ -202,6 +212,8 @@ export function RunPage({
       setNotice('会话发起已暂停：请在弹窗中处理 Cursor 登录账号问题后自动继续。')
     } else if (plan.items.some((item) => item.code === 'membership_blocked')) {
       setNotice('会话发起已暂停：当前账号为 Free 档位，请先在「账号与 Cursor」执行「处理」，再于弹窗刷新档位继续。')
+    } else if (plan.items.some((item) => item.code === 'warmup_failed')) {
+      setError(`预热未通过，已中止批量发起（未消耗自动化配额）：${plan.items.find((item) => item.code === 'warmup_failed')?.message ?? ''}`)
     } else if (plan.items.some((item) => item.code === 'cdp_unavailable')) {
       setNotice('会话创建需要 Cursor 调试端口：点击「重启 Cursor 并启用会话创建」（一次性），完成后重试。')
     } else {
@@ -398,6 +410,10 @@ export function RunPage({
       guided={guideSeats}
       cdpAutoHealEnabled={cdpAutoHealEnabled}
       cdpAutoHealEvent={cdpAutoHealEvent}
+      warmupRun={sessionWarmupRun}
+      warmupEnabled={sessionWarmupEnabled}
+      onToggleWarmup={onToggleSessionWarmup}
+      onRunWarmup={onRunSessionWarmup ? () => void run('warmup', onRunSessionWarmup) : undefined}
       onCreate={composingIndependent ? createIndependentBatch : createPendingSessions}
       onModelSave={saveModel}
       onEnableCdp={enableCdp}

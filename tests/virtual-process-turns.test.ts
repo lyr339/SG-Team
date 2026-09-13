@@ -70,18 +70,69 @@ describe('projectVirtualProcessTurns', () => {
     expect(turns[0]).toMatchObject({ id: 'plugin-message', position: 0.5 })
   })
 
-  it('seals the turn at its precisely linked reply and drops post-seal transport noise', () => {
-    // 8.2-3：回复以 replyToEntryId 精确关联（outboundId 链路），封口之后的
-    // keepalive/内部协议块属传输空档，不得进入已封口回合（周期闪动根因）。
+  it('seals the turn at its precisely linked reply and routes post-seal work into the continuation', () => {
+    // 8.2-3：回复以 replyToEntryId 精确关联（outboundId 链路），封口之后的块不得进入
+    // 已封口回合（周期闪动根因）。传输噪音已在 hook 按气泡整组过滤，能到达这里的封口后
+    // 块是 Agent 答完继续干活的真实过程（会话交接后接续任务）：作为该锚点的续作独立呈现，
+    // 而不是丢弃。
     const reply: ConversationEntry = {
       ...assistant('reply-1', 1_500), replyToEntryId: 'm1'
     }
     const turns = projectVirtualProcessTurns(
       [user('m1', 1_000, 1_020), reply],
-      process([block('work', 1_100), block('keepalive', 1_600)])
+      process([block('work', 1_100), block('follow-up-work', 1_600)])
     )
-    expect(turns.map((turn) => ({ id: turn.id, blocks: turn.process?.blocks.map((item) => item.id) })))
-      .toEqual([{ id: 'm1', blocks: ['work'] }])
+    expect(turns.map((turn) => ({
+      id: turn.id,
+      blocks: turn.process?.blocks.map((item) => item.id),
+      continuation: turn.continuation?.process?.blocks.map((item) => item.id)
+    }))).toEqual([{ id: 'm1', blocks: ['work'], continuation: ['follow-up-work'] }])
+    expect(turns[0]?.continuation?.process?.turn).toBe('cursor-native-long-turn:virtual:m1:continuation')
+    expect(turns[0]?.continuation?.process?.startedAt).toBe(1_600)
+  })
+
+  it('does not create a continuation when the reply has no precise link (legacy time window)', () => {
+    // 旧数据无 replyToEntryId → 无关闭边界 → 沿用时间窗：回复后的块仍属回合本身。
+    const turns = projectVirtualProcessTurns(
+      [user('m1', 1_000, 1_020), assistant('reply-legacy', 1_500)],
+      process([block('work', 1_100), block('after-reply', 1_600)])
+    )
+    expect(turns[0]?.continuation).toBeUndefined()
+    expect(turns[0]?.process?.blocks.map((item) => item.id)).toEqual(['work', 'after-reply'])
+  })
+
+  it('routes the live response by the same close boundary: after the reply it belongs to the continuation', () => {
+    const reply: ConversationEntry = { ...assistant('reply-1', 1_500), replyToEntryId: 'm1' }
+    const entries = [user('m1', 1_000, 1_020), reply]
+    const before = projectVirtualProcessTurns(
+      entries, process([block('work', 1_100)]),
+      { id: 'resp-1', channelId: '1', text: '正文', status: 'streaming', startedAt: 1_200, updatedAt: 1_300 }
+    )
+    expect(before[0]?.response?.id).toBe('resp-1')
+    expect(before[0]?.continuation).toBeUndefined()
+
+    const after = projectVirtualProcessTurns(
+      entries, undefined,
+      { id: 'resp-2', channelId: '1', text: '续作正文', status: 'streaming', startedAt: 1_700, updatedAt: 1_800 }
+    )
+    expect(after).toHaveLength(1)
+    expect(after[0]?.response).toBeUndefined()
+    expect(after[0]?.continuation?.response?.id).toBe('resp-2')
+    expect(after[0]?.live).toBe(true)
+  })
+
+  it('marks the turn live while a continuation block is still running and skips persisted continuation blocks', () => {
+    const persisted: ProcessBlock = block('persisted-follow-up', 1_600)
+    const reply: ConversationEntry = {
+      ...assistant('reply-1', 1_500), replyToEntryId: 'm1', continuationBlocks: [persisted]
+    }
+    const running: ProcessBlock = { kind: 'tool', id: 'shell-1', toolName: 'Shell', toolKind: 'command', summary: 'npm test', status: 'running', startedAt: 1_700 }
+    const turns = projectVirtualProcessTurns(
+      [user('m1', 1_000, 1_020), reply],
+      process([persisted, running])
+    )
+    expect(turns[0]?.continuation?.process?.blocks.map((item) => item.id)).toEqual(['shell-1'])
+    expect(turns[0]?.live).toBe(true)
   })
 
   it('keeps the legacy time-window fallback for replies without precise outbound links', () => {
@@ -94,8 +145,9 @@ describe('projectVirtualProcessTurns', () => {
       .toEqual([{ id: 'm1', blocks: ['work', 'after-reply'] }])
   })
 
-  it('assigns gap blocks to no turn when a later message has been delivered', () => {
-    // 8.2-5：下一条消息 delivered 后创建新回合；两回合之间的空档块不归属任何回合。
+  it('keeps work between two sealed turns on the earlier turn as its continuation, not on the later turn', () => {
+    // 8.2-5：下一条消息 delivered 后创建新回合；两回合之间的块属于前一回合的续作，
+    // 不进入后一回合，也不挪进已封口的前一回合正文过程。
     const firstReply: ConversationEntry = { ...assistant('reply-1', 1_500), replyToEntryId: 'm1' }
     const secondReply: ConversationEntry = { ...assistant('reply-2', 2_600), replyToEntryId: 'm2' }
     const turns = projectVirtualProcessTurns(
@@ -105,25 +157,33 @@ describe('projectVirtualProcessTurns', () => {
       ],
       process([
         block('work-1', 1_100),      // m1 回合内
-        block('keepalive', 1_800),   // m1 封口后、m2 投递前 → 空档
+        block('between', 1_800),     // m1 封口后、m2 投递前 → m1 的续作
         block('work-2', 2_200)       // m2 回合内
       ])
     )
-    expect(turns.map((turn) => ({ id: turn.id, blocks: turn.process?.blocks.map((item) => item.id) }))).toEqual([
-      { id: 'm1', blocks: ['work-1'] },
-      { id: 'm2', blocks: ['work-2'] }
+    expect(turns.map((turn) => ({
+      id: turn.id,
+      blocks: turn.process?.blocks.map((item) => item.id),
+      continuation: turn.continuation?.process?.blocks.map((item) => item.id)
+    }))).toEqual([
+      { id: 'm1', blocks: ['work-1'], continuation: ['between'] },
+      { id: 'm2', blocks: ['work-2'], continuation: undefined }
     ])
   })
 
   it('keeps a sealed turn closed even while the next message is still queued', () => {
-    // 8.2-4：下一消息仅入队未投递时不夺走上一轮；已封口回合同样不再吸收空档块。
+    // 8.2-4：下一消息仅入队未投递时不夺走上一轮；已封口回合不再吸收后续块——
+    // 它们是该回合的续作（Agent 没回 check_messages 而继续干活，排队消息因此取不走）。
     const reply: ConversationEntry = { ...assistant('reply-1', 1_500), replyToEntryId: 'm1' }
     const turns = projectVirtualProcessTurns(
       [user('m1', 1_000, 1_020), reply, user('queued-2', 1_700)],
-      process([block('work-1', 1_100), block('keepalive', 1_600)])
+      process([block('work-1', 1_100), block('follow-up', 1_600)])
     )
-    expect(turns.map((turn) => ({ id: turn.id, blocks: turn.process?.blocks.map((item) => item.id) })))
-      .toEqual([{ id: 'm1', blocks: ['work-1'] }])
+    expect(turns.map((turn) => ({
+      id: turn.id,
+      blocks: turn.process?.blocks.map((item) => item.id),
+      continuation: turn.continuation?.process?.blocks.map((item) => item.id)
+    }))).toEqual([{ id: 'm1', blocks: ['work-1'], continuation: ['follow-up'] }])
   })
 
   it('anchors blocks by their stable first-observation time, not by rehydration time', () => {

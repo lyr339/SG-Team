@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useId, useRef, type ReactNode } from 'react'
 
 export type InspectorTabId = 'review' | 'plan' | 'activity' | 'artifacts'
 
@@ -79,39 +79,31 @@ function isTypingTarget(target: EventTarget | null): boolean {
   return Boolean(element && (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA' || element.isContentEditable))
 }
 
+/** 计数徽章文案：超过 99 只显示 99+。 */
+function badgeText(badge: number | undefined): string | undefined {
+  return badge ? (badge > 99 ? '99+' : String(badge)) : undefined
+}
+
 /**
  * 右栏壳：标签行（WAI-ARIA tabs，方向键 / Home / End 漫游焦点，⌥1–4 直达）、
- * 滑动的选中指示条、关闭按钮、内容区。面板宽度不足时由 CSS 容器查询把标签收成纯图标。
+ * 关闭按钮、内容区。
+ *
+ * 标签是「图标常驻、文字按需展开」的胶囊：四个标签平时只露图标，被选中的那个原地
+ * 长出胶囊底板，标题与计数从图标右侧滑出（CSS `grid-template-columns: 0fr → 1fr`），
+ * 切走时同样滑回图标。选中态完全由按钮自身承担——没有需要测量、异步跟随的独立指示条，
+ * 展开动画期间也不会出现底板与文字错位。文字与计数始终在 DOM 里（可访问名称 / 测试不变），
+ * 收起时只是视觉宽度为 0。
+ *
  * Esc 在面板内任意位置按下都关闭右栏（输入框内除外，让输入框自己处理）。
  */
 export function InspectorShell({ tabs, activeTab, onTabChange, onClose, children }: InspectorShellProps): React.JSX.Element {
   const baseId = useId()
   const tabRefs = useRef<Map<InspectorTabId, HTMLButtonElement>>(new Map())
-  const listRef = useRef<HTMLDivElement>(null)
-  const [indicator, setIndicator] = useState<{ left: number; width: number }>()
 
   const focusTab = useCallback((tab: InspectorTabId): void => {
     onTabChange(tab)
     tabRefs.current.get(tab)?.focus()
   }, [onTabChange])
-
-  // 指示条跟随选中标签：测量 offsetLeft/offsetWidth 后用 transform 位移，
-  // 容器查询把标签收成图标时宽度会变，ResizeObserver 重测。
-  useLayoutEffect(() => {
-    const list = listRef.current
-    const active = tabRefs.current.get(activeTab)
-    if (!list || !active) return
-    const measure = (): void => {
-      const width = active.offsetWidth
-      setIndicator(width > 0 ? { left: active.offsetLeft, width } : undefined)
-    }
-    measure()
-    if (typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver(measure)
-    observer.observe(list)
-    observer.observe(active)
-    return () => observer.disconnect()
-  }, [activeTab, tabs])
 
   useEffect(() => {
     storeInspectorTab(activeTab)
@@ -157,16 +149,13 @@ export function InspectorShell({ tabs, activeTab, onTabChange, onClose, children
     <ShellContext.Provider value={{ baseId, activeTab }}>
       <aside className="workspace-inspector" aria-label="会话辅助工作区" onKeyDown={onShellKeyDown}>
         <header className="workspace-inspector__bar">
-          <div className="workspace-inspector__tabs" role="tablist" aria-label="辅助工作区标签" onKeyDown={onTabListKeyDown} ref={listRef}>
-            {indicator ? (
-              <span
-                className="inspector-tab-indicator"
-                aria-hidden="true"
-                style={{ transform: `translateX(${indicator.left}px)`, width: `${indicator.width}px` }}
-              />
-            ) : null}
+          <div className="workspace-inspector__tabs" role="tablist" aria-label="辅助工作区标签" onKeyDown={onTabListKeyDown}>
             {tabs.map((tab, index) => {
               const selected = tab.id === activeTab
+              const badge = badgeText(tab.badge)
+              // 收起时数字不可见：把计数放进悬停提示，仍然一眼可查。
+              const title = [tab.title ?? tab.label, badge ? `${badge} 项` : undefined, inspectorTabShortcutLabel(index)]
+                .filter(Boolean).join(' · ')
               return (
                 <button
                   key={tab.id}
@@ -181,13 +170,19 @@ export function InspectorShell({ tabs, activeTab, onTabChange, onClose, children
                   aria-selected={selected}
                   aria-controls={`${baseId}-panel-${tab.id}`}
                   tabIndex={selected ? 0 : -1}
-                  title={`${tab.title ?? tab.label} · ${inspectorTabShortcutLabel(index)}`}
+                  title={title}
                   onClick={() => onTabChange(tab.id)}
                 >
-                  <span className="inspector-tab__icon">{tab.icon}</span>
-                  <span className="inspector-tab__label">{tab.label}</span>
-                  {tab.badge ? <b className="inspector-tab__badge">{tab.badge > 99 ? '99+' : tab.badge}</b> : null}
-                  {tab.live ? <i className="inspector-tab__dot" aria-hidden="true" /> : null}
+                  <span className="inspector-tab__icon">
+                    {tab.icon}
+                    {tab.live ? <i className="inspector-tab__dot" aria-hidden="true" /> : null}
+                  </span>
+                  <span className="inspector-tab__reveal">
+                    <span className="inspector-tab__text">
+                      <span className="inspector-tab__label">{tab.label}</span>
+                      {badge ? <b className="inspector-tab__badge">{badge}</b> : null}
+                    </span>
+                  </span>
                 </button>
               )
             })}

@@ -40,5 +40,11 @@ export function shareSnapshotStructure(previous: DesktopSnapshot, incoming: Desk
         previous.liveAgentResponses?.[channelId] === state ? previous.liveAgentResponses[channelId]! : state
       ]))
     : incoming.liveAgentResponses
-  return { ...incoming, sessions, conversations, liveProcess, liveAgentResponses }
+  const liveStatusLine: DesktopSnapshot['liveStatusLine'] = incoming.liveStatusLine
+    ? Object.fromEntries(Object.entries(incoming.liveStatusLine).map(([channelId, state]) => [
+        channelId,
+        previous.liveStatusLine?.[channelId] === state ? previous.liveStatusLine[channelId]! : state
+      ]))
+    : incoming.liveStatusLine
+  return { ...incoming, sessions, conversations, liveProcess, liveAgentResponses, liveStatusLine }
 }

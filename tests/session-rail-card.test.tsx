@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { AgentSession } from '../src/domain/agent-session'
+import type { LiveProcessState } from '../src/shared/desktop-api'
 import { SessionRailCard } from '../src/renderer/src/SessionRailCard'
 
 const session: AgentSession = {
@@ -24,6 +25,40 @@ const session: AgentSession = {
 const NOW = Date.parse('2026-09-07T10:00:00+08:00')
 
 describe('SessionRailCard（名册行）', () => {
+  it('状态行常驻在卡片末行（Cursor 副标题同款）：生成中转圈 + 动词 · 对象；离线灰化为 Completed / Stopped，不撤下', () => {
+    const liveProcess: LiveProcessState = { turn: 't', startedAt: NOW, updatedAt: NOW, generating: true, blocks: [
+      { kind: 'tool', id: 'read', toolName: 'read_file_v2', toolKind: 'read', toolCase: 'readToolCall', status: 'running',
+        summary: `src/renderer/src/${'very-long-file-name-'.repeat(12)}.ts` }
+    ] }
+    const html = renderToStaticMarkup(<SessionRailCard session={{ ...session, online: true, status: 'running' }}
+      liveProcess={liveProcess} selected onOpen={() => {}} draggable now={NOW} />)
+    expect(html).toContain('session-row__activity is-read is-live')
+    expect(html).toContain('session-row__activity-spinner')
+    expect(html).not.toContain('session-row__activity-glyph')
+    expect(html.indexOf('class="session-row__name"')).toBeLessThan(html.indexOf('class="session-row__activity is-read is-live"'))
+    expect(html.indexOf('class="session-row__activity is-read is-live"')).toBeGreaterThan(html.indexOf('session-row__metrics'))
+    expect(html).toContain('<strong>Reading</strong>')
+    expect(html).toContain('session-row__activity-separator')
+    expect(html).toContain(`${'very-long-file-name-'.repeat(12)}.ts`)
+    expect(html).not.toContain('session-row__activity-icon')
+    expect(html.match(/<button\b/g)).toHaveLength(1)
+    expect(html).toContain('draggable="true"')
+    // 离线：常驻但灰化，静态字形代替转圈；有终止证据说 Stopped，否则 Completed。
+    const offline = renderToStaticMarkup(<SessionRailCard session={session} liveProcess={liveProcess} selected={false} onOpen={() => {}} />)
+    expect(offline).toContain('session-row__activity is-other is-muted')
+    expect(offline).toContain('<strong>Completed</strong>')
+    expect(offline).toContain('session-row__activity-glyph')
+    expect(offline).not.toContain('session-row__activity-spinner')
+    expect(offline).not.toContain('Reading')
+    const stopped = renderToStaticMarkup(<SessionRailCard session={{ ...session, status: 'stopped' }} selected={false} onOpen={() => {}} />)
+    expect(stopped).toContain('<strong>Stopped</strong>')
+    // 待命席位由 Cursor 侧事实给出 Thinking（探针实证：check_messages 被跳过、扫到轮询前的思考）。
+    const standby = renderToStaticMarkup(<SessionRailCard session={{ ...session, online: true, status: 'waiting', waiting: true }}
+      statusLine={{ composerId: 'c1', generating: true, composerStatus: 'generating', statusLine: { kind: 'thinking', label: 'Thinking' }, updatedAt: NOW }}
+      selected={false} onOpen={() => {}} />)
+    expect(standby).toContain('session-row__activity is-thinking is-live')
+    expect(standby).toContain('<strong>Thinking</strong>')
+  })
   it('离线行：灰色空心状态点、「已离线」、最近活性时间、排队徽记；上下文未知时只画光环轨道', () => {
     const html = renderToStaticMarkup(
       <SessionRailCard
@@ -145,7 +180,8 @@ describe('SessionRailCard（名册行）', () => {
     expect(html).toContain('aria-label="主控"')
     expect(html).toContain('session-row is-attention')
     expect(html).toContain('等待拍板')
-    expect(html).toContain('aria-label="后端实现（临时主控） CH-2，等待拍板，上下文 58%，排队 1"')
+    // 状态行常驻：没有任何 Cursor 侧事实的在岗席位读作 Planning next moves，并进入 aria-label。
+    expect(html).toContain('aria-label="后端实现（临时主控） CH-2，等待拍板，Planning next moves，上下文 58%，排队 1"')
   })
 
   it('侧栏行不重复渲染 token / 费用；用量只放在工作台顶部', () => {

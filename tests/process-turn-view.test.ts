@@ -75,3 +75,110 @@ describe('ProcessTurnViewModel', () => {
     expect(suggestedActionsFromText(text)).toEqual([])
   })
 })
+
+describe('ProcessTurnViewModel · tool presentation (Cursor 同口径)', () => {
+  it('uses the model-given description as the headline and demotes verb + target below it', () => {
+    const model = buildProcessTurnView({
+      id: 'turn',
+      blocks: [{
+        kind: 'tool', id: 'cursor:shell', toolName: 'run_terminal_command_v2', toolKind: 'command',
+        title: '查看新消息提交时对待答问卷的处理逻辑', summary: 'cd /tmp && python3 - <<EOF', hint: 'cd, python3', status: 'done', output: 'ok'
+      }]
+    })
+    const step = model.steps[0]!
+    expect(step.action).toBe('查看新消息提交时对待答问卷的处理逻辑')
+    expect(step.verb).toBe('已运行')
+    expect(step.target).toBeUndefined()
+    expect(step.hint).toBe('cd, python3')
+    expect(step.stateText).toBe('完成')
+    // 命令不再占头部，但在明细第一行可见。
+    expect(step.details[0]).toEqual({ label: '命令', value: 'cd /tmp && python3 - <<EOF', kind: 'code' })
+  })
+
+  it('turns the verb with status when there is no description', () => {
+    const statuses = ['running', 'done', 'failed'] as const
+    const actions = statuses.map((status) => buildProcessTurnView({
+      id: 'turn',
+      blocks: [{ kind: 'tool', id: `read-${status}`, toolName: 'read_file_v2', toolKind: 'read', summary: '/a.ts', hint: 'L1-120', status }]
+    }).steps[0]!)
+    expect(actions.map((step) => step.action)).toEqual(['读取中', '已读取', '读取失败'])
+    expect(actions.map((step) => step.stateText)).toEqual(['进行中', '完成', '失败'])
+    expect(actions[1]).toMatchObject({ target: '/a.ts', hint: 'L1-120', verb: undefined })
+  })
+
+  it('refines the verb by native toolCase (ls / glob / fetch / await) and falls back to the kind table', () => {
+    const steps = buildProcessTurnView({
+      id: 'turn',
+      blocks: [
+        { kind: 'tool', id: 'ls', toolName: 'list_dir', toolKind: 'read', toolCase: 'lsToolCall', summary: '/src', status: 'done' },
+        { kind: 'tool', id: 'glob', toolName: 'glob_file_search', toolKind: 'search', toolCase: 'globToolCall', summary: '**/*.ts', status: 'running' },
+        { kind: 'tool', id: 'fetch', toolName: 'web_fetch', toolKind: 'browser', toolCase: 'fetchToolCall', summary: 'https://example.com', status: 'done' },
+        { kind: 'tool', id: 'await', toolName: 'awaitToolCall', toolKind: 'command', toolCase: 'awaitToolCall', summary: '837682', hint: '12s', status: 'done' },
+        { kind: 'tool', id: 'legacy', toolName: 'read_file_v2', toolKind: 'read', summary: '/a.ts', status: 'done' }
+      ]
+    }).steps
+    expect(steps.map((step) => step.action)).toEqual(['已列出', '搜索文件中', '已抓取', '后台命令已结束', '已读取'])
+    // await 属 command 类但不是可执行命令行：不生成 shell 卡数据。
+    expect(steps[3]).toMatchObject({ kind: 'command', target: '837682', hint: '12s' })
+    expect(steps[3]?.shell).toBeUndefined()
+  })
+
+  it('normalizes the shell description like Cursor (drop leading “run”, capitalize) and exposes shell card data', () => {
+    const step = buildProcessTurnView({
+      id: 'turn',
+      blocks: [{
+        kind: 'tool', id: 'sh', toolName: 'run_terminal_command_v2', toolKind: 'command', toolCase: 'shellToolCall',
+        title: 'run the relay regression tests', summary: 'npx vitest run tests/relay', hint: 'npx · exit 1', status: 'failed', output: 'FAIL', error: 'exit 1'
+      }]
+    }).steps[0]!
+    expect(step.action).toBe('The relay regression tests')
+    expect(step.shell).toEqual({ command: 'npx vitest run tests/relay', output: 'FAIL', exitCode: 1, error: 'exit 1' })
+    // 中文说明不受影响。
+    const zh = buildProcessTurnView({
+      id: 'turn',
+      blocks: [{ kind: 'tool', id: 'sh2', toolName: 'run_terminal_command_v2', toolKind: 'command', toolCase: 'shellToolCall', title: '跑测试', summary: 'npm test', status: 'done' }]
+    }).steps[0]!
+    expect(zh.action).toBe('跑测试')
+    expect(zh.shell).toEqual({ command: 'npm test', output: undefined, exitCode: undefined, error: undefined })
+  })
+
+  it('names MCP tools by their real tool name and surfaces the server as the hint', () => {
+    const model = buildProcessTurnView({
+      id: 'turn',
+      blocks: [
+        { kind: 'tool', id: 'mcp-1', toolName: 'mcp-SG Team-team_task', toolKind: 'mcp', summary: '', status: 'done' },
+        { kind: 'tool', id: 'mcp-2', toolName: 'mcp-cursor-ide-browser-browser_navigate', toolKind: 'mcp', summary: 'http://localhost', status: 'running' },
+        { kind: 'tool', id: 'plan', toolName: 'planUpdate', toolKind: 'todo', summary: '执行计划', status: 'done' }
+      ]
+    })
+    expect(model.steps[0]).toMatchObject({ action: '已调用 team_task', hint: 'SG Team' })
+    expect(model.steps[1]).toMatchObject({ action: '调用中 browser_navigate', hint: 'cursor-ide-browser', target: 'http://localhost' })
+    expect(model.steps[2]).toMatchObject({ action: '已更新计划', target: '执行计划' })
+  })
+
+  it('exposes ask_question as a question step whose state text follows the questionnaire, not the tool status', () => {
+    const question = {
+      toolCallId: 'tc-1', title: '方向', status: 'pending' as const,
+      questions: [{ id: 'q', prompt: '选哪个？', allowMultiple: false, options: [{ id: 'a', label: 'A' }] }]
+    }
+    const pending = buildProcessTurnView({
+      id: 'turn',
+      blocks: [{ kind: 'tool', id: 'q', toolName: 'ask_question', toolKind: 'question', title: '方向', summary: '', status: 'running', question, input: { title: '方向' } }]
+    }).steps[0]!
+    expect(pending).toMatchObject({ kind: 'question', action: '方向', verb: undefined, stateText: '等待回答' })
+    // 题目由卡片承载，不再重复输出「输入」JSON。
+    expect(pending.details.some((detail) => detail.label === '输入')).toBe(false)
+    expect(pending.question).toBe(question)
+
+    const submitted = buildProcessTurnView({
+      id: 'turn',
+      blocks: [{ kind: 'tool', id: 'q', toolName: 'ask_question', toolKind: 'question', summary: '', status: 'done', question: { ...question, status: 'submitted' } }]
+    }).steps[0]!
+    expect(submitted).toMatchObject({ action: '已回答', stateText: '已回答' })
+    const timedOut = buildProcessTurnView({
+      id: 'turn',
+      blocks: [{ kind: 'tool', id: 'q', toolName: 'ask_question', toolKind: 'question', summary: '', status: 'done', question: { ...question, status: 'cancelled', skipReason: 'timeout' } }]
+    }).steps[0]!
+    expect(timedOut.stateText).toBe('已超时')
+  })
+})

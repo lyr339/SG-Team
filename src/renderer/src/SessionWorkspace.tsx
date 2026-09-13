@@ -8,10 +8,12 @@ import { AttachmentThumbnail } from './AttachmentImageViewer'
 import { AgentAvatar } from './AgentAvatar'
 import { ClampedMessage } from './ClampedMessage'
 import { ProcessTurnCard } from './ProcessTurnCard'
+import type { QuestionActions } from './QuestionCard'
+import { QueuedMessageTray } from './QueuedMessageTray'
 import { TurnResponseText } from './TurnResponseText'
 import { SessionUsageStat } from './SessionUsageStat'
 import { suggestedActionsFromText } from './process-turn-view'
-import { projectTurnTimeline, type TurnTimelineItem } from './timeline-view'
+import { partitionTimelineEntries, projectTurnTimeline, type TurnTimelineItem } from './timeline-view'
 import { useBottomFollow } from './use-bottom-follow'
 import { revealAfterPaint, subscribeReveal } from './inspector/reveal-bus'
 
@@ -37,6 +39,8 @@ interface SessionWorkspaceProps {
   /** Cursor Composer 原生回复文本（CDP 250ms 增量）。 */
   liveAgentResponse?: LiveAgentResponseState
   nativeProcessStream?: NativeProcessStreamStatus
+  /** 过程卡里 ask_question 的回答 / 跳过动作（绑定到本通道）。 */
+  questionActions?: QuestionActions
 }
 
 /** 同角色且间隔小于该值的连续消息合并成一组（只显示一次头像与名称）。 */
@@ -150,36 +154,41 @@ export function SessionWorkspace({
   onAttachmentsChange,
   liveProcess,
   liveAgentResponse,
-  nativeProcessStream
+  nativeProcessStream,
+  questionActions
 }: SessionWorkspaceProps): React.JSX.Element {
   const [sendError, setSendError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [copiedId, setCopiedId] = useState('')
   const [starredIds, setStarredIds] = useState<ReadonlySet<string>>(new Set())
   const visibleEntries = useMemo(() => entries.filter((entry) => !entry.silent), [entries])
-  // 队列弹层的条目口径：仍未被 check_messages 取走的用户消息（离线队列传输下才有该边界）。
-  const queuedEntries = useMemo(() => (
-    session.deliveryMode === 'queued'
-      ? visibleEntries.filter((entry) => entry.role === 'user' && entry.source === 'desktop'
-          && entry.status === 'complete' && entry.deliveredAt === undefined)
-      : []
-  ), [session.deliveryMode, visibleEntries])
-  const latestAssistantId = [...visibleEntries].reverse().find((entry) => entry.role === 'assistant')?.id
-  const seenCount = useRef(visibleEntries.length)
+  const queuedTransport = session.deliveryMode === 'queued'
+  // 时间线只放已进入对话的内容；队列传输下尚未被 check_messages 取走的用户消息停在
+  // 输入区上方的待投递托盘，被取走那一刻才进入时间线（两处互斥，同一条消息只出现一次）。
+  const { timeline: timelineEntries, queued: queuedEntries } = useMemo(
+    () => partitionTimelineEntries(visibleEntries, !queuedTransport),
+    [visibleEntries, queuedTransport]
+  )
+  const latestAssistantId = [...timelineEntries].reverse().find((entry) => entry.role === 'assistant')?.id
+  const seenCount = useRef(timelineEntries.length)
   /**
    * 观看者到来（本视图按 channelId 挂载）时已存在的实时过程块：切换会话进入正在
    * 生成的回合，这些块的正文已经"呈现过"，落位不重播；之后新出现的块才打字。
    */
   const hydratedBlockIds = useRef<ReadonlySet<string> | null>(null)
   if (hydratedBlockIds.current === null) {
-    hydratedBlockIds.current = new Set((liveProcess?.blocks ?? []).map((block) => block.id))
+    // 已持久化的续作块与直播块同属"观看者到来时已存在"：续作卡在直播中挂载时
+    // 它们同样直接落位，不从空串重播。
+    hydratedBlockIds.current = new Set([
+      ...(liveProcess?.blocks ?? []).map((block) => block.id),
+      ...entries.flatMap((entry) => entry.continuationBlocks?.map((block) => block.id) ?? [])
+    ])
   }
   const agentOffline = !session.online
-  const lastEntry = visibleEntries.at(-1)
+  const lastEntry = timelineEntries.at(-1)
   const lastEntryKey = lastEntry
     ? `${lastEntry.id}:${lastEntry.status}:${lastEntry.text.length}`
     : 'empty'
-  const queuedTransport = session.deliveryMode === 'queued'
   // live 过程流指纹：块数/状态翻转都改变它，驱动贴底滚动跟上实时过程
   const liveProcessKey = liveProcess
     ? [
@@ -194,7 +203,7 @@ export function SessionWorkspace({
         ].join(':'))
       ].join('|')
     : ''
-  const finalizedLiveResponse = liveAgentResponse && visibleEntries.some((entry) => (
+  const finalizedLiveResponse = liveAgentResponse && timelineEntries.some((entry) => (
     entry.role === 'assistant'
     && entry.status === 'complete'
     && entry.timestamp >= liveAgentResponse.startedAt - 5_000
@@ -207,17 +216,17 @@ export function SessionWorkspace({
   const agentRunning = session.online && session.status === 'running'
   const turnTimeline = useMemo(
     () => projectTurnTimeline({
-      entries: visibleEntries,
+      entries: timelineEntries,
       liveProcess,
       liveResponse: visibleLiveResponse,
       immediateDelivery: !queuedTransport,
       agentRunning
     }),
-    [visibleEntries, liveProcess, visibleLiveResponse, queuedTransport, agentRunning]
+    [timelineEntries, liveProcess, visibleLiveResponse, queuedTransport, agentRunning]
   )
-  // 占位判定沿用：最后一个可视条目是用户消息且没有任何回合产物（过程/回复流）
+  // 占位判定沿用：时间线最后一个条目是已投递的用户消息且没有任何回合产物（过程/回复流）
   // 接管该消息——responding 但零产物（过程流未就绪）同样显示占位。
-  const pendingVisibleUser = visibleEntries.at(-1)?.role === 'user' ? visibleEntries.at(-1) : undefined
+  const pendingVisibleUser = timelineEntries.at(-1)?.role === 'user' ? timelineEntries.at(-1) : undefined
   const lastTurn = pendingVisibleUser
     ? turnTimeline.find((item) => item.key === `turn:${pendingVisibleUser.id}`)
     : undefined
@@ -233,7 +242,7 @@ export function SessionWorkspace({
   ), [turnTimeline])
   const follow = useBottomFollow(
     `${session.id}:${session.composerId ?? ''}`,
-    `${visibleEntries.length}:${lastEntryKey}:${liveProcessKey}:${liveResponseKey}:${timelineItems.length}`
+    `${timelineEntries.length}:${lastEntryKey}:${liveProcessKey}:${liveResponseKey}:${timelineItems.length}`
   )
   const canSend = (session.online || queuedTransport) && !submitting
   // 独立席位：solo 角色模板的 roleTemplateKey 流经 AgentSession（团队席为
@@ -244,9 +253,9 @@ export function SessionWorkspace({
   const notWaiting = !disconnected && !queuedOffline && !session.waiting && session.status !== 'running'
   useEffect(() => {
     if (!follow.awayFromBottom) {
-      seenCount.current = visibleEntries.length
+      seenCount.current = timelineEntries.length
     }
-  }, [follow.awayFromBottom, visibleEntries.length])
+  }, [follow.awayFromBottom, timelineEntries.length])
 
   useEffect(() => {
     if (!copiedId) return
@@ -261,10 +270,10 @@ export function SessionWorkspace({
     revealAfterPaint(() => follow.viewportRef.current, target)
   )), [follow.viewportRef])
 
-  const pendingBelow = follow.awayFromBottom ? Math.max(0, visibleEntries.length - seenCount.current) : 0
+  const pendingBelow = follow.awayFromBottom ? Math.max(0, timelineEntries.length - seenCount.current) : 0
 
   const jumpToBottom = (): void => {
-    seenCount.current = visibleEntries.length
+    seenCount.current = timelineEntries.length
     follow.jumpToBottom()
   }
 
@@ -300,8 +309,8 @@ export function SessionWorkspace({
   }
 
   const retryEntry = async (entry: ConversationEntry): Promise<void> => {
-    const index = visibleEntries.findIndex((candidate) => candidate.id === entry.id)
-    const previousUser = visibleEntries.slice(0, index).reverse().find((candidate) => candidate.role === 'user')
+    const index = timelineEntries.findIndex((candidate) => candidate.id === entry.id)
+    const previousUser = timelineEntries.slice(0, index).reverse().find((candidate) => candidate.role === 'user')
     await quickSend(previousUser?.text
       ? `请重新处理上一条请求，保留有效结论并修正不足：\n\n${previousUser.text}`
       : '请重新检查并回答上一条请求，保留有效结论并修正不足。')
@@ -380,13 +389,10 @@ export function SessionWorkspace({
               )}
             </div>
             <div className="chat-tail">
-              <span className={`chat-state ${entry.status === 'failed' ? 'is-failed' : ''} ${entry.status === 'complete' && queuedTransport && entry.deliveredAt === undefined ? 'is-queued' : ''}`}>
+              {/* 进入时间线的用户消息一定已投递（排队中的停在待投递托盘），尾注只剩发送时刻。 */}
+              <span className={`chat-state ${entry.status === 'failed' ? 'is-failed' : ''}`}>
                 {entry.status === 'pending' && '发送中…'}
-                {entry.status === 'complete' && (queuedTransport && entry.deliveredAt === undefined
-                  ? (entry.heldForNextSession
-                    ? `等待新会话 · 排队于 ${formatClock(entry.timestamp)}`
-                    : `排队中 · ${formatClock(entry.timestamp)}`)
-                  : `已发送 ${formatClock(entry.timestamp)}`)}
+                {entry.status === 'complete' && `已发送 ${formatClock(entry.timestamp)}`}
                 {entry.status === 'streaming' && '实时生成中'}
                 {entry.status === 'failed' && `发送失败：${entry.error || '未知原因'}`}
               </span>
@@ -447,8 +453,13 @@ export function SessionWorkspace({
     detached: boolean
     /** 已投递、Agent 运行中、尚无任何产物：同一行以空态占位（打字指示 + 过程流健康提示）。 */
     idle: boolean
+    /**
+     * 续作行：回复封口之后 Agent 继续工作的过程，紧贴在该回复之下（同一回合 DOM 身份）。
+     * anchorReplyId 用于判定默认展开（只有最新一条回复的续作默认展开，与回复过程卡一致）。
+     */
+    continuation?: { anchorReplyId: string }
   }): React.JSX.Element => {
-    const { turnKey, process, response, reply, grouped, detached, idle } = input
+    const { turnKey, process, response, reply, grouped, detached, idle, continuation } = input
     const responding = reply === undefined
     // 落库回复优先用持久化过程；封口帧尚未到达时用仍锚定在本回合的实时过程兜底。
     const replyBlocks = reply ? replyProcessBlocks(reply) : undefined
@@ -463,6 +474,9 @@ export function SessionWorkspace({
     )
     const suggestions = reply?.status === 'complete' ? suggestedActionsFromText(reply.text) : []
     const at = reply?.timestamp ?? process?.startedAt ?? response?.startedAt ?? Date.now()
+    const defaultOpen = continuation
+      ? liveActive || continuation.anchorReplyId === latestAssistantId
+      : responding || reply?.id === latestAssistantId
     // 宽度在回合开始时就定下（responding 恒用宽列）：首个过程块到达时不再把整行
     // 从 82% 拉宽到 94%。
     const className = [
@@ -470,10 +484,11 @@ export function SessionWorkspace({
       responding ? 'live-process-row' : '',
       detached ? 'live-process-row--detached' : '',
       responding || hasProcess ? 'chat-row--process' : '',
+      continuation ? 'chat-row--continuation' : '',
       grouped ? 'is-grouped' : ''
     ].filter(Boolean).join(' ')
     return (
-      <div key={`${turnKey}:agent`} className={className} data-entry-id={reply?.id}>
+      <div key={continuation ? `${turnKey}:continuation` : `${turnKey}:agent`} className={className} data-entry-id={reply?.id} data-continuation-of={continuation?.anchorReplyId}>
         <span className="chat-gutter" aria-hidden={grouped}>
           {!grouped
             ? <span className="chat-face-avatar"><AgentAvatar avatarId={session.avatarId} name={session.displayName} crowned={session.isEffectiveLead ?? session.roleTemplateKey === 'lead'} size="sm" /></span>
@@ -489,6 +504,12 @@ export function SessionWorkspace({
             </div>
           )}
           <div className={`chat-bubble${idle ? ' live-process-idle' : ''}`}>
+            {continuation ? (
+              // 直播态由过程卡自己的「Cursor 实时过程」标记表达，这里只说明这一段是什么。
+              <div className={`chat-continuation-caption${liveActive ? ' is-live' : ''}`} role="status">
+                {liveActive ? '回复后继续工作中' : '回复后继续工作'}
+              </div>
+            ) : null}
             {idle ? (
               <>
                 <span className="typing-indicator"><i /><i /><i /></span>
@@ -506,13 +527,14 @@ export function SessionWorkspace({
                 truncatedItemCount={replyBlocks?.length ? reply?.processTruncatedItemCount : process?.truncatedItemCount}
                 startedAt={replyBlocks?.length ? reply?.processBlocks?.[0]?.startedAt : process?.startedAt}
                 updatedAt={reply ? reply.timestamp : process?.updatedAt}
-                defaultOpen={responding || reply?.id === latestAssistantId}
+                defaultOpen={defaultOpen}
                 compact
                 live={liveActive}
                 hydratedBlockIds={hydratedBlockIds.current ?? undefined}
+                questionActions={questionActions}
               />
             ) : null}
-            <TurnResponseText turnKey={turnKey} live={response} reply={reply} />
+            <TurnResponseText turnKey={continuation ? `${turnKey}:continuation` : turnKey} live={response} reply={reply} />
             {reply && !reply.text ? (reply.status === 'streaming' ? '正在生成…' : '（空）') : null}
             {reply ? renderAttachments(reply) : null}
             {reply?.status === 'streaming' ? (
@@ -641,6 +663,20 @@ export function SessionWorkspace({
           detached: turn.detached !== undefined,
           idle
         }))
+        // 续作行：回复封口后 Agent 继续工作（会话交接后接续任务等），过程流与正文流
+        // 紧贴回复之下继续直播/回放，而不是被当成传输空档丢弃。
+        const continuation = turn.continuation
+        if (assistantReply && continuation && (continuation.process?.blocks.length || continuation.response)) {
+          renderedRows.push(renderAgentTurnRow({
+            turnKey: turn.key,
+            process: continuation.process,
+            response: continuation.response,
+            grouped: true,
+            detached: false,
+            idle: false,
+            continuation: { anchorReplyId: assistantReply.id }
+          }))
+        }
         // Agent 活动/回复打断用户消息组（RC-12）：u1 与 u2 之间出现过过程/回复，
         // u2 不得与 u1 合并成组（隐藏头像与名称）。
         previousUserEntry = undefined
@@ -738,6 +774,22 @@ export function SessionWorkspace({
         )}
       </div>
 
+      {/* 待投递托盘：发送后的即时回显。消息在这里等 Agent 取走，取走那一刻移入上方时间线。 */}
+      <QueuedMessageTray
+        session={session}
+        entries={queuedEntries}
+        onWithdraw={onWithdrawQueued ? (entryId) => {
+          void onWithdrawQueued(entryId).catch((error: unknown) => {
+            setSendError(error instanceof Error ? error.message : String(error))
+          })
+        } : undefined}
+        onRelease={onReleaseQueued ? (entryId) => {
+          void onReleaseQueued(entryId).catch((error: unknown) => {
+            setSendError(error instanceof Error ? error.message : String(error))
+          })
+        } : undefined}
+      />
+
       <ComposerWorkbench
         session={session}
         currentProjectName={currentProjectName}
@@ -754,17 +806,6 @@ export function SessionWorkspace({
         handoffTitle={handoffTitle}
         attachments={attachments}
         onAttachmentsChange={onAttachmentsChange}
-        queuedEntries={queuedEntries}
-        onWithdrawQueued={onWithdrawQueued ? (entryId) => {
-          void onWithdrawQueued(entryId).catch((error: unknown) => {
-            setSendError(error instanceof Error ? error.message : String(error))
-          })
-        } : undefined}
-        onReleaseQueued={onReleaseQueued ? (entryId) => {
-          void onReleaseQueued(entryId).catch((error: unknown) => {
-            setSendError(error instanceof Error ? error.message : String(error))
-          })
-        } : undefined}
       />
     </section>
   )

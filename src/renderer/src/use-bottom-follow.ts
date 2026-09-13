@@ -46,6 +46,10 @@ export function useBottomFollow(resetKey: string, contentKey: string) {
     if (!content || typeof ResizeObserver === 'undefined') return
     const observer = new ResizeObserver(followContent)
     observer.observe(content)
+    // 视口自身变矮（待投递托盘出现 / 输入区加高 / 窗口缩小）同样会把底部内容挤出可视区，
+    // 跟随中的视口要一起贴底；用户主动滚动意图仍由 onScroll/onWheel 判定。
+    const viewport = viewportRef.current
+    if (viewport) observer.observe(viewport)
     return () => observer.disconnect()
   }, [followContent])
 

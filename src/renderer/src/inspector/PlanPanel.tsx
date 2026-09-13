@@ -1,4 +1,4 @@
-import type { ConversationEntry, ProcessBlock } from '../../../domain/conversation-entry'
+import { conversationEntryProcessBlocks, type ConversationEntry, type ProcessBlock } from '../../../domain/conversation-entry'
 import type { LiveProcessState } from '../../../shared/desktop-api'
 import { PlanIcon, TargetGlyph } from './InspectorIcons'
 import type { InspectorTabId } from './InspectorShell'
@@ -38,7 +38,8 @@ export function currentCursorTodos(
     return { items: live?.items ?? [], blockId: live?.blockId, live: true }
   }
   for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const historical = latestTodoBlock(entries[index]?.processBlocks)
+    const entry = entries[index]
+    const historical = entry ? latestTodoBlock(conversationEntryProcessBlocks(entry)) : undefined
     if (historical) return { items: historical.items, blockId: historical.blockId, live: false }
   }
   return { items: [], live: false }

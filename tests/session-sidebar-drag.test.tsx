@@ -162,6 +162,50 @@ describe('SessionSidebar 拖拽重排', () => {
     })
   }
 
+  it('逐通道传递实时活动与 Cursor 侧事实；更新不串席位，离线行常驻为 Completed 且不影响卡片选择', async () => {
+    const snapshot = snapshotWith([
+      { id: 'a', status: 'running', waiting: false, connectionPhase: 'processing' },
+      { id: 'b', status: 'running', waiting: false, connectionPhase: 'processing' }
+    ])
+    snapshot.liveProcess = {
+      '1': { turn: 't1', generating: true, startedAt: 1, updatedAt: 2,
+        blocks: [{ kind: 'tool', id: 'a-read', toolName: 'read_file_v2', toolKind: 'read', summary: 'only-a.ts', status: 'running' }] },
+      '2': { turn: 't2', generating: true, startedAt: 1, updatedAt: 2,
+        blocks: [{ kind: 'thinking', id: 'b-think', text: 'B 的思考', status: 'running' }] }
+    }
+    await renderSnapshot(snapshot)
+    const rows = () => [...container.querySelectorAll<HTMLButtonElement>('.session-row')]
+    const a = rows().find((row) => row.textContent?.includes('only-a.ts'))!
+    const b = rows().find((row) => row.textContent?.includes('Thinking'))!
+    expect(a).toBeDefined()
+    expect(b).toBeDefined()
+    expect(b.textContent).not.toContain('only-a.ts')
+    await renderSnapshot({ ...snapshot, liveProcess: {
+      ...snapshot.liveProcess,
+      '1': { ...snapshot.liveProcess['1']!, updatedAt: 3,
+        blocks: [{ kind: 'tool', id: 'a-read', toolName: 'read_file_v2', toolKind: 'read', summary: 'next-a.ts', status: 'running' }] }
+    } })
+    expect(rows().find((row) => row.textContent?.includes('next-a.ts'))).toBe(a)
+    expect(rows().find((row) => row.textContent?.includes('Thinking'))).toBe(b)
+    expect(a.getAttribute('aria-current')).toBe('true')
+    // Cursor 侧事实（hook v32）优先于过程块：席位 1 的副标题换成正文片段，席位 2 不受影响。
+    await renderSnapshot({ ...snapshot, liveStatusLine: {
+      '1': { composerId: 'c-a', generating: true, composerStatus: 'generating', statusLine: { kind: 'text', label: 'Reply snippet for A' }, updatedAt: 4 }
+    } })
+    expect(a.textContent).toContain('Reply snippet for A')
+    expect(a.textContent).not.toContain('next-a.ts')
+    expect(b.textContent).toContain('Thinking')
+    // 离线：状态行常驻、灰化为 Completed（离线行换组，按文本重新定位），选择不变。
+    await renderSnapshot({ ...snapshot, sessions: snapshot.sessions.map((s) => s.channelId === '1' ? { ...s, online: false } : s) })
+    expect(container.querySelectorAll('.session-row__activity')).toHaveLength(2)
+    const offlineRow = rows().find((row) => row.classList.contains('is-offline'))!
+    expect(offlineRow).toBeDefined()
+    expect(offlineRow.querySelector('.session-row__activity')?.textContent).toContain('Completed')
+    expect(offlineRow.querySelector('.session-row__activity')?.classList.contains('is-muted')).toBe(true)
+    expect(offlineRow.getAttribute('aria-current')).toBe('true')
+    expect(rows().find((row) => row.textContent?.includes('Thinking'))?.classList.contains('is-offline')).toBe(false)
+  })
+
   it('动态展示四类状态组与头部摘要；折叠状态持久化，折叠内容 inert 且过渡后卸载', async () => {
     await renderSnapshot(snapshotWith([
       { id: 'run', displayName: '运行席', status: 'running', waiting: false, connectionPhase: 'processing', queueDepth: 1 },

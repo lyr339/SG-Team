@@ -10,12 +10,13 @@ import {
 } from '../src/renderer/src/run/run-view'
 import { teamControlSnapshot } from '../src/renderer/src/preview/mock-data'
 
-type SeatShape = 'waiting' | 'working' | 'offline' | 'unconfirmed'
+type SeatShape = 'waiting' | 'working' | 'awaiting' | 'offline' | 'unconfirmed'
 
 function runtimeOf(shape: SeatShape, channelId: string): TeamMemberRuntime | undefined {
   if (shape === 'unconfirmed') return undefined
   const base = { channelId, queueDepth: 0, lastSeenAt: Date.now() - 5_000, healthEvidence: [], workingFiles: [] }
   if (shape === 'waiting') return { ...base, status: 'waiting', online: true, waiting: true, connectionPhase: 'waiting' }
+  if (shape === 'awaiting') return { ...base, status: 'running', online: true, awaitingUser: true, waiting: false, connectionPhase: 'processing' }
   // 执行租约：已取走消息、长任务期间心跳停刷（online=false）仍算在岗执行中。
   if (shape === 'working') return { ...base, status: 'running', online: false, waiting: false, connectionPhase: 'processing' }
   return { ...base, status: 'offline', online: false, waiting: false, connectionPhase: 'offline' }
@@ -66,6 +67,16 @@ describe('run view · seats', () => {
     expect(view.liveSeatCount).toBe(3)
     expect(view.evidencePending).toBe(true)
     expect(view.state).toMatchObject({ label: '待命 1 · 执行中 1' })
+  })
+
+  it('surfaces a pending user decision as attention without treating the seat as offline or rebuildable', () => {
+    const independent = buildRunView(independentTeam(['awaiting', 'waiting']))
+    expect(independent.seats[0]).toMatchObject({ state: 'awaiting', pending: false })
+    expect(independent.liveSeatCount).toBe(2)
+    expect(independent.state).toMatchObject({ label: '等待回答 1 · 待命 1 · 执行中 0', tone: 'warning' })
+
+    const team = buildRunView(teamRun('awaiting', 'running'))
+    expect(team.state).toMatchObject({ label: '2 个席位等待回答', tone: 'warning' })
   })
 
   it('shows only the seats of the active mode: team seats hide the solo seat and vice versa', () => {

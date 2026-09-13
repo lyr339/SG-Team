@@ -353,9 +353,83 @@ export const desktopSnapshot: DesktopSnapshot = {
       blocks: [
         { kind: 'thinking', id: 'live-1', text: '正在比对渲染层挂接点与数据契约，确认原生事件顺序与状态翻转……', status: 'done', durationMs: 3_200 },
         { kind: 'message', id: 'live-message', text: '先检查过程卡的实时渲染，再运行浏览器验证。', status: 'done' },
-        { kind: 'tool', id: 'live-2', toolName: 'Search', toolKind: 'search', summary: 'process 展示', status: 'done', output: '命中 3 个文件' },
-        { kind: 'tool', id: 'live-3', toolName: 'browser_navigate', toolKind: 'browser', summary: 'http://127.0.0.1:5173', status: 'done', output: '页面已加载' },
-        { kind: 'tool', id: 'live-4', toolName: 'run_terminal_cmd', toolKind: 'command', summary: 'npx vitest run tests/relay', status: 'running', input: { command: 'npx vitest run tests/relay' } },
+        // 探索类连续调用 → 折叠为「Explored 3 files, 1 search」组（Cursor detailed 分组）。
+        { kind: 'tool', id: 'live-2', toolName: 'ripgrep_raw_search', toolKind: 'search', toolCase: 'grepToolCall', summary: 'process 展示', hint: 'SessionWorkspace.tsx', status: 'done', output: '命中 3 个文件' },
+        { kind: 'tool', id: 'live-read', toolName: 'read_file_v2', toolKind: 'read', toolCase: 'readToolCall', summary: 'src/renderer/src/ProcessTurnCard.tsx', hint: 'L120-180', status: 'done' },
+        { kind: 'tool', id: 'live-read-2', toolName: 'read_file_v2', toolKind: 'read', toolCase: 'readToolCall', summary: 'src/renderer/src/process-turn-view.ts', hint: 'L1-90', status: 'done' },
+        { kind: 'tool', id: 'live-read-3', toolName: 'read_file_v2', toolKind: 'read', toolCase: 'readToolCall', summary: 'src/renderer/src/styles.css', hint: 'L1690-1760', status: 'done' },
+        {
+          kind: 'tool', id: 'live-edit', toolName: 'edit_file_v2', toolKind: 'edit', toolCase: 'editToolCall', summary: 'src/renderer/src/styles.css', hint: '+3 −1', status: 'done',
+          output: 'The file src/renderer/src/styles.css has been updated.',
+          // 结构化 diff（hook v29 由 diffString 解析）：展开后按行着色。
+          diff: { lines: [
+            { type: 'hunk', text: '@@ -1728,4 +1728,6 @@' },
+            { type: 'context', text: '.cursor-native-tool { min-width: 0; overflow: hidden; }', oldLine: 1728, newLine: 1728 },
+            { type: 'removed', text: '.cursor-native-tool__head { min-height: 44px; }', oldLine: 1729 },
+            { type: 'added', text: '.cursor-native-tool__head { min-height: 40px; }', newLine: 1729 },
+            { type: 'added', text: '.cursor-native-tool.is-nested { border: 0; box-shadow: none; }', newLine: 1730 },
+            { type: 'added', text: '.cursor-native-tool.is-nested > .cursor-native-tool__head { min-height: 28px; }', newLine: 1731 },
+            { type: 'context', text: '.cursor-native-tool.is-failed { border-color: var(--red-border); }', oldLine: 1730, newLine: 1732 }
+          ] }
+        },
+        {
+          kind: 'tool', id: 'live-edit-stream', toolName: 'edit_file_v2', toolKind: 'edit', toolCase: 'editToolCall',
+          summary: 'src/infrastructure/cursor/cursor-stream-observer.ts', hint: '+3 −0', status: 'running',
+          // hook v29 的运行态形态：同一 block 原地增长，卡片只显示尾部并自动贴底。
+          diff: { lines: [
+            { type: 'hunk', text: '@@ -209,3 +209,6 @@' },
+            { type: 'context', text: 'function diffFromEdit(td, payload, args) {', oldLine: 209, newLine: 209 },
+            { type: 'context', text: '  let lines = []', oldLine: 210, newLine: 210 },
+            { type: 'added', text: '  let streaming = false', newLine: 211 },
+            { type: 'added', text: '  const source = args?.streamContent', newLine: 212 },
+            { type: 'added', text: '  if (source) lines = parseStreamingDiff(source)', newLine: 213 }
+          ] }
+        },
+        // 浏览器 MCP 连续两次 → 「Ran 2 browser actions」组。
+        { kind: 'tool', id: 'live-3', toolName: 'mcp-user-playwright-browser_navigate', toolKind: 'mcp', toolCase: 'mcpToolCall', summary: 'http://127.0.0.1:5173', status: 'done', output: '页面已加载' },
+        { kind: 'tool', id: 'live-3b', toolName: 'mcp-user-playwright-browser_snapshot', toolKind: 'mcp', toolCase: 'mcpToolCall', summary: '', status: 'done', output: '- heading "拾光"' },
+        {
+          kind: 'tool', id: 'live-4', toolName: 'run_terminal_command_v2', toolKind: 'command', toolCase: 'shellToolCall',
+          title: '运行 relay 相关回归测试', summary: 'grep -n "function\\|const.*=" /Applications/拾光.app/Contents/Resources/app.asar/out/main/index.js', hint: 'grep',
+          status: 'running', input: { command: 'grep -n "function\\|const.*=" /Applications/拾光.app/Contents/Resources/app.asar/out/main/index.js', description: '运行 relay 相关回归测试' },
+          // 运行中的部分输出（Cursor 定时 flush 进气泡）：预览窗贴底显示最新几行。
+          output: [
+            ' RUN  v4.1.11 /Users/lyr/Downloads/qingtian/qingtian-team',
+            '',
+            ' ✓ tests/channel-message-relay.test.ts (24 tests) 312ms',
+            ' ✓ tests/channel-message-service.test.ts (18 tests) 141ms',
+            ' ✓ tests/channel-delivery-policy.test.ts (9 tests) 22ms',
+            ' ✓ tests/channel-protocol-policy.test.ts (12 tests) 37ms',
+            ' ↓ tests/relay-scope.test.ts (5 tests | 1 skipped)',
+            ' 567:async function runMcpLeaseProxy(args = process.argv.slice(2)) { const observer = stateDir ? new FileLeaseObserver(stateDir) : undefined }',
+            ' · tests/relay-presence.test.ts running…'
+          ].join('\n')
+        },
+        {
+          kind: 'tool', id: 'live-question', toolName: 'ask_question', toolKind: 'question', title: '过程卡改造方向', summary: '', status: 'running',
+          question: {
+            toolCallId: 'preview-question-1',
+            title: '过程卡改造方向',
+            status: 'pending',
+            questions: [
+              {
+                id: 'direction', prompt: '工具头部采用哪种布局？', allowMultiple: false,
+                options: [
+                  { id: 'title-first', label: '意图说明为主标题，动词与对象为副行（推荐）' },
+                  { id: 'verb-first', label: '动词 + 对象为主，意图说明折叠进详情' },
+                  { id: 'compact', label: '单行紧凑：动词 · 对象 · 提示' }
+                ]
+              },
+              {
+                id: 'scope', prompt: '本轮是否同时处理 ask_question 卡片？', allowMultiple: true,
+                options: [
+                  { id: 'card', label: '渲染可点选卡片' },
+                  { id: 'presence', label: '等待回答期间保持席位在线' }
+                ]
+              }
+            ]
+          }
+        },
         {
           kind: 'tool', id: 'live-todos', toolName: 'todos', toolKind: 'todo', summary: '任务清单 1/3', status: 'running',
           todos: [

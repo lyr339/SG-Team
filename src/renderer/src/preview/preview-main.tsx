@@ -8,9 +8,11 @@ import type { AccountAutomationRun } from '../../../domain/account-automation'
 import type { ConversationEntry } from '../../../domain/conversation-entry'
 import { AGENT_AVATAR_IDS, TEAM_ROLE_TEMPLATES, createConfiguredTeamBundle, emptyTeamControlSnapshot } from '../../../domain/team-control'
 import type { TeamRunStatus } from '../../../domain/team-control'
-import type { SgDesktopApi, TeamSetupDraft } from '../../../shared/desktop-api'
+import type { LiveProcessState, LiveStatusLineState, SgDesktopApi, TeamSetupDraft } from '../../../shared/desktop-api'
 import type { WorkspaceReviewSummary } from '../../../domain/workspace-review'
 import { estimateUsageFromReference, priceForModel } from '../../../domain/cursor-usage'
+import { CURSOR_STORAGE_CATALOG, buildCleanupPlan, type CursorStorageScan } from '../../../domain/cursor-storage-cleanup'
+import { formatFileSize } from '../../../shared/format-file-size'
 import { App } from '../App'
 import { applyAppearancePreferences, readAppearancePreferences } from '../appearance-preferences'
 import {
@@ -33,6 +35,7 @@ import '../workspace-inspector.css'
 type Listener<T> = (snapshot: T) => void
 
 const previewParameters = new URLSearchParams(window.location.search)
+const pumpScene = previewParameters.get('pump')
 const setupMode = previewParameters.get('setup') === '1'
 const detectedWorkspaceMode = previewParameters.get('detectedWorkspace') === '1'
 const activeExecutingMode = previewParameters.get('activeExecuting') === '1'
@@ -46,13 +49,32 @@ const automationScene = (['countdown', 'processing', 'importing', 'deleting', 'd
 const previewNow = Date.now()
 const automationSceneRun: AccountAutomationRun | undefined = automationScene ? ({
   countdown: { phase: 'countdown', message: '将在 6.5s 后自动处理当前账号（可取消）', remainingSec: 6.5, planId: 'preview-plan', startedAt: previewNow - 3_500 },
-  processing: { phase: 'processing', message: '奥仔：正在提交 Session Token 处理…', planId: 'preview-plan', startedAt: previewNow - 12_000 },
+  processing: {
+    phase: 'processing', message: '奥仔：正在提交 Session Token 处理…', planId: 'preview-plan', startedAt: previewNow - 12_000,
+    handover: { accountId: 'preview-acc-2', label: 'spare@example.com', status: 'preparing', message: '票据已就绪，等待退款完成', startedAt: previewNow - 10_000 }
+  },
   importing: { phase: 'importing', message: '会话已失效，正在刷新浏览器会话获取新 Token…', planId: 'preview-plan', startedAt: previewNow - 26_000 },
-  deleting: { phase: 'deleting', message: '奥仔已完成，正在刷新浏览器会话并秒级加固账号…', planId: 'preview-plan', startedAt: previewNow - 31_000 },
-  done: { phase: 'done', message: '自动化完成：已处理、账号已加固（浏览器会话内秒级执行）、本地记录已移除', planId: 'preview-plan', startedAt: previewNow - 47_000, finishedAt: previewNow - 5_000 },
+  deleting: {
+    phase: 'deleting', message: '奥仔已完成，正在刷新浏览器会话并秒级加固账号…', planId: 'preview-plan', startedAt: previewNow - 31_000,
+    handover: { accountId: 'preview-acc-2', label: 'spare@example.com', status: 'switching', message: '等待 Cursor 接收并确认', startedAt: previewNow - 8_000 }
+  },
+  done: {
+    phase: 'done', message: '自动化完成：已处理、账号已加固（浏览器会话内秒级执行）、本地记录已移除', planId: 'preview-plan', startedAt: previewNow - 47_000, finishedAt: previewNow - 5_000,
+    handover: { accountId: 'preview-acc-2', label: 'spare@example.com', status: 'done', message: 'Cursor 已完成接手', startedAt: previewNow - 18_000, finishedAt: previewNow - 16_000 }
+  },
   failed: { phase: 'failed', message: '奥仔处理失败：卡密余额不足，请先充值或更换卡密（本地账号已保留）', planId: 'preview-plan', startedAt: previewNow - 22_000, finishedAt: previewNow - 8_000 },
   cancelled: { phase: 'cancelled', message: '已取消本次自动化', planId: 'preview-plan', startedAt: previewNow - 9_000, finishedAt: previewNow - 4_000 }
 } as const)[automationScene] : undefined
+// 会话预热走查场景：?warmup=running|done|slow|failed|no-model
+const warmupScene = (['running', 'done', 'slow', 'failed', 'no-model'] as const)
+  .find((scene) => scene === previewParameters.get('warmup'))
+const previewWarmupRun: import('../../../domain/session-warmup').SessionWarmupRun | undefined = warmupScene ? ({
+  running: { phase: 'waiting' as const, message: '预热会话已提交，等待 GPT-5.6 Luna 响应…', modelLabel: 'GPT-5.6 Luna', startedAt: previewNow - 2_000 },
+  done: { phase: 'done' as const, message: '预热通过 · GPT-5.6 Luna · 1.8s', modelLabel: 'GPT-5.6 Luna', startedAt: previewNow - 1_800, finishedAt: previewNow, durationMs: 1_800 },
+  slow: { phase: 'done' as const, message: '预热通过 · GPT-5.6 Luna · 12.4s（响应偏慢，账号可能拥挤）', modelLabel: 'GPT-5.6 Luna', startedAt: previewNow - 12_400, finishedAt: previewNow, durationMs: 12_400, slow: true },
+  failed: { phase: 'failed' as const, message: '预热响应超时（30s 内 GPT-5.6 Luna 未产出回复）——账号可能已不可用，已中止批量发起', modelLabel: 'GPT-5.6 Luna', startedAt: previewNow - 30_000, finishedAt: previewNow - 1_000 },
+  'no-model': { phase: 'failed' as const, message: '未在 Cursor 模型目录中找到可用的低成本模型（GPT-5.6 Luna 等）；已中止预热，绝不静默切换贵模型', startedAt: previewNow - 500, finishedAt: previewNow }
+} as const)[warmupScene] : undefined
 const previewRunStatus = (['draft', 'ready', 'launching', 'running', 'attention', 'paused', 'completed'] as TeamRunStatus[])
   .find((status) => status === requestedRunStatus)
 // 右栏「变更」面板走查：?review=clean|not_git|error|many（缺省为两文件就绪态）。
@@ -301,6 +323,155 @@ if (sessionsScene === 'none') {
     ]
   }
 }
+// 续作走查：?continuation=1 —— 会话交接后「已接手」已落库，Agent 没回 check_messages 而继续干活。
+// 回复之下应出现续作行：已持久化的续作块在前、直播中的续作块在后（运行中 shell 贴底跟随）。
+if (previewParameters.get('continuation') === '1') {
+  const handoffAt = previewNow - 6 * 60_000
+  const replyAt = previewNow - 5 * 60_000
+  state.desktop.conversations = {
+    ...state.desktop.conversations,
+    '2': [
+      {
+        id: 'outbox:handoff-1', channelId: '2', role: 'user', source: 'desktop', status: 'complete',
+        timestamp: handoffAt, deliveredAt: handoffAt + 1_000,
+        text: '【会话交接】来自 CH-1（独立席 1 · Claude Opus） · 2026-09-11 20:08\n\n请先阅读并接续下面的上下文，再处理后续消息：\n\n1. Cursor 会话转录（JSONL）：\n   /Users/lyr/.cursor/projects/Users-lyr-Downloads/agent-transcripts/3b51b5de/3b51b5de.jsonl'
+      },
+      {
+        id: 'reply:handoff-1', channelId: '2', role: 'assistant', source: 'cursor', status: 'complete',
+        timestamp: replyAt, replyToEntryId: 'outbox:handoff-1', turn: 'cursor:preview-native-turn:virtual:outbox:handoff-1',
+        text: '已接手 CH-1 的上下文。我读到的最后一个任务：把拾光的过程流做成 Cursor 原生那样的块状结构——分组、Shell 独立卡、红绿 diff。当前处于阶段 A 尚未动工。',
+        processBlocks: [
+          { kind: 'tool', id: 'handoff-read-transcript', toolName: 'read_file_v2', toolKind: 'read', toolCase: 'readToolCall', summary: '3b51b5de.jsonl', hint: '191 行', status: 'done', startedAt: handoffAt + 5_000 },
+          { kind: 'tool', id: 'handoff-read-record', toolName: 'read_file_v2', toolKind: 'read', toolCase: 'readToolCall', summary: 'CH-1-3b51b5de-20260911-200815.md', status: 'done', startedAt: handoffAt + 9_000 }
+        ],
+        continuationBlocks: [
+          { kind: 'tool', id: 'cont-todo', toolName: 'todos', toolKind: 'todo', summary: '任务清单 0/4', status: 'done', startedAt: replyAt + 4_000,
+            todos: [
+              { content: '阶段 A：投影层分组', status: 'in_progress' },
+              { content: '阶段 B：Shell 独立卡', status: 'pending' },
+              { content: '阶段 C：头部降噪', status: 'pending' },
+              { content: '阶段 D：红绿 diff', status: 'pending' }
+            ] },
+          { kind: 'tool', id: 'cont-read-1', toolName: 'read_file_v2', toolKind: 'read', toolCase: 'readToolCall', summary: 'src/renderer/src/process-turn-view.ts', hint: 'L1-120', status: 'done', startedAt: replyAt + 12_000 },
+          { kind: 'tool', id: 'cont-read-2', toolName: 'read_file_v2', toolKind: 'read', toolCase: 'readToolCall', summary: 'src/renderer/src/ProcessTurnCard.tsx', hint: 'L360-520', status: 'done', startedAt: replyAt + 18_000 },
+          { kind: 'tool', id: 'cont-read-3', toolName: 'read_file_v2', toolKind: 'read', toolCase: 'readToolCall', summary: 'src/domain/conversation-entry.ts', status: 'done', startedAt: replyAt + 25_000 },
+          { kind: 'tool', id: 'cont-edit', toolName: 'edit_file_v2', toolKind: 'edit', toolCase: 'editToolCall', summary: 'src/renderer/src/process-step-groups.ts', hint: '+42 −0', status: 'done', startedAt: replyAt + 90_000,
+            diff: { lines: [
+              { type: 'hunk', text: '@@ -0,0 +1,6 @@' },
+              { type: 'added', text: "export type ProcessGroupVariant = 'thought' | 'explore' | 'commands' | 'edits'", newLine: 1 },
+              { type: 'added', text: 'export interface ProcessTurnGroup {', newLine: 2 },
+              { type: 'added', text: "  kind: 'group'", newLine: 3 },
+              { type: 'added', text: '  id: string', newLine: 4 },
+              { type: 'added', text: '  steps: ProcessTurnStep[]', newLine: 5 },
+              { type: 'added', text: '}', newLine: 6 }
+            ] } }
+        ]
+      }
+    ]
+  }
+  state.desktop.liveProcess = {
+    '2': {
+      turn: 'cursor:preview-native-turn',
+      startedAt: handoffAt + 5_000,
+      updatedAt: previewNow - 800,
+      generating: true,
+      blocks: [
+        { kind: 'thinking', id: 'cont-live-think', text: '分组函数已经落地，跑一遍相关测试确认 identity 稳定，再把 compact 分支切到 items 渲染。', status: 'done', durationMs: 4_100, startedAt: previewNow - 40_000 },
+        {
+          kind: 'tool', id: 'cont-live-shell', toolName: 'run_terminal_command_v2', toolKind: 'command', toolCase: 'shellToolCall',
+          title: '运行分组相关测试', summary: 'npx vitest run tests/process-step-groups.test.ts tests/process-blocks.test.tsx', hint: 'npx',
+          status: 'running', startedAt: previewNow - 12_000,
+          input: { command: 'npx vitest run tests/process-step-groups.test.ts tests/process-blocks.test.tsx', description: '运行分组相关测试' },
+          output: [' RUN  v4.1.11 /Users/lyr/Downloads/qingtian/qingtian-team', '', ' ✓ tests/process-step-groups.test.ts (17 tests) 41ms', ' · tests/process-blocks.test.tsx running…'].join('\n')
+        }
+      ]
+    }
+  }
+  state.desktop.liveAgentResponses = undefined
+  state.desktop.sessions = state.desktop.sessions.map((session) => session.channelId === '2'
+    ? { ...session, status: 'running', connectionPhase: 'processing', waiting: true, online: true, deliveryMode: 'queued' }
+    : session)
+}
+// 待投递托盘走查：?queued=1 —— Agent 正在处理上一条消息（过程流直播中），用户又发了两条：
+// 它们不进时间线，停在输入区上方的托盘里（一条带「等待新会话」保持位；另有 1 条内部静默消息只计数）。
+if (previewParameters.get('queued') === '1') {
+  state.desktop.conversations = {
+    ...state.desktop.conversations,
+    '2': [
+      // 基础夹具是直连口径（用户消息不带投递时刻）；切到队列传输后，历史消息按"已投递"补齐。
+      ...(state.desktop.conversations['2'] ?? []).map((entry) => (
+        entry.role === 'user' && entry.deliveredAt === undefined ? { ...entry, deliveredAt: entry.timestamp + 1_000 } : entry
+      )),
+      {
+        id: 'outbox:queued-1', channelId: '2', role: 'user', source: 'desktop', status: 'complete',
+        timestamp: previewNow - 50_000,
+        text: '顺手把托盘的暗色也走查一下，注意与输入区同宽、同圆角。'
+      },
+      {
+        id: 'outbox:queued-2', channelId: '2', role: 'user', source: 'desktop', status: 'complete',
+        timestamp: previewNow - 12_000, heldForNextSession: true,
+        text: '【会话交接】CH-2（架构实现 · CH-2） 上一段会话的上下文 · 2026-09-12 16:40\n\n你是该席位重建后的新会话。请先阅读并接续下面的上下文，再处理后续消息。',
+        attachments: [{ id: 'queued-att-1', name: 'CH-2-handoff.md', mimeType: 'text/markdown', size: 2_048 }]
+      }
+    ]
+  }
+  state.desktop.sessions = state.desktop.sessions.map((session) => session.channelId === '2'
+    ? { ...session, status: 'running', connectionPhase: 'processing', waiting: false, online: true, deliveryMode: 'queued', queueDepth: 3 }
+    : session)
+}
+// 名册常驻状态行走查：?railactivity=1（搭配 sessions=many）—— 复刻 Cursor 会话列表副标题的全部形态同台：
+// 工具动词 + 对象（Cursor 侧事实 / 过程块回退两条路）、正文首行片段、To-Dos 进度、待命席位的 Thinking、
+// Awaiting approval、离线 Completed，以及 Cursor 一个都没扫到时的兜底 Planning next moves（第 9 席，仅本场景）。
+// `long` 变体给对象一个极长文件名，走查明细省略。
+if (['1', 'long'].includes(previewParameters.get('railactivity') ?? '')) {
+  const long = previewParameters.get('railactivity') === 'long'
+  const activity = (id: string, blocks: LiveProcessState['blocks'], generating = true): LiveProcessState => ({
+    turn: `cursor:preview-rail-activity:${id}`,
+    startedAt: previewNow - 90_000,
+    updatedAt: previewNow - 600,
+    generating,
+    blocks
+  })
+  const cursorLine = (id: string, statusLine: LiveStatusLineState['statusLine'], generating = true): LiveStatusLineState => ({
+    composerId: `preview-composer-${id}`, generating, composerStatus: generating ? 'generating' : 'completed', statusLine, updatedAt: previewNow - 400
+  })
+  const longName = `${'session-rail-view-with-a-very-long-name-'.repeat(long ? 4 : 0)}session-rail-view.ts`
+  // 基础夹具里 CH-2 有一段流式正文；它是最新气泡，会压过读取中的工具——这里只走查工具回退路。
+  state.desktop.liveAgentResponses = undefined
+  // 过程块回退路（旧 hook 帧）：读取中的工具 → Reading + basename。
+  state.desktop.liveProcess = {
+    ...(state.desktop.liveProcess ?? {}),
+    '2': activity('2', [
+      { kind: 'tool', id: 'rail-act-grep', toolName: 'grep_v2', toolKind: 'search', toolCase: 'grepToolCall', summary: 'sessionRailActivity', status: 'done', startedAt: previewNow - 30_000 },
+      { kind: 'tool', id: 'rail-act-read', toolName: 'read_file_v2', toolKind: 'read', toolCase: 'readToolCall', summary: `src/renderer/src/${longName}`, status: 'running', startedAt: previewNow - 8_000 }
+    ]),
+    '5': activity('5', [{
+      kind: 'tool', id: 'rail-act-question', toolName: 'ask_question', toolKind: 'question', toolCase: 'askQuestionToolCall', status: 'running', startedAt: previewNow - 20_000,
+      question: { toolCallId: 'tc-rail-1', title: '状态行放在状态行下方还是上方？', status: 'pending', questions: [] }
+    }], false)
+  }
+  // Cursor 侧事实路（hook v32 帧）：与 Cursor 自己的侧栏同一算法给出的副标题。
+  state.desktop.liveStatusLine = {
+    '1': cursorLine('1', { kind: 'tool', label: `Grepping sessionRailActivity in src/ (${long ? '**/*.{ts,tsx,css,md,mjs}' : '*.ts'})`, detail: `sessionRailActivity in src/ (${long ? '**/*.{ts,tsx,css,md,mjs}' : '*.ts'})`, toolKind: 'search' }),
+    '3': cursorLine('3', { kind: 'text', label: 'I dug into the Cursor 3.6.31 bundle and probed the…' }),
+    '4': cursorLine('4', { kind: 'tool', label: 'Editing SessionRailCard.tsx', detail: 'SessionRailCard.tsx', toolKind: 'edit' }),
+    '6': cursorLine('6', { kind: 'todos', label: '3/7 To-Dos Completed', toolKind: 'todo' }),
+    // 待命席位（check_messages 长轮询）：MCP 无详情被跳过，扫到轮询前那段 keepalive 思考 → Thinking。
+    '7': cursorLine('7', { kind: 'thinking', label: 'Thinking' }),
+    // 回合存活但 Cursor 一个都没扫到（刚开始生成 / 连续无详情工具）：它自己的兜底原话。
+    '9': cursorLine('9', undefined)
+  }
+  const planningBase = state.desktop.sessions.find((session) => session.channelId === '4')
+  if (planningBase) {
+    state.desktop.sessions = [...state.desktop.sessions, {
+      ...planningBase, id: 'preview-many-9', channelId: '9', displayName: '数据接入 · CH-9', roleName: '数据席', avatarId: 'architect',
+      contextUsage: { used: 96_000, limit: 1_000_000, ratio: 0.096 }, changes: undefined, queueDepth: 0, modelName: 'Fable 5'
+    }]
+  }
+  state.desktop.sessions = state.desktop.sessions.map((session) => ['1', '2', '3', '4', '5', '9'].includes(session.channelId)
+    ? { ...session, status: 'running', connectionPhase: 'processing', waiting: false, online: true, awaitingUser: session.channelId === '5' }
+    : session)
+}
 const previewTasks = structuredClone(taskPoolSnapshot)
 if (previewRunStatus === 'completed') {
   for (const task of Object.values(previewTasks.tasks)) {
@@ -321,10 +492,64 @@ const memoryListeners = new Set<Listener<typeof state.memory>>()
 const teamListeners = new Set<Listener<typeof state.team>>()
 let previewCursorAccounts: Array<{
   id: string; label: string; maskedToken: string; active: boolean; createdAt: number; updatedAt: number
+  fingerprintProfileId?: string
 }> = [
-  { id: 'preview-acc-1', label: 'work@example.com', maskedToken: '••••9f2k', active: true, createdAt: previewNow - 40 * 60_000, updatedAt: previewNow - 5 * 60_000 },
+  // 首个账号预置窗口绑定：预览同时覆盖「已绑定 / 跟随默认」两种行形态
+  { id: 'preview-acc-1', label: 'work@example.com', maskedToken: '••••9f2k', active: true, createdAt: previewNow - 40 * 60_000, updatedAt: previewNow - 5 * 60_000, fingerprintProfileId: 'bit-proxy' },
   { id: 'preview-acc-2', label: 'spare@example.com', maskedToken: '••••41qz', active: false, createdAt: previewNow - 90 * 60_000, updatedAt: previewNow - 30 * 60_000 }
 ]
+
+/**
+ * 存储清理走查：?cleanup=running（默认，Cursor 运行中，需退出的项被阻断）| closed（全部可清）| empty。
+ * 数字取自 2026-09-12 一台真实机器的盘点（22GB 聊天库 / 16GB 快照 / 78 个工作区里 20 个失效）。
+ */
+const previewCleanupScene = previewParameters.get('cleanup') ?? 'running'
+function previewStorageScan(olderThanDays = 90): CursorStorageScan {
+  const GB = 1024 ** 3
+  const MB = 1024 ** 2
+  const candidateCount = olderThanDays === 30 ? 796 : olderThanDays === 90 ? 298 : 121
+  const candidateBytes = olderThanDays === 30 ? 12.9 * GB : olderThanDays === 90 ? 5.4 * GB : 2.1 * GB
+  if (previewCleanupScene === 'empty') {
+    return {
+      scannedAt: previewNow, userDataRoot: '/Users/demo/Library/Application Support/Cursor', cursorRunning: false,
+      entries: [
+        { id: 'chat-history', bytes: 0, count: 0, note: `数据库 1.2 GB · 64 个会话 · 没有 ${olderThanDays} 天前的会话`, cleanable: false },
+        { id: 'snapshots', bytes: 0, count: 0, cleanable: false },
+        { id: 'local-history', bytes: 0, count: 0, cleanable: false },
+        { id: 'orphan-workspaces', bytes: 0, count: 0, note: '每个工作区的文件夹都还在', cleanable: false },
+        { id: 'stale-backups', bytes: 0, count: 0, cleanable: false },
+        { id: 'caches', bytes: 0, count: 0, cleanable: false },
+        { id: 'logs', bytes: 0, count: 0, cleanable: false },
+        { id: 'legacy-patch', bytes: 0, count: 0, note: '未检测到', cleanable: false }
+      ],
+      chatHistory: { databasePath: '/Users/demo/Library/Application Support/Cursor/User/globalStorage/state.vscdb', fileBytes: 1.2 * GB, sidecarBytes: 0, composerCount: 64, indexedCount: 64, bubbleCount: 12_000, candidateCount: 0, candidateBytesEstimate: 0, protectedCount: 0, specialCount: 0, olderThanDays, freeDiskBytes: 120 * GB, compactable: true },
+      legacyPatch: { detected: false, markers: [] },
+      totalBytes: 0
+    }
+  }
+  return {
+    scannedAt: previewNow,
+    userDataRoot: '/Users/demo/Library/Application Support/Cursor',
+    cursorRunning: previewCleanupScene === 'closed' ? false : true,
+    entries: [
+      { id: 'chat-history', bytes: candidateBytes, count: candidateCount, note: `数据库 20.9 GB · 1321 个会话 · ${olderThanDays} 天前的 ${candidateCount} 个可清理 · 6 个受拾光保护 · 3 个项目 / 规格 / 子会话不清理`, cleanable: true },
+      { id: 'snapshots', bytes: 16.1 * GB, count: 48_211, note: '48211 个文件', cleanable: true },
+      { id: 'local-history', bytes: 208 * MB, count: 3_940, note: '3940 个历史版本', cleanable: true },
+      { id: 'orphan-workspaces', bytes: 1.02 * GB, count: 20, note: '20 个文件夹已不存在', cleanable: true },
+      { id: 'stale-backups', bytes: 1.56 * GB, count: 2, note: 'state.vscdb.backup、state.vscdb.bak', cleanable: true },
+      { id: 'caches', bytes: 146 * MB, count: 1_204, note: '1204 个文件', cleanable: true },
+      { id: 'logs', bytes: 28 * MB, count: 612, note: '612 个文件', cleanable: true },
+      { id: 'legacy-patch', bytes: 243_503, count: 1, note: '__QINGTIAN_SEAMLESS__ · __QINGTIAN_COMPOSER_BRIDGE_V2__', cleanable: false }
+    ],
+    chatHistory: {
+      databasePath: '/Users/demo/Library/Application Support/Cursor/User/globalStorage/state.vscdb',
+      fileBytes: 20.9 * GB, sidecarBytes: 5.6 * MB, composerCount: 1922, indexedCount: 1321, bubbleCount: 1_088_294,
+      candidateCount, candidateBytesEstimate: candidateBytes, protectedCount: 6, specialCount: 3, olderThanDays, freeDiskBytes: 21 * GB, compactable: false
+    },
+    legacyPatch: { detected: true, bundlePath: '/Applications/Cursor.app/Contents/Resources/app/out/vs/workbench/workbench.desktop.main.js', bytes: 243_503, markers: ['__QINGTIAN_SEAMLESS__', '__QINGTIAN_COMPOSER_BRIDGE_V2__'] },
+    totalBytes: candidateBytes + 16.1 * GB + 208 * MB + 1.02 * GB + 1.56 * GB + 146 * MB + 28 * MB
+  }
+}
 
 function pushDesktop(): void {
   state.desktop = { ...state.desktop, updatedAt: Date.now() }
@@ -365,6 +590,12 @@ const api: SgDesktopApi = {
     if (wasActive && previewCursorAccounts[0]) previewCursorAccounts[0].active = true
     return structuredClone(previewCursorAccounts)
   },
+  setCursorAccountFingerprintProfile: async (accountId, profileId) => {
+    previewCursorAccounts = previewCursorAccounts.map((account) => (
+      account.id === accountId ? { ...account, fingerprintProfileId: profileId } : account
+    ))
+    return structuredClone(previewCursorAccounts)
+  },
   importCursorAccountFromLocalCursor: async () => {
     return api.saveCursorAccount({
       label: 'preview@example.com（本机 Cursor）',
@@ -387,6 +618,22 @@ const api: SgDesktopApi = {
     backupDir: `/backup/account-switch-${Date.now()}`
   }),
   verifyCursorRuntimeAccount: async () => ({ status: 'matched' as const, cursorLabel: 'preview@cursor.com', activeLabel: 'preview@cursor.com' }),
+  switchCursorAccountLive: async () => ({ switched: true }),
+  getCursorSwitchPumpStatus: async () => pumpScene === 'external'
+    ? ({
+        kind: 'installed' as const, managed: false,
+        config: { port: 51824, key: 'preview', revision: 2 },
+        message: '检测到兼容切号补丁（端口 51824，由其他工具管理）'
+      })
+    : pumpScene === 'missing'
+      ? ({ kind: 'not-installed' as const, message: '切号补丁未安装' })
+      : ({
+          kind: 'installed' as const, managed: true,
+          config: { port: 51824, key: 'preview', revision: 1 },
+          message: '拾光切号补丁已安装（端口 51824）'
+        }),
+  ensureCursorSwitchPump: async () => ({ ok: true, changed: false, message: '切号补丁已是当前配置' }),
+  removeCursorSwitchPump: async () => ({ ok: true, changed: true, message: '切号补丁已卸载，重启 Cursor 生效。' }),
   refreshCursorMembership: async () => ({ state: 'ok' as const, profile: { tier: 'pro' as const, raw: 'pro', trialEligible: false, isTeamMember: false, lastPaymentFailed: false, fetchedAt: Date.now() } }),
   refreshCursorAccountMemberships: async (accountIds) => Object.fromEntries(
     previewCursorAccounts
@@ -419,6 +666,10 @@ const api: SgDesktopApi = {
   }),
   getAgentLaunchPlan: async () => undefined,
   onAgentLaunchProgress: () => () => {},
+  // 会话预热走查场景：?warmup=running|done|slow|failed|no-model
+  runSessionWarmup: async () => previewWarmupRun ?? { phase: 'done' as const, message: '预热通过 · GPT-5.6 Luna · 1.8s', modelLabel: 'GPT-5.6 Luna', startedAt: previewNow - 1_800, finishedAt: previewNow, durationMs: 1_800 },
+  getSessionWarmupRun: async () => previewWarmupRun,
+  onSessionWarmupProgress: () => () => {},
   enableCursorCdp: async () => ({ ok: true, message: 'Cursor 已重启并启用会话创建端口（9333）' }),
   getCursorCdpSettings: async () => ({ autoHealEnabled: false }),
   saveCursorCdpSettings: async (settings) => settings,
@@ -435,6 +686,31 @@ const api: SgDesktopApi = {
     settingsExists: true,
     changed: true
   }),
+  scanCursorStorage: async (input) => {
+    await new Promise((resolve) => setTimeout(resolve, 350))
+    return previewStorageScan(input?.chatHistoryOlderThanDays)
+  },
+  cleanCursorStorage: async (request) => {
+    await new Promise((resolve) => setTimeout(resolve, 900))
+    const scan = previewStorageScan(request.chatHistoryOlderThanDays)
+    const plan = buildCleanupPlan(scan, request)
+    const after: CursorStorageScan = {
+      ...scan,
+      entries: scan.entries.map((entry) => plan.runnable.includes(entry.id) ? { ...entry, bytes: 0, count: 0, cleanable: false, note: undefined } : entry),
+      totalBytes: scan.entries.filter((entry) => entry.cleanable && !plan.runnable.includes(entry.id) && entry.id !== 'legacy-patch').reduce((sum, entry) => sum + entry.bytes, 0)
+    }
+    return {
+      ok: plan.runnable.length > 0,
+      freedBytes: plan.totalBytes,
+      done: plan.runnable,
+      skipped: plan.blocked,
+      message: plan.runnable.length
+        ? `已清理 ${plan.runnable.map((id) => CURSOR_STORAGE_CATALOG.find((spec) => spec.id === id)?.label ?? id).join('、')}，释放约 ${formatFileSize(plan.totalBytes)}`
+        : `未清理：${plan.blocked[0]?.reason ?? '没有可执行的项'}`,
+      scan: after
+    }
+  },
+  revealCursorStorage: async () => {},
   cancelCdpAutoHealCountdown: async () => {},
   onCdpAutoHealEvent: () => () => {},
   getAccountAutomationSettings: async () => ({ enabled: Boolean(automationSceneRun), delaySec: 10, postProcessDelaySec: 10 }),
@@ -451,10 +727,14 @@ const api: SgDesktopApi = {
   getAccountAutomationRoxyApiKey: async () => ({ saved: true, maskedKey: '6192****eada' }),
   saveAccountAutomationRoxyApiKey: async () => ({ saved: true, maskedKey: '6192****eada' }),
   importCursorAccountFromFingerprint: async () => {
-    return api.saveCursorAccount({
+    const imported = await api.saveCursorAccount({
       label: 'user_preview_0001（Roxy指纹）',
       token: 'user_preview_0001::preview-fingerprint-token'
     })
+    // 导入即绑定：新账号固定到读取它的窗口（预览固定为「代理」窗口）
+    const created = imported.find((account) => account.label.includes('Roxy指纹'))
+    if (created) return api.setCursorAccountFingerprintProfile(created.id, 'bit-proxy')
+    return imported
   },
   openFingerprintLoginPage: async () => {},
   cleanupFingerprintEnvironment: async () => {},
@@ -468,7 +748,7 @@ const api: SgDesktopApi = {
   getSnapshot: async () => structuredClone(state.desktop),
   sendMessage: async ({ channelId, text }) => {
     const entry: ConversationEntry = {
-      id: `preview-${Date.now()}`,
+      id: `outbox:preview-${Date.now()}`,
       channelId,
       role: 'user',
       text,
@@ -480,7 +760,28 @@ const api: SgDesktopApi = {
       ...state.desktop.conversations,
       [channelId]: [...(state.desktop.conversations[channelId] ?? []), entry]
     }
+    const session = state.desktop.sessions.find((candidate) => candidate.channelId === channelId)
+    const bumpDepth = (delta: number): void => {
+      state.desktop.sessions = state.desktop.sessions.map((candidate) => candidate.channelId === channelId
+        ? { ...candidate, queueDepth: Math.max(0, candidate.queueDepth + delta) }
+        : candidate)
+    }
+    bumpDepth(1)
     pushDesktop()
+    // 模拟真实投递：Agent 待命时 check_messages 约 1s 内取走（消息从托盘移入时间线）；
+    // 正在处理 / 离线时留在托盘，直到预览里手动撤回。
+    if (session?.deliveryMode === 'queued' && session.online && session.waiting) {
+      setTimeout(() => {
+        const entries = state.desktop.conversations[channelId] ?? []
+        if (!entries.some((candidate) => candidate.id === entry.id && candidate.deliveredAt === undefined)) return
+        state.desktop.conversations = {
+          ...state.desktop.conversations,
+          [channelId]: entries.map((candidate) => candidate.id === entry.id ? { ...candidate, deliveredAt: Date.now() } : candidate)
+        }
+        bumpDepth(-1)
+        pushDesktop()
+      }, 900)
+    }
     return { commandId: entry.id }
   },
   withdrawQueuedMessage: async ({ channelId, entryId }) => {
@@ -490,6 +791,9 @@ const api: SgDesktopApi = {
       ...state.desktop.conversations,
       [channelId]: entries.filter((entry) => entry.id !== entryId)
     }
+    state.desktop.sessions = state.desktop.sessions.map((session) => session.channelId === channelId
+      ? { ...session, queueDepth: Math.max(0, session.queueDepth - 1) }
+      : session)
     pushDesktop()
     return true
   },
@@ -502,6 +806,51 @@ const api: SgDesktopApi = {
     }
     pushDesktop()
     return true
+  },
+  answerCursorQuestion: async ({ channelId, toolCallId, selections, freeformTexts, note }) => {
+    const live = state.desktop.liveProcess?.[channelId]
+    if (!live) return { ok: false, code: 'question_not_pending', message: '预览：该通道没有进行中的提问' }
+    state.desktop.liveProcess = {
+      ...state.desktop.liveProcess,
+      [channelId]: {
+        ...live,
+        updatedAt: Date.now(),
+        blocks: live.blocks.map((block) => block.kind === 'tool' && block.question?.toolCallId === toolCallId
+          ? {
+              ...block,
+              status: 'done',
+              question: {
+                ...block.question,
+                status: 'submitted',
+                note: note?.trim() || undefined,
+                answers: block.question.questions.map((item) => ({
+                  questionId: item.id,
+                  selectedOptionIds: (selections[item.id] ?? []).filter((id) => id !== '__freeform_other__'),
+                  ...(freeformTexts?.[item.id] ? { freeformText: freeformTexts[item.id] } : {})
+                }))
+              }
+            }
+          : block)
+      }
+    }
+    pushDesktop()
+    return { ok: true, status: 'submitted' }
+  },
+  skipCursorQuestion: async ({ channelId, toolCallId }) => {
+    const live = state.desktop.liveProcess?.[channelId]
+    if (!live) return { ok: false, code: 'question_not_pending', message: '预览：该通道没有进行中的提问' }
+    state.desktop.liveProcess = {
+      ...state.desktop.liveProcess,
+      [channelId]: {
+        ...live,
+        updatedAt: Date.now(),
+        blocks: live.blocks.map((block) => block.kind === 'tool' && block.question?.toolCallId === toolCallId
+          ? { ...block, status: 'done', question: { ...block.question, status: 'cancelled', skipReason: 'user' } }
+          : block)
+      }
+    }
+    pushDesktop()
+    return { ok: true, status: 'cancelled' }
   },
   getSessionHandoffContext: async ({ channelId }) => {
     const session = state.desktop.sessions.find((candidate) => candidate.channelId === channelId)

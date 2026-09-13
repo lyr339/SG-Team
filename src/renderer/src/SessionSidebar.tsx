@@ -248,6 +248,9 @@ export function SessionSidebar({
                           session={session}
                           selected={selected}
                           onOpen={onSelectSession}
+                          liveProcess={snapshot.liveProcess?.[session.channelId]}
+                          liveResponse={snapshot.liveAgentResponses?.[session.channelId]}
+                          statusLine={snapshot.liveStatusLine?.[session.channelId]}
                           now={now}
                           tabIndex={selected || (!selectedVisible && session.id === firstVisibleId) ? 0 : -1}
                           draggable={group.sessions.length > 1}

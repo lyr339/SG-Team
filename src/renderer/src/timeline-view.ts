@@ -1,6 +1,6 @@
 import type { ConversationEntry } from '../../domain/conversation-entry'
 import type { LiveAgentResponseState, LiveProcessState } from '../../shared/desktop-api'
-import { projectVirtualProcessTurns } from './virtual-process-turns'
+import { projectVirtualProcessTurns, type VirtualProcessContinuation } from './virtual-process-turns'
 
 /**
  * 阶段 F（RC-8）：统一回合时间线投影。
@@ -30,6 +30,12 @@ export interface TurnTimelineItem {
   response?: LiveAgentResponseState
   /** 已落库回复（sealed 阶段）。 */
   reply?: ConversationEntry
+  /**
+   * 回复封口之后 Agent 继续工作的过程（sealed 阶段才有）：已持久化的续作块
+   * （reply.continuationBlocks）在前、仍在直播的续作块在后，正文流为尚未落库的续作正文。
+   * 渲染在回复正文之下，同一回合 DOM 身份。
+   */
+  continuation?: VirtualProcessContinuation
   /** 无锚过程（首条消息之前的遗留过程），独立渲染不打断分组。 */
   detached?: LiveProcessState
 }
@@ -42,6 +48,43 @@ export interface TurnTimelineInput {
   immediateDelivery?: boolean
   /** Agent 正在运行（处理占位判定）。 */
   agentRunning?: boolean
+}
+
+/** 仍在排队的用户消息：已入 outbox、尚未被 check_messages 取走（deliveredAt 缺失）。 */
+export function isQueuedUserEntry(entry: ConversationEntry): boolean {
+  return entry.role === 'user'
+    && entry.source === 'desktop'
+    && entry.status === 'complete'
+    && entry.deliveredAt === undefined
+}
+
+export interface TimelinePartition {
+  /** 已进入对话的条目（时间线渲染口径）。 */
+  timeline: ConversationEntry[]
+  /** 仍在排队的用户消息（待投递托盘口径），保持传入顺序。 */
+  queued: ConversationEntry[]
+}
+
+/**
+ * 把会话条目分成「已进入对话」与「仍在排队」两部分。
+ *
+ * 排序层早已把未投递消息定义为"尚未进入对话"（sortConversationEntries 给它的排位是 +∞）；
+ * 呈现层贯彻同一模型：队列传输下它不在时间线上，而停在输入区上方的待投递托盘，被 Agent
+ * 取走（deliveredAt 写入）那一刻才进入时间线。直连传输入队即投递，没有排队态。
+ * 两部分互斥且穷尽——同一条消息永远只出现在一个地方。
+ */
+export function partitionTimelineEntries(
+  entries: readonly ConversationEntry[],
+  immediateDelivery: boolean
+): TimelinePartition {
+  if (immediateDelivery) return { timeline: [...entries], queued: [] }
+  const timeline: ConversationEntry[] = []
+  const queued: ConversationEntry[] = []
+  for (const entry of entries) {
+    if (isQueuedUserEntry(entry)) queued.push(entry)
+    else timeline.push(entry)
+  }
+  return { timeline, queued }
 }
 
 /**
@@ -59,6 +102,34 @@ function replyAnchorIndex(entries: readonly ConversationEntry[], reply: Conversa
     if (entries[index]!.role === 'user') return index
   }
   return -1
+}
+
+/**
+ * 回合的续作视图：已持久化的续作块（回复行携带）与仍在直播的续作块拼成一张过程卡，
+ * 直播态（generating / 块运行中）只来自实时部分；两边都没有则无续作。
+ */
+function continuationOf(
+  reply: ConversationEntry,
+  live: VirtualProcessContinuation | undefined
+): VirtualProcessContinuation | undefined {
+  const persisted = reply.continuationBlocks ?? []
+  const liveProcess = live?.process
+  if (!persisted.length && !liveProcess && !live?.response) return undefined
+  const blocks = liveProcess ? [...persisted, ...liveProcess.blocks] : persisted
+  const process: LiveProcessState | undefined = blocks.length
+    ? {
+        turn: liveProcess?.turn ?? `${reply.turn ?? reply.id}:continuation`,
+        blocks,
+        startedAt: blocks[0]?.startedAt ?? liveProcess?.startedAt ?? reply.timestamp,
+        updatedAt: liveProcess?.updatedAt ?? reply.timestamp,
+        generating: liveProcess?.generating === true,
+        ...(liveProcess?.truncatedItemCount !== undefined ? { truncatedItemCount: liveProcess.truncatedItemCount } : {})
+      }
+    : undefined
+  return {
+    ...(process ? { process } : {}),
+    ...(live?.response ? { response: live.response } : {})
+  }
 }
 
 /**
@@ -113,6 +184,7 @@ export function projectTurnTimeline(input: TurnTimelineInput): TurnTimelineItem[
     // sealed 阶段仍携带锚定到本回合的实时过程：已随回复持久化的块已被
     // projectVirtualProcessTurns 按 id 剔除，剩余的是「回复先落库、封口帧稍后
     // 到达」窗口内的过程——渲染层用它兜底，过程卡不会在封口瞬间消失再出现。
+    const continuation = reply ? continuationOf(reply, live?.continuation) : undefined
     items.push({
       key: `turn:${entry.id}`,
       phase,
@@ -120,7 +192,8 @@ export function projectTurnTimeline(input: TurnTimelineInput): TurnTimelineItem[
       user: entry,
       process: live?.process,
       response: live?.response,
-      reply
+      reply,
+      ...(continuation ? { continuation } : {})
     })
   }
 

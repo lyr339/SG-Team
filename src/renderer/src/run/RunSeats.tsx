@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import type { AgentLaunchPlan } from '../../../domain/agent-launch'
+import type { SessionWarmupRun } from '../../../domain/session-warmup'
 import type { CdpAutoHealEvent } from '../../../domain/cursor-cdp'
 import type { CursorModelOption, CursorModelSelection } from '../../../domain/cursor-model'
 import { cursorModelSelectionFromOption, cursorModelSelectionSummary } from '../cursor-model-selection'
@@ -36,6 +37,11 @@ interface RunSeatsProps {
   guided?: boolean
   cdpAutoHealEnabled: boolean
   cdpAutoHealEvent?: CdpAutoHealEvent
+  /** 会话预热探针：发起前自动执行的开关与最近一次结果；也可单独手动触发。 */
+  warmupRun?: SessionWarmupRun
+  warmupEnabled?: boolean
+  onToggleWarmup?: (enabled: boolean) => void
+  onRunWarmup?: () => void
   onCreate: () => void
   onModelSave: (channelId: string, selection: CursorModelSelection) => Promise<void> | void
   onEnableCdp?: () => void
@@ -59,6 +65,10 @@ export function RunSeats({
   guided = false,
   cdpAutoHealEnabled,
   cdpAutoHealEvent,
+  warmupRun,
+  warmupEnabled = true,
+  onToggleWarmup,
+  onRunWarmup,
   onCreate,
   onModelSave,
   onEnableCdp,
@@ -175,25 +185,60 @@ export function RunSeats({
       ) : null}
 
       <footer className="run-seats__footer">
-        {onToggleAutoHeal ? (
-          <ToggleSwitch checked={cdpAutoHealEnabled} disabled={busy} onChange={(enabled) => void onToggleAutoHeal(enabled)}>
-            <span title="开启后：检测到 Cursor 运行但未启用会话创建端口时，会先显示 10 秒可取消倒计时，再自动重启 Cursor、打开当前工作区并启用端口。">自动保持会话创建端口</span>
-          </ToggleSwitch>
-        ) : <span />}
+        <span className="run-seats__toggles">
+          {onToggleAutoHeal ? (
+            <ToggleSwitch checked={cdpAutoHealEnabled} disabled={busy} onChange={(enabled) => void onToggleAutoHeal(enabled)}>
+              <span className="run-guard__copy">
+                <strong>自动保持会话创建端口</strong>
+                <small>检测到端口缺失时，倒计时后自动重启 Cursor 并启用</small>
+              </span>
+            </ToggleSwitch>
+          ) : null}
+          {onToggleWarmup ? (
+            <ToggleSwitch checked={warmupEnabled} disabled={busy} onChange={(enabled) => void onToggleWarmup(enabled)}>
+              <span className="run-guard__copy">
+                <strong>发起前预热探路</strong>
+                <small>先用最低成本模型验证账号能跑通响应，未通过则中止</small>
+              </span>
+            </ToggleSwitch>
+          ) : null}
+          {!onToggleAutoHeal && !onToggleWarmup ? <span /> : null}
+        </span>
         <span className="run-seats__create">
+          {warmupRun && warmupEnabled ? (
+            <span
+              className={`run-warmup-status is-${warmupRun.phase === 'done' ? (warmupRun.slow ? 'slow' : 'done') : warmupRun.phase === 'failed' ? 'failed' : 'running'}`}
+              role={warmupRun.phase === 'failed' ? 'alert' : 'status'}
+              aria-live="polite"
+            >
+              <i aria-hidden="true" />
+              <span className="run-warmup-status__text" title={warmupRun.message}>{warmupRun.message}</span>
+            </span>
+          ) : null}
           {createBlockedReason ? <small>{createBlockedReason}</small> : null}
           {ended ? (
             <small>席位随新一轮或新批次重新创建</small>
           ) : pendingCount === 0 && !launching ? (
             <small className="run-seats__settled">所有席位已在岗，无需创建会话</small>
           ) : (
-            <button
-              ref={createRef}
-              type="button"
-              className="primary-button"
-              disabled={busy || launching || Boolean(createBlockedReason)}
-              onClick={onCreate}
-            >{launching ? '创建中…' : createLabel}</button>
+            <>
+              {onRunWarmup ? (
+                <button
+                  type="button"
+                  className="secondary-button run-warmup-button"
+                  disabled={busy || launching || Boolean(createBlockedReason) || warmupRun?.phase === 'creating' || warmupRun?.phase === 'waiting'}
+                  title="单独预热一次：验证当前账号能跑通模型响应，不创建席位会话"
+                  onClick={onRunWarmup}
+                >{warmupRun?.phase === 'creating' || warmupRun?.phase === 'waiting' ? '预热中…' : '立即预热'}</button>
+              ) : null}
+              <button
+                ref={createRef}
+                type="button"
+                className="primary-button"
+                disabled={busy || launching || Boolean(createBlockedReason)}
+                onClick={onCreate}
+              >{launching ? '创建中…' : createLabel}</button>
+            </>
           )}
         </span>
       </footer>

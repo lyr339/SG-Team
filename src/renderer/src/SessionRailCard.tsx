@@ -1,6 +1,7 @@
-import { memo } from 'react'
+import { memo, useMemo } from 'react'
 import type { DragEvent } from 'react'
 import type { AgentSession } from '../../domain/agent-session'
+import type { LiveAgentResponseState, LiveProcessState, LiveStatusLineState } from '../../shared/desktop-api'
 import {
   contextTone,
   formatContextUsage,
@@ -9,8 +10,10 @@ import {
 } from './format'
 import { AgentAvatar } from './AgentAvatar'
 import { modelProviderClass, modelProviderLabel } from './model-provider'
+import { StepIcon } from './process-step-icon'
 import {
   contextRingDash,
+  sessionRailActivity,
   sessionRailContextPercent,
   sessionRailGroupOf,
   sessionRailStateLabel,
@@ -21,6 +24,11 @@ interface SessionRailCardProps {
   session: AgentSession
   selected: boolean
   onOpen: (channelId: string) => void
+  /** 实时过程流/正文（快照引用稳定，未变化时 memo 直接跳过重渲染）。 */
+  liveProcess?: LiveProcessState
+  liveResponse?: LiveAgentResponseState
+  /** Cursor 侧栏副标题同源事实（hook v32 / inspect 帧）；缺省时按过程块回退。 */
+  statusLine?: LiveStatusLineState
   /** 拖拽重排透传（侧栏启用；HTML5 DnD 事件直接落在行按钮上）。 */
   draggable?: boolean
   onDragStart?: (event: DragEvent<HTMLButtonElement>) => void
@@ -39,6 +47,9 @@ function SessionRailCardView({
   session,
   selected,
   onOpen,
+  liveProcess,
+  liveResponse,
+  statusLine,
   draggable = false,
   onDragStart,
   onDragEnd,
@@ -47,6 +58,11 @@ function SessionRailCardView({
 }: SessionRailCardProps): React.JSX.Element {
   const group = sessionRailGroupOf(session)
   const offline = group === 'offline'
+  // 常驻状态行（Cursor 侧栏副标题同款）：视图引用稳定（未变化即同一对象），useMemo 只在真实变化时重算。
+  const activity = useMemo(
+    () => sessionRailActivity(session, liveProcess, liveResponse, statusLine),
+    [session, liveProcess, liveResponse, statusLine]
+  )
   const { name, channel } = sessionRailTitle(session)
   const state = sessionRailStateLabel(session)
   const percent = sessionRailContextPercent(session)
@@ -81,7 +97,7 @@ function SessionRailCardView({
       onClick={() => onOpen(session.channelId)}
       title={tooltip}
       aria-current={selected ? 'true' : undefined}
-      aria-label={`${name} ${channel}，${state}${percent === undefined ? '' : `，上下文 ${Math.round(percent)}%`}${session.queueDepth > 0 ? `，排队 ${session.queueDepth}` : ''}`}
+      aria-label={`${name} ${channel}，${state}，${activity.verb}${activity.detail ? ` · ${activity.detail}` : ''}${percent === undefined ? '' : `，上下文 ${Math.round(percent)}%`}${session.queueDepth > 0 ? `，排队 ${session.queueDepth}` : ''}`}
       tabIndex={tabIndex}
       draggable={draggable}
       onDragStart={onDragStart}
@@ -137,6 +153,16 @@ function SessionRailCardView({
             {end ? <time dateTime={new Date(end).toISOString()} title={`结束（离线时间）${formatFullClock(end)}`}>结束 {timeLabel(end)}</time> : endLabel}
           </span>
         </span>
+      </span>
+      <span
+        className={`session-row__activity is-${activity.kind}${activity.live ? ' is-live' : ''}${activity.muted ? ' is-muted' : ''}`}
+        title={activity.detail ? `${activity.verb} ${activity.detail}` : activity.verb}
+      >
+        {activity.live
+          ? <i className="session-row__activity-spinner" aria-hidden="true" />
+          : <i className="session-row__activity-glyph" aria-hidden="true"><StepIcon kind={activity.kind} /></i>}
+        <strong>{activity.verb}</strong>
+        {activity.detail ? <><span className="session-row__activity-separator" aria-hidden="true">·</span><span className="session-row__activity-detail">{activity.detail}</span></> : null}
       </span>
     </button>
   )

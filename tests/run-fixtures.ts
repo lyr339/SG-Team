@@ -2,12 +2,13 @@ import type { TeamControlSnapshot, TeamMemberRuntime, TeamMemberView, TeamRunSta
 import { teamControlSnapshot } from '../src/renderer/src/preview/mock-data'
 
 /** 席位运行形态：与服务端守卫口径一致（在岗 / 执行租约 / 离线 / 无证据）。 */
-export type SeatShape = 'waiting' | 'working' | 'offline' | 'unconfirmed'
+export type SeatShape = 'waiting' | 'working' | 'awaiting' | 'offline' | 'unconfirmed'
 
 export function runtimeOf(shape: SeatShape, channelId: string): TeamMemberRuntime | undefined {
   if (shape === 'unconfirmed') return undefined
   const base = { channelId, queueDepth: 0, lastSeenAt: Date.now() - 5_000, healthEvidence: [], workingFiles: [] }
   if (shape === 'waiting') return { ...base, status: 'waiting', online: true, waiting: true, connectionPhase: 'waiting' }
+  if (shape === 'awaiting') return { ...base, status: 'running', online: true, awaitingUser: true, waiting: false, connectionPhase: 'processing' }
   // 执行租约：已取走消息、长任务期间心跳停刷（online=false）仍算在岗执行中。
   if (shape === 'working') return { ...base, status: 'running', online: false, waiting: false, connectionPhase: 'processing' }
   return { ...base, status: 'offline', online: false, waiting: false, connectionPhase: 'offline' }

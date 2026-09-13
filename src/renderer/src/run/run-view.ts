@@ -23,7 +23,7 @@ import {
  * 页面直接表达"一个槽位、两种模式"——这里把领域快照折叠成页面需要的少数事实：
  * 当前模式、阶段、席位状态、破坏性操作的后果，组件只负责摆放与交互。
  */
-export type RunSeatState = 'waiting' | 'working' | 'offline' | 'unconfirmed'
+export type RunSeatState = 'waiting' | 'working' | 'awaiting' | 'offline' | 'unconfirmed'
 
 export interface RunSeat {
   channelId: string
@@ -43,6 +43,7 @@ export interface RunSeat {
 export const SEAT_STATE_LABEL: Record<RunSeatState, string> = {
   waiting: '待命中',
   working: '执行中',
+  awaiting: '等待回答',
   offline: '离线',
   unconfirmed: '待确认'
 }
@@ -51,6 +52,7 @@ export const SEAT_STATE_LABEL: Record<RunSeatState, string> = {
 export function seatStateOf(member: TeamMemberView): RunSeatState {
   const runtime = member.runtime
   if (!runtime) return 'unconfirmed'
+  if (runtime.awaitingUser) return 'awaiting'
   if (isAgentOnDuty(runtime) && runtime.waiting) return 'waiting'
   if (runtime.online || hasInFlightExecution(runtime)) return 'working'
   return 'offline'
@@ -120,6 +122,14 @@ function teamStateChip(run: TeamRun, phase: RunPhase, presence: TeamRuntimePrese
   if (phase === 'launching') return { label: '启动确认中', tone: 'progress', hint: '等待各席位 team_check_in 回执' }
   if (phase === 'active') {
     if (presence === 'online') {
+      const awaiting = seats.filter((seat) => seat.state === 'awaiting').length
+      if (awaiting > 0) {
+        return {
+          label: `${awaiting} 个席位等待回答`,
+          tone: 'warning',
+          hint: '打开对应会话，在提问卡片中直接选择并提交'
+        }
+      }
       return run.status === 'attention'
         ? { label: '团队需处理', tone: 'warning' }
         : { label: '协作执行中', tone: 'active' }
@@ -139,8 +149,16 @@ function independentStateChip(run: TeamRun, seats: RunSeat[]): RunStateChip {
   if (run.status === 'completed') return { label: '批次已结束', tone: 'muted', hint: '旧会话下一次轮询会收到结束指令并自行退出' }
   const waiting = seats.filter((seat) => seat.state === 'waiting').length
   const working = seats.filter((seat) => seat.state === 'working').length
+  const awaiting = seats.filter((seat) => seat.state === 'awaiting').length
   if (!seats.length) return { label: '空批次', tone: 'neutral' }
-  if (waiting + working === 0) return { label: '全部离线', tone: 'warning' }
+  if (waiting + working + awaiting === 0) return { label: '全部离线', tone: 'warning' }
+  if (awaiting > 0) {
+    return {
+      label: `等待回答 ${awaiting} · 待命 ${waiting} · 执行中 ${working}`,
+      tone: 'warning',
+      hint: '打开对应会话，在提问卡片中直接选择并提交'
+    }
+  }
   return {
     label: working ? `待命 ${waiting} · 执行中 ${working}` : `待命 ${waiting}/${seats.length}`,
     tone: waiting + working === seats.length ? 'active' : 'neutral'
@@ -252,7 +270,9 @@ export function teamFlowSteps(view: RunView): RunFlowStep[] {
   const launched = view.phase !== 'prelaunch'
   const completed = view.phase === 'completed'
   const goalDefined = Boolean(run.goal.trim())
-  const allWaiting = view.seats.length > 0 && view.seats.every((seat) => seat.state === 'waiting' || seat.state === 'working')
+  const allWaiting = view.seats.length > 0 && view.seats.every((seat) => (
+    seat.state === 'waiting' || seat.state === 'working' || seat.state === 'awaiting'
+  ))
   return [
     { label: '团队目标', state: goalDefined ? 'done' : 'current' },
     { label: '启动团队', state: launched ? 'done' : goalDefined ? 'current' : 'todo' },

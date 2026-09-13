@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { sortConversationEntries, type ConversationEntry } from '../src/domain/conversation-entry'
-import { projectTurnTimeline } from '../src/renderer/src/timeline-view'
+import { isQueuedUserEntry, partitionTimelineEntries, projectTurnTimeline } from '../src/renderer/src/timeline-view'
 
 function user(id: string, timestamp: number, deliveredAt?: number): ConversationEntry {
   return { id, channelId: '1', role: 'user', text: id, timestamp, deliveredAt, status: 'complete', source: 'desktop' }
@@ -156,5 +156,101 @@ describe('projectTurnTimeline（阶段 F：统一回合身份）', () => {
     })
     expect(items.map((item) => item.key)).toEqual(['turn:u1', 'entry:err1'])
     expect(items[0]?.phase).toBe('sealed')
+  })
+
+  describe('续作（回复封口后 Agent 继续工作）', () => {
+    it('keeps the turn sealed and carries post-reply live work as its continuation under the same key', () => {
+      // 会话交接后接手方「已接手」落库，随后不回 check_messages 直接干活：这段过程
+      // 不能消失——挂在同一回合（同一 DOM key）的 continuation 上，回合仍是 sealed。
+      const items = projectTurnTimeline({
+        entries: [user('u1', 1_000, 1_100), assistant('a1', 1_500, 'u1')],
+        liveProcess: { ...process([{ id: 'work-1', startedAt: 1_200 }, { id: 'follow-up', startedAt: 1_600 }]), generating: true },
+        agentRunning: true
+      })
+      expect(items).toHaveLength(1)
+      expect(items[0]).toMatchObject({ key: 'turn:u1', phase: 'sealed' })
+      expect(items[0]?.process?.blocks.map((block) => block.id)).toEqual(['work-1'])
+      expect(items[0]?.continuation?.process?.blocks.map((block) => block.id)).toEqual(['follow-up'])
+      expect(items[0]?.continuation?.process?.generating).toBe(true)
+    })
+
+    it('replays persisted continuation blocks after a restart and appends still-live ones behind them', () => {
+      const reply: ConversationEntry = {
+        ...assistant('a1', 1_500, 'u1'),
+        turn: 'cursor:native-long-turn:virtual:u1',
+        continuationBlocks: [{ kind: 'tool', id: 'persisted-1', toolName: 'Read', toolKind: 'read', summary: 'a.ts', status: 'done', startedAt: 1_600 }]
+      }
+      const historical = projectTurnTimeline({ entries: [user('u1', 1_000, 1_100), reply] })
+      expect(historical[0]?.continuation?.process).toMatchObject({
+        turn: 'cursor:native-long-turn:virtual:u1:continuation',
+        generating: false,
+        startedAt: 1_600
+      })
+      expect(historical[0]?.continuation?.process?.blocks.map((block) => block.id)).toEqual(['persisted-1'])
+
+      const withLive = projectTurnTimeline({
+        entries: [user('u1', 1_000, 1_100), reply],
+        liveProcess: { ...process([{ id: 'live-2', startedAt: 1_700 }]), generating: true },
+        agentRunning: true
+      })
+      expect(withLive[0]?.continuation?.process?.blocks.map((block) => block.id)).toEqual(['persisted-1', 'live-2'])
+      expect(withLive[0]?.continuation?.process?.generating).toBe(true)
+    })
+
+    it('never attaches a continuation to an unsealed turn or to a legacy reply without a precise link', () => {
+      const responding = projectTurnTimeline({
+        entries: [user('u1', 1_000, 1_100)],
+        liveProcess: process([{ id: 'work-1', startedAt: 1_200 }]),
+        agentRunning: true
+      })
+      expect(responding[0]?.continuation).toBeUndefined()
+
+      const legacy = projectTurnTimeline({
+        entries: [user('u1', 1_000, 1_100), assistant('legacy-1', 1_500)],
+        liveProcess: process([{ id: 'after', startedAt: 1_600 }])
+      })
+      expect(legacy[0]?.continuation).toBeUndefined()
+      expect(legacy[0]?.process?.blocks.map((block) => block.id)).toEqual(['after'])
+    })
+  })
+})
+
+describe('partitionTimelineEntries（排队中的消息不在时间线上）', () => {
+  it('moves undelivered desktop user messages to the queue and keeps everything else on the timeline', () => {
+    const entries = sortConversationEntries([
+      user('u1', 1_000, 1_100),
+      assistant('a1', 1_500, 'u1'),
+      user('u2', 1_300),
+      { ...user('u3', 1_400), heldForNextSession: true },
+      { id: 'err1', channelId: '1', role: 'error', text: '失败', timestamp: 1_600, status: 'failed', source: 'desktop', error: 'boom' }
+    ])
+    const { timeline, queued } = partitionTimelineEntries(entries, false)
+    expect(timeline.map((entry) => entry.id)).toEqual(['u1', 'a1', 'err1'])
+    expect(queued.map((entry) => entry.id)).toEqual(['u2', 'u3'])
+    // 互斥且穷尽：同一条消息只在一处。
+    expect(timeline.length + queued.length).toBe(entries.length)
+    expect(queued.every((entry) => isQueuedUserEntry(entry))).toBe(true)
+    expect(timeline.some((entry) => isQueuedUserEntry(entry))).toBe(false)
+  })
+
+  it('treats delivery as the moment a message enters the timeline', () => {
+    const before = partitionTimelineEntries([user('u1', 1_000)], false)
+    expect(before.timeline).toEqual([])
+    expect(before.queued.map((entry) => entry.id)).toEqual(['u1'])
+    const after = partitionTimelineEntries([user('u1', 1_000, 1_900)], false)
+    expect(after.timeline.map((entry) => entry.id)).toEqual(['u1'])
+    expect(after.queued).toEqual([])
+  })
+
+  it('has no queued state under immediate delivery and ignores non-desktop or non-complete user entries', () => {
+    const immediate = partitionTimelineEntries([user('u1', 1_000)], true)
+    expect(immediate.timeline.map((entry) => entry.id)).toEqual(['u1'])
+    expect(immediate.queued).toEqual([])
+
+    const recovery: ConversationEntry = { ...user('u-recovery', 1_000), source: 'recovery' }
+    const pending: ConversationEntry = { ...user('u-pending', 1_000), status: 'pending' }
+    const partition = partitionTimelineEntries([recovery, pending], false)
+    expect(partition.timeline.map((entry) => entry.id)).toEqual(['u-recovery', 'u-pending'])
+    expect(partition.queued).toEqual([])
   })
 })

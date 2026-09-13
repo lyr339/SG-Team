@@ -1,7 +1,7 @@
 /* ============================================================
    会话右侧工作区（Codex 式右栏）：变更 / 计划 / 活动 / 产物
    平整停靠面板；层级由标签、hairline 与语义色承担，不用重阴影。
-   动效预算：标签指示条 180ms、面板进场 160ms、折叠 200ms、只允许状态点脉冲。
+   动效预算：标签胶囊展开 220ms、面板进场 160ms、折叠 200ms、只允许状态点脉冲。
    ============================================================ */
 
 .workspace-inspector {
@@ -23,56 +23,63 @@
 /* ---------- 标签行 ---------- */
 .workspace-inspector__bar {
   min-width: 0; display: flex; align-items: center; gap: 6px;
-  padding: 5px 6px;
+  /* 44px 行高 = 6 + 32（标签/关闭按钮）+ 5 + 1px 底边线：内容区正好容纳 32px 胶囊，不再被底边线挤出半像素。 */
+  padding: 6px 6px 5px;
   border-bottom: 1px solid var(--color-border-tertiary);
   background: color-mix(in srgb, var(--surface-solid) 56%, transparent);
 }
-.workspace-inspector__tabs { position: relative; min-width: 0; flex: 1 1 auto; display: flex; align-items: center; gap: 3px; overflow: hidden; }
+.workspace-inspector__tabs { position: relative; min-width: 0; flex: 1 1 auto; display: flex; align-items: center; gap: 2px; overflow: hidden; }
 
-/* 选中态由一条滑动的底板承担：切换时底板平移，文字只变色，标签本身不重排。 */
-.inspector-tab-indicator {
-  position: absolute; top: 0; left: 0; height: 32px;
-  background: var(--surface-solid); border: 1px solid var(--color-border-secondary); border-radius: 8px;
-  box-shadow: var(--shadow-hairline);
-  transition: transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1), width 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
-  pointer-events: none;
-}
+/* 标签 = 图标常驻的胶囊：平时 32×32 只露图标；选中的那个原地长出底板，文字从图标右侧滑出。
+   选中态由按钮自身承担（无独立测量的指示条），展开与底板同步，不会错位。 */
 .inspector-tab {
-  position: relative; z-index: 1; min-width: 0; height: 32px; display: inline-flex; align-items: center; gap: 6px;
-  padding: 0 10px; color: var(--muted); background: transparent;
+  position: relative; flex: 0 1 auto; min-width: 0; height: 32px; display: inline-flex; align-items: center;
+  padding: 0 7px; color: var(--muted); background: transparent;
   border: 1px solid transparent; border-radius: 8px;
   font-size: var(--fs-11); font-weight: 600; white-space: nowrap;
-  transition: color 130ms ease, background 130ms ease;
+  transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
 }
 .inspector-tab:hover { color: var(--text); background: var(--surface-soft); }
 .inspector-tab:focus-visible { outline: 2px solid var(--color-ring-primary); outline-offset: 1px; }
-.inspector-tab.is-active { color: var(--text); background: transparent; }
-/* 指示条尚未测量（首帧 / 静态渲染）时退回静态选中样式，避免选中态空白。 */
-.workspace-inspector__tabs:not(:has(.inspector-tab-indicator)) .inspector-tab.is-active {
-  background: var(--surface-solid); border-color: var(--color-border-secondary); box-shadow: var(--shadow-hairline);
+.inspector-tab.is-active {
+  color: var(--text); background: var(--surface-solid);
+  border-color: var(--color-border-secondary); box-shadow: var(--shadow-hairline);
 }
-.inspector-tab__icon { width: 16px; height: 16px; display: grid; place-items: center; color: var(--text-soft); }
+.inspector-tab__icon { position: relative; width: 16px; height: 16px; flex: 0 0 16px; display: grid; place-items: center; color: var(--text-soft); }
 .inspector-tab__icon svg { width: 15px; height: 15px; }
 .inspector-tab.is-active .inspector-tab__icon { color: var(--text); }
-.inspector-tab__badge {
-  min-width: 17px; height: 17px; display: grid; place-items: center;
-  padding: 0 5px; color: var(--text-soft); background: var(--surface-soft);
-  border-radius: var(--border-radius-full); font: 650 var(--fs-10)/1 var(--font-numeric);
-  transition: background 130ms ease, color 130ms ease;
+/* 展开区：grid 轨道 0fr → 1fr 决定宽度，文字随之从图标背后滑出；收起时宽度为 0，DOM 与可访问名称不变。 */
+.inspector-tab__reveal {
+  display: grid; grid-template-columns: 0fr; align-items: center; min-width: 0;
+  transition: grid-template-columns 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
-.inspector-tab.is-active .inspector-tab__badge { color: var(--text); background: color-mix(in srgb, var(--canvas-solid) 70%, transparent); }
-/* 实时状态点独立于计数徽章：有计数时排在徽章之后，没有计数时单独出现。 */
-.inspector-tab__dot { width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: var(--color-text-info); animation: inspector-pulse 1.6s ease-in-out infinite; }
+.inspector-tab__text {
+  min-width: 0; display: inline-flex; align-items: center; gap: 6px; overflow: hidden;
+  opacity: 0; transform: translateX(-6px);
+  transition: opacity 140ms ease, transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1), padding-left 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.inspector-tab.is-active .inspector-tab__reveal { grid-template-columns: 1fr; }
+.inspector-tab.is-active .inspector-tab__text { opacity: 1; transform: none; padding-left: 7px; }
+.inspector-tab__label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.inspector-tab__badge {
+  flex: 0 0 auto; min-width: 17px; height: 17px; display: grid; place-items: center;
+  padding: 0 5px; color: var(--text); background: color-mix(in srgb, var(--canvas-solid) 70%, transparent);
+  border-radius: var(--border-radius-full); font: 650 var(--fs-10)/1 var(--font-numeric);
+}
+/* 实时状态点挂在图标右上角：收起与展开两种形态里位置一致；描边用底板色把它从图标笔画里托出来。 */
+.inspector-tab__dot {
+  position: absolute; top: -3px; right: -3px; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--color-text-info); box-shadow: 0 0 0 1.5px var(--surface);
+  animation: inspector-pulse 1.6s ease-in-out infinite;
+}
+.inspector-tab.is-active .inspector-tab__dot { box-shadow: 0 0 0 1.5px var(--surface-solid); }
 .inspector-tab.is-live .inspector-tab__badge { color: var(--color-text-info); background: var(--color-background-info); }
 @keyframes inspector-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
-/* 面板收窄时标签只留图标（容器查询，与外层布局解耦）；
+/* 面板收窄时（容器查询，与外层布局解耦）：
    变更页元信息行去掉与顶栏重复的工程名、「实时」只留状态点，把宽度让给分支与文件数；
-   文件行的暂存状态 chip 收起（title 里仍有），「本轮」保留。 */
+   文件行的暂存状态 chip 收起（title 里仍有），「本轮」保留。标签本身已是图标胶囊，无需再收。 */
 @container inspector (max-width: 360px) {
-  .inspector-tab { padding: 0 8px; gap: 0; }
-  .inspector-tab__label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-  .inspector-tab__badge, .inspector-tab__dot { margin-left: 4px; }
   .inspector-section__header span { display: none; }
   .inspector-section__header { min-height: 46px; }
   .inspector-review__workspace { display: none; }
@@ -81,7 +88,7 @@
 }
 
 .workspace-inspector__close {
-  flex: 0 0 auto; width: 30px; height: 30px; display: grid; place-items: center; padding: 0;
+  flex: 0 0 auto; width: 32px; height: 32px; display: grid; place-items: center; padding: 0;
   color: var(--muted); background: transparent; border: 1px solid transparent; border-radius: 8px;
 }
 .workspace-inspector__close:hover { color: var(--text); background: var(--surface-soft); }
@@ -105,8 +112,9 @@
   padding: 10px 12px 10px 14px; border-bottom: 1px solid var(--color-border-tertiary);
 }
 .inspector-section__header > div:first-child { min-width: 0; display: grid; gap: 3px; }
-.inspector-section__header strong { font-size: var(--fs-12); font-weight: 650; }
-.inspector-section__header span { overflow: hidden; color: var(--muted); font-size: var(--fs-11); line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+/* 行高取整数像素：小节头下方是 sticky 分组头与 hairline，小数行盒会让整列躺上亚像素、光栅化闪跳。 */
+.inspector-section__header strong { font-size: var(--fs-12); font-weight: 650; line-height: 20px; }
+.inspector-section__header span { overflow: hidden; color: var(--muted); font-size: var(--fs-11); line-height: 16px; text-overflow: ellipsis; white-space: nowrap; }
 .inspector-section__aside { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; color: var(--text-soft); font: 650 var(--fs-13)/1 var(--font-numeric); }
 
 /* 空态在面板剩余高度内居中，略微上偏（视觉重心），并给出一个能去的地方。 */
@@ -477,6 +485,6 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .wor
   .inspector-icon-button.is-spinning svg, .inspector-plan__list li.is-running > i, .inspector-state__spinner { animation: none; }
   .inspector-tab__dot, .inspector-review__live i, .activity-turn__pulse, .activity-row__meta em.is-running i { animation: none; }
   .inspector-panel, .artifact-card, .inspector-toast, .inspector-confirm, .inspector-skeleton > i { animation: none; }
-  .inspector-tab-indicator, .inspector-collapsible, .review-file__head > svg, .activity-turn__meta svg, .activity-row__meta svg, .artifact-card__actions { transition: none; }
+  .inspector-tab, .inspector-tab__reveal, .inspector-tab__text, .inspector-collapsible, .review-file__head > svg, .activity-turn__meta svg, .activity-row__meta svg, .artifact-card__actions { transition: none; }
   .is-revealed { animation: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-text-info) 45%, transparent); }
 }

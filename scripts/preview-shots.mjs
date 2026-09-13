@@ -60,11 +60,79 @@ function railStorage({ cardOpacity = 0.94, colorMode = 'light', railWidth = 326 
 }
 
 const TABS = ['review', 'plan', 'activity', 'artifacts']
+const EDIT_CARD = '.cursor-native-edit[data-step-id="block:live-edit"]'
+// 真浏览器检查：hover / 鼠标点击后移出 / 键盘焦点，及完整代码的局部横向滚动。
+function editCardProbe(expanded, arrowVisible) {
+  return `(() => {
+    const card = document.querySelector(${JSON.stringify(EDIT_CARD)})
+    const head = card.querySelector('.cursor-native-edit__head')
+    const toggle = card.querySelector('.cursor-native-edit__toggle')
+    const diff = card.querySelector('.cursor-native-diff')
+    const box = card.getBoundingClientRect()
+    const title = head.querySelector('strong')
+    const language = head.querySelector('.cursor-native-edit__language')
+    const stats = head.querySelector('.cursor-native-edit__stats')
+    const fail = (message) => { throw new Error(message) }
+    if ((head.getAttribute('aria-expanded') === 'true') !== ${expanded}) fail('edit expansion mismatch')
+    if ((Number(getComputedStyle(toggle).opacity) > .9) !== ${arrowVisible}) fail('hover/focus visibility mismatch')
+    if (Math.abs(box.height - window.__editAuditHeight) > 1 && !${expanded}) fail('hover changed card height')
+    if (box.right > card.closest('.cursor-native-process__flow').getBoundingClientRect().right + 1) fail('card escaped flow')
+    if (language.getBoundingClientRect().right > title.getBoundingClientRect().left) fail('language overlaps filename')
+    const fonts = [language, title, stats].map(node => {
+      const style = getComputedStyle(node)
+      return [style.fontFamily, style.fontSize, style.fontWeight, style.lineHeight].join('|')
+    })
+    if (new Set(fonts).size !== 1) fail('inconsistent header typography')
+    if (${expanded}) {
+      if (diff.scrollWidth <= diff.clientWidth || getComputedStyle(diff).overflowX !== 'auto') fail('long code has no horizontal reading area')
+      diff.scrollLeft = diff.scrollWidth
+      if (diff.scrollLeft <= 0) fail('horizontal scroll failed')
+      if (card.scrollWidth > card.clientWidth + 1) fail('code expanded the card')
+    }
+    return { expanded: ${expanded}, arrowVisible: ${arrowVisible}, width: box.width, height: box.height, scrollLeft: diff.scrollLeft }
+  })()`
+}
 const scenes = [
   ...TABS.flatMap((tab) => [
     { name: `${tab}-light`, width: 1440, height: 900, colorScheme: 'light', storage: baseStorage({ tab }) },
     { name: `${tab}-dark`, width: 1440, height: 900, colorScheme: 'dark', storage: baseStorage({ tab, colorMode: 'dark' }) }
   ]),
+  // 标签胶囊：四个标签平时只露图标，选中的那个展开出文字与计数；切换时新胶囊长出、旧胶囊收回同步进行。
+  ...['light', 'dark'].map((colorMode) => ({
+    name: `inspector-tabs-${colorMode}`, width: 1440, height: 900, colorScheme: colorMode, storage: baseStorage({ colorMode }),
+    clip: '.workspace-inspector__bar',
+    actions: [{
+      label: '标签胶囊几何',
+      probe: `(() => {
+        const tabs = Array.from(document.querySelectorAll('.inspector-tab')).map((tab) => ({
+          label: tab.querySelector('.inspector-tab__label')?.textContent,
+          active: tab.classList.contains('is-active'),
+          width: Math.round(tab.getBoundingClientRect().width),
+          height: Math.round(tab.getBoundingClientRect().height),
+          revealWidth: Math.round(tab.querySelector('.inspector-tab__reveal').getBoundingClientRect().width)
+        }))
+        const bar = document.querySelector('.workspace-inspector__bar').getBoundingClientRect()
+        const close = document.querySelector('.workspace-inspector__close').getBoundingClientRect()
+        return {
+          collapsedAreSquare: tabs.filter((tab) => !tab.active).every((tab) => tab.width === 32 && tab.height === 32 && tab.revealWidth === 0),
+          activeExpanded: tabs.some((tab) => tab.active && tab.revealWidth > 0),
+          closeAlignedWithTabs: Math.abs(close.height - 32) < 0.5 && Math.abs((close.top + close.height / 2) - (bar.top + bar.height / 2)) < 0.5,
+          tabs
+        }
+      })()`
+    }]
+  })),
+  {
+    name: 'inspector-tabs-switch-mid', width: 1440, height: 900, colorScheme: 'light', storage: baseStorage(),
+    clip: '.workspace-inspector__bar',
+    actions: [{ click: '.inspector-tab:nth-child(3)' }, { wait: 90 }]
+  },
+  {
+    name: 'inspector-tabs-switch-end', width: 1440, height: 900, colorScheme: 'light', storage: baseStorage(),
+    clip: '.workspace-inspector__bar',
+    actions: [{ click: '.inspector-tab:nth-child(3)' }, { wait: 400 }]
+  },
+  { name: 'inspector-tabs-narrow', width: 1180, height: 760, colorScheme: 'light', storage: baseStorage({ tab: 'activity', width: 300 }), clip: '.workspace-inspector__bar' },
   // 窄栏：窗口 1180 宽、右栏收到下限 300，标签应收成纯图标。
   { name: 'review-narrow', width: 1180, height: 760, colorScheme: 'light', storage: baseStorage({ width: 300 }) },
   { name: 'activity-narrow', width: 1180, height: 760, colorScheme: 'light', storage: baseStorage({ tab: 'activity', width: 300 }) },
@@ -174,12 +242,22 @@ const scenes = [
   },
   { name: 'run-team-active-clear', run: true, colorScheme: 'light', storage: baseStorage({ cardOpacity: 0 }) },
   // 右上角设置入口：账号与 Cursor。
-  ...['accounts', 'import', 'automation', 'aozai', 'maintenance'].flatMap(group =>
+  ...['accounts', 'import', 'automation', 'aozai', 'maintenance', 'cleanup'].flatMap(group =>
     ['light', 'dark'].map(colorScheme => ({
       name: `settings-${group}-${colorScheme}`, hash: `account:${group}`,
       width: 1440, height: 900, colorScheme, storage: baseStorage({ colorMode: colorScheme }), clip: null
     }))
   ),
+  { name: 'settings-maintenance-compatible-pump', hash: 'account:maintenance', query: 'pump=external', width: 1440, height: 900, colorScheme: 'dark', storage: baseStorage({ colorMode: 'dark' }), clip: null },
+  { name: 'settings-maintenance-missing-pump', hash: 'account:maintenance', query: 'pump=missing', width: 1440, height: 900, colorScheme: 'light', storage: baseStorage({ colorMode: 'light' }), clip: null },
+  // 存储清理：Cursor 已退出（全部可清，默认预选含缓存/日志；高窗一次看全八项）、勾上对话历史后的
+  // 红色确认块、无可清理内容的空态。盘点 mock 有 350ms 延迟，动作前先等它落地。
+  { name: 'settings-cleanup-closed-light', hash: 'account:cleanup', query: 'cleanup=closed', width: 1440, height: 1400, colorScheme: 'light', storage: baseStorage({ colorMode: 'light' }), clip: null },
+  {
+    name: 'settings-cleanup-confirm-dark', hash: 'account:cleanup', query: 'cleanup=closed', width: 1440, height: 1400, colorScheme: 'dark', storage: baseStorage({ colorMode: 'dark' }), clip: null,
+    actions: [{ wait: 600 }, { click: '[data-item="chat-history"] input[type="checkbox"]' }, { click: '.storage-cleanup__button.is-primary' }, { wait: 120 }]
+  },
+  { name: 'settings-cleanup-empty-dark', hash: 'account:cleanup', query: 'cleanup=empty', width: 1440, height: 900, colorScheme: 'dark', storage: baseStorage({ colorMode: 'dark' }), clip: null },
   { name: 'account-page', hash: 'account', width: 1440, height: 900, colorScheme: 'light', storage: baseStorage(), clip: null },
 
   // ---------- 会话侧栏（名册）：右栏收起，特写裁 .session-pane ----------
@@ -188,6 +266,56 @@ const scenes = [
   ...[['light', 'light'], ['dark', 'dark']].map(([suffix, colorMode]) => (
     { name: `sessions-rail-${suffix}`, rail: true, query: 'sessions=many', colorScheme: colorMode, storage: railStorage({ colorMode }) }
   )),
+  // 常驻状态行（Cursor 会话列表副标题复刻）：工具动词 + 对象 / 正文片段 / To-Dos / 待命 Thinking /
+  // Awaiting approval / 兜底 Planning next moves / 离线 Completed 同台（深浅色）。
+  ...[['light', 'light'], ['dark', 'dark']].map(([suffix, colorMode]) => (
+    { name: `sessions-rail-activity-${suffix}`, rail: true, query: 'sessions=many&railactivity=1', colorScheme: colorMode, storage: railStorage({ colorMode }) }
+  )),
+  ...['light', 'dark'].map((colorMode) => ({
+    name: `sessions-rail-activity-narrow-${colorMode}`, rail: true, width: 1180, height: 900,
+    query: 'sessions=many&railactivity=long', colorScheme: colorMode, storage: railStorage({ colorMode, railWidth: 286 }),
+    actions: [{ label: '状态行常驻、布局与状态', probe: `(() => {
+      const rows = [...document.querySelectorAll('.session-row')]
+      const pills = [...document.querySelectorAll('.session-row__activity')]
+      // 常驻：每一行恰好一枚，离线行也有。
+      if (pills.length !== rows.length) throw new Error('状态行数量 ' + pills.length + ' ≠ 行数 ' + rows.length)
+      for (const row of rows) if (row.querySelectorAll('.session-row__activity').length !== 1) throw new Error('某行状态行数量不为 1')
+      for (const kind of ['search', 'read', 'edit', 'message', 'todo', 'thinking', 'question', 'other']) {
+        if (!pills.some(pill => pill.classList.contains('is-' + kind))) throw new Error('缺少状态行形态: ' + kind)
+      }
+      const texts = pills.map(pill => pill.textContent)
+      for (const expected of ['Grepping', 'Reading', 'Editing', 'Thinking', 'To-Dos Completed', 'Awaiting approval', 'Completed', 'Planning next moves']) {
+        if (!texts.some(text => text.includes(expected))) throw new Error('缺少原版措辞: ' + expected)
+      }
+      for (const pill of pills) {
+        const row = pill.closest('.session-row'), main = row.querySelector('.session-row__main')
+        const rect = pill.getBoundingClientRect(), parent = main.getBoundingClientRect()
+        const avatar = row.querySelector('.session-row__avatar').getBoundingClientRect()
+        // 胶囊是卡片底行：横跨头像列与文字列（头像左沿 → 卡片右沿），每行等宽，不随内容长短。
+        if (Math.abs(rect.left - avatar.left) > 1 || Math.abs(rect.right - parent.right) > 1) throw new Error('状态行未横跨卡片: ' + pill.className)
+        if (rect.top < parent.bottom || row.lastElementChild !== pill) throw new Error('状态行不是卡片末行')
+        if (row.scrollWidth > row.clientWidth + 1) throw new Error('卡片出现横向溢出')
+        const live = pill.classList.contains('is-live'), spinner = pill.querySelector('.session-row__activity-spinner')
+        if (live !== Boolean(spinner)) throw new Error('转圈与回合存活不一致: ' + pill.className)
+        if (row.classList.contains('is-offline') && !(pill.classList.contains('is-muted') && pill.textContent.includes('Completed'))) throw new Error('离线行未收口为 Completed')
+        if (getComputedStyle(pill).animationName !== 'none') throw new Error('状态行不应有进场动画')
+      }
+      const question = document.querySelector('.session-row__activity.is-question')
+      if (!question.closest('.session-row.is-attention')) throw new Error('待决策分类不一致')
+      const standby = document.querySelector('.session-row.is-waiting .session-row__activity')
+      if (!standby || !standby.textContent.includes('Thinking')) throw new Error('待命席位未显示 Thinking')
+      // 长明细与长正文片段都在胶囊内省略（…），不撑宽卡片。
+      const detail = document.querySelector('.session-row__activity.is-read .session-row__activity-detail')
+      if (detail.scrollWidth <= detail.clientWidth || getComputedStyle(detail).textOverflow !== 'ellipsis') throw new Error('长对象未正确省略')
+      const snippet = document.querySelector('.session-row__activity.is-message > strong')
+      if (snippet.scrollWidth <= snippet.clientWidth || getComputedStyle(snippet).textOverflow !== 'ellipsis') throw new Error('长正文片段未正确省略')
+      for (const kind of ['read', 'search', 'question']) {
+        const verb = document.querySelector('.session-row__activity.is-' + kind + ' > strong')
+        if (verb.scrollWidth > verb.clientWidth + 1) throw new Error('短动词被明细挤压')
+      }
+      return pills.map(pill => ({kind:pill.className, text:pill.textContent, width:pill.getBoundingClientRect().width, height:pill.getBoundingClientRect().height}))
+    })()` }]
+  })),
   { name: 'sessions-rail-default', rail: true, colorScheme: 'light', storage: railStorage() },
   { name: 'sessions-rail-clear', rail: true, query: 'sessions=many', colorScheme: 'light', storage: railStorage({ cardOpacity: 0 }) },
   { name: 'sessions-rail-clear-dark', rail: true, query: 'sessions=many', colorScheme: 'dark', storage: railStorage({ cardOpacity: 0, colorMode: 'dark' }) },
@@ -209,7 +337,200 @@ const scenes = [
   },
   { name: 'sessions-rail-scrolled', rail: true, width: 1180, height: 620, query: 'sessions=many', colorScheme: 'light', storage: railStorage(), actions: [{ eval: `document.querySelector('.session-list').scrollTop = 150` }, { wait: 120 }] },
   { name: 'sessions-rail-empty', rail: true, query: 'sessions=none', colorScheme: 'light', storage: railStorage() },
-  { name: 'sessions-rail-reduced-motion', rail: true, query: 'sessions=many', colorScheme: 'light', reducedMotion: true, storage: railStorage() }
+  { name: 'sessions-rail-reduced-motion', rail: true, query: 'sessions=many', colorScheme: 'light', reducedMotion: true, storage: railStorage() },
+
+  // ---------- 会话页过程卡：工具头部（意图说明 / 动词 / 提示）与 ask_question 可点选卡片 ----------
+  // 含待答问卷的过程回合：Shell 的意图说明为主标题 + 程序名提示、读取行范围、编辑增删行数。
+  // 预览夹具同时带流式回复，时间线会把该行归为已关联过程；按问卷后代定位比 live-process-row 更稳定。
+  ...['light', 'dark'].map((colorMode) => ({
+    name: `session-process-${colorMode}`, width: 1440, height: 1200, colorScheme: colorMode,
+    storage: railStorage({ colorMode }), clip: '.chat-row--process:has(.cursor-native-tool.is-question)',
+    actions: [{ eval: `document.querySelector('.chat-row--process:has(.cursor-native-tool.is-question)').scrollIntoView({ block: 'start' })` }, { wait: 200 }]
+  })),
+  // 步骤分组（Cursor detailed 同款）：折叠的「Explored 3 files, 1 search」/「Ran 2 browser actions」组头、
+  // 独立 shell 卡、展开后的组内轻行；深浅色各一张，另有一张展开首组。
+  ...['light', 'dark'].map((colorMode) => ({
+    name: `session-process-groups-${colorMode}`, width: 1440, height: 1200, colorScheme: colorMode,
+    storage: railStorage({ colorMode }), clip: '.chat-row--process:has(.cursor-native-group)',
+    actions: [{ eval: `document.querySelector('.chat-row--process:has(.cursor-native-group)').scrollIntoView({ block: 'start' })` }, { wait: 200 }]
+  })),
+  // 长绝对路径与长输出行：卡片、时间线和工作区不得被 monospace min-content 撑宽。
+  ...['light', 'dark'].map((colorMode) => ({
+    name: `session-process-shell-overflow-${colorMode}`, width: 900, height: 760, colorScheme: colorMode,
+    storage: railStorage({ colorMode }), clip: '.cursor-native-shell[data-step-id="block:live-4"]',
+    actions: [
+      { eval: `document.querySelector('.cursor-native-shell[data-step-id="block:live-4"]').scrollIntoView({ block: 'center' })` },
+      {
+        label: '长命令 Shell 边界约束',
+        probe: `(() => {
+          const card = document.querySelector('.cursor-native-shell[data-step-id="block:live-4"]')
+          const flow = card?.closest('.cursor-native-process__flow')
+          const timeline = card?.closest('.workspace-timeline')
+          if (!card || !flow || !timeline) return { found: false }
+          const cardBox = card.getBoundingClientRect()
+          const flowBox = flow.getBoundingClientRect()
+          const timelineBox = timeline.getBoundingClientRect()
+          const documentElement = document.documentElement
+          return {
+            found: true,
+            cardWithinFlow: cardBox.right <= flowBox.right + 0.5,
+            flowWithinTimeline: flowBox.right <= timelineBox.right + 0.5,
+            pageHasNoHorizontalOverflow: documentElement.scrollWidth <= documentElement.clientWidth,
+            card: { left: cardBox.left, right: cardBox.right, width: cardBox.width, clientWidth: card.clientWidth, scrollWidth: card.scrollWidth },
+            flow: { left: flowBox.left, right: flowBox.right, width: flowBox.width },
+            timeline: { left: timelineBox.left, right: timelineBox.right, width: timelineBox.width }
+          }
+        })()`
+      },
+      { wait: 150 }
+    ]
+  })),
+  // 续作行：回复封口后 Agent 继续工作（会话交接后接续任务）。回复正文之下出现「回复后继续工作中」
+  // 说明行 + 续作过程卡：已持久化续作块（todo / Explored 组 / 编辑卡）在前，直播中的 shell 在后。
+  ...['light', 'dark'].map((colorMode) => ({
+    name: `session-continuation-${colorMode}`, width: 1440, height: 1200, colorScheme: colorMode, query: 'continuation=1',
+    storage: railStorage({ colorMode }), clip: '.workspace-timeline',
+    actions: [
+      { eval: `document.querySelector('[data-entry-id="reply:handoff-1"]').scrollIntoView({ block: 'start' })` },
+      {
+        label: '续作行结构',
+        probe: `(() => {
+          const reply = document.querySelector('[data-entry-id="reply:handoff-1"]')
+          const row = document.querySelector('.chat-row--continuation')
+          if (!reply || !row) return { found: false }
+          const caption = row.querySelector('.chat-continuation-caption')?.textContent ?? ''
+          return {
+            found: true,
+            below: row.getBoundingClientRect().top >= reply.getBoundingClientRect().bottom - 1,
+            caption,
+            liveCaption: caption.endsWith('中'),
+            noAvatar: !row.querySelector('.chat-face-avatar') && !row.querySelector('.chat-name'),
+            persistedFirst: Array.from(row.querySelectorAll('[data-step-id]')).map((node) => node.getAttribute('data-step-id')).slice(0, 2),
+            shellRunning: Boolean(row.querySelector('.cursor-native-shell .cursor-native-shell__output'))
+          }
+        })()`
+      },
+      { wait: 150 }
+    ]
+  })),
+  // 待投递托盘：Agent 处理中时新发的两条消息不进时间线，停在时间线与输入区之间（一条带保持位，
+  // 另有 1 条内部静默消息只计数）。探针核对：托盘位于时间线之下、输入区之上；排队正文不在任何气泡里。
+  ...['light', 'dark'].map((colorMode) => ({
+    name: `session-queue-tray-${colorMode}`, width: 1440, height: 900, colorScheme: colorMode, query: 'queued=1',
+    storage: railStorage({ colorMode }), clip: null,
+    actions: [
+      {
+        label: '托盘结构',
+        probe: `(() => {
+          const tray = document.querySelector('.queue-tray')
+          const timeline = document.querySelector('.workspace-timeline-wrap')
+          const composer = document.querySelector('.workspace-composer')
+          if (!tray || !timeline || !composer) return { found: false }
+          const trayBox = tray.getBoundingClientRect()
+          const composerBox = composer.getBoundingClientRect()
+          const bubbles = Array.from(document.querySelectorAll('.chat-row--mine')).map((row) => row.textContent ?? '')
+          return {
+            found: true,
+            belowTimeline: trayBox.top >= timeline.getBoundingClientRect().bottom - 1,
+            aboveComposer: trayBox.bottom <= composerBox.top + 1,
+            sameWidthAsComposer: Math.abs(trayBox.left - composerBox.left) < 1 && Math.abs(trayBox.right - composerBox.right) < 1,
+            depth: tray.getAttribute('data-queue-depth'),
+            items: tray.querySelectorAll('.queue-tray__item').length,
+            heldItems: tray.querySelectorAll('.queue-tray__item.is-held').length,
+            queuedTextInTimeline: bubbles.some((text) => text.includes('顺手把托盘的暗色也走查一下')),
+            note: tray.querySelector('.queue-tray__note')?.textContent ?? ''
+          }
+        })()`
+      },
+      { wait: 150 }
+    ]
+  })),
+  {
+    name: 'session-queue-tray-collapsed', width: 1440, height: 900, colorScheme: 'light', query: 'queued=1', storage: railStorage(), clip: '.queue-tray',
+    actions: [{ click: '.queue-tray__head' }, { wait: 200 }]
+  },
+  {
+    name: 'session-process-group-expanded', width: 1440, height: 1200, colorScheme: 'light', storage: railStorage(), clip: '.chat-row--process:has(.cursor-native-group)',
+    actions: [
+      { click: '.cursor-native-group.is-explore .cursor-native-group__head' },
+      { wait: 150 },
+      { eval: `document.querySelector('.chat-row--process:has(.cursor-native-group)').scrollIntoView({ block: 'start' })` },
+      { wait: 150 }
+    ]
+  },
+  // 编辑行展开：结构化 diff 按行着色（增删绿红），浅/深各一张。
+  ...['light', 'dark'].map((colorMode) => ({
+    name: `session-edit-interaction-audit-${colorMode}`, width: 900, height: 900, colorScheme: colorMode,
+    storage: railStorage({ colorMode }), clip: EDIT_CARD,
+    actions: [
+      { eval: `(() => { const card = document.querySelector(${JSON.stringify(EDIT_CARD)}); card.scrollIntoView({block:'center'}); card.querySelector('.cursor-native-edit__language').textContent = 'HTML'; window.__editAuditHeight = card.getBoundingClientRect().height })()` },
+      { hover: '.brand' },
+      { probe: editCardProbe(false, false) },
+      { hover: EDIT_CARD },
+      { probe: editCardProbe(false, true) },
+      { click: `${EDIT_CARD} .cursor-native-edit__head` },
+      { hover: '.brand' },
+      { probe: editCardProbe(true, false) },
+      { click: `${EDIT_CARD} .cursor-native-edit__head` },
+      { hover: '.brand' },
+      { probe: editCardProbe(false, false) },
+      { key: 'Tab', code: 'Tab' },
+      { probe: editCardProbe(false, true) }
+    ]
+  })),
+  ...['light', 'dark'].map((colorMode) => ({
+    name: `session-process-diff-preview-${colorMode}`, width: 1100, height: 900, colorScheme: colorMode, storage: railStorage({ colorMode }),
+    clip: '.cursor-native-edit[data-step-id="block:live-edit"]',
+    actions: [{ eval: `document.querySelector('.cursor-native-edit[data-step-id="block:live-edit"]').scrollIntoView({ block: 'center' })` }, { wait: 150 }]
+  })),
+  {
+    name: 'session-process-diff-preview-hover', width: 1100, height: 900, colorScheme: 'light', storage: railStorage(),
+    clip: '.cursor-native-edit[data-step-id="block:live-edit"]',
+    actions: [
+      { eval: `document.querySelector('.cursor-native-edit[data-step-id="block:live-edit"]').scrollIntoView({ block: 'center' })` },
+      { hover: '.cursor-native-edit[data-step-id="block:live-edit"]' },
+      { wait: 150 }
+    ]
+  },
+  ...['light', 'dark'].map((colorMode) => ({
+    name: `session-process-diff-${colorMode}`, width: 1440, height: 1200, colorScheme: colorMode, storage: railStorage({ colorMode }), clip: '.chat-row--process:has(.cursor-native-group)',
+    actions: [
+      { click: '.cursor-native-edit[data-step-id="block:live-edit"] .cursor-native-edit__head' },
+      { wait: 150 },
+      { eval: `document.querySelector('.chat-row--process:has(.cursor-native-group)').scrollIntoView({ block: 'start' })` },
+      { wait: 150 }
+    ]
+  })),
+  // 编辑运行态：固定高度尾窗、最新代码行强调、自动贴底（hook v29 streamContent）。
+  ...['light', 'dark'].map((colorMode) => ({
+    name: `session-process-edit-stream-${colorMode}`, width: 1440, height: 900, colorScheme: colorMode, storage: railStorage({ colorMode }), clip: '.cursor-native-edit:has(.cursor-native-diff.is-live)',
+    actions: [
+      { eval: `document.querySelector('.cursor-native-edit:has(.cursor-native-diff.is-live)').scrollIntoView({ block: 'center' })` },
+      { wait: 150 }
+    ]
+  })),
+  {
+    name: 'session-question-selected', width: 1440, height: 1100, colorScheme: 'light', storage: railStorage(), clip: '.cursor-native-tool.is-question',
+    actions: [
+      { click: '.cursor-question__item:nth-of-type(1) .cursor-question__option:first-child' },
+      { click: '.cursor-question__item:nth-of-type(2) .cursor-question__option:first-child' },
+      { click: '.cursor-question__item:nth-of-type(2) .cursor-question__option:nth-child(2)' },
+      { eval: `document.querySelector('.cursor-native-tool.is-question').scrollIntoView({ block: 'center' })` },
+      { wait: 150 }
+    ]
+  },
+  {
+    name: 'session-question-answered', width: 1440, height: 1100, colorScheme: 'light', storage: railStorage(), clip: '.cursor-native-tool.is-question',
+    actions: [
+      { click: '.cursor-question__item:nth-of-type(1) .cursor-question__option:first-child' },
+      { click: '.cursor-question__item:nth-of-type(2) .cursor-question__option:first-child' },
+      { click: '.cursor-question__confirm' },
+      { wait: 250 },
+      { click: '.cursor-native-tool.is-question .cursor-native-tool__head' },
+      { eval: `document.querySelector('.cursor-native-tool.is-question').scrollIntoView({ block: 'center' })` },
+      { wait: 150 }
+    ]
+  }
 ]
 
 for (const scene of scenes) {
@@ -316,7 +637,7 @@ class Cdp {
 
 async function evaluate(cdp, sessionId, expression) {
   const result = await cdp.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }, sessionId)
-  if (result.exceptionDetails) throw new Error(result.exceptionDetails.text || 'evaluate 失败')
+  if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text || 'evaluate 失败')
   return result.result?.value
 }
 

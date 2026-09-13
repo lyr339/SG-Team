@@ -22,14 +22,22 @@ describe('theme surface contracts', () => {
     expect(styles).not.toMatch(/\.composer-submit button:disabled\s*\{[^}]*rgba\(255,\s*255,\s*255/)
   })
 
-  it('keeps an accessible queue popover that opens upward and never covers the composer', () => {
+  it('docks the queue tray between the timeline and the composer instead of floating a popover', () => {
     // 绑定状态徽章已按需求移除（信息保留在会话卡遥测状态里）。
     expect(styles).not.toContain('.composer-binding-status')
-    // 向上展开（bottom 锚定）、右对齐；层级不低于时长气泡（110），交互态可点击。
-    expect(styles).toMatch(/\.composer-queue-popover\s*\{[^}]*z-index:\s*1[1-9]\d/)
-    expect(styles).toMatch(/\.composer-queue-popover\s*\{[^}]*bottom:\s*calc\(100% \+ \d+px\)/)
-    expect(styles).not.toMatch(/\.composer-queue-popover\s*\{[^}]*top:\s*calc\(100%/)
-    expect(styles).toMatch(/\.composer-queue-status\.is-pinned \.composer-queue-popover[^{]*\{[^}]*pointer-events:\s*auto/)
+    // 队列不再是输入区上的悬浮弹层：工作区网格为它留出独立一行，托盘是普通流内块（不绝对定位、
+    // 不抢层级），虚线外框表达「还不是对话记录」，宽度与输入区一致（同 16px 侧边距）。
+    expect(styles).not.toContain('.composer-queue-popover')
+    expect(styles).not.toContain('.composer-queue-status')
+    expect(styles).toMatch(/\.workspace-main\s*\{[^}]*grid-template-rows:\s*auto auto minmax\(0, 1fr\) auto auto/)
+    expect(styles).toMatch(/\.queue-tray\s*\{[^}]*border:[^;]*dashed/)
+    expect(styles).toMatch(/\.queue-tray\s*\{[^}]*margin:\s*0 16px/)
+    expect(styles).not.toMatch(/\.queue-tray\s*\{[^}]*position:\s*absolute/)
+    expect(styles).not.toMatch(/\.queue-tray\s*\{[^}]*z-index/)
+    // 时间线里的用户消息不再有「排队中」尾注样式（排队中的消息在托盘，不在时间线）。
+    expect(styles).not.toContain('.chat-state.is-queued')
+    // 动效尊重系统减弱设置。
+    expect(styles).toMatch(/prefers-reduced-motion: reduce\)\s*\{[^}]*\.queue-tray, \.queue-tray__item\s*\{\s*animation:\s*none/)
   })
 
   it('uses the cool Orbit palette instead of the former yellow parchment palette', () => {
@@ -138,7 +146,7 @@ describe('theme surface contracts', () => {
   it('keeps tool identity colors theme-aware and the todo list on the Cursor-native monochrome design', () => {
     // 工具身份色板：明暗双值（light-dark）成对出现，卡体不染色
     for (const kind of ['read', 'search', 'edit', 'write', 'command', 'browser', 'mcp', 'todo']) {
-      expect(styles).toMatch(new RegExp(`\\.cursor-native-tool\\.is-${kind}, \\.process-turn-step\\.is-${kind} \\{[^}]*--tool-hue:\\s*light-dark\\(`))
+      expect(styles).toMatch(new RegExp(`\\.cursor-native-tool\\.is-${kind}, \\.process-turn-step\\.is-${kind}, \\.session-row__activity\\.is-${kind} \\{[^}]*--tool-hue:\\s*light-dark\\(`))
     }
     // Cursor 原生 todo：实心圆反色 spinner + 透明度阶梯（单色纪律）
     expect(styles).toMatch(/\.todo-spinner\s*\{[^}]*background:\s*var\(--text\)[^}]*border-radius:\s*50%/)

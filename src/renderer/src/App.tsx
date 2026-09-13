@@ -25,8 +25,11 @@ import type { ManualTeamHandoffOutcome, TeamHandoffOptions } from '../../domain/
 import type { CursorAccountMetadata, CursorRuntimeAccountMatch } from '../../domain/cursor-account'
 import type { CursorMembershipStatus } from '../../domain/cursor-membership'
 import type { CursorUpdatePreferences } from '../../domain/cursor-update'
+import type { CursorSwitchPumpStatus } from '../../domain/cursor-switch-pump'
+import type { CursorStorageCleanupResult, CursorStorageScan } from '../../domain/cursor-storage-cleanup'
 import type { AozaiCardStatus, AozaiProgressEvent } from '../../domain/aozai-service'
 import type { AgentLaunchPlan, AgentLaunchRequest } from '../../domain/agent-launch'
+import type { SessionWarmupRun } from '../../domain/session-warmup'
 import type { AccountAutomationRun, AccountAutomationSettings } from '../../domain/account-automation'
 import type { CdpAutoHealEvent } from '../../domain/cursor-cdp'
 import type { MessageAttachment } from '../../domain/conversation-entry'
@@ -79,6 +82,23 @@ function persistLastSessionChannel(channelId: string): void {
   } catch { /* 本次运行内仍保留当前会话。 */ }
 }
 
+const SESSION_WARMUP_STORAGE_KEY = 'shiguang.session-warmup.v1'
+
+/** 「发起前预热」开关：默认开启；渲染层本地持久化（与账号自动化设置解耦，批量/独立发起都生效）。 */
+function readSessionWarmupEnabled(): boolean {
+  try {
+    return localStorage.getItem(SESSION_WARMUP_STORAGE_KEY) !== '0'
+  } catch {
+    return true
+  }
+}
+
+function persistSessionWarmupEnabled(enabled: boolean): void {
+  try {
+    localStorage.setItem(SESSION_WARMUP_STORAGE_KEY, enabled ? '1' : '0')
+  } catch { /* 本次运行内仍保留当前选择。 */ }
+}
+
 function cursorWorkspaceFingerprint(detection?: CursorWorkspaceDetection): string {
   if (!detection) return ''
   return JSON.stringify({
@@ -126,12 +146,25 @@ export function App(): React.JSX.Element {
   const [cursorUpdatePreferences, setCursorUpdatePreferences] = useState<CursorUpdatePreferences>()
   const [cursorUpdateBusy, setCursorUpdateBusy] = useState(false)
   const [cursorUpdateError, setCursorUpdateError] = useState('')
+  // 切号补丁（无感换号依赖）：状态卡只读检测 + 一键安装/卸载
+  const [switchPumpStatus, setSwitchPumpStatus] = useState<CursorSwitchPumpStatus>()
+  const [switchPumpBusy, setSwitchPumpBusy] = useState(false)
+  const [switchPumpFeedback, setSwitchPumpFeedback] = useState<{ ok: boolean; message: string }>()
+  // 存储清理：盘点结果只来自主进程；清理结果自带清理后的新盘点
+  const [storageScan, setStorageScan] = useState<CursorStorageScan>()
+  const [storageScanBusy, setStorageScanBusy] = useState(false)
+  const [storageScanError, setStorageScanError] = useState('')
+  const [storageCleanupBusy, setStorageCleanupBusy] = useState(false)
+  const [storageCleanupResult, setStorageCleanupResult] = useState<CursorStorageCleanupResult>()
   const [aozaiStatus, setAozaiStatus] = useState<AozaiCardStatus>({ saved: false })
   const [aozaiBusy, setAozaiBusy] = useState(false)
   const [aozaiError, setAozaiError] = useState('')
   const [aozaiProgress, setAozaiProgress] = useState<AozaiProgressEvent | null>(null)
   const [aozaiFeedback, setAozaiFeedback] = useState<{ ok: boolean; message: string } | null>(null)
   const [agentLaunchPlan, setAgentLaunchPlan] = useState<AgentLaunchPlan | undefined>(undefined)
+  // 会话预热探针：批量发起前用最低成本模型验证账号能真实跑通响应（绝不触发账号自动化）。
+  const [sessionWarmupRun, setSessionWarmupRun] = useState<SessionWarmupRun | undefined>(undefined)
+  const [sessionWarmupEnabled, setSessionWarmupEnabled] = useState<boolean>(() => readSessionWarmupEnabled())
   const [accountAutomationSettings, setAccountAutomationSettings] = useState<AccountAutomationSettings>({ enabled: false, delaySec: 30, postProcessDelaySec: 30 })
   const [accountAutomationRun, setAccountAutomationRun] = useState<AccountAutomationRun | undefined>(undefined)
   // 指纹浏览器窗口列表（账号自动化链的浏览器宿主；用户按当次网络选「代理/直连」窗口。
@@ -294,6 +327,9 @@ export function App(): React.JSX.Element {
     void window.sgDesktop.getAgentLaunchPlan()
       .then((plan) => { if (plan) setAgentLaunchPlan(plan) })
       .catch(() => {})
+    void window.sgDesktop.getSessionWarmupRun()
+      .then((run) => { if (run) setSessionWarmupRun(run) })
+      .catch(() => {})
     void window.sgDesktop.getAccountAutomationSettings()
       .then(setAccountAutomationSettings)
       .catch(() => {})
@@ -315,6 +351,7 @@ export function App(): React.JSX.Element {
       .catch(() => {})
     const unsubscribeAozai = window.sgDesktop.onAozaiProgress(setAozaiProgress)
     const unsubscribeAgentLaunch = window.sgDesktop.onAgentLaunchProgress(setAgentLaunchPlan)
+    const unsubscribeSessionWarmup = window.sgDesktop.onSessionWarmupProgress(setSessionWarmupRun)
     const unsubscribeCdpAutoHeal = window.sgDesktop.onCdpAutoHealEvent((event) => {
       if (event.phase === 'done') {
         setCdpAutoHealEvent(undefined)
@@ -334,6 +371,10 @@ export function App(): React.JSX.Element {
     void window.sgDesktop.getCursorUpdatePreferences()
       .then(setCursorUpdatePreferences)
       .catch((reason: unknown) => setCursorUpdateError(userFacingErrorMessage(reason)))
+    // 切号补丁状态（只读检测，零副作用）；维护页状态卡与热切可用性共用。
+    void window.sgDesktop.getCursorSwitchPumpStatus()
+      .then(setSwitchPumpStatus)
+      .catch(() => {})
     const unsubscribeAccountAutomation = window.sgDesktop.onAccountAutomationProgress((run) => {
       setAccountAutomationRun(run)
       if (run.phase === 'done' || run.phase === 'failed') {
@@ -351,6 +392,7 @@ export function App(): React.JSX.Element {
     return () => {
       unsubscribeAozai()
       unsubscribeAgentLaunch()
+      unsubscribeSessionWarmup()
       unsubscribeCdpAutoHeal()
       unsubscribeAccountAutomation()
     }
@@ -394,9 +436,37 @@ export function App(): React.JSX.Element {
   }, [refreshRuntimeMatch, refreshMembership])
 
   const performAgentLaunch = useCallback(async (requests: AgentLaunchRequest[]): Promise<AgentLaunchPlan> => {
+    // 预热探针（闸门之后、批量之前）：低成本模型先跑一次「只回复：1」，
+    // 未通过则中止批量——不消耗自动化配额，不让 N 个会话干等 180s 超时。
+    if (readSessionWarmupEnabled()) {
+      const warmup = await window.sgDesktop.runSessionWarmup()
+      setSessionWarmupRun(warmup)
+      if (warmup.phase !== 'done') {
+        const blocked: AgentLaunchPlan = {
+          id: 'session-warmup',
+          state: 'failed',
+          items: requests.map((request) => ({
+            channelId: request.channelId,
+            modelSelection: request.modelSelection,
+            stage: 'failed' as const,
+            message: warmup.message,
+            code: 'warmup_failed' as const
+          })),
+          startedAt: Date.now(),
+          finishedAt: Date.now()
+        }
+        setAgentLaunchPlan(blocked)
+        return blocked
+      }
+    }
     const plan = await window.sgDesktop.launchAgentSessions(requests)
     setAgentLaunchPlan(plan)
     return plan
+  }, [])
+
+  const runSessionWarmupNow = useCallback(async (): Promise<void> => {
+    const warmup = await window.sgDesktop.runSessionWarmup()
+    setSessionWarmupRun(warmup)
   }, [])
 
   const launchAgentSessions = useCallback(async (requests: AgentLaunchRequest[]): Promise<AgentLaunchPlan> => {
@@ -516,6 +586,8 @@ export function App(): React.JSX.Element {
     } catch (reason) {
       setRuntimeGuardError(userFacingErrorMessage(reason))
     } finally {
+      // 冷切换会清账号行的「待重启对齐」标记：回读列表让徽标即时对齐 vault。
+      void window.sgDesktop.listCursorAccounts().then(setCursorAccounts).catch(() => {})
       setRuntimeGuardBusy(false)
     }
   }, [runtimeGuard, cursorAccounts, performAgentLaunch, refreshRuntimeMatch])
@@ -863,6 +935,11 @@ export function App(): React.JSX.Element {
       // 换活跃账号 = 档位锚点变化，同步重查
       void refreshMembership()
     },
+    // 窗口绑定是纯本地元信息写入：不锁账号 busy（避免改绑时整行按钮闪禁），失败走账号区错误条
+    onSetAccountFingerprintProfile: async (accountId, profileId) => {
+      try { setCursorAccounts(await window.sgDesktop.setCursorAccountFingerprintProfile(accountId, profileId)) }
+      catch (reason) { setCursorAccountError(reason instanceof Error ? reason.message : String(reason)) }
+    },
     onRemove: async (accountId) => {
       setCursorAccountBusy(true); setCursorAccountError('')
       try {
@@ -949,6 +1026,30 @@ export function App(): React.JSX.Element {
         void refreshMembership()
         void refreshAccountMemberships([accountId])
       } catch (reason) { setCursorAccountError(reason instanceof Error ? reason.message : String(reason)) }
+      finally {
+        // 冷切换的每个出口 vault 都可能已变（activeId + 清「待重启对齐」标记）：
+        // 无条件回读，「当前」徽标与账号行标记跟 vault 真实状态对齐，不留旧值。
+        void window.sgDesktop.listCursorAccounts().then(setCursorAccounts).catch(() => {})
+        setCursorAccountBusy(false)
+      }
+    },
+    onSwitchLiveAccount: async (accountId) => {
+      setCursorAccountBusy(true); setCursorAccountError('')
+      try {
+        const result = await window.sgDesktop.switchCursorAccountLive(accountId)
+        if (!result.switched) {
+          setCursorAccountError(`⚠️ 无感换号未完成：${result.reason ?? '未知原因'}。可改用「切换并重启」。`)
+          return
+        }
+        setCursorAccountError(result.warning
+          ? `⚠️ 已换号，但本地状态需要处理：${result.warning}`
+          : '✅ 已换号，Cursor 无需重启——令牌、邮箱与账号缓存均已刷新；机器码待下次「切换并重启」时对齐。')
+        void refreshRuntimeMatch()
+        void refreshMembership()
+        void refreshAccountMemberships([accountId])
+        // pendingMachineAlign 标记随热切置位，账号行标记立即刷新
+        void window.sgDesktop.listCursorAccounts().then(setCursorAccounts).catch(() => {})
+      } catch (reason) { setCursorAccountError(reason instanceof Error ? reason.message : String(reason)) }
       finally { setCursorAccountBusy(false) }
     },
     runtimeMatch,
@@ -1011,6 +1112,73 @@ export function App(): React.JSX.Element {
         setCursorUpdateBusy(false)
       }
     },
+    switchPumpStatus,
+    switchPumpBusy,
+    switchPumpFeedback,
+    onRefreshSwitchPumpStatus: () => {
+      void window.sgDesktop.getCursorSwitchPumpStatus()
+        .then(setSwitchPumpStatus)
+        .catch(() => {})
+    },
+    onEnsureSwitchPump: async () => {
+      setSwitchPumpBusy(true); setSwitchPumpFeedback(undefined)
+      try {
+        const outcome = await window.sgDesktop.ensureCursorSwitchPump()
+        setSwitchPumpFeedback({
+          ok: outcome.ok,
+          message: outcome.warning ? `${outcome.message}（${outcome.warning}）` : outcome.message
+        })
+      } catch (reason) {
+        setSwitchPumpFeedback({ ok: false, message: userFacingErrorMessage(reason) })
+      } finally {
+        setSwitchPumpBusy(false)
+        // 安装/改写后状态可能变化（installed/config），无条件重读一次
+        void window.sgDesktop.getCursorSwitchPumpStatus().then(setSwitchPumpStatus).catch(() => {})
+      }
+    },
+    onRemoveSwitchPump: async () => {
+      setSwitchPumpBusy(true); setSwitchPumpFeedback(undefined)
+      try {
+        const outcome = await window.sgDesktop.removeCursorSwitchPump()
+        setSwitchPumpFeedback({
+          ok: outcome.ok,
+          message: outcome.warning ? `${outcome.message}（${outcome.warning}）` : outcome.message
+        })
+      } catch (reason) {
+        setSwitchPumpFeedback({ ok: false, message: userFacingErrorMessage(reason) })
+      } finally {
+        setSwitchPumpBusy(false)
+        void window.sgDesktop.getCursorSwitchPumpStatus().then(setSwitchPumpStatus).catch(() => {})
+      }
+    },
+    storageScan,
+    storageScanBusy,
+    storageScanError,
+    storageCleanupBusy,
+    storageCleanupResult,
+    onScanCursorStorage: async (input) => {
+      setStorageScanBusy(true); setStorageScanError('')
+      try {
+        setStorageScan(await window.sgDesktop.scanCursorStorage(input))
+      } catch (reason) {
+        setStorageScanError(userFacingErrorMessage(reason))
+      } finally {
+        setStorageScanBusy(false)
+      }
+    },
+    onCleanCursorStorage: async (request) => {
+      setStorageCleanupBusy(true); setStorageCleanupResult(undefined); setStorageScanError('')
+      try {
+        const result = await window.sgDesktop.cleanCursorStorage(request)
+        setStorageCleanupResult(result)
+        if (result.scan) setStorageScan(result.scan)
+      } catch (reason) {
+        setStorageCleanupResult({ ok: false, freedBytes: 0, done: [], skipped: [], message: userFacingErrorMessage(reason) })
+      } finally {
+        setStorageCleanupBusy(false)
+      }
+    },
+    onRevealCursorStorage: (id) => { void window.sgDesktop.revealCursorStorage(id).catch(() => {}) },
     onSetModelDataPolicyAutoAcknowledge: async (enabled) => {
       let message = '已关闭自动确认；官网已有确认保持不变'
       if (enabled) {
@@ -1141,6 +1309,13 @@ export function App(): React.JSX.Element {
           }}
           agentLaunchPlan={agentLaunchPlan}
           cursorModels={visibleSnapshot.cursorModels ?? []}
+          sessionWarmupRun={sessionWarmupRun}
+          sessionWarmupEnabled={sessionWarmupEnabled}
+          onToggleSessionWarmup={(enabled) => {
+            setSessionWarmupEnabled(enabled)
+            persistSessionWarmupEnabled(enabled)
+          }}
+          onRunSessionWarmup={runSessionWarmupNow}
           onLaunchAgentSessions={launchAgentSessions}
           onCreateIndependentSessions={createIndependentSessions}
           onChooseIndependentWorkspace={() => window.sgDesktop.chooseIndependentWorkspace()}
@@ -1202,8 +1377,17 @@ export function App(): React.JSX.Element {
               : undefined}
           handoffTitle={handoffEntry.title}
           onWithdrawQueued={async (entryId) => {
+            const withdrawn = (snapshot.conversations[selectedSession.channelId] ?? []).find((entry) => entry.id === entryId)
             const ok = await window.sgDesktop.withdrawQueuedMessage({ channelId: selectedSession.channelId, entryId })
             if (!ok) throw new Error('这条消息已被 Agent 取走，无法撤回')
+            // 撤回不等于丢弃：正文回填输入框（已有草稿则换行接在后面），误触可直接重发。附件已落盘，不回填。
+            const withdrawnText = withdrawn?.text.trim()
+            if (withdrawnText) {
+              setComposerDrafts((current) => {
+                const draft = current[selectedSession.channelId] ?? ''
+                return { ...current, [selectedSession.channelId]: draft.trim() ? `${draft.trimEnd()}\n\n${withdrawnText}` : withdrawnText }
+              })
+            }
             acceptSnapshot(await window.sgDesktop.getSnapshot())
             return ok
           }}
@@ -1220,6 +1404,12 @@ export function App(): React.JSX.Element {
           liveProcess={snapshot.liveProcess?.[selectedSession.channelId]}
           liveAgentResponse={snapshot.liveAgentResponses?.[selectedSession.channelId]}
           nativeProcessStream={snapshot.nativeProcessStream}
+          questionActions={{
+            answer: (toolCallId, draft) => window.sgDesktop.answerCursorQuestion({
+              channelId: selectedSession.channelId, toolCallId, ...draft
+            }),
+            skip: (toolCallId) => window.sgDesktop.skipCursorQuestion({ channelId: selectedSession.channelId, toolCallId })
+          }}
           onSend={async (text, attachments) => {
             await window.sgDesktop.sendMessage({ channelId: selectedSession.channelId, text, attachments })
           }}

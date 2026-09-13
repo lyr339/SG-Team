@@ -248,9 +248,9 @@ describe('SessionWorkspace', () => {
     expect(html.indexOf('请继续实现')).toBeLessThan(html.indexOf('过程记录'))
   })
 
-  it('用户新消息排队时，进行中的过程流留在上一回合原地（不消失、不迁移）', () => {
+  it('用户新消息排队时，进行中的过程流留在上一回合原地，新消息停在待投递托盘而不进时间线', () => {
     const html = renderWorkspace({
-      session: { status: 'running', waiting: false, connectionPhase: 'processing', deliveryMode: 'queued' },
+      session: { status: 'running', waiting: false, connectionPhase: 'processing', deliveryMode: 'queued', queueDepth: 1 },
       entries: [
         entry({ id: 'u1', role: 'user', source: 'desktop', text: '第一条', timestamp: 1_000, deliveredAt: 1_050 }),
         entry({ id: 'u2', role: 'user', source: 'desktop', text: '第二条（排队中）', timestamp: 5_000 })
@@ -263,11 +263,120 @@ describe('SessionWorkspace', () => {
         ]
       }
     })
-    // 过程卡仍在，且位于第一条与第二条之间（锚定第一条回合）；第二条尚未投递，无占位。
+    // 过程卡仍在，锚定第一条回合；第二条尚未投递：不出现在时间线（只有一条用户气泡），
+    // 而是停在时间线之后、输入区之前的待投递托盘里，且没有占位。
     expect(html).toContain('cursor-native-process')
     expect(html.indexOf('第一条')).toBeLessThan(html.indexOf('cursor-native-process'))
-    expect(html.indexOf('cursor-native-process')).toBeLessThan(html.indexOf('第二条（排队中）'))
+    expect(html.match(/chat-row chat-row--mine/g)).toHaveLength(1)
+    const tray = html.indexOf('class="queue-tray')
+    expect(tray).toBeGreaterThan(html.indexOf('cursor-native-process'))
+    expect(html.indexOf('第二条（排队中）')).toBeGreaterThan(tray)
+    expect(html).toContain('待投递 <b>1</b>')
+    expect(html).toContain('Agent 正在处理当前任务：新消息按顺序等待')
+    expect(html).not.toContain('排队中 ·')
     expect(html).not.toContain('live-process-idle')
+  })
+
+  it('消息被取走后离开托盘进入时间线，托盘随之消失', () => {
+    const queued = renderWorkspace({
+      session: { status: 'running', waiting: false, connectionPhase: 'processing', deliveryMode: 'queued', queueDepth: 1 },
+      entries: [entry({ id: 'u1', role: 'user', source: 'desktop', text: '待取走的消息', timestamp: 1_000 })]
+    })
+    expect(queued).toContain('queue-tray')
+    expect(queued).not.toContain('chat-row--mine')
+    expect(queued).not.toContain('live-process-idle')
+
+    const delivered = renderWorkspace({
+      session: { status: 'running', waiting: false, connectionPhase: 'processing', deliveryMode: 'queued', queueDepth: 0 },
+      entries: [entry({ id: 'u1', role: 'user', source: 'desktop', text: '待取走的消息', timestamp: 1_000, deliveredAt: 1_900 })]
+    })
+    expect(delivered).not.toContain('queue-tray')
+    expect(delivered).toContain('chat-row--mine')
+    expect(delivered).toContain('已发送')
+    expect(delivered).toContain('live-process-idle')
+  })
+
+  it('保持位消息同样停在托盘，并标注等待新会话', () => {
+    const html = renderWorkspace({
+      session: { status: 'waiting', waiting: true, connectionPhase: 'waiting', deliveryMode: 'queued', queueDepth: 1 },
+      entries: [entry({ id: 'u-hold', role: 'user', source: 'desktop', text: '【会话交接】上下文文档', timestamp: 1_000, heldForNextSession: true })]
+    })
+    expect(html).not.toContain('chat-row--mine')
+    expect(html).toContain('queue-tray__item is-held')
+    expect(html).toContain('1 条等待新会话')
+    expect(html).toContain('Agent 正在监听：下一条消息会立即投递')
+  })
+
+  it('直连传输没有排队态：未带投递时刻的用户消息照常留在时间线', () => {
+    const html = renderWorkspace({
+      session: { status: 'running', waiting: false, connectionPhase: 'processing' },
+      entries: [entry({ id: 'u1', role: 'user', source: 'desktop', text: '直连消息', timestamp: 1_000 })]
+    })
+    expect(html).toContain('chat-row--mine')
+    expect(html).not.toContain('queue-tray')
+  })
+
+  it('回复落库后 Agent 继续干活：过程流以续作行紧贴回复之下实时展示，而不是消失', () => {
+    // 会话交接实测（2026-09-11 CH-2）：「已接手」record_reply 之后接手方直接开始执行
+    // 转录里的任务；此前这段过程被判为封口后空档而整体不渲染。
+    const html = renderWorkspace({
+      session: { status: 'running', waiting: false, connectionPhase: 'processing', deliveryMode: 'queued' },
+      entries: [
+        entry({ id: 'u1', role: 'user', source: 'desktop', text: '【会话交接】来自 CH-1', timestamp: 1_000, deliveredAt: 1_050 }),
+        entry({
+          id: 'a1', role: 'assistant', text: '已接手 CH-1 的上下文。', timestamp: 2_000, replyToEntryId: 'u1',
+          processBlocks: [{ kind: 'tool', id: 'read-transcript', toolName: 'read_file', toolKind: 'read', summary: 'transcript.jsonl', status: 'done', startedAt: 1_100 }]
+        })
+      ],
+      liveProcess: {
+        turn: 'cursor:native-turn', startedAt: 1_100, updatedAt: 3_200, generating: true,
+        blocks: [
+          { kind: 'tool', id: 'follow-read', toolName: 'read_file', toolKind: 'read', summary: 'src/process-turn-view.ts', status: 'done', startedAt: 2_500 },
+          { kind: 'tool', id: 'follow-shell', toolName: 'Shell', toolKind: 'command', summary: 'npx vitest run', status: 'running', startedAt: 3_100 }
+        ]
+      }
+    })
+    expect(html).toContain('chat-row--continuation')
+    expect(html).toContain('回复后继续工作中')
+    // 顺序：回复过程卡（transcript.jsonl）→ 回复正文 → 续作行（follow 块）
+    expect(html.indexOf('transcript.jsonl')).toBeLessThan(html.indexOf('已接手 CH-1 的上下文。'))
+    expect(html.indexOf('已接手 CH-1 的上下文。')).toBeLessThan(html.indexOf('chat-row--continuation'))
+    expect(html.indexOf('chat-row--continuation')).toBeLessThan(html.indexOf('src/process-turn-view.ts'))
+    expect(html.slice(html.indexOf('chat-row--continuation'))).toContain('cursor-native-shell')
+    // 续作行属同一回合，不重复画头像/名称行
+    const continuationIndex = html.indexOf('chat-row--continuation')
+    expect(html.slice(continuationIndex).indexOf('chat-name')).toBe(-1)
+    // 不再显示「正在处理」占位（回合已封口）
+    expect(html).not.toContain('live-process-idle')
+  })
+
+  it('回放已持久化的续作块：重启后仍在回复之下，静态呈现且不带直播标记', () => {
+    const html = renderWorkspace({
+      entries: [
+        entry({ id: 'u1', role: 'user', source: 'desktop', text: '交接', timestamp: 1_000, deliveredAt: 1_050 }),
+        entry({
+          id: 'a1', role: 'assistant', text: '已接手。', timestamp: 2_000, replyToEntryId: 'u1',
+          continuationBlocks: [
+            { kind: 'tool', id: 'follow-edit', toolName: 'edit_file', toolKind: 'edit', summary: 'src/a.ts', status: 'done', startedAt: 2_500 }
+          ]
+        })
+      ]
+    })
+    expect(html).toContain('chat-row--continuation')
+    expect(html).toContain('回复后继续工作')
+    expect(html).not.toContain('回复后继续工作中')
+    expect(html).toContain('src/a.ts')
+    expect(html.indexOf('已接手。')).toBeLessThan(html.indexOf('src/a.ts'))
+  })
+
+  it('没有续作时不渲染续作行（回复落库后 Agent 回到待命）', () => {
+    const html = renderWorkspace({
+      entries: [
+        entry({ id: 'u1', role: 'user', source: 'desktop', text: '问题', timestamp: 1_000, deliveredAt: 1_050 }),
+        entry({ id: 'a1', role: 'assistant', text: '回答', timestamp: 2_000, replyToEntryId: 'u1' })
+      ]
+    })
+    expect(html).not.toContain('chat-row--continuation')
   })
 
   it('occupies the same Agent row for the idle placeholder and the first process frame', () => {
@@ -315,19 +424,24 @@ describe('SessionWorkspace', () => {
   })
 
   it('离线但可排队时仍显示 Agent 离线，而不是把传输方式当状态', () => {
-    const html = renderWorkspace({
-      session: {
-        online: false,
-        connected: false,
-        waiting: false,
-        status: 'offline',
-        deliveryMode: 'queued'
-      }
+    const offline = {
+      online: false,
+      connected: false,
+      waiting: false,
+      status: 'offline' as const,
+      deliveryMode: 'queued' as const
+    }
+    const idle = renderWorkspace({ session: offline })
+    expect(idle).toContain('Cursor Agent 已离线，消息会先进入队列')
+    expect(idle).not.toContain('待轮询')
+    // 没有待投递内容时不出现托盘；一旦有排队消息，托盘的状态句同样说的是 Agent 状态。
+    expect(idle).not.toContain('queue-tray')
+    const queued = renderWorkspace({
+      session: { ...offline, queueDepth: 1 },
+      entries: [entry({ id: 'u1', role: 'user', source: 'desktop', text: '离线期间排队', timestamp: 1_000 })]
     })
-
-    expect(html).toContain('Agent 离线：消息保留在本地队列')
-    expect(html).toContain('Cursor Agent 已离线，消息会先进入队列')
-    expect(html).not.toContain('待轮询')
+    expect(queued).toContain('queue-tray is-offline')
+    expect(queued).toContain('Agent 离线：消息保留在本地队列')
   })
 
   it('精简独立会话页头：状态胶囊已经表达离线，副标题只保留席位身份', () => {
@@ -463,7 +577,7 @@ describe('SessionWorkspace', () => {
       })]
     })
     expect(html).toContain('process-turn')
-    expect(html).toContain('读取文件')
+    expect(html).toContain('已读取')
     expect(html).toContain('src/App.tsx')
     expect(html).toContain('chat-row--process')
     expect(html).not.toContain('process-turn__live-label')
@@ -533,12 +647,14 @@ describe('统一回合时间线（阶段 F：RC-8 turn identity）', () => {
       id: 'u1', role: 'user', source: 'desktop', text: '统一身份验证',
       timestamp: 1_000, deliveredAt: undefined
     })
-    // queued（队列传输、未投递）：仅用户气泡，无占位（尚未到达 Agent）
+    // queued（队列传输、未投递）：消息停在待投递托盘，时间线上还没有它的回合（尚未到达 Agent）
     const queued = renderWorkspace({
-      session: { status: 'running', waiting: false, connectionPhase: 'processing', deliveryMode: 'queued' },
+      session: { status: 'running', waiting: false, connectionPhase: 'processing', deliveryMode: 'queued', queueDepth: 1 },
       entries: [userEntry]
     })
     expect(queued).toContain('统一身份验证')
+    expect(queued).toContain('queue-tray')
+    expect(queued).not.toContain('chat-row--mine')
     expect(queued).not.toContain('live-process-idle')
 
     // delivered：占位出现（running + 已投递 + 无产物）
@@ -602,7 +718,7 @@ describe('统一回合时间线（阶段 F：RC-8 turn identity）', () => {
     expect(html.match(/is-grouped/g) ?? []).toHaveLength(0)
   })
 
-  it('groups consecutive queued user messages but breaks the group on agent activity (RC-12)', () => {
+  it('groups consecutive delivered user messages but breaks the group on agent activity (RC-12)', () => {
     const session = {
       status: 'running' as const,
       waiting: false,
@@ -613,12 +729,13 @@ describe('统一回合时间线（阶段 F：RC-8 turn identity）', () => {
       id: 'u1', role: 'user', source: 'desktop', text: '第一条',
       timestamp: 1_000_000, deliveredAt: 1_000_050
     })
+    // 两条都已投递（排队中的消息不在时间线上，分组只在已进入对话的消息之间发生）。
     const second = entry({
       id: 'u2', role: 'user', source: 'desktop', text: '第二条',
-      timestamp: 1_060_000
+      timestamp: 1_060_000, deliveredAt: 1_060_050
     })
 
-    // 连续排队（u1 之后无任何 Agent 产物）：u2 与 u1 合并分组。
+    // 连续投递（u1 之后无任何 Agent 产物）：u2 与 u1 合并分组。
     const grouped = renderWorkspace({ session, entries: [first, second] })
     expect(grouped.match(/is-grouped/g)).toHaveLength(1)
 

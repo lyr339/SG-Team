@@ -1,4 +1,4 @@
-import type { ConversationEntry, ProcessBlock } from '../../../domain/conversation-entry'
+import { conversationEntryProcessBlocks, type ConversationEntry, type ProcessBlock } from '../../../domain/conversation-entry'
 import type { WorkspaceReviewFileSummary, WorkspaceReviewSummary } from '../../../domain/workspace-review'
 import type { LiveProcessState } from '../../../shared/desktop-api'
 
@@ -80,7 +80,7 @@ export function turnMutatedPaths(
   const start = latestDeliveredUserIndex(entries)
   const blocks: ProcessBlock[] = []
   for (const entry of entries.slice(start + 1)) {
-    if (entry.role === 'assistant' && entry.processBlocks) blocks.push(...entry.processBlocks)
+    if (entry.role === 'assistant') blocks.push(...conversationEntryProcessBlocks(entry))
   }
   if (liveProcess) blocks.push(...liveProcess.blocks)
   const paths: string[] = []

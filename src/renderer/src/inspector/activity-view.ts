@@ -1,4 +1,4 @@
-import type { ConversationEntry, ProcessBlock } from '../../../domain/conversation-entry'
+import { conversationEntryProcessBlocks, type ConversationEntry, type ProcessBlock } from '../../../domain/conversation-entry'
 import type { LiveProcessState } from '../../../shared/desktop-api'
 import { normalizeReviewPath, processBlockPath } from './review-scope'
 
@@ -184,12 +184,15 @@ export function projectActivity(
       turns.push(current)
       continue
     }
-    if (entry.role !== 'assistant' || !entry.processBlocks?.length) continue
+    if (entry.role !== 'assistant') continue
+    // 回复过程 + 回复后的续作：右栏回答的是「这一轮发生过什么」，两者都算
+    const blocks = conversationEntryProcessBlocks(entry)
+    if (!blocks.length) continue
     if (!current) {
       current = emptyTurn(`turn:${entry.id}`, false, undefined, entry.timestamp)
       turns.push(current)
     }
-    addBlocks(current, entry.processBlocks, workspacePath)
+    addBlocks(current, blocks, workspacePath)
   }
   if (liveProcess?.blocks.length) {
     const target = current ?? (() => {
