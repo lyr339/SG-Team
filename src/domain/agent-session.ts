@@ -95,6 +95,8 @@ export interface AgentSession {
   connected: boolean
   /** active=正面存活；suspected=仅租约陈旧；stopped=Cursor/运行时正面终止证据。 */
   runtimeEvidence?: AgentRuntimeEvidence
+  /** Cursor Agent 正阻塞在 ask_question 等用户决策上；会话仍在线，但需要用户处理。 */
+  awaitingUser?: boolean
   /** 消息投递方式：queued 表示可离线入队，由 Cursor Agent 下次轮询取走。 */
   deliveryMode?: 'live' | 'queued'
   waiting: boolean

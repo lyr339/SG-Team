@@ -257,7 +257,8 @@ function referenceUsage(inputTokens: number, profile: keyof typeof USAGE_PROFILE
   const cacheWriteTokens = Math.round(inputTokens * weights.write / totalInput)
   const cacheReadTokens = Math.max(0, inputTokens - fresh - cacheWriteTokens)
   const outputTokens = Math.round(inputTokens * weights.output / totalInput)
-  const counts = { inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens }
+  // Kimi 无独立缓存写入桶：原写入估算归普通输入，缓存命中和输入总量保持不变。
+  const counts = { inputTokens, outputTokens, cacheWriteTokens: /^kimi\b/i.test(price.label) ? 0 : cacheWriteTokens, cacheReadTokens }
   return { ...counts, estimateProfile: profile,
     estimatedCostUsd: estimateTurnCostUsd({ ...counts, occurredAt: 0 }, price) }
 }
@@ -277,6 +278,12 @@ export function upgradeUsageEstimate(usage: CursorSessionUsage): CursorSessionUs
 }
 
 export function projectUsage(composerId: string, ledger: CursorUsageLedger): CursorSessionUsage {
+  // 同时兼容已有账本（含冻结/混合模型），仅归一 Kimi 回合；其写价本就等于普通输入价。
+  if (Object.values(ledger.turns).some((turn) => /^kimi\b/i.test(turn.price.label) && turn.cacheWriteTokens !== 0)) {
+    ledger = { ...ledger, turns: Object.fromEntries(Object.entries(ledger.turns).map(([id, turn]) => [
+      id, /^kimi\b/i.test(turn.price.label) && turn.cacheWriteTokens !== 0 ? { ...turn, cacheWriteTokens: 0 } : turn
+    ])) }
+  }
   const turns = Object.values(ledger.turns)
   const exact = turns.filter((turn) => turn.exact).length
   const sum = (key: 'inputTokens' | 'outputTokens' | 'cacheReadTokens' | 'cacheWriteTokens' | 'estimatedCostUsd'): number =>

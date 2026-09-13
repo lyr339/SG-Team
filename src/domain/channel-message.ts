@@ -28,6 +28,11 @@ export interface ChannelOutboundMessage {
   holdSessionToken?: string
   /** 用户在投递前撤回的时间：不再计数、不再投递，行保留审计。 */
   withdrawnAt?: number
+  /**
+   * 本轮结束 / 换轮时被退役的时间（retireScopeBefore / beginScope 只退役未投递行）：
+   * 不再计数、不再投递，行保留审计。呈现层对它与撤回一视同仁——它已不是"待投递"。
+   */
+  retiredAt?: number
 }
 
 /** 该消息是否对携带 `session` 令牌（缺省 = 无令牌）的调用方可投递。 */
@@ -66,6 +71,8 @@ export interface ChannelInboundReply {
   processBlocks?: import('./conversation-entry').ProcessBlock[]
   processTurn?: string
   processTruncatedItemCount?: number
+  /** 回复封口之后的续作过程（见 ConversationEntry.continuationBlocks）。 */
+  continuationBlocks?: import('./conversation-entry').ProcessBlock[]
 }
 
 /**

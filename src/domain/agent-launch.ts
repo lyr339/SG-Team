@@ -2,7 +2,7 @@ import type { CursorModelSelection } from './cursor-model'
 
 export type AgentLaunchStage = 'trigger' | 'composer' | 'waiting' | 'done' | 'failed'
 
-export type AgentLaunchFailureCode = 'cdp_unavailable' | 'runtime_account_mismatch' | 'membership_blocked'
+export type AgentLaunchFailureCode = 'cdp_unavailable' | 'runtime_account_mismatch' | 'membership_blocked' | 'warmup_failed'
 
 export interface AgentLaunchItem {
   channelId: string

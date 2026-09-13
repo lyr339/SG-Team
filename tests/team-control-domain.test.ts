@@ -199,9 +199,9 @@ describe('team control domain', () => {
     })).toThrowError(/至少需要 1 个非独立席位/)
 
     const prompt = buildSoloLaunchHint({ channelId: '8' })
-    expect(prompt).toContain('独立模式')
-    expect(prompt).toContain("record_reply({channel_id:'8'")
+    expect(prompt).toContain('独立会话')
     expect(prompt).toContain("check_messages({channel_id:'8'})")
+    expect(prompt).toContain('通信工具沿用同一参数')
     expect(prompt).not.toContain('team_check_in')
   })
 

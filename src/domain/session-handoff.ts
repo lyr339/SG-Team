@@ -128,6 +128,16 @@ const TEAM_RECIPIENT_NOTE = '本消息是用户发起的上下文交接，不是
   + '不要据此调用 team_task plan / claim 拆解或领取任务，不要 team_message broadcast，也不要向主控上报为进度。'
   + '读完后仍按角色简报继续工作。'
 
+/**
+ * 交接消息收尾指令。「然后继续处理后续消息」曾被模型理解为「继续执行转录里未完成的任务」：
+ * 接手方 record_reply 确认后不回 check_messages，直接在同一原生回合里干上一段会话的活——
+ * 用户新消息排队取不走，拾光侧这段工作也全部落在回合封口之后。收尾必须把「回到待命」和
+ * 「不主动接任务」说成两条明确规则，只把接续判断交给用户。
+ */
+export const HANDOFF_CLOSING_INSTRUCTION = '读完后用一两句话向用户确认已接手（说明你读到的最后一个任务与当前状态），'
+  + 'record_reply 之后立即回到 check_messages 待命。不要主动继续执行转录里未完成的任务，也不要自行推进任何步骤——'
+  + '是否接续、从哪里接续，以用户在本通道随后发来的指令为准。'
+
 /** 来源席位标签：有角色时用「角色 · 席位」（独立席位只用席位名），否则回退到会话显示名。 */
 function sourceSeatLabel(input: { displayName: string; role?: SessionHandoffSeatRole }): string {
   const role = input.role
@@ -175,10 +185,7 @@ export function buildSessionHandoffMessage(input: {
   if (input.targetIsTeamSeat) lines.push('', TEAM_RECIPIENT_NOTE)
   const note = input.note?.trim().slice(0, SESSION_HANDOFF_NOTE_MAX_CHARS)
   if (note) lines.push('', `交接说明：${note}`)
-  lines.push(
-    '',
-    '读完后用一两句话向用户确认已接手（说明你读到的最后一个任务与当前状态），然后继续处理后续消息。'
-  )
+  lines.push('', HANDOFF_CLOSING_INSTRUCTION)
   return lines.join('\n')
 }
 
@@ -235,6 +242,11 @@ export function buildSessionHandoffRecord(input: {
     if (entry.processBlocks?.length) {
       const tools = entry.processBlocks.filter((block) => block.kind === 'tool').length
       lines.push('', `（过程：${entry.processBlocks.length} 步${tools ? ` · ${tools} 次工具` : ''}）`)
+    }
+    if (entry.continuationBlocks?.length) {
+      // 回复之后 Agent 继续工作的部分：接手方需要知道这段工作存在，它不在回复正文里。
+      const tools = entry.continuationBlocks.filter((block) => block.kind === 'tool').length
+      lines.push('', `（回复后继续工作：${entry.continuationBlocks.length} 步${tools ? ` · ${tools} 次工具` : ''}）`)
     }
     if (entry.error) lines.push('', `错误：${entry.error}`)
     return lines.join('\n')

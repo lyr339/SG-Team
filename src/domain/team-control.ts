@@ -144,6 +144,8 @@ export interface TeamMemberRuntime {
   status: AgentSessionStatus
   online: boolean
   runtimeEvidence?: AgentRuntimeEvidence
+  /** Cursor Agent 正等待 ask_question 等用户决策；在线但需要用户处理。 */
+  awaitingUser?: boolean
   waiting: boolean
   /** 连接相位（waiting/processing/keepalive/need_reply_sync），在岗判定见 isAgentOnDuty。 */
   connectionPhase?: string
@@ -550,25 +552,23 @@ export function buildTeamLaunchHint(input: {
   binding: RuntimeBinding
 }): string {
   const { channelId, binding } = input
-  const session = sessionTokenInstruction({ channelId, sessionToken: binding.sessionToken })
   return [
-    `拾光协作通道 CH-${channelId} 已启动。`,
-    `请先调用 ${SG_TEAM_MCP_SERVER_ID} 的 team_check_in({channel_id:'${channelId}'}) 领取角色职责与团队目标；`,
-    `此后所有团队工具与通信保活均传同一 channel_id，并严格按 check_in 返回的指令工作。`,
-    `本次 Cursor 会话绑定标记：${cursorComposerBindingMarker({ bindingKey: binding.composerBindingKey, channelId })}`,
-    session ? `\n${session}` : ''
-  ].join('')
+    `${SG_TEAM_MCP_SERVER_ID} · CH-${channelId}。不要回复本条；`,
+    `立即调用 team_check_in({channel_id:'${channelId}'})，随后按角色简报与服务器说明工作。`,
+    cursorComposerBindingMarker({ bindingKey: binding.composerBindingKey, channelId })
+  ].join('\n')
 }
 
-/** 独立席位开场指令：只保留用户单聊循环，绑定标记由 AgentSessionLauncher 统一追加。 */
+/**
+ * 独立席位开场指令：只交付本会话动态参数与首个动作；完整循环、静默和终止规则
+ * 由 SG Team MCP instructions 单一陈述，绑定标记由 AgentSessionLauncher 统一追加。
+ */
 export function buildSoloLaunchHint(input: { channelId: string; sessionToken?: string }): string {
   const { channelId } = input
   const call = communicationCallArguments(input)
-  const session = sessionTokenInstruction(input)
   return [
-    `拾光协作通道 CH-${channelId} 已启动（独立模式）。你是独立执行 Agent，不加入任何团队：不要调用任何 team_* 工具（服务端会拒绝），直接处理用户消息。`,
-    `每次完整回复用户后，先调用 record_reply(${call.replace(/\}$/, ', content: 完整回复正文}')})，再调用 check_messages(${call}) 等待下一条；keepalive 或无未读时静默继续，不输出可见回复、不 record_reply。`,
-    ...(session ? [session] : [])
+    `${SG_TEAM_MCP_SERVER_ID} · CH-${channelId} · 独立会话。不要回复本条——不思考、不输出任何文字、不使用 team_*；`,
+    `立即调用 check_messages(${call}) 进入长会话待命，之后按服务器说明持续对话，通信工具沿用同一参数。`
   ].join('\n')
 }
 

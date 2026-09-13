@@ -14,10 +14,18 @@ import type { CursorWorkspaceDetection } from '../domain/cursor-workspace'
 import type { CursorModelOption, CursorModelSelection } from '../domain/cursor-model'
 import type { AozaiCardStatus, AozaiProcessResult, AozaiProgressEvent } from '../domain/aozai-service'
 import type { AgentLaunchPlan, AgentLaunchRequest } from '../domain/agent-launch'
+import type { SessionWarmupRun } from '../domain/session-warmup'
 import type { CdpAutoHealEvent, CursorCdpSettings } from '../domain/cursor-cdp'
 import type { AccountAutomationRun, AccountAutomationSettings } from '../domain/account-automation'
+import type { CursorSwitchPumpOutcome, CursorSwitchPumpStatus } from '../domain/cursor-switch-pump'
 import type { CursorUpdatePreferences, CursorUpdateWriteResult } from '../domain/cursor-update'
 import type { CursorUsageSnapshot } from '../domain/cursor-usage'
+import type {
+  CursorStorageCleanupRequest,
+  CursorStorageCleanupResult,
+  CursorStorageItemId,
+  CursorStorageScan
+} from '../domain/cursor-storage-cleanup'
 import type {
   WorkspaceOpenFileResult,
   WorkspaceReviewActionInput,
@@ -27,6 +35,7 @@ import type {
   WorkspaceReviewSummary
 } from '../domain/workspace-review'
 import type { SessionHandoffContext, SessionHandoffRequest, SessionHandoffResult } from '../domain/session-handoff'
+import type { CursorStatusLine } from '../domain/cursor-status-line'
 
 export type BridgeConnectionState =
   | 'disconnected'
@@ -59,11 +68,28 @@ export interface LiveAgentResponseState {
   status: 'streaming' | 'complete'
   startedAt: number
   updatedAt: number
+  /** 生命周期守卫用的证据来源（渲染层不消费）：observer 原生帧 / runtime inspect / 转录兜底。 */
+  source?: 'native' | 'inspect' | 'transcript'
 }
 
 export interface NativeProcessStreamStatus {
   state: 'connected' | 'reconnecting' | 'unavailable'
   detail: string
+  updatedAt: number
+}
+
+/**
+ * 名册常驻状态行的 Cursor 侧事实（hook v32 / runtime inspect 每帧携带）：与 Cursor 会话列表
+ * 副标题同一算法。只存在于实时层——不进封口、不落库、不参与虚拟回合。
+ */
+export interface LiveStatusLineState {
+  composerId: string
+  /** 回合存活（Cursor composer status === 'generating'）；决定显示 statusLine 还是 Completed / Stopped。 */
+  generating: boolean
+  /** Cursor 回合状态原文（generating / aborted / completed / none）。 */
+  composerStatus?: string
+  /** 回合存活时的副标题；Cursor 一个都扫不到时缺省（渲染层落到 "Planning next moves"）。 */
+  statusLine?: CursorStatusLine
   updatedAt: number
 }
 
@@ -87,6 +113,8 @@ export interface DesktopSnapshot {
   liveProcess?: Record<string, LiveProcessState>
   /** 按通道映射的 Cursor 原生流式回复。record_reply 落地后自动移除。 */
   liveAgentResponses?: Record<string, LiveAgentResponseState>
+  /** 按通道映射的名册状态行事实（Cursor 侧栏副标题同源）；随作用域切换清空。 */
+  liveStatusLine?: Record<string, LiveStatusLineState>
   /** Cursor 原生过程观察器健康度；断链时 UI 必须明确披露。 */
   nativeProcessStream?: NativeProcessStreamStatus
   protocolIssues: string[]
@@ -124,6 +152,35 @@ export interface QueuedMessageRef {
 export interface SendMessageAccepted {
   commandId: string
 }
+
+/** 拾光卡片提交的 ask_question 答案：按题 id 的选项 id（可含自由填写哨兵）与自由填写正文。 */
+export interface CursorQuestionAnswerInput {
+  channelId: string
+  toolCallId: string
+  selections: Record<string, string[]>
+  freeformTexts?: Record<string, string>
+  /** 用户附言；为空时主进程按选择生成摘要（Cursor 的回退路径要求跟进消息非空）。 */
+  note?: string
+}
+
+export interface CursorQuestionSkipInput {
+  channelId: string
+  toolCallId: string
+}
+
+export type CursorQuestionFailureCode =
+  | 'invalid_input'
+  | 'composer_unbound'
+  | 'cdp_unavailable'
+  | 'composer_not_loaded'
+  | 'unsupported_runtime'
+  | 'question_not_pending'
+  | 'submit_failed'
+  | 'unconfirmed'
+
+export type CursorQuestionActionResult =
+  | { ok: true; status: 'submitted' | 'cancelled' }
+  | { ok: false; code: CursorQuestionFailureCode; message: string }
 
 export interface TeamSetupChannel {
   channelId: string
@@ -191,9 +248,11 @@ export interface SgDesktopApi {
   saveCursorAccount(input: { label: string; token: string; makeActive?: boolean }): Promise<CursorAccountMetadata[]>
   selectCursorAccount(accountId: string): Promise<CursorAccountMetadata[]>
   removeCursorAccount(accountId: string): Promise<CursorAccountMetadata[]>
+  /** 绑定/改绑/解绑账号的指纹浏览器窗口（undefined 解绑，回退默认窗口）。 */
+  setCursorAccountFingerprintProfile(accountId: string, profileId?: string): Promise<CursorAccountMetadata[]>
   importCursorAccountFromLocalCursor(): Promise<CursorAccountMetadata[]>
   importCursorAccountFromBrowser(): Promise<CursorAccountMetadata[]>
-  /** 第一步「获取 Token」的指纹导入：读当前选中指纹浏览器 profile 的登录态（读毕关窗，cookie 留 profile）。 */
+  /** 第一步「获取 Token」的指纹导入：读当前选中指纹浏览器 profile 的登录态（读毕关窗，cookie 留 profile）；保存时自动绑定该窗口。 */
   importCursorAccountFromFingerprint(): Promise<CursorAccountMetadata[]>
   /** 打开选定的指纹浏览器窗口并导航到 cursor.com：用户可提前登录（cookie 落 profile，窗口不自动关）。 */
   openFingerprintLoginPage(): Promise<void>
@@ -229,6 +288,18 @@ export interface SgDesktopApi {
    */
   verifyCursorRuntimeAccount(): Promise<CursorRuntimeAccountMatch>
   /**
+   * 无感换号（热切）：不杀进程、不写库、不动机器码——票据经回环泵给运行中
+   * Cursor 的切号补丁，硬回执到手才同步活跃账号。永不 throw；switched=false
+   * 时 reason 为人话原因（补丁未装/端口占用/回执超时/换票失败）。
+   */
+  switchCursorAccountLive(accountId: string): Promise<{ switched: boolean; reason?: string; warning?: string }>
+  /** 切号补丁只读状态（维护页状态卡）。 */
+  getCursorSwitchPumpStatus(): Promise<CursorSwitchPumpStatus>
+  /** 一键安装/修复切号补丁（写 Cursor workbench bundle + 重签名；重启 Cursor 生效）。 */
+  ensureCursorSwitchPump(): Promise<CursorSwitchPumpOutcome>
+  /** 卸载切号补丁（重启 Cursor 生效）。 */
+  removeCursorSwitchPump(): Promise<CursorSwitchPumpOutcome>
+  /**
    * 在线获取 Cursor 运行时账号的会员档位（api2.cursor.sh/auth/full_stripe_profile，
    * Bearer 运行时 token；token 明文只在主进程内）。批量会话发起闸门与手动刷新共用；
    * 失败返回 error 状态（fail-closed：过闸必须有权威结果）。
@@ -245,11 +316,21 @@ export interface SgDesktopApi {
   launchAgentSessions(requests: AgentLaunchRequest[]): Promise<AgentLaunchPlan>
   getAgentLaunchPlan(): Promise<AgentLaunchPlan | undefined>
   onAgentLaunchProgress(listener: (plan: AgentLaunchPlan) => void): () => void
+  /** 会话预热探针：批量发起前用最低成本模型验证账号能真实跑通响应；绝不触发账号自动化。 */
+  runSessionWarmup(): Promise<SessionWarmupRun>
+  getSessionWarmupRun(): Promise<SessionWarmupRun | undefined>
+  onSessionWarmupProgress(listener: (run: SessionWarmupRun) => void): () => void
   enableCursorCdp(): Promise<{ ok: boolean; message: string; suggestAutoHeal?: boolean }>
   getCursorCdpSettings(): Promise<CursorCdpSettings>
   saveCursorCdpSettings(settings: CursorCdpSettings): Promise<CursorCdpSettings>
   getCursorUpdatePreferences(): Promise<CursorUpdatePreferences>
   setCursorAutoUpdateDisabled(disabled: boolean): Promise<CursorUpdateWriteResult>
+  /** Cursor 本机存储盘点（只读）；对话历史阈值缺省 90 天。 */
+  scanCursorStorage(input?: { chatHistoryOlderThanDays?: number }): Promise<CursorStorageScan>
+  /** 执行清理：主进程重新扫描后按新鲜事实建计划，逐项执行并返回新盘点。 */
+  cleanCursorStorage(request: CursorStorageCleanupRequest): Promise<CursorStorageCleanupResult>
+  /** 在系统文件管理器里定位该项所在位置。 */
+  revealCursorStorage(id: CursorStorageItemId): Promise<void>
   /** 用户取消 auto-heal 倒计时：本次 Cursor 启动不再自动重启。 */
   cancelCdpAutoHealCountdown(): Promise<void>
   onCdpAutoHealEvent(listener: (event: CdpAutoHealEvent) => void): () => void
@@ -275,6 +356,10 @@ export interface SgDesktopApi {
   withdrawQueuedMessage(input: QueuedMessageRef): Promise<boolean>
   /** 解除「等待新会话」保持位，消息回到普通排队。 */
   releaseQueuedMessage(input: QueuedMessageRef): Promise<boolean>
+  /** 在拾光里回答 Cursor 原生 ask_question：答案经 CDP 交给该会话的待决策，附言作为跟进消息送达模型。 */
+  answerCursorQuestion(input: CursorQuestionAnswerInput): Promise<CursorQuestionActionResult>
+  /** 跳过 Cursor 原生 ask_question（等同 Cursor 面板里的 Skip）。 */
+  skipCursorQuestion(input: CursorQuestionSkipInput): Promise<CursorQuestionActionResult>
   /** 会话交接：定位该通道 Cursor 会话的上下文文档（转录）与可用投递方式。 */
   getSessionHandoffContext(input: { channelId: string }): Promise<SessionHandoffContext>
   /** 会话交接：把上下文文档路径（连同拾光会话记录）排进目标通道队列。 */
@@ -339,6 +424,7 @@ export const IPC = {
   cursorAccountsSave: 'cursor-accounts:save',
   cursorAccountsSelect: 'cursor-accounts:select',
   cursorAccountsRemove: 'cursor-accounts:remove',
+  cursorAccountsSetFingerprintProfile: 'cursor-accounts:set-fingerprint-profile',
   cursorAccountsImportFromLocal: 'cursor-accounts:import-from-local',
   cursorAccountsImportFromBrowser: 'cursor-accounts:import-from-browser',
   cursorAccountsImportFromFingerprint: 'cursor-accounts:import-from-fingerprint',
@@ -346,6 +432,10 @@ export const IPC = {
   cursorAccountsCleanupFingerprintEnvironment: 'cursor-accounts:cleanup-fingerprint-environment',
   cursorAccountsAcknowledgeModelDataPolicies: 'cursor-accounts:acknowledge-model-data-policies',
   cursorAccountsRestartWith: 'cursor-accounts:restart-with',
+  cursorAccountsSwitchLive: 'cursor-accounts:switch-live',
+  cursorSwitchPumpStatus: 'cursor-switch-pump:status',
+  cursorSwitchPumpEnsure: 'cursor-switch-pump:ensure',
+  cursorSwitchPumpRemove: 'cursor-switch-pump:remove',
   cursorAccountsVerifyRuntime: 'cursor-accounts:verify-runtime',
   cursorAccountsRefreshMembership: 'cursor-accounts:refresh-membership',
   cursorAccountsRefreshMemberships: 'cursor-accounts:refresh-memberships',
@@ -359,10 +449,16 @@ export const IPC = {
   agentLaunchGet: 'agent-launch:get',
   agentLaunchProgress: 'agent-launch:progress',
   agentLaunchEnableCdp: 'agent-launch:enable-cdp',
+  sessionWarmupRun: 'session-warmup:run',
+  sessionWarmupGet: 'session-warmup:get',
+  sessionWarmupProgress: 'session-warmup:progress',
   cursorCdpGetSettings: 'cursor-cdp:get-settings',
   cursorCdpSaveSettings: 'cursor-cdp:save-settings',
   cursorUpdateGetPreferences: 'cursor-update:get-preferences',
   cursorUpdateSetAutoUpdateDisabled: 'cursor-update:set-auto-update-disabled',
+  cursorStorageScan: 'cursor-storage:scan',
+  cursorStorageCleanup: 'cursor-storage:cleanup',
+  cursorStorageReveal: 'cursor-storage:reveal',
   cursorCdpCancelCountdown: 'cursor-cdp:cancel-countdown',
   cursorCdpAutoHealEvent: 'cursor-cdp:auto-heal-event',
   cursorUsageGet: 'cursor-usage:get',
@@ -387,6 +483,8 @@ export const IPC = {
   sendMessage: 'sg-team-session:send-message',
   withdrawQueuedMessage: 'sg-team-session:withdraw-queued-message',
   releaseQueuedMessage: 'sg-team-session:release-queued-message',
+  answerCursorQuestion: 'sg-team-session:answer-cursor-question',
+  skipCursorQuestion: 'sg-team-session:skip-cursor-question',
   sessionHandoffContext: 'sg-team-session:handoff-context',
   sessionHandoffDeliver: 'sg-team-session:handoff-deliver',
   revealPathInFolder: 'sg-team-session:reveal-path',

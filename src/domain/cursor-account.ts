@@ -5,6 +5,14 @@ export interface CursorAccountMetadata {
   active: boolean
   createdAt: number
   updatedAt: number
+  /** 热切换号后机器码仍属上一账号，待冷切换归一。 */
+  pendingMachineAlign?: boolean
+  /**
+   * 账号绑定的指纹浏览器窗口 id（Roxy profile）。
+   * 绑定在导入时自动记录（从哪个窗口读出 Token 就绑定哪个窗口），也可在账号列表改绑；
+   * 自动化链的浏览器操作锚定活跃账号的绑定窗口，未绑定时回退「默认窗口」。
+   */
+  fingerprintProfileId?: string
 }
 
 /**

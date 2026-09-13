@@ -3,10 +3,14 @@ import type { ConversationEntry, ProcessBlock } from './conversation-entry'
 export interface VirtualProcessBlockSegment {
   anchorEntryId?: string
   /**
-   * true = 回合已在回复处封口，该块晚于关闭边界：属传输空档（keepalive/
-   * 内部协议噪声），不属于任何用户可见回复，投影层应丢弃而非折入 prelude。
+   * true = 该段是锚点回合的「续作」：回合已在回复处封口，块晚于关闭边界、
+   * 早于下一条消息投递——Agent 答完用户后没有回到 check_messages 待命，而是在
+   * 同一个 Cursor 原生回合里继续工作（典型：会话交接后接续转录里的任务）。
+   * 传输噪音（check_messages / keepalive 思考 / capability）在 hook 的
+   * processSnapshot 已按气泡整组过滤，能到达这里的封口后块就是真实业务工作；
+   * 投影层与封口层把它作为锚点回复之后的独立过程卡展示与持久化，而不是丢弃。
    */
-  gap?: boolean
+  continuation?: boolean
   blocks: ProcessBlock[]
   startedAt: number
 }
@@ -20,7 +24,7 @@ function deliveredAt(entry: ConversationEntry, immediateDelivery: boolean): numb
  * 同一用户消息有多条可见回复时取最早一条（record_reply 去重后正常只有一条）。
  * 旧数据缺少 replyToEntryId 时不设边界，保留时间窗回退语义。
  */
-function replyCloseAtByUserEntryId(entries: readonly ConversationEntry[]): Map<string, number> {
+export function replyCloseAtByUserEntryId(entries: readonly ConversationEntry[]): Map<string, number> {
   const closeAt = new Map<string, number>()
   for (const entry of entries) {
     if (entry.role !== 'assistant' || !entry.replyToEntryId) continue
@@ -38,7 +42,8 @@ function replyCloseAtByUserEntryId(entries: readonly ConversationEntry[]): Map<s
  * 虚拟回合窗口（RC-2）：
  * - 开放边界 = outbound.deliveredAt（check_messages 权威投递时间）；
  * - 关闭边界 = 对应 reply.createdAt（replyToEntryId 精确关联）；
- * - 关闭之后、下一条消息投递之前的内容属传输空档（gap），不归属任何回合。
+ * - 关闭之后、下一条消息投递之前的块属于该锚点的续作段（continuation），
+ *   与回合内块分开归属：回合内块随回复封口，续作块挂在回复之后。
  */
 export function partitionVirtualProcessBlocks(
   entries: readonly ConversationEntry[],
@@ -68,18 +73,15 @@ export function partitionVirtualProcessBlocks(
       }
     }
     const anchor = anchorIndex >= 0 ? users[anchorIndex] : undefined
-    if (anchor) {
-      const closeAt = replyCloseAt.get(anchor.id)
-      if (closeAt !== undefined && startedAt > closeAt) {
-        const gap = segments.get('__gap__') ?? { blocks: [], startedAt, gap: true }
-        gap.blocks.push(block)
-        gap.startedAt = Math.min(gap.startedAt, startedAt)
-        segments.set('__gap__', gap)
-        continue
-      }
+    const closeAt = anchor ? replyCloseAt.get(anchor.id) : undefined
+    const continuation = anchor !== undefined && closeAt !== undefined && startedAt > closeAt
+    const key = anchor ? (continuation ? `${anchor.id}:continuation` : anchor.id) : '__prelude__'
+    const segment = segments.get(key) ?? {
+      anchorEntryId: anchor?.id,
+      ...(continuation ? { continuation: true } : {}),
+      blocks: [],
+      startedAt
     }
-    const key = anchor?.id ?? '__prelude__'
-    const segment = segments.get(key) ?? { anchorEntryId: anchor?.id, blocks: [], startedAt }
     segment.blocks.push(block)
     segment.startedAt = Math.min(segment.startedAt, startedAt)
     segments.set(key, segment)

@@ -16,18 +16,82 @@ export interface ProcessBlockTiming {
   timingEstimated?: boolean
 }
 
+export type ProcessToolKind =
+  | 'command' | 'read' | 'search' | 'edit' | 'write' | 'browser' | 'mcp' | 'todo' | 'task' | 'question' | 'other'
+
+/** Cursor 原生 ask_question 的一道题（选项完整保留，渲染层据此生成可点选卡片）。 */
+export interface ProcessQuestionItem {
+  id: string
+  prompt: string
+  allowMultiple: boolean
+  options: Array<{ id: string; label: string }>
+}
+
+export interface ProcessQuestionAnswer {
+  questionId: string
+  selectedOptionIds: string[]
+  freeformText?: string
+}
+
+/**
+ * ask_question 的结构化状态：与 Cursor 气泡 `additionalData.status` 同源——
+ * pending = 等待用户在拾光或 Cursor 中作答；submitted = 已提交（answers 为最终答案）；
+ * cancelled = 用户跳过或超时自动拒绝。toolCallId 是回答时定位 Cursor 待决策的主键。
+ */
+export interface ProcessQuestion {
+  toolCallId: string
+  title?: string
+  questions: ProcessQuestionItem[]
+  status: 'pending' | 'submitted' | 'cancelled'
+  answers?: ProcessQuestionAnswer[]
+  /** 用户随答案附带的说明（拾光提交时写入；Cursor 侧作为跟进消息送达模型）。 */
+  note?: string
+  /** cancelled 时的原因（user / timeout）。 */
+  skipReason?: string
+}
+
+/** 结构化 diff 的一行：added / removed / context，hunk 是 `@@ … @@` 分隔行。 */
+export interface ProcessDiffLine {
+  type: 'added' | 'removed' | 'context' | 'hunk'
+  text: string
+  oldLine?: number
+  newLine?: number
+}
+
+/**
+ * 编辑工具的结构化 diff（hook 由 Cursor `precomputedDiff.lines` 或 `diffString` 统一解析），
+ * 渲染层据此按行着色；行数受传输上限约束，超出部分以 truncatedLineCount 如实披露。
+ */
+export interface ProcessDiff {
+  lines: ProcessDiffLine[]
+  truncatedLineCount?: number
+}
+
 /** 工具调用过程区块 */
 export interface ProcessBlockTool extends ProcessBlockTiming {
   kind: 'tool'
   id: string
   toolName: string
-  toolKind?: 'command' | 'read' | 'search' | 'edit' | 'write' | 'browser' | 'mcp' | 'todo' | 'other'
+  toolKind?: ProcessToolKind
+  /**
+   * Cursor 原生工具 case 名（`readToolCall` / `lsToolCall` / `grepToolCall` …）：分组算法按它区分
+   * read 与 ls、grep 与 glob（toolKind 粒度不够）。旧持久化块与旧 hook 帧缺失，投影层按 toolKind 回退。
+   */
+  toolCase?: string
+  /** 模型为本次调用给出的意图说明（如 Shell 的 description、子任务描述）；有则作为主标题。 */
+  title?: string
   /** 工具调用摘要（如文件路径、命令行） */
   summary?: string
+  /** 结果侧的紧凑提示（如 `cd, python3`、`L12-80`、`+12 −3`、`3 个文件`）。 */
+  hint?: string
   /** 工具输入参数明细 */
   input?: Record<string, unknown>
   /** Cursor 原生 todo 项（toolKind=todo）。 */
   todos?: Array<{ content: string; status: string }>
+  /** Cursor 原生 ask_question（toolKind=question）的结构化状态。 */
+  question?: ProcessQuestion
+  /** 编辑工具（toolKind=edit）的结构化 diff；缺失时渲染层回退 output 里的 diffString 文本。 */
+  diff?: ProcessDiff
   /** 工具执行输出（如有） */
   output?: string
   /** 执行状态 */
@@ -102,7 +166,9 @@ export function normalizeProcessBlockText(block: ProcessBlock): ProcessBlock {
   if (block.kind === 'tool') {
     return {
       ...block,
+      title: sanitizeOptionalText(block.title),
       summary: sanitizeOptionalText(block.summary),
+      hint: sanitizeOptionalText(block.hint),
       output: sanitizeOptionalText(block.output),
       error: sanitizeOptionalText(block.error)
     }
@@ -187,10 +253,30 @@ export interface ConversationEntry {
   processBlocks?: ProcessBlock[]
   /** 原生超长回合因传输上限折叠的步骤数。 */
   processTruncatedItemCount?: number
+  /**
+   * 回复封口之后、下一条用户消息投递之前 Agent 继续工作的过程（续作）：
+   * Agent 答完没有回到 check_messages 待命而是接着干活时产生（典型是会话交接后
+   * 接续转录里的任务）。与 processBlocks 分开：前者是「产出这条回复的过程」，
+   * 渲染在正文之上；续作渲染在正文之下，只含已结算（done / failed）的块。
+   */
+  continuationBlocks?: ProcessBlock[]
   /** 用户消息携带的附件 */
   attachments?: MessageAttachment[]
   /** 静默条目：系统内部协作通知不进入用户时间线，仅通过 DesktopSnapshot.commandReceipts 保留投递回执 */
   silent?: boolean
+}
+
+/**
+ * 一条回复承载的全部过程块：产出回复的过程 + 回复之后的续作，按时间先后拼接。
+ * 供只关心「这段对话里发生过什么」的聚合视图（右栏活动 / 变更范围 / 待办、交接记录）
+ * 使用；会话时间线仍分开渲染两者。
+ */
+export function conversationEntryProcessBlocks(entry: Pick<ConversationEntry, 'processBlocks' | 'continuationBlocks'>): ProcessBlock[] {
+  const primary = entry.processBlocks ?? []
+  const continuation = entry.continuationBlocks ?? []
+  if (!continuation.length) return primary
+  if (!primary.length) return continuation
+  return [...primary, ...continuation]
 }
 
 const ROLE_ORDER: Record<ConversationRole, number> = { user: 0, assistant: 1, system: 2, error: 3 }

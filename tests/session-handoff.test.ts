@@ -4,6 +4,7 @@ import {
   buildSessionHandoffMessage,
   buildSessionHandoffRecord,
   formatHandoffTime,
+  HANDOFF_CLOSING_INSTRUCTION,
   handoffRecordFileName,
   SESSION_HANDOFF_MARKER,
   type SessionTranscriptLocation
@@ -41,6 +42,25 @@ describe('session handoff message', () => {
     expect(text).toContain('CH-1-85bb41c4-20260904-200500.md')
     expect(text).toContain('交接说明：接着把队列弹层收尾。')
     expect(text).toContain('向用户确认已接手')
+  })
+
+  it('closes by sending the recipient back to check_messages instead of letting it continue the inherited task', () => {
+    // 2026-09-10/11 实测：旧收尾「然后继续处理后续消息」被接手方理解为「继续执行转录里的任务」——
+    // record_reply 之后不回 check_messages，几十次工具调用在同一原生回合里进行，用户新消息排队取不走。
+    const text = buildSessionHandoffMessage({
+      sourceChannelId: '1', sourceDisplayName: '独立席 1', target: { kind: 'channel', channelId: '2' }, issuedAt, transcript
+    })
+    const closing = text.trim().split('\n').at(-1)!
+    expect(closing).toBe(HANDOFF_CLOSING_INSTRUCTION)
+    expect(closing).toContain('record_reply 之后立即回到 check_messages 待命')
+    expect(closing).toContain('不要主动继续执行转录里未完成的任务')
+    expect(closing).toContain('以用户在本通道随后发来的指令为准')
+    expect(text).not.toContain('然后继续处理后续消息')
+    // 交接说明（用户附言）排在收尾指令之前，不会把它挤成倒数第二条
+    const withNote = buildSessionHandoffMessage({
+      sourceChannelId: '1', sourceDisplayName: '独立席 1', target: { kind: 'self' }, issuedAt, transcript, note: '先看队列弹层'
+    })
+    expect(withNote.indexOf('交接说明：先看队列弹层')).toBeLessThan(withNote.indexOf(HANDOFF_CLOSING_INSTRUCTION))
   })
 
   it('describes a cross-session handoff and tolerates a transcript Cursor has not written yet', () => {
@@ -127,6 +147,12 @@ describe('session handoff record (拾光侧会话记录)', () => {
       processBlocks: [
         { kind: 'thinking', id: 'th', text: '…', status: 'done' },
         { kind: 'tool', id: 'tool', toolName: 'read_file', status: 'done' }
+      ],
+      // 回复之后继续干的活：接手方须知道这段工作存在（它不在回复正文里）
+      continuationBlocks: [
+        { kind: 'tool', id: 'follow-1', toolName: 'Shell', toolKind: 'command', summary: 'npm test', status: 'done' },
+        { kind: 'tool', id: 'follow-2', toolName: 'edit_file', toolKind: 'edit', summary: 'a.ts', status: 'done' },
+        { kind: 'thinking', id: 'follow-th', text: '…', status: 'done' }
       ]
     },
     {
@@ -151,7 +177,7 @@ describe('session handoff record (拾光侧会话记录)', () => {
     expect(markdown).toContain('- Cursor composerId：85bb41c4-4815')
     expect(markdown).toContain('- 消息：2 条用户消息 / 1 条 Agent 回复；时间范围 2026-09-04 19:13 – 2026-09-04 19:20')
     expect(markdown).toContain('## 用户 · 19:13:30\n\n你好，你是什么模型')
-    expect(markdown).toContain('## Agent · 19:14:13\n\n你好！我是 Claude。\n\n（过程：2 步 · 1 次工具）')
+    expect(markdown).toContain('## Agent · 19:14:13\n\n你好！我是 Claude。\n\n（过程：2 步 · 1 次工具）\n\n（回复后继续工作：3 步 · 2 次工具）')
     expect(markdown).toContain('（交接时尚未投递给 Agent）')
     expect(markdown).toContain('附件：image.png → /tmp/att/image.png')
     expect(markdown).not.toContain('内部协作通知')

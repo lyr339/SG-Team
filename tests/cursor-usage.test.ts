@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  estimateUsageFromReference,
+  projectUsage,
   reduceUsage,
   estimateTurnCostUsd,
   formatCostUsd,
@@ -102,6 +104,35 @@ describe('token 口径（缓存读/写 ⊂ 输入，2026-09-01 实证定稿）',
     // 上游口径异常（缓存 > 输入）时 clamp 到 0，不产生负费。
     expect(estimateTurnCostUsd({ inputTokens: 0, outputTokens: 0, cacheReadTokens: 1_000_000, cacheWriteTokens: 0, occurredAt: 0 }, price))
       .toBeCloseTo(0.3, 6)
+  })
+})
+
+describe('Kimi 缓存写入归普通输入', () => {
+  it('新估算 Cache Write 为零，输入总量/命中缓存/输出和同价费用保持一致', () => {
+    const kimiPrice = priceForModel('kimi-k3')
+    const before = estimateUsageFromReference(57_500_000, 'other', { ...kimiPrice, label: 'other' })
+    const after = estimateUsageFromReference(57_500_000, 'kimi-k3', kimiPrice)
+    expect(before.cacheWriteTokens).toBeGreaterThan(0)
+    expect(after.cacheWriteTokens).toBe(0)
+    expect(after.inputTokens).toBe(before.inputTokens)
+    expect(after.outputTokens).toBe(before.outputTokens)
+    expect(after.cacheReadTokens).toBe(before.cacheReadTokens)
+    expect(after.estimatedCostUsd).toBeCloseTo(before.estimatedCostUsd, 10)
+  })
+
+  it('旧冻结混合账本仅归一 Kimi，原数据不变且重复读取幂等', () => {
+    const turn = { inputTokens: 1000, outputTokens: 10, cacheReadTokens: 800, cacheWriteTokens: 100,
+      estimatedCostUsd: .001, price: priceForModel('kimi-k3'), exact: false, at: 10 }
+    const ledger = { frozenAt: 20, turns: { kimi: turn, claude: { ...turn, price: priceForModel('claude-sonnet') } } }
+    const result = projectUsage('mixed', ledger)
+    expect(result.ledger!.turns.kimi!.cacheWriteTokens).toBe(0)
+    expect(result.ledger!.turns.claude!.cacheWriteTokens).toBe(100)
+    expect(result.cacheWriteTokens).toBe(100)
+    expect(result.inputTokens).toBe(2000)
+    expect(result.estimatedCostUsd).toBe(.002)
+    expect(result.ledger!.frozenAt).toBe(20)
+    expect(turn.cacheWriteTokens).toBe(100)
+    expect(projectUsage('mixed', result.ledger!)).toEqual(result)
   })
 })
 
