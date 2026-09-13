@@ -31,3 +31,30 @@ jobs:
       - run: npm test
       - run: npm run build
       - run: npm run smoke:channel
+
+  # Windows 安装包：只在 Windows runner 上打（electron-builder 打 NSIS 需要 Windows 或 wine，
+  # 且 --config.electronDist 复用本机 node_modules/electron/dist，跨平台会拿错二进制）。
+  # 未签名：首次运行有 SmartScreen 提示（更多信息 → 仍要运行）。产物挂在 workflow 的 artifacts 里。
+  package-windows:
+    needs: verify
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: windows-latest
+    env:
+      ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run pack:win
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shiguang-windows-x64
+          path: |
+            release/*.exe
+            release/*.exe.blockmap
+            release/latest.yml
+          if-no-files-found: error
+          retention-days: 14

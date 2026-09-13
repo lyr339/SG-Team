@@ -2,10 +2,12 @@ import { execFile } from 'node:child_process'
 import { existsSync, statSync } from 'node:fs'
 import { promisify } from 'node:util'
 import {
-  buildCursorWindowsStartArgs,
   countWindowsCursorProcesses,
+  cursorWindowsStartCommand,
+  describeWindowsCdpStartFailure,
   resolveCursorWindowsExecutable,
-  runningCursorWindowsExecutable
+  runningCursorWindowsExecutable,
+  windowsCursorCommandLines
 } from './cursor-windows-launch'
 
 /**
@@ -79,12 +81,20 @@ export async function restartCursorWithCdp(options: CursorCdpRestartOptions): Pr
   try {
     // Windows：先记下正在运行的那份 Cursor 的路径，退出后按它拉起（Program Files 安装无 App Paths）。
     let windowsRunningExecutable: string | undefined
+    let windowsExecutable: string | undefined
     if (await cursorMainProcessCount(execFileFn, platform) > 0) {
       if (platform === 'win32') windowsRunningExecutable = await runningCursorWindowsExecutable(execFileFn)
       // 优雅退出（不做强杀——本模块策略与账号切换器不同，保留用户未保存内容）：
       // mac 走 AppleScript quit；win 走 taskkill（无 /F 即 WM_CLOSE，等价语义）
+      let quitIssue: string | undefined
       if (platform === 'win32') {
-        await execFileFn('taskkill', ['/IM', 'Cursor.exe'])
+        // Electron 有十几个同名无窗口子进程，无 /F 的 taskkill 对它们必然报「只能强制终止」并以非 0
+        // 退出——但主窗口已经收到 WM_CLOSE，Cursor 正在退出。退出码不作为成败依据，只看进程数是否归零。
+        try {
+          await execFileFn('taskkill', ['/IM', 'Cursor.exe'])
+        } catch (error) {
+          quitIssue = summarizeError(error)
+        }
       } else {
         await execFileFn('osascript', ['-e', 'tell application "Cursor" to quit'])
       }
@@ -93,16 +103,17 @@ export async function restartCursorWithCdp(options: CursorCdpRestartOptions): Pr
         await sleep(POLL_INTERVAL_MS)
       }
       if (await cursorMainProcessCount(execFileFn, platform) > 0) {
-        return { ok: false, message: 'Cursor 未能在限定时间内退出（可能有未保存的拦截弹窗），请手动关闭后重试' }
+        return {
+          ok: false,
+          message: `Cursor 未能在限定时间内退出（可能有未保存的拦截弹窗），请手动关闭后重试${quitIssue ? `；taskkill：${quitIssue}` : ''}`
+        }
       }
     }
 
     if (platform === 'win32') {
-      await execFileFn('cmd.exe', buildCursorWindowsStartArgs({
-        executable: resolveCursorWindowsExecutable({ runningPath: windowsRunningExecutable }),
-        workspacePath,
-        cdpPort: port
-      }))
+      windowsExecutable = resolveCursorWindowsExecutable({ runningPath: windowsRunningExecutable })
+      const command = cursorWindowsStartCommand({ executable: windowsExecutable, workspacePath, cdpPort: port })
+      await execFileFn(command.file, command.args, command.options)
     } else {
       const openArgs = workspacePath
         ? ['-a', 'Cursor', workspacePath, '--args', `--remote-debugging-port=${port}`]
@@ -127,11 +138,26 @@ export async function restartCursorWithCdp(options: CursorCdpRestartOptions): Pr
       }
       await sleep(POLL_INTERVAL_MS)
     }
+    if (platform === 'win32') {
+      // 端口没起来的三种原因处置完全不同（没起来 / 被残留实例接管没带参数 / 带了参数但端口不通），
+      // 读一遍 Cursor.exe 的命令行分清楚，同事截图即可定位。
+      return {
+        ok: false,
+        message: describeWindowsCdpStartFailure({
+          port,
+          executable: windowsExecutable ?? 'Cursor.exe',
+          commandLines: await windowsCursorCommandLines(execFileFn)
+        })
+      }
+    }
     return { ok: false, message: `Cursor 已启动，但调试端口 ${port} 在限定时间内未就绪；请确认 Cursor 完全启动后重试` }
   } catch (error) {
-    const detail = error instanceof Error ? error.message.replace(/\s+/g, ' ').trim().slice(0, 200) : String(error)
-    return { ok: false, message: `重启 Cursor 失败：${detail}` }
+    return { ok: false, message: `重启 Cursor 失败：${summarizeError(error)}` }
   }
+}
+
+function summarizeError(error: unknown): string {
+  return error instanceof Error ? error.message.replace(/\s+/g, ' ').trim().slice(0, 200) : String(error)
 }
 
 function validWorkspacePath(input: string | undefined): string | undefined {

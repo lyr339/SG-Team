@@ -12,7 +12,7 @@ import {
 } from './cursor-desktop-token-exchanger'
 import { cursorUserDataRoot } from './cursor-install-paths'
 import { isCursorMainProcessRunning } from './cursor-process-probe'
-import { buildCursorWindowsStartArgs, resolveCursorWindowsExecutable, runningCursorWindowsExecutable } from './cursor-windows-launch'
+import { cursorWindowsStartCommand, resolveCursorWindowsExecutable, runningCursorWindowsExecutable } from './cursor-windows-launch'
 
 const execFileAsync = promisify(execFile)
 
@@ -75,8 +75,8 @@ export class CursorAccountSwitcher {
     cdpPort?: () => number | undefined
     /** 拉起时打开的团队工作区路径（无效路径自动忽略）。 */
     workspacePath?: () => string | undefined
-    /** 进程命令注入点（测试替身）；生产执行真实 pkill/pgrep/open。 */
-    execFn?: (file: string, args: string[]) => Promise<{ stdout: string }>
+    /** 进程命令注入点（测试替身）；生产执行真实 pkill/pgrep/open。第三个参数只有 Windows 拉起用（原样命令串）。 */
+    execFn?: (file: string, args: string[], options?: { windowsVerbatimArguments?: boolean }) => Promise<{ stdout: string }>
     /** 端口探测注入点（测试替身）。 */
     fetchFn?: (url: string) => Promise<{ status: number }>
     /** 拉起后等待 CDP 端口就绪的时限（默认 30s）。 */
@@ -97,10 +97,11 @@ export class CursorAccountSwitcher {
     return this.options.platform ?? platform
   }
 
-  private get exec(): (file: string, args: string[]) => Promise<{ stdout: string }> {
-    return this.options.execFn ?? ((file, args) => execFileAsync(file, args, {
+  private get exec(): (file: string, args: string[], options?: { windowsVerbatimArguments?: boolean }) => Promise<{ stdout: string }> {
+    return this.options.execFn ?? ((file, args, options) => execFileAsync(file, args, {
       encoding: 'utf8',
-      timeout: 5_000
+      timeout: 5_000,
+      ...options
     }))
   }
 
@@ -297,11 +298,13 @@ export class CursorAccountSwitcher {
         const workspace = this.validWorkspacePath(this.options.workspacePath?.())
         // cmd start 立即返回（不等待 GUI 进程），经 this.exec 走注入链可测试；
         // 与 mac 侧对齐：CDP 端口可用时附带调试参数，保住切换后的会话创建能力。
-        await this.exec('cmd.exe', buildCursorWindowsStartArgs({
+        // 命令串必须原样（windowsVerbatimArguments）交给 cmd，否则引号被 Node 转义、start 找不到程序。
+        const command = cursorWindowsStartCommand({
           executable: resolveCursorWindowsExecutable({ runningPath: this.windowsRunningExecutable }),
           workspacePath: workspace,
           cdpPort: port
-        }))
+        })
+        await this.exec(command.file, command.args, command.options)
         return port ? 'cdp' : 'plain'
       }
       return 'failed'

@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs'
 import { win32 } from 'node:path'
+import { CURSOR_CDP_PORT_ENV } from './cursor-cdp-session-creator'
 import { cursorInstallRoots } from './cursor-install-paths'
 
 // 这里只构造 Windows 路径：显式用 win32 语义，宿主是 macOS（测试）时结果也一致。
@@ -10,8 +11,11 @@ const { join } = win32
  * CDP 重启 cursor-cdp-restart 共用——单一来源，两处行为必须一致）。
  *
  * 与 macOS 版彻底分离：mac 走 open/pkill/pgrep；win 走 cmd start/taskkill/tasklist。
- * 拉起一律通过 `cmd.exe /d /s /c start "" <exe> ...`——/s 保证带引号参数的解析稳定，
- * start 立即返回（cmd 不等待 GUI 进程），并免去逐参数转义坑。
+ * 拉起一律通过 `cmd.exe /d /s /c "start "" <exe> ..."`（start 立即返回，cmd 不等待 GUI 进程；
+ * 裸名时 start 还会查 App Paths）。整段命令必须以 windowsVerbatimArguments 原样交给 cmd：
+ * Node/libuv 默认会给含空格与引号的参数外加引号、把内部引号转义成 `\"`，而 cmd 不认反斜杠
+ * 转义——start 会收到 `\"\" \"C:\...\Cursor.exe\"`，把 `\"\"` 当成要运行的程序。Node 自己在
+ * shell:true 时就是这样处理 cmd.exe 的（/d /s /c + 原样命令串）。
  */
 
 export interface WindowsCursorLaunchSpec {
@@ -87,15 +91,70 @@ export function resolveCursorWindowsExecutable(options: {
   return cursorWindowsExecutableCandidates(options.env).find((candidate) => exists(candidate)) ?? 'Cursor.exe'
 }
 
-/** 组装 cmd start 命令串（cmd.exe 的 args 形态；引号包裹空格路径）。 */
-export function buildCursorWindowsStartArgs(spec: WindowsCursorLaunchSpec): string[] {
+/** 交给 execFile 的完整拉起命令：file + args + 必须携带的 spawn 选项。 */
+export interface WindowsCursorStartCommand {
+  file: 'cmd.exe'
+  args: string[]
+  options: { windowsVerbatimArguments: true }
+}
+
+/**
+ * 组装 cmd start 命令：`/d /s /c "start "" "<exe>" ["<workspace>"] [--remote-debugging-port=N ...]"`。
+ * 整段命令外面再包一层引号并以 windowsVerbatimArguments 原样传递——cmd 的 /s 规则是「首字符为引号
+ * 则去掉首尾两个引号、其余原样」，于是 start 拿到的正是我们写的那一行；不加原样标记时 Node 会把
+ * 内部引号转义成 `\"`（见文件头注释）。两个调用方（CDP 重启、账号切换拉起）都必须把 options 传下去。
+ */
+export function cursorWindowsStartCommand(spec: WindowsCursorLaunchSpec): WindowsCursorStartCommand {
   const parts = [`start "" "${spec.executable}"`]
   if (spec.workspacePath) parts.push(`"${spec.workspacePath}"`)
   if (spec.cdpPort) {
     parts.push(`--remote-debugging-port=${spec.cdpPort}`)
     parts.push('--disable-features=LocalNetworkAccessChecks')
   }
-  return ['/d', '/s', '/c', parts.join(' ')]
+  return { file: 'cmd.exe', args: ['/d', '/s', '/c', `"${parts.join(' ')}"`], options: { windowsVerbatimArguments: true } }
+}
+
+const CURSOR_COMMAND_LINES_ARGS = windowsPowerShellCommandArgs(
+  'Get-CimInstance Win32_Process -Filter "Name=\'Cursor.exe\'" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty CommandLine'
+)
+
+/**
+ * 运行中所有 Cursor.exe 进程的完整命令行（主进程 + Chromium 子进程）。CDP 端口没起来时用它区分
+ * 「没起来 / 起来了但没带参数 / 带了参数但端口不通」三种完全不同的原因。查询失败返回 undefined。
+ */
+export async function windowsCursorCommandLines(execFileFn: ExecFileFn): Promise<string[] | undefined> {
+  for (const powershell of windowsPowerShellCandidates()) {
+    try {
+      const { stdout } = await execFileFn(powershell, CURSOR_COMMAND_LINES_ARGS)
+      return stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+    } catch (error) {
+      if ((error as { code?: unknown } | null)?.code !== 'ENOENT') return undefined
+    }
+  }
+  return undefined
+}
+
+/**
+ * 拉起后调试端口在限定时间内未响应时的诊断文案（纯函数）。三种原因的处置完全不同，
+ * 一句「未就绪」分不出来；同事把这句话截图回来就能定位。
+ */
+export function describeWindowsCdpStartFailure(input: {
+  port: number
+  executable: string
+  commandLines: string[] | undefined
+}): string {
+  const { port, executable, commandLines } = input
+  if (commandLines === undefined) {
+    return `Cursor 已拉起，但调试端口 ${port} 在限定时间内未就绪，且无法读取 Cursor 进程信息（PowerShell 不可用）；请确认 Cursor 完全启动后重试`
+  }
+  if (commandLines.length === 0) {
+    return `Cursor 没有启动起来（拉起命令：${executable}）；请检查 Cursor 的安装位置，或手动打开 Cursor 后重试`
+  }
+  const flag = `--remote-debugging-port=${port}`
+  if (!commandLines.some((line) => line.includes(flag))) {
+    return `Cursor 在运行，但进程命令行里没有 ${flag}——很可能拉起时仍有残留的 Cursor.exe，本次启动被它接管；请完全退出 Cursor（任务管理器里确认没有 Cursor.exe）后重试`
+  }
+  return `Cursor 已带 ${flag} 启动，但端口 ${port} 无响应：可能落在 Windows 保留端口段（netsh int ipv4 show excludedportrange protocol=tcp）或被安全软件拦截；可用环境变量 ${CURSOR_CDP_PORT_ENV} 指定其他端口后重启拾光`
 }
 
 /**

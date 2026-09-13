@@ -78,9 +78,11 @@ if (packaged && !packagedAppDirectory) {
     : '找不到已打包的拾光.app')
 }
 
+// Windows 可执行名是 ASCII 的 ShiGuang.exe（package.json build.win.executableName：mcp.json 的
+// command 路径不含中文，避开 Cursor 拉起 stdio 服务器时的编码/引号问题）；mac 沿用 productName。
 const mcpCommand = packaged
   ? (process.platform === 'win32'
-    ? join(packagedAppDirectory!, '拾光.exe')
+    ? join(packagedAppDirectory!, 'ShiGuang.exe')
     : join(packagedAppDirectory!, 'Contents', 'MacOS', basename(packagedAppDirectory!, '.app')))
   : process.execPath
 const mcpServerPath = packaged

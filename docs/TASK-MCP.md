@@ -67,7 +67,7 @@ The model never supplies its identity or a lease token. One unified server proce
 }
 ```
 
-On Windows `command` is the installed `拾光.exe` and `args` points at `resources/mcp/index.mjs`.
+On Windows `command` is the installed `ShiGuang.exe` (ASCII executable name via `build.win.executableName`; the product/shortcut name stays 拾光) and `args` points at `resources/mcp/index.mjs`.
 
 The Agent identity is `workspace hash + channel + install generation`. It is intentionally not treated as a permanent conversation identity. Every MCP tool call checks the active SQLite registration; reinstalling revokes older generations, so a stale Cursor MCP process cannot claim or mutate tasks.
 

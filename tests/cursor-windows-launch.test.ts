@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
   cursorWindowsExecutableCandidates,
+  cursorWindowsStartCommand,
+  describeWindowsCdpStartFailure,
   resolveCursorWindowsExecutable,
   runningCursorWindowsExecutable,
+  windowsCursorCommandLines,
   windowsPowerShellCommandArgs
 } from '../src/infrastructure/cursor/cursor-windows-launch'
 
@@ -79,5 +82,57 @@ describe('Windows Cursor executable resolution', () => {
       throw error
     }
     await expect(runningCursorWindowsExecutable(timeout)).resolves.toBeUndefined()
+  })
+})
+
+describe('Windows Cursor launch command', () => {
+  it('wraps the whole start line in quotes and demands verbatim arguments (Node would otherwise escape the inner quotes as \\" which cmd does not understand)', () => {
+    const command = cursorWindowsStartCommand({
+      executable: 'C:\\Program Files\\Cursor\\Cursor.exe',
+      workspacePath: 'C:\\Users\\张三\\work space',
+      cdpPort: 9333
+    })
+    expect(command.file).toBe('cmd.exe')
+    expect(command.options).toEqual({ windowsVerbatimArguments: true })
+    expect(command.args.slice(0, 3)).toEqual(['/d', '/s', '/c'])
+    // cmd /s：首字符是引号则去掉首尾两个引号、其余原样——start 拿到的正是里面这一行。
+    expect(command.args[3]).toBe(
+      '"start "" "C:\\Program Files\\Cursor\\Cursor.exe" "C:\\Users\\张三\\work space" --remote-debugging-port=9333 --disable-features=LocalNetworkAccessChecks"'
+    )
+    // 普通拉起（无端口、无工作区）也走同一形态。
+    expect(cursorWindowsStartCommand({ executable: 'Cursor.exe' }).args[3]).toBe('"start "" "Cursor.exe""')
+  })
+
+  it('reads every Cursor.exe command line through the UTF-8 PowerShell entry and returns undefined when the probe itself fails', async () => {
+    const calls: string[][] = []
+    const lines = await windowsCursorCommandLines(async (_file, args) => {
+      calls.push(args)
+      return { stdout: '"C:\\Users\\demo\\AppData\\Local\\Programs\\Cursor\\Cursor.exe" --remote-debugging-port=9333 "C:\\ws"\r\n"C:\\Users\\demo\\AppData\\Local\\Programs\\Cursor\\Cursor.exe" --type=gpu-process\r\n\r\n' }
+    })
+    expect(lines).toHaveLength(2)
+    expect(lines?.[0]).toContain('--remote-debugging-port=9333')
+    expect(calls[0]?.[2]).toContain('[Console]::OutputEncoding=New-Object System.Text.UTF8Encoding($false);')
+    expect(calls[0]?.[2]).toContain("Win32_Process -Filter \"Name='Cursor.exe'\"")
+    await expect(windowsCursorCommandLines(async () => ({ stdout: '' }))).resolves.toEqual([])
+    await expect(windowsCursorCommandLines(async () => {
+      const error = new Error('spawn ETIMEDOUT') as Error & { code?: string }
+      error.code = 'ETIMEDOUT'
+      throw error
+    })).resolves.toBeUndefined()
+  })
+
+  it('tells the three "port never came up" causes apart', () => {
+    const base = { port: 9333, executable: 'C:\\Program Files\\Cursor\\Cursor.exe' }
+    expect(describeWindowsCdpStartFailure({ ...base, commandLines: undefined })).toContain('无法读取 Cursor 进程信息')
+    expect(describeWindowsCdpStartFailure({ ...base, commandLines: [] })).toContain('Cursor 没有启动起来（拉起命令：C:\\Program Files\\Cursor\\Cursor.exe）')
+    // 残留实例接管：进程在，但命令行里没有本次端口参数。
+    const takenOver = describeWindowsCdpStartFailure({ ...base, commandLines: ['"C:\\...\\Cursor.exe" --type=renderer', '"C:\\...\\Cursor.exe"'] })
+    expect(takenOver).toContain('没有 --remote-debugging-port=9333')
+    expect(takenOver).toContain('完全退出 Cursor')
+    // 带了参数但端口不通：保留段 / 安全软件，指向换端口的环境变量。
+    const blocked = describeWindowsCdpStartFailure({ ...base, commandLines: ['"C:\\...\\Cursor.exe" --remote-debugging-port=9333 "C:\\ws"'] })
+    expect(blocked).toContain('已带 --remote-debugging-port=9333 启动')
+    expect(blocked).toContain('excludedportrange')
+    expect(blocked).toContain('SG_TEAM_CURSOR_CDP_PORT')
   })
 })
