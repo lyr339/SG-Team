@@ -34,6 +34,9 @@ jobs:
             exit 1
           fi
       - run: npm run typecheck
+      # npm ≥12 默认不跑依赖的 install 脚本（allowScripts 名单只是建议 / 版本匹配规则随 npm 变），
+      # electron 的 postinstall 不一定下过二进制：显式补一次（幂等），否则 electronDist 不存在。
+      - run: node node_modules/electron/install.js
       # pack:mac + adhoc 重签 + ditto 压缩（scripts/dist-mac.mjs：未签名的 Electron 包传到别的 Mac
       # 会被 Gatekeeper 判「已损坏」；重签后变成「无法验证开发者」，系统设置里有「仍要打开」）。
       - run: npm run dist:mac
@@ -54,6 +57,9 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      # npm ≥12 默认不跑依赖的 install 脚本（allowScripts 名单只是建议 / 版本匹配规则随 npm 变），
+      # electron 的 postinstall 不一定下过二进制：显式补一次（幂等），否则 electronDist 不存在。
+      - run: node node_modules/electron/install.js
       # 失败时把日志尾部写成 annotation（Actions 日志要登录才能看，annotation 匿名可读）。
       - name: pack:win
         shell: pwsh

@@ -48,6 +48,9 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      # npm ≥12 默认不跑依赖的 install 脚本（allowScripts 名单只是建议 / 版本匹配规则随 npm 变），
+      # electron 的 postinstall 不一定下过二进制：显式补一次（幂等），否则 electronDist 不存在。
+      - run: node node_modules/electron/install.js
       # 失败时把日志尾部写成 annotation：公开仓库的 Actions 日志要登录才能看，annotation 匿名可读（API / 页面）。
       - name: pack:win
         shell: pwsh

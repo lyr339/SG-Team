@@ -24,7 +24,10 @@ npm run verify:mac      # 或 verify:win：打包产物 + 真实多进程冒烟
 Packaged output: `release/mac-arm64/拾光.app` (directory target, unsigned) and
 `release/ShiGuang-Setup-<version>.exe` (NSIS installer; `pack:win:dir` gives the
 bare `release/win-unpacked/ShiGuang.exe`). Both `pack:*` scripts reuse the Electron in
-`node_modules/electron/dist`, so no Electron download is needed at pack time.
+`node_modules/electron/dist`, so no Electron download is needed at pack time —
+provided electron's postinstall actually ran; npm ≥ 12 skips dependency install
+scripts by default, so the CI packaging jobs run `node node_modules/electron/install.js`
+after `npm ci` (idempotent; do the same locally if `electronDist does not exist`).
 
 Handing a build to someone else:
 
