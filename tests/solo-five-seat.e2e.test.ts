@@ -62,12 +62,15 @@ describe('solo five-seat end-to-end composition', () => {
       const prompts = createTeamAgentLaunchPromptPort({ getSnapshot: () => service.getSnapshot() })
       for (const channelId of ['1', '2', '3']) {
         const prompt = await prompts.fetchStartPrompt(channelId)
-        // 会话围栏：开场提示把该席位签发的 session 令牌写进两条通信调用，令牌与绑定一致。
+        // 精简开场：只在首次 check_messages 中交付一次席位令牌；后续通信工具沿用同参，
+        // 完整围栏与静默规则由 MCP Server instructions 承担。
         const token = restored.bindings.find((binding) => binding.channelId === channelId)?.sessionToken
         expect(token).toMatch(/^[a-zA-Z0-9_-]{8,128}$/)
         expect(prompt).toContain(`check_messages({channel_id:'${channelId}', session:'${token}'})`)
-        expect(prompt).toContain(`record_reply({channel_id:'${channelId}', session:'${token}', content: 完整回复正文})`)
-        expect(prompt).toContain('会话围栏')
+        expect(prompt.split(token!).length - 1).toBe(1)
+        expect(prompt).toContain('通信工具沿用同一参数')
+        expect(prompt).not.toContain('会话围栏')
+        expect(prompt.length).toBeLessThan(260)
         expect(prompt).not.toContain('team_check_in')
         expect(() => repository.resolveChannelAgentIdentity(channelId)).toThrowError(/独立席位/)
       }
@@ -128,8 +131,8 @@ describe('solo five-seat end-to-end composition', () => {
         expect(() => repository.resolveChannelAgentIdentity(channelId)).toThrowError(/独立席位/)
         const prompts = createTeamAgentLaunchPromptPort({ getSnapshot: () => service.getSnapshot() })
         const prompt = await prompts.fetchStartPrompt(channelId)
-        expect(prompt).toContain('独立模式')
-        expect(prompt).toContain('record_reply')
+        expect(prompt).toContain('独立会话')
+        expect(prompt).toContain('check_messages')
         expect(prompt).not.toContain('team_check_in')
       }
     } finally {

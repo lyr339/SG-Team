@@ -122,6 +122,21 @@ describe('AgentSessionLauncher', () => {
     expect(createCalls[0]?.prompt).toContain('[[SG_TEAM_BIND:bind-abc:CH-3]]')
   })
 
+  it('开场提示已含相同绑定标记时不重复追加', async () => {
+    const marker = '[[SG_TEAM_BIND:bind-abc:CH-3]]'
+    const { launcher, state, createCalls } = createHarness(
+      [{ channelId: '3', online: true, waiting: false }],
+      { bindingKeys: { '3': 'bind-abc' }, prompts: { '3': `团队启动\n${marker}` } }
+    )
+    const pending = launcher.launch(['3'])
+    await Promise.resolve()
+    readyComposer(state, '3', 'composer-3')
+    await Promise.resolve()
+    readyWaiting(state, '3', 'composer-3')
+    expect((await pending).state).toBe('done')
+    expect((createCalls[0]?.prompt ?? '').split(marker).length - 1).toBe(1)
+  })
+
   it('新绑定存在时不复用上一轮仍显示待命的旧 Composer', async () => {
     const { launcher, state, createCalls } = createHarness(
       [{ channelId: '3', online: true, waiting: true, composerId: 'composer-old' }],

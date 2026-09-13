@@ -719,6 +719,7 @@ export class TeamControlService {
           status: runtime.status,
           online: runtime.online,
           runtimeEvidence: runtime.runtimeEvidence,
+          awaitingUser: runtime.awaitingUser,
           waiting: runtime.waiting,
           connectionPhase: runtime.connectionPhase,
           pendingOutboundId: runtime.pendingOutboundId,

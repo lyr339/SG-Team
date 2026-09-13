@@ -73,7 +73,7 @@ describe('team agent launch prompts', () => {
     expect(prompt).not.toContain('会话围栏')
   })
 
-  it('hands the seat session token to the team Agent and tells it to stop on a fence instruction', async () => {
+  it('keeps the team launch visible text compact; check_in briefing owns the seat token and fence rules', async () => {
     const binding: RuntimeBinding = {
       id: 'binding-builder',
       workspaceId: 'workspace-a',
@@ -91,12 +91,12 @@ describe('team agent launch prompts', () => {
     }
     const prompts = createTeamAgentLaunchPromptPort({ getSnapshot: () => snapshotWith(binding) })
     const prompt = await prompts.fetchStartPrompt('2')
-    // 团队工具只需 channel_id；令牌只约束通信工具。
+    // 团队开场只负责启动 team_check_in；通信令牌随后由角色简报交付。
     expect(prompt).toContain("team_check_in({channel_id:'2'})")
-    expect(prompt).toContain('本会话令牌（session）：seat-token-builder-0001')
-    expect(prompt).toContain("session:'seat-token-builder-0001'")
-    expect(prompt).toContain('会话围栏')
-    expect(prompt).toContain('立即停止轮询并结束，不要重试')
+    expect(prompt).toContain('不要回复本条')
+    expect(prompt).not.toContain('seat-token-builder-0001')
+    expect(prompt).not.toContain('会话围栏')
+    expect(prompt.length).toBeLessThan(200)
   })
 
   it('fails before CDP launch when the channel has no installed runtime binding', async () => {
@@ -183,8 +183,9 @@ describe('team agent launch prompts', () => {
       ensureRunLaunched: () => { ensured += 1 }
     })
     const prompt = await prompts.fetchStartPrompt('2')
-    expect(prompt).toContain('独立模式')
-    expect(prompt).toContain('record_reply')
+    expect(prompt).toContain('独立会话')
+    expect(prompt).toContain('check_messages')
+    expect(prompt).toContain('不要回复本条')
     expect(prompt).not.toContain('team_check_in')
     expect(ensured).toBe(0)
   })

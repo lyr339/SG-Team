@@ -1,5 +1,5 @@
 import { WINDOW_MIN_WIDTH } from '../shared/window-layout'
-import { app, BrowserWindow, nativeImage, safeStorage, shell } from 'electron'
+import { app, BrowserWindow, Menu, nativeImage, safeStorage, shell, Tray } from 'electron'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { SqliteTaskPoolRepository } from '../infrastructure/task-pool/sqlite-task-pool-repository'
@@ -32,6 +32,11 @@ import { MemoryReviewCoordinator } from '../application/memory-review-coordinato
 import { TeamOrchestrator } from '../application/team-orchestrator'
 import { CursorAccountVault } from '../application/cursor-account-vault'
 import { cursorRuntimeMatchMessage, verifyCursorRuntimeAccountMatch } from '../application/cursor-runtime-account-verify'
+import { CursorSwitchMutex } from '../infrastructure/cursor/cursor-switch-mutex'
+import { CursorSwitchPumpInstaller } from '../infrastructure/cursor/cursor-switch-pump-installer'
+import { CursorLiveSwitcher } from '../infrastructure/cursor/cursor-live-switch'
+import { CursorRuntimeAccountBridge } from '../infrastructure/cursor/cursor-runtime-account-bridge'
+import { CursorDesktopTokenExchanger } from '../infrastructure/cursor/cursor-desktop-token-exchanger'
 import { registerCursorAccountIpc } from './register-cursor-account-ipc'
 import { registerWindowChromeIpc, syncWindowFullscreen, WINDOW_TOPBAR_HEIGHT } from './register-window-chrome-ipc'
 import { AozaiCardVault } from '../application/aozai-card-vault'
@@ -43,7 +48,9 @@ import {
 } from './safe-storage-namespace'
 import { AgentSessionLauncher } from '../application/agent-session-launcher'
 import { registerAgentLaunchIpc } from './register-agent-launch-ipc'
-import { CursorCdpSessionCreator } from '../infrastructure/cursor/cursor-cdp-session-creator'
+import { SessionWarmupService } from '../application/session-warmup-service'
+import { registerSessionWarmupIpc } from './register-session-warmup-ipc'
+import { CursorCdpSessionCreator, evaluateCdpExpression } from '../infrastructure/cursor/cursor-cdp-session-creator'
 import { CursorStreamObserver } from '../infrastructure/cursor/cursor-stream-observer'
 import { restartCursorWithCdp } from '../infrastructure/cursor/cursor-cdp-restart'
 import { CursorCdpKeeper } from '../infrastructure/cursor/cursor-cdp-keeper'
@@ -54,6 +61,12 @@ import { CursorUsageStore } from '../infrastructure/cursor/cursor-usage-store'
 import { registerCursorUsageIpc } from './register-cursor-usage-ipc'
 import { CursorUpdatePreferencesStore } from '../infrastructure/cursor/cursor-update-preferences'
 import { registerCursorUpdateIpc } from './register-cursor-update-ipc'
+import { registerCursorStorageIpc } from './register-cursor-storage-ipc'
+import { cursorStorageDatabasePorts } from './cursor-storage-worker-port'
+import createCursorStorageWorker from './cursor-storage-worker?nodeWorker'
+import { CursorStorageScanner } from '../infrastructure/cursor/cursor-storage-scanner'
+import { probeCursorRunning } from '../infrastructure/cursor/cursor-process-probe'
+import { cursorUserDataRoot, locateCursorWorkbenchBundle } from '../infrastructure/cursor/cursor-install-paths'
 import { CursorAccountDeleter } from '../infrastructure/cursor/cursor-account-deleter'
 import { CursorTokenImporter } from '../infrastructure/cursor/cursor-token-importer'
 import { CursorAccountProfileFetcher } from '../infrastructure/cursor/cursor-account-profile'
@@ -64,6 +77,7 @@ import { ExternalBrowserAccountHost } from '../infrastructure/cursor/external-br
 import type { AccountAutomationBrowserHost } from '../infrastructure/cursor/account-automation-browser-host'
 import { AccountAutomationService } from '../application/account-automation-service'
 import { AccountAutomationSettingsStore } from '../application/account-automation-store'
+import { resolveExecutionProfileId, selectAccountHandoverTarget } from '../domain/account-automation'
 import { registerAccountAutomationIpc } from './register-account-automation-ipc'
 import { LocalSessionBridge } from '../application/local-session-bridge'
 import { IPC } from '../shared/desktop-api'
@@ -74,10 +88,14 @@ import { SessionHandoffService } from '../application/session-handoff-service'
 import { RevealPathPolicy } from '../application/reveal-path-policy'
 import { registerSessionHandoffIpc } from './register-session-handoff-ipc'
 import { installLocalImageProtocol, registerLocalImageScheme } from './local-image-protocol'
+import { CursorQuestionResponder } from '../infrastructure/cursor/cursor-question-responder'
+import { CursorQuestionService } from '../application/cursor-question-service'
+import { registerCursorQuestionIpc } from './register-cursor-question-ipc'
 import { legacyUserDataDirectory, resolveUserDataDirectory } from './user-data-directory'
 import { homedir } from 'node:os'
 
 let mainWindow: BrowserWindow | undefined
+let tray: Tray | undefined
 let disposeIpc: (() => void) | undefined
 let disposeTaskPoolIpc: (() => void) | undefined
 let disposeMcpInstallerIpc: (() => void) | undefined
@@ -88,13 +106,16 @@ let disposeRunContext: (() => void) | undefined
 let disposeCursorAccountIpc: (() => void) | undefined
 let disposeAozaiIpc: (() => void) | undefined
 let disposeAgentLaunchIpc: (() => void) | undefined
+let disposeSessionWarmupIpc: (() => void) | undefined
 let disposeAccountAutomationIpc: (() => void) | undefined
 let disposeCdpKeeperIpc: (() => void) | undefined
 let disposeCursorUsageIpc: (() => void) | undefined
 let disposeCursorUpdateIpc: (() => void) | undefined
+let disposeCursorStorageIpc: (() => void) | undefined
 let disposeWindowChromeIpc: (() => void) | undefined
 let disposeWorkspaceReviewIpc: (() => void) | undefined
 let disposeSessionHandoffIpc: (() => void) | undefined
+let disposeCursorQuestionIpc: (() => void) | undefined
 let cursorCdpKeeperRef: CursorCdpKeeper | undefined
 /** 退出前清理账号自动化浏览器宿主（按当前设置解析：指纹=关窗断连；外部=noop）。 */
 let accountBrowserHostDisposeRef: (() => Promise<void>) | undefined
@@ -199,6 +220,36 @@ function setMacDockIcon(): void {
   }
 }
 
+/** macOS 菜单栏使用独立单色模板图；Dock 彩色图缩到 18px 会失去结构与对比度。 */
+function createMacTray(): void {
+  if (process.platform !== 'darwin' || tray) return
+  const iconPath = app.isPackaged
+    ? join(process.resourcesPath, 'trayTemplate.png')
+    : join(__dirname, '../../build/trayTemplate.png')
+  if (!existsSync(iconPath)) return
+  try {
+    const icon = nativeImage.createFromPath(iconPath)
+    if (icon.isEmpty()) return
+    icon.setTemplateImage(true)
+    tray = new Tray(icon)
+    tray.setToolTip('拾光')
+    const show = (): void => {
+      if (!mainWindow || mainWindow.isDestroyed()) createWindow()
+      if (mainWindow?.isMinimized()) mainWindow.restore()
+      mainWindow?.show()
+      mainWindow?.focus()
+    }
+    tray.on('click', show)
+    tray.on('right-click', () => tray?.popUpContextMenu(Menu.buildFromTemplate([
+      { label: '显示拾光', click: show },
+      { type: 'separator' },
+      { label: '退出拾光', click: () => app.quit() }
+    ])))
+  } catch (error) {
+    process.stderr.write(`[tray-icon] ${error instanceof Error ? error.message : String(error)}\n`)
+  }
+}
+
 app.on('second-instance', () => {
   if (!mainWindow) return
   if (mainWindow.isMinimized()) mainWindow.restore()
@@ -212,6 +263,7 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   // Explicitly set the running Dock tile as well as the bundle icon. macOS can
   // otherwise keep showing a cached icon from an older build with the same ID.
   setMacDockIcon()
+  createMacTray()
   const databasePath = join(app.getPath('userData'), 'task-pool.sqlite3')
   const cursorAccountVault = new CursorAccountVault(
     join(app.getPath('userData'), 'cursor-accounts.json'),
@@ -384,11 +436,18 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   }
   // 官网账号资料识别（token → email/name）：导入时把 user_xxx 换成可读邮箱备注。
   const cursorAccountProfileFetcher = new CursorAccountProfileFetcher()
+  // 自动化执行的窗口解析（唯一收口）：活跃账号绑定 ?? 默认窗口。
+  // 注意运行中语义——通道内活会话即本轮窗口锚，本解析只在「无活会话」时生效
+  //（运行起点 preflight 会显式锚定；热切接手改变活跃账号也不会抢窗）。
+  const resolveAutomationProfileId = (): string | undefined => resolveExecutionProfileId(
+    cursorAccountVault.list(),
+    accountAutomationSettingsStore.load().bitProfileId
+  )
   const fingerprintAccountChannel = new FingerprintAccountChannel({
-    // 提供方恒 Roxy，窗口 id 按设置实时解析——
+    // 提供方恒 Roxy，窗口 id 按「活跃账号绑定 ?? 默认窗口」实时解析——
     // 通道内部按「client 实例 + profileId」缓存会话，两者任一变化都会重开
     resolveClient: resolveFingerprintClient,
-    resolveProfileId: () => accountAutomationSettingsStore.load().bitProfileId,
+    resolveProfileId: resolveAutomationProfileId,
     shouldAcknowledgeModelDataPolicies: () => (
       accountAutomationSettingsStore.load().autoAcknowledgeModelDataPolicies !== false
     )
@@ -403,12 +462,27 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     return fingerprintAccountChannel
   }
   accountBrowserHostDisposeRef = () => resolveAccountBrowserHost().dispose()
+  // 冷热切换互斥锁：热切（运行中泵票）与冷切换（杀进程写库）绝不能并发。
+  const cursorSwitchMutex = new CursorSwitchMutex()
+  const cursorSwitchPumpInstaller = new CursorSwitchPumpInstaller()
+  // 无感换号核心：换票（纯 HTTP PKCE）→ 回环泵票 → 补丁回执 → vault.select。
+  const cursorLiveSwitcher = new CursorLiveSwitcher({
+    vault: cursorAccountVault,
+    exchanger: new CursorDesktopTokenExchanger(),
+    bridge: new CursorRuntimeAccountBridge(),
+    installer: cursorSwitchPumpInstaller,
+    mutex: cursorSwitchMutex,
+    suppressRuntimeWatch: () => cursorCdpKeeperRef?.suppress(15_000),
+    trace: (message) => console.log(message)
+  })
   const accountAutomationService = new AccountAutomationService({
     settings: accountAutomationSettingsStore,
     aozai: aozaiService,
     cardVault: aozaiCardVault,
     accounts: cursorAccountVault,
-    readBrowserToken: () => resolveAccountBrowserHost().readToken(),
+    // preflight＝运行起点：显式锚定本轮窗口（活跃账号绑定 ?? 默认窗口），
+    // 活会话此后即为运行锚——热切接手、默认窗口改动都不会把链抢到别的窗口。
+    readBrowserToken: () => resolveAccountBrowserHost().readToken(resolveAutomationProfileId()),
     refreshBrowserToken: (previousToken) => resolveAccountBrowserHost().refresh(previousToken),
     // 运行态一致性硬闸（preflight 早查+复检都跑）：Cursor 登录 ≠ 活跃账号时中止，
     // 防「删错官网账号 / 会话僵尸」。vault_empty 视为通过——后续「尚未选择账号」闸会拦。
@@ -426,10 +500,20 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
         : { ok: false, reason: cursorRuntimeMatchMessage(match) }
     },
     deleter: new CursorAccountDeleter(),
+    // 无感换号：退款成功后热切到接手号（内部全降级，永不影响自动化主链）；
+    // 接手号 = 排除当前处理号后最近更新者（与小辰 pickNextMain 的 newestFirst 同序）。
+    liveSwitch: (accountId) => cursorLiveSwitcher.switchLive({ accountId }),
+    prepareLiveSwitch: (accountId) => cursorLiveSwitcher.prepare({ accountId }),
+    pickNextAccount: (excludeId) => selectAccountHandoverTarget(
+      cursorAccountVault.list(),
+      excludeId,
+      accountAutomationSettingsStore.load().seamlessHandoverAccountId
+    )?.id,
     // 秒级通道（首选）：宿主各自的「刷新 + token 轮换守门 + 页内删除」实现
     inBrowserDeleter: {
       prepareRefresh: () => resolveAccountBrowserHost().prepareRefresh(),
-      deleteWhenReady: () => resolveAccountBrowserHost().deleteWhenReady(),
+      // 归属守门透传：删除前核对页面会话仍属被处理账号（指纹宿主执行，外部宿主忽略）
+      deleteWhenReady: (expectedAccountId) => resolveAccountBrowserHost().deleteWhenReady(expectedAccountId),
       // 账号隔离清场（仅删除成功后由 service 调用；外部宿主无此能力时跳过）
       clearSiteData: () => resolveAccountBrowserHost().clearSiteData?.() ?? Promise.resolve(),
       // 完整收尾事务（指纹宿主）：页面卸载 → 关窗 → Roxy 缓存清理 → 指纹轮换。
@@ -566,20 +650,35 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
       //（cookie 留 profile；后续自动化链会重新拉起）。拿到 token 顺手识别官网资料
       //（email/注册时间）——label 显示邮箱而不是 user_xxx；识别失败静默降级。
       // 识别与关窗并行（互不依赖），网络差时最多多等一个超时窗口。
+      // 窗口锚定「导入来源」的显式选择（用户此刻操作的目标窗口，而非活跃账号绑定）；
+      // 返回 profileId 供保存时写入账号绑定——导入即绑定，之后该账号的自动化固定走此窗口。
       importFromFingerprint: async () => {
-        const token = await fingerprintAccountChannel.readToken()
+        const profileId = accountAutomationSettingsStore.load().bitProfileId
+        const token = await fingerprintAccountChannel.readToken(profileId)
         const userId = token.includes('::') ? (token.split('::')[0] ?? '') : ''
         const [profile] = await Promise.all([
           cursorAccountProfileFetcher.fetch(token).catch(() => undefined),
           fingerprintAccountChannel.dispose().catch(() => {})
         ])
-        return { token, userId, browserName: 'Roxy指纹', profile }
+        return { token, userId, browserName: 'Roxy指纹', profile, profileId }
       },
       // 用户提前登录入口：打开选定窗口并导航 cursor.com，不关窗、会话留缓存
       //（登录后点导入直接热连接读 cookie；用户手动关窗由断链感知自动失效缓存）。
-      openFingerprintLogin: () => fingerprintAccountChannel.openLoginPage(),
-      cleanupFingerprintEnvironment: () => fingerprintAccountChannel.cleanupEnvironment(),
-      acknowledgeModelDataPolicies: () => fingerprintAccountChannel.acknowledgeRequiredModelDataPolicies()
+      // 显式锚定「导入来源」选定窗口——这是用户显式操作，不跟随活跃账号绑定。
+      openFingerprintLogin: () => fingerprintAccountChannel.openLoginPage(
+        accountAutomationSettingsStore.load().bitProfileId
+      ),
+      cleanupFingerprintEnvironment: () => fingerprintAccountChannel.cleanupEnvironment(
+        accountAutomationSettingsStore.load().bitProfileId
+      ),
+      // 手动政策确认锚定活跃账号语义（结果用于活跃账号凭据原地更新）：按绑定解析。
+      acknowledgeModelDataPolicies: () => fingerprintAccountChannel.acknowledgeRequiredModelDataPolicies(
+        resolveAutomationProfileId()
+      ),
+      // 无感换号手动入口与补丁管理（维护页状态卡/一键安装）。
+      liveSwitcher: cursorLiveSwitcher,
+      switchPumpInstaller: cursorSwitchPumpInstaller,
+      switchMutex: cursorSwitchMutex
     }
   )
   disposeAozaiIpc = registerAozaiIpc(aozaiCardVault, aozaiService, cursorAccountVault, () => mainWindow)
@@ -611,6 +710,16 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     },
     () => mainWindow
   )
+  // 会话预热探针：与 launcher 完全解耦（不取开场提示词、不绑通道、不触发自动化），
+  // 只复用同一 CDP 创建/观测能力；候选模型由遥测目录按牌价偏好链解析。
+  const warmupSnapshotSource = desktopSessionService
+  const sessionWarmupService = new SessionWarmupService({
+    creator: cursorCdpCreator,
+    evaluate: evaluateCdpExpression,
+    activeWorkspacePath: activeTeamWorkspacePath,
+    listModels: () => warmupSnapshotSource.getSnapshot().cursorModels ?? []
+  })
+  disposeSessionWarmupIpc = registerSessionWarmupIpc(sessionWarmupService, () => mainWindow)
   disposeCdpKeeperIpc = registerCdpKeeperIpc(cursorCdpKeeper, cursorCdpSettingsStore, () => mainWindow)
   disposeCursorUsageIpc = registerCursorUsageIpc(cursorUsageTracker, () => mainWindow)
   disposeWorkspaceReviewIpc = registerWorkspaceReviewIpc(workspaceReviewReader, () => mainWindow, {
@@ -643,7 +752,37 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     () => mainWindow,
     { downloadsPath: () => app.getPath('downloads') }
   )
+  // 拾光内回答 Cursor 原生 ask_question：与会话创建/过程观察共用同一 Cursor 窗口解析。
+  disposeCursorQuestionIpc = registerCursorQuestionIpc(
+    new CursorQuestionService({
+      team: teamControlService,
+      sessions: desktopSessionService,
+      responder: new CursorQuestionResponder({
+        resolveWorkbenchSocket: (workspacePath) => cursorCdpCreator.resolveWorkbenchSocket(workspacePath)
+      })
+    }),
+    () => mainWindow
+  )
   disposeCursorUpdateIpc = registerCursorUpdateIpc(cursorUpdatePreferencesStore, () => mainWindow)
+  // Cursor 本机存储清理：盘点只读；对话历史的数据库分析/删除在 worker 线程（22GB 库上
+  // 一次索引遍历要数秒）；目录类清理走系统回收站。拾光运行绑定过的 Composer 永不清理。
+  const cursorStorageUserDataRoot = cursorUserDataRoot()
+  const cursorStorageBundlePath = locateCursorWorkbenchBundle()
+  const cursorStorageScanner = new CursorStorageScanner({
+    userDataRoot: cursorStorageUserDataRoot,
+    workbenchBundlePath: cursorStorageBundlePath,
+    cursorRunning: () => probeCursorRunning(),
+    protectedComposerIds: () => teamControlRepository
+      ? teamControlRepository.loadTeamControl().bindings.flatMap((binding) => binding.composerId ? [binding.composerId] : [])
+      : [],
+    ...cursorStorageDatabasePorts(createCursorStorageWorker),
+    trashItem: (path) => shell.trashItem(path)
+  })
+  disposeCursorStorageIpc = registerCursorStorageIpc(
+    cursorStorageScanner,
+    { userDataRoot: cursorStorageUserDataRoot, workbenchBundlePath: cursorStorageBundlePath },
+    () => mainWindow
+  )
   disposeWindowChromeIpc = registerWindowChromeIpc(() => mainWindow)
   disposeAccountAutomationIpc = registerAccountAutomationIpc(accountAutomationService, () => mainWindow, {
     // 窗口列表按当前设置的提供方实时拉取（Roxy 需先保存 API Key）
@@ -715,6 +854,8 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
 })
 
 app.on('before-quit', () => {
+  tray?.destroy()
+  tray = undefined
   void accountBrowserHostDisposeRef?.().catch(() => {})
   cursorStreamObserver?.dispose()
   cursorUsageTrackerRef?.dispose()
@@ -740,13 +881,16 @@ app.on('before-quit', () => {
   disposeCursorAccountIpc?.()
   disposeAozaiIpc?.()
   disposeAgentLaunchIpc?.()
+  disposeSessionWarmupIpc?.()
   disposeAccountAutomationIpc?.()
   disposeCdpKeeperIpc?.()
   disposeCursorUsageIpc?.()
   disposeCursorUpdateIpc?.()
+  disposeCursorStorageIpc?.()
   disposeWindowChromeIpc?.()
   disposeWorkspaceReviewIpc?.()
   disposeSessionHandoffIpc?.()
+  disposeCursorQuestionIpc?.()
   cursorCdpKeeperRef?.stop()
   teamControlService?.dispose()
   teamControlRepository?.close()

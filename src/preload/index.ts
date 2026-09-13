@@ -27,6 +27,7 @@ const api: SgDesktopApi = {
   saveCursorAccount: (input) => ipcRenderer.invoke(IPC.cursorAccountsSave, input),
   selectCursorAccount: (accountId) => ipcRenderer.invoke(IPC.cursorAccountsSelect, accountId),
   removeCursorAccount: (accountId) => ipcRenderer.invoke(IPC.cursorAccountsRemove, accountId),
+  setCursorAccountFingerprintProfile: (accountId, profileId) => ipcRenderer.invoke(IPC.cursorAccountsSetFingerprintProfile, { accountId, profileId }),
   importCursorAccountFromLocalCursor: () => ipcRenderer.invoke(IPC.cursorAccountsImportFromLocal),
   importCursorAccountFromBrowser: () => ipcRenderer.invoke(IPC.cursorAccountsImportFromBrowser),
   importCursorAccountFromFingerprint: () => ipcRenderer.invoke(IPC.cursorAccountsImportFromFingerprint),
@@ -34,6 +35,10 @@ const api: SgDesktopApi = {
   cleanupFingerprintEnvironment: () => ipcRenderer.invoke(IPC.cursorAccountsCleanupFingerprintEnvironment),
   acknowledgeCursorModelDataPolicies: () => ipcRenderer.invoke(IPC.cursorAccountsAcknowledgeModelDataPolicies),
   restartCursorWithAccount: (accountId) => ipcRenderer.invoke(IPC.cursorAccountsRestartWith, accountId),
+  switchCursorAccountLive: (accountId) => ipcRenderer.invoke(IPC.cursorAccountsSwitchLive, accountId),
+  getCursorSwitchPumpStatus: () => ipcRenderer.invoke(IPC.cursorSwitchPumpStatus),
+  ensureCursorSwitchPump: () => ipcRenderer.invoke(IPC.cursorSwitchPumpEnsure),
+  removeCursorSwitchPump: () => ipcRenderer.invoke(IPC.cursorSwitchPumpRemove),
   verifyCursorRuntimeAccount: () => ipcRenderer.invoke(IPC.cursorAccountsVerifyRuntime),
   refreshCursorMembership: () => ipcRenderer.invoke(IPC.cursorAccountsRefreshMembership),
   refreshCursorAccountMemberships: (accountIds) => ipcRenderer.invoke(IPC.cursorAccountsRefreshMemberships, accountIds),
@@ -45,10 +50,15 @@ const api: SgDesktopApi = {
   launchAgentSessions: (requests) => ipcRenderer.invoke(IPC.agentLaunchStart, requests),
   getAgentLaunchPlan: () => ipcRenderer.invoke(IPC.agentLaunchGet),
   enableCursorCdp: () => ipcRenderer.invoke(IPC.agentLaunchEnableCdp),
+  runSessionWarmup: () => ipcRenderer.invoke(IPC.sessionWarmupRun),
+  getSessionWarmupRun: () => ipcRenderer.invoke(IPC.sessionWarmupGet),
   getCursorCdpSettings: () => ipcRenderer.invoke(IPC.cursorCdpGetSettings),
   saveCursorCdpSettings: (settings) => ipcRenderer.invoke(IPC.cursorCdpSaveSettings, settings),
   getCursorUpdatePreferences: () => ipcRenderer.invoke(IPC.cursorUpdateGetPreferences),
   setCursorAutoUpdateDisabled: (disabled) => ipcRenderer.invoke(IPC.cursorUpdateSetAutoUpdateDisabled, disabled),
+  scanCursorStorage: (input) => ipcRenderer.invoke(IPC.cursorStorageScan, input),
+  cleanCursorStorage: (request) => ipcRenderer.invoke(IPC.cursorStorageCleanup, request),
+  revealCursorStorage: (id) => ipcRenderer.invoke(IPC.cursorStorageReveal, id),
   cancelCdpAutoHealCountdown: () => ipcRenderer.invoke(IPC.cursorCdpCancelCountdown),
   onCdpAutoHealEvent: (listener) => {
     const wrapped = (_event: Electron.IpcRendererEvent, payload: Parameters<typeof listener>[0]): void => listener(payload)
@@ -71,6 +81,8 @@ const api: SgDesktopApi = {
   sendMessage: (input) => ipcRenderer.invoke(IPC.sendMessage, input),
   withdrawQueuedMessage: (input) => ipcRenderer.invoke(IPC.withdrawQueuedMessage, input),
   releaseQueuedMessage: (input) => ipcRenderer.invoke(IPC.releaseQueuedMessage, input),
+  answerCursorQuestion: (input) => ipcRenderer.invoke(IPC.answerCursorQuestion, input),
+  skipCursorQuestion: (input) => ipcRenderer.invoke(IPC.skipCursorQuestion, input),
   getSessionHandoffContext: (input) => ipcRenderer.invoke(IPC.sessionHandoffContext, input),
   deliverSessionHandoff: (input) => ipcRenderer.invoke(IPC.sessionHandoffDeliver, input),
   revealPathInFolder: (input) => ipcRenderer.invoke(IPC.revealPathInFolder, input),
@@ -144,6 +156,11 @@ const api: SgDesktopApi = {
     const handler = (_event: Electron.IpcRendererEvent, plan: Parameters<typeof listener>[0]): void => listener(plan)
     ipcRenderer.on(IPC.agentLaunchProgress, handler)
     return () => ipcRenderer.removeListener(IPC.agentLaunchProgress, handler)
+  },
+  onSessionWarmupProgress: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, run: Parameters<typeof listener>[0]): void => listener(run)
+    ipcRenderer.on(IPC.sessionWarmupProgress, handler)
+    return () => ipcRenderer.removeListener(IPC.sessionWarmupProgress, handler)
   }
 }
 

@@ -187,7 +187,10 @@ export class AgentSessionLauncher {
     }
 
     if (bindingKey) {
-      prompt += `\n\n本次 Cursor 会话绑定标记：${cursorComposerBindingMarker({ bindingKey, channelId: item.channelId })}`
+      const marker = cursorComposerBindingMarker({ bindingKey, channelId: item.channelId })
+      // 团队启动提示由 TeamControlService 直接投递时已自带标记；独立会话提示
+      // 由 Launcher 追加。统一保证恰好一次，避免团队开场重复两行绑定信息。
+      if (!prompt.includes(marker)) prompt += `\n${marker}`
     }
 
     this.setStage(
