@@ -29,9 +29,8 @@ Every protocol rule is stated once, at the layer that owns it:
 | Layer | Text | Owns |
 | --- | --- | --- |
 | Server `instructions` (once per session) | `buildUnifiedServerInstructions` | the complete protocol: tool map, reply loop, silence rule, boundaries, termination |
-| Launch hint (once per seat) | `buildTeamLaunchHint` / `buildSoloLaunchHint` | identity, first call, session token |
-| First delivery suffix | `buildDeliverySuffix({ isFirstDelivery: true })` | the "持续对话协议" summary with the concrete `record_reply` / `check_messages` calls |
-| Every later delivery | two-line reminder under `CHANNEL_USER_DELIVERY_MARKER` | what to do when this turn ends |
+| Launch hint (once per seat) | `buildTeamLaunchHint` / `buildSoloLaunchHint` | mode/channel, first call and only the dynamic session parameter needed by a solo seat; the Composer binding marker appears exactly once |
+| Every real delivery | compact two-line `buildDeliverySuffix` | `CHANNEL_USER_DELIVERY_MARKER` plus the turn-closing `record_reply → check_messages` reminder; the full protocol is not repeated |
 | Tool `nextAction` | `buildChannelWaitInstruction` | "go back to `check_messages` silently" |
 | `team_check_in` briefing | `buildTeamRoleBriefing` | role mission, boundaries, per-role workflow, collaboration rules — no protocol restatement |
 
@@ -77,9 +76,11 @@ The Agent identity is `workspace hash + channel + install generation`. It is int
 `check_messages` and `record_reply` are the only user-facing communication tools. Both take `channel_id` and an optional `session`:
 
 ```text
-check_messages({ channel_id: '2', session?: '<seat token>', reply?: string })
+check_messages({ channel_id: '2', session?: '<seat token>', reply?: string, tick?: '<poll cursor>' })
 record_reply({ channel_id: '2', session?: '<seat token>', content, title?, groupId?, taskId?, files? })
 ```
+
+- `tick` is the anti-loop poll cursor: every non-error `check_messages` result (delivery suffix and keepalive body alike) names the exact next call with a fresh, monotonically increasing `tick` (the persisted per-channel turn counter). The agent echoes the latest value on every poll so no two consecutive calls share identical arguments — host IDE "repeated/looping tool call" safeguards key on identical calls and would otherwise misfire on the long-poll pattern and talk the agent into stopping (2026-09-12 incident). The server never validates `tick`; it is fail-open and safe to omit (first call, legacy sessions).
 
 - `session` is the per-seat token (`^[a-zA-Z0-9_-]{8,128}$`) that the launch hint / role briefing hands to the Cursor session. It is issued when the seat is installed, rotated when the seat is rebuilt, cleared on standby takeover, and moved with the donor on manual handoff. The Agent never invents it; if the launch instruction did not include one, the call is made without it.
 - Without `session` the call is `legacy` and follows the previous contract unchanged (sessions created before the upgrade, standby takeovers).

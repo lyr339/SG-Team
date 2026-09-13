@@ -16,6 +16,7 @@
 | 1.4 | ✅ 已完成：主进程定时器采取克制收敛，最重的 Cursor telemetry 空闲期 2s → 10s 降频，活跃期不变；统一总线暂缓以避免时序风险 | P1 | M | desktop-session-service |
 | 1.5 | ✅ 已完成：relay conversations 引用共享 + session fingerprint 缓存 + enrich 层同步缓存；基准 4 通道 × 200 轮显示 conversations 75% 复用、session 100% 复用 | P1 | S–M | channel-message-relay / desktop-session-service |
 | 1.6 | 依赖瘦身择机：MCP bundle 970K（zod v4 + MCP SDK），renderer 764K；评估树摇与按需引入 | P2 | M | out/ 实测 |
+| 1.7 | 过程流重活外移择机：present/safePlain/diff 计算从 Cursor 页面内挪到 Node 侧（页面只采集最小原始数据）。背景：2026-09-12 根因分析确认 Cursor 1h+ 卡顿源于 hook 每次写入全量扫描回合气泡；同日已完成阴性缓存/快照节流/增量缓存三步（成本已降 1–2 个数量级），外移只省 CPU 不省 O(回合) 读取，收益递减——动手前需重新实测评估 | P2 | M–L | cursor-stream-observer / cursor-cdp-session-creator |
 
 ## 2. 交互与视觉一致性
 

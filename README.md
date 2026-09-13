@@ -28,6 +28,24 @@ On Windows, electron-builder shells out to `powershell.exe`; make sure
 `C:\Windows\System32\WindowsPowerShell\v1.0` is on `PATH` in the shell you run
 it from.
 
+Windows checklist (the items that have produced "many errors" before):
+
+- Node **24+** for every `npm` script: the MCP bundle and the smoke scripts use
+  `node:sqlite`, so an older Node fails with `ERR_UNKNOWN_BUILTIN_MODULE`.
+- Behind a slow GitHub connection set `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`
+  for `npm ci` and `ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/`
+  for the NSIS target; `pack:win` itself only needs the local Electron dist.
+- Cursor must be the pinned **3.6.31** build installed **per user**
+  (`%LOCALAPPDATA%\Programs\Cursor`). The hot account switch patches
+  `resources\app\out\vs\workbench\workbench.desktop.main.js`; an all-users install
+  under `Program Files` needs an elevated 拾光, and Cursor must be fully closed
+  while the patch is written (Windows refuses to replace an open file).
+- The hot-switch pump polls loopback port **51824**. Hyper-V / WSL2 / Docker
+  reserve dynamic port ranges; check `netsh int ipv4 show excludedportrange protocol=tcp`
+  before installing the patch, because the port is baked into the bundle.
+- Process probes go through PowerShell with UTF-8 output; Chinese user names and
+  install paths are supported, but `Cursor.exe` must not be renamed.
+
 Design walkthrough (pure-browser preview with a mocked desktop API, plus a
 headless screenshot matrix over the right-hand inspector and the 运行 page:
 panels / run states × light/dark × narrow × transparent × reduced-motion ×
