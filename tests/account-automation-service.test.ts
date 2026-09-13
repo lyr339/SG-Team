@@ -11,6 +11,8 @@ interface FakeAccount {
   label: string
   active: boolean
   token: string
+  /** 账号绑定的指纹窗口（映射进 metadata，驱动 preflight 的绑定态文案）。 */
+  fingerprintProfileId?: string
   removed?: boolean
 }
 
@@ -50,6 +52,10 @@ interface HarnessOptions {
   finalize?: { error?: string }
   /** Cursor 运行态一致性核对（提供时注入 verifyCursorRuntime）。 */
   verifyCursorRuntime?: { ok: boolean; reason?: string }
+  seamlessHandoverEnabled?: boolean
+  nextAccountId?: string
+  liveSwitch?: (accountId: string) => Promise<{ switched: boolean; reason?: string; warning?: string; retryable?: boolean }>
+  prepareLiveSwitch?: (accountId: string) => Promise<{ commit(): Promise<{ switched: boolean; reason?: string; warning?: string; retryable?: boolean }> }>
 }
 
 function createHarness(options: HarnessOptions = {}) {
@@ -58,6 +64,7 @@ function createHarness(options: HarnessOptions = {}) {
   store.save({
     enabled: options.enabled ?? true,
     delaySec: options.delaySec ?? 7,
+    seamlessHandoverEnabled: options.seamlessHandoverEnabled ?? true,
     ...(options.postProcessDelaySec !== undefined ? { postProcessDelaySec: options.postProcessDelaySec } : {})
   })
 
@@ -73,15 +80,19 @@ function createHarness(options: HarnessOptions = {}) {
   const refreshCalls: string[] = []
   const prepareCalls: number[] = []
   const fastDeleteCalls: number[] = []
+  const fastDeleteAccountIds: Array<string | undefined> = []
   const disposeCalls: number[] = []
   const clearSiteDataCalls: number[] = []
   const finalizeCalls: number[] = []
   const runMessages: string[] = []
+  const liveSwitchCalls: string[] = []
+  const liveSwitchOrder: string[] = []
 
   const service = new AccountAutomationService({
     settings: store,
     aozai: {
       processToken: async (token, _onProgress, processOptionsArg) => {
+        liveSwitchOrder.push('process')
         processCalls.push(token)
         processOptions.push(processOptionsArg)
         return options.processResult ?? { ok: true, message: '处理完成', remaining: 45 }
@@ -95,7 +106,8 @@ function createHarness(options: HarnessOptions = {}) {
     },
     accounts: {
       list: () => accounts.filter((a) => !a.removed).map((a) => ({
-        id: a.id, label: a.label, maskedToken: '••••', active: a.active, createdAt: 0, updatedAt: 0
+        id: a.id, label: a.label, maskedToken: '••••', active: a.active, createdAt: 0, updatedAt: 0,
+        ...(a.fingerprintProfileId ? { fingerprintProfileId: a.fingerprintProfileId } : {})
       })),
       credential: (id?: string) => {
         const account = accounts.find((a) => (id ? a.id === id : a.active))
@@ -119,7 +131,9 @@ function createHarness(options: HarnessOptions = {}) {
     refreshBrowserToken: async (previousToken: string) => {
       refreshCalls.push(previousToken)
       if (options.browserTokenError) throw new Error(options.browserTokenError)
-      if (previousToken !== 'old-token') throw new Error('previousToken 未正确传递')
+      // previousToken 必须是当前活跃账号的凭据（不再硬编码 'old-token'，以覆盖 user::jwt 形态）
+      const activeToken = accounts.find((a) => a.active)?.token
+      if (previousToken !== activeToken) throw new Error('previousToken 未正确传递')
       return options.browserToken ?? 'new-token-from-browser'
     },
     ...(options.readBrowserToken !== undefined || options.readBrowserTokenError !== undefined
@@ -138,14 +152,36 @@ function createHarness(options: HarnessOptions = {}) {
         return options.deleteResult ?? { ok: true, message: 'Cursor 官网账号已删除' }
       }
     },
+    ...((options.liveSwitch || options.prepareLiveSwitch) ? {
+      ...(options.liveSwitch ? {
+        liveSwitch: async (accountId: string) => {
+          liveSwitchCalls.push(accountId)
+          return options.liveSwitch!(accountId)
+        }
+      } : {}),
+      ...(options.prepareLiveSwitch ? {
+        prepareLiveSwitch: async (accountId: string) => {
+          liveSwitchOrder.push(`prepare:${accountId}`)
+          const prepared = await options.prepareLiveSwitch!(accountId)
+          return {
+            commit: async () => {
+              liveSwitchOrder.push(`commit:${accountId}`)
+              return prepared.commit()
+            }
+          }
+        }
+      } : {}),
+      pickNextAccount: () => options.nextAccountId
+    } : {}),
     ...(options.inBrowser
       ? {
           inBrowserDeleter: {
             prepareRefresh: async () => {
               prepareCalls.push(1)
             },
-            deleteWhenReady: async () => {
+            deleteWhenReady: async (expectedAccountId?: string) => {
               fastDeleteCalls.push(1)
+              fastDeleteAccountIds.push(expectedAccountId)
               const spec = options.inBrowser!
               if (spec.kind === 'deleted') return { kind: 'deleted' as const }
               if (spec.kind === 'not_logged_in') {
@@ -193,10 +229,13 @@ function createHarness(options: HarnessOptions = {}) {
     refreshCalls,
     prepareCalls,
     fastDeleteCalls,
+    fastDeleteAccountIds,
     disposeCalls,
     clearSiteDataCalls,
     finalizeCalls,
     runMessages,
+    liveSwitchCalls,
+    liveSwitchOrder,
     cleanup: () => rmSync(dir, { recursive: true, force: true })
   }
 }
@@ -280,6 +319,62 @@ describe('AccountAutomationService', () => {
     expect(harness.accounts[0]?.removed).toBe(true)
   })
 
+  it('归属复核：轮换出的新会话属于其他账号 → 中止防误删（不入库、不删除、保留本地）', async () => {
+    const harness = createHarness({
+      accounts: [{ id: 'acc-1', label: 'A', active: true, token: 'user_aaa::old-jwt' }],
+      deleteResults: [{ ok: false, authExpired: true, message: '会话已失效（官网要求重新登录）' }],
+      browserToken: 'user_bbb::new-jwt' // 窗口已被改登成别的账号
+    })
+    cleanup = harness.cleanup
+    harness.service.onAllSessionsTriggered('plan-1')
+    const run = await waitForTerminal(harness.service)
+    expect(run.phase).toBe('failed')
+    expect(run.message).toContain('新会话已属于其他账号')
+    // 错账号凭据绝不入库、绝不用于删除；本地记录保留
+    expect(harness.replacedTokens).toHaveLength(0)
+    expect(harness.deleteCalls).toEqual(['user_aaa::old-jwt'])
+    expect(harness.accounts[0]?.removed).not.toBe(true)
+  })
+
+  it('归属复核：同账号轮换（user_aaa::old → user_aaa::new）→ 守卫放行并走通轮换链', async () => {
+    const harness = createHarness({
+      accounts: [{ id: 'acc-1', label: 'A', active: true, token: 'user_aaa::old-jwt' }],
+      deleteResults: [
+        { ok: false, authExpired: true, message: '会话已失效（官网要求重新登录）' },
+        { ok: true, message: 'Cursor 官网账号已删除' }
+      ],
+      browserToken: 'user_aaa::new-jwt'
+    })
+    cleanup = harness.cleanup
+    harness.service.onAllSessionsTriggered('plan-1')
+    const run = await waitForTerminal(harness.service)
+    expect(run.phase).toBe('done')
+    expect(harness.replacedTokens).toEqual([{ id: 'acc-1', token: 'user_aaa::new-jwt' }])
+    expect(harness.deleteCalls).toEqual(['user_aaa::old-jwt', 'user_aaa::new-jwt'])
+    expect(harness.accounts[0]?.removed).toBe(true)
+  })
+
+  it('秒级通道收到被处理账号的归属前缀（userId），供页内删除前守门', async () => {
+    const harness = createHarness({
+      accounts: [{ id: 'acc-1', label: 'A', active: true, token: 'user_aaa::old-jwt' }],
+      inBrowser: { kind: 'deleted' }
+    })
+    cleanup = harness.cleanup
+    harness.service.onAllSessionsTriggered('plan-1')
+    const run = await waitForTerminal(harness.service)
+    expect(run.phase).toBe('done')
+    expect(harness.fastDeleteAccountIds).toEqual(['user_aaa'])
+  })
+
+  it('秒级通道归属前缀：token 非 user::jwt 形态时传 undefined（守卫退化为不拦）', async () => {
+    const harness = createHarness({ inBrowser: { kind: 'deleted' } })
+    cleanup = harness.cleanup
+    harness.service.onAllSessionsTriggered('plan-1')
+    const run = await waitForTerminal(harness.service)
+    expect(run.phase).toBe('done')
+    expect(harness.fastDeleteAccountIds).toEqual([undefined])
+  })
+
   it('删除被拒（非会话失效，如仍有有效订阅）→ 不轮换、直接失败并保留本地记录', async () => {
     const harness = createHarness({
       deleteResults: [{ ok: false, message: 'workspace has active subscription' }]
@@ -358,13 +453,50 @@ describe('AccountAutomationService', () => {
     expect(harness.deleteCalls).toHaveLength(0)
   })
 
+  it('preflight 文案按绑定态精准归因：未绑定账号指向默认窗口', async () => {
+    const harness = createHarness({ readBrowserToken: 'some-other-token' })
+    cleanup = harness.cleanup
+    harness.service.onAllSessionsTriggered('plan-1')
+    const run = await waitForTerminal(harness.service)
+    expect(run.phase).toBe('failed')
+    expect(run.message).toContain('默认指纹窗口登录态与拾光凭据不一致')
+    expect(run.message).toContain('请重新从浏览器导入 Token')
+  })
+
+  it('preflight 文案按绑定态精准归因：已绑定账号点出绑定窗口与修法', async () => {
+    const harness = createHarness({
+      readBrowserToken: 'some-other-token',
+      accounts: [{ id: 'acc-1', label: '工作号', active: true, token: 'old-token', fingerprintProfileId: 'win-1' }]
+    })
+    cleanup = harness.cleanup
+    harness.service.onAllSessionsTriggered('plan-1')
+    const run = await waitForTerminal(harness.service)
+    expect(run.phase).toBe('failed')
+    expect(run.message).toContain('账号「工作号」绑定的指纹窗口登录态与拾光凭据不一致')
+    expect(run.message).toContain('改绑窗口')
+    expect(harness.processCalls).toHaveLength(0)
+  })
+
+  it('preflight 未登录：已绑定账号的文案指到绑定窗口', async () => {
+    const harness = createHarness({
+      readBrowserToken: '',
+      accounts: [{ id: 'acc-1', label: '工作号', active: true, token: 'old-token', fingerprintProfileId: 'win-1' }]
+    })
+    cleanup = harness.cleanup
+    harness.service.onAllSessionsTriggered('plan-1')
+    const run = await waitForTerminal(harness.service)
+    expect(run.phase).toBe('failed')
+    expect(run.message).toContain('账号「工作号」绑定的指纹窗口未登录 cursor.com')
+    expect(harness.processCalls).toHaveLength(0)
+  })
+
   it('浏览器会话读取失败 → 消耗卡密前中止', async () => {
     const harness = createHarness({ readBrowserTokenError: '钥匙串读取失败' })
     cleanup = harness.cleanup
     harness.service.onAllSessionsTriggered('plan-1')
     const run = await waitForTerminal(harness.service)
     expect(run.phase).toBe('failed')
-    expect(run.message).toContain('浏览器会话读取失败')
+    expect(run.message).toContain('默认指纹窗口读取失败')
     expect(harness.processCalls).toHaveLength(0)
   })
 
@@ -650,7 +782,9 @@ describe('AccountAutomationService', () => {
       // 旧设置迁移：postProcessDelaySec 缺省沿用 delaySec（同步钳制）
       postProcessDelaySec: 60,
       browserHost: 'fingerprint',
-      autoAcknowledgeModelDataPolicies: true
+      bitProfileId: undefined,
+      autoAcknowledgeModelDataPolicies: true,
+      seamlessHandoverEnabled: true
     })
     const low = harness.store.save({ enabled: true, delaySec: 0 })
     expect(low.delaySec).toBe(0.5)
@@ -658,6 +792,95 @@ describe('AccountAutomationService', () => {
     expect(harness.store.save({ enabled: true, delaySec: 2.5 }).delaySec).toBe(2.5)
     expect(harness.store.save({ enabled: true, delaySec: 2.3 }).delaySec).toBe(2.5)
     expect(harness.store.save({ enabled: true, delaySec: 2.2 }).delaySec).toBe(2)
+  })
+
+  it('退款后热切到接手账号，并把成功结果收进完成消息', async () => {
+    const harness = createHarness({
+      accounts: [
+        { id: 'acc-1', label: 'A', active: true, token: 'old-token' },
+        { id: 'acc-2', label: 'B', active: false, token: 'next-token' }
+      ],
+      nextAccountId: 'acc-2',
+      liveSwitch: async () => ({ switched: true })
+    })
+    cleanup = harness.cleanup
+    harness.service.onAllSessionsTriggered('live-success')
+    const run = await waitForTerminal(harness.service)
+    expect(harness.liveSwitchCalls).toEqual(['acc-2'])
+    expect(run.message).toContain('无感换号已完成（Cursor 未重启）')
+  })
+
+  it('在奥仔处理前启动接手票据预热，退款成功后才提交运行态切换', async () => {
+    const harness = createHarness({
+      accounts: [
+        { id: 'acc-1', label: 'A', active: true, token: 'old-token' },
+        { id: 'acc-2', label: 'B', active: false, token: 'next-token' }
+      ],
+      nextAccountId: 'acc-2',
+      prepareLiveSwitch: async () => ({ commit: async () => ({ switched: true }) })
+    })
+    cleanup = harness.cleanup
+    harness.service.onAllSessionsTriggered('live-prewarm')
+    const run = await waitForTerminal(harness.service)
+    expect(harness.liveSwitchOrder).toEqual(['prepare:acc-2', 'process', 'commit:acc-2'])
+    expect(run.handover).toMatchObject({ accountId: 'acc-2', label: 'B', status: 'done' })
+  })
+
+  it('开关关闭或缺少接手账号时不触发热切', async () => {
+    const disabled = createHarness({
+      seamlessHandoverEnabled: false,
+      nextAccountId: 'acc-2',
+      liveSwitch: async () => ({ switched: true })
+    })
+    disabled.service.onAllSessionsTriggered('live-disabled')
+    await waitForTerminal(disabled.service)
+    expect(disabled.liveSwitchCalls).toHaveLength(0)
+    disabled.cleanup()
+
+    const noTarget = createHarness({ liveSwitch: async () => ({ switched: true }) })
+    noTarget.service.onAllSessionsTriggered('live-no-target')
+    await waitForTerminal(noTarget.service)
+    expect(noTarget.liveSwitchCalls).toHaveLength(0)
+    noTarget.cleanup()
+    cleanup = () => {}
+  })
+
+  it('热切失败时只对同一接手账号补切一次，不切回已处理账号', async () => {
+    let attempt = 0
+    const harness = createHarness({
+      accounts: [
+        { id: 'acc-1', label: 'A', active: true, token: 'old-token' },
+        { id: 'acc-2', label: 'B', active: false, token: 'next-token' }
+      ],
+      nextAccountId: 'acc-2',
+      liveSwitch: async () => ++attempt === 1
+        ? { switched: false, reason: 'first timeout', retryable: true }
+        : { switched: true }
+    })
+    cleanup = harness.cleanup
+    harness.service.onAllSessionsTriggered('live-retry')
+    const run = await waitForTerminal(harness.service)
+    expect(harness.liveSwitchCalls).toEqual(['acc-2', 'acc-2'])
+    expect(run.message).toContain('无感换号已完成（补切')
+  })
+
+  it('删除失败也统一结算已启动的热切结果', async () => {
+    const harness = createHarness({
+      accounts: [
+        { id: 'acc-1', label: 'A', active: true, token: 'old-token' },
+        { id: 'acc-2', label: 'B', active: false, token: 'next-token' }
+      ],
+      nextAccountId: 'acc-2',
+      liveSwitch: async () => ({ switched: true, warning: '本地标记待修复' }),
+      deleteResult: { ok: false, message: 'delete failed' }
+    })
+    cleanup = harness.cleanup
+    harness.service.onAllSessionsTriggered('live-failed-delete')
+    const run = await waitForTerminal(harness.service)
+    expect(run.phase).toBe('failed')
+    // finally 可能在 waitForTerminal 观察到 failed 后继续补充消息，等待微任务收口。
+    for (let i = 0; i < 10; i += 1) await Promise.resolve()
+    expect(harness.service.getRun().message).toContain('无感换号已完成，但需处理')
   })
 
   it('设置持久化：指纹浏览器窗口 id（非空字符串保留、空串/非法值剔除）', () => {
@@ -677,6 +900,21 @@ describe('AccountAutomationService', () => {
     expect(harness.store.save({ enabled: false, delaySec: 5 }).autoAcknowledgeModelDataPolicies).toBe(true)
     harness.store.save({ enabled: false, delaySec: 5, autoAcknowledgeModelDataPolicies: false })
     expect(harness.store.load().autoAcknowledgeModelDataPolicies).toBe(false)
+  })
+
+  it('设置持久化：接手账号保留有效 ID，空值回到自动选择', () => {
+    const harness = createHarness()
+    cleanup = harness.cleanup
+    expect(harness.store.save({
+      enabled: true,
+      delaySec: 5,
+      seamlessHandoverAccountId: '  acc-2  '
+    }).seamlessHandoverAccountId).toBe('acc-2')
+    expect(harness.store.save({
+      enabled: true,
+      delaySec: 5,
+      seamlessHandoverAccountId: ' '
+    }).seamlessHandoverAccountId).toBeUndefined()
   })
 
   it('设置持久化：指纹浏览器提供方字段已废弃（统一 Roxy，读取即丢弃）', () => {

@@ -240,7 +240,7 @@ describe('FingerprintAccountChannel', () => {
   it('未选择窗口 → 抛错引导选择', async () => {
     const harness = createHarness()
     harness.setProfileId(undefined)
-    await expect(harness.channel.readToken()).rejects.toThrow(/未选择指纹浏览器窗口/)
+    await expect(harness.channel.readToken()).rejects.toThrow(/未绑定指纹浏览器窗口/)
     expect(harness.openCalls).toHaveLength(0)
   })
 
@@ -271,8 +271,117 @@ describe('FingerprintAccountChannel', () => {
     it('未选择窗口 → 抛错引导选择', async () => {
       const harness = createHarness()
       harness.setProfileId(undefined)
-      await expect(harness.channel.openLoginPage()).rejects.toThrow(/未选择指纹浏览器窗口/)
+      await expect(harness.channel.openLoginPage()).rejects.toThrow(/未绑定指纹浏览器窗口/)
       expect(harness.openCalls).toHaveLength(0)
+    })
+  })
+
+  describe('窗口锚定与显式指定（账号 ↔ 窗口绑定语义）', () => {
+    it('显式 override 优先于解析结果（用户操作/运行起点的目标窗口）', async () => {
+      const harness = createHarness() // 解析恒为 win-1
+      harness.socket.tokenQueue = [OLD_TOKEN]
+      await expect(harness.channel.readToken('win-2')).resolves.toBe('user_abc::old-jwt')
+      expect(harness.openCalls).toEqual(['win-2'])
+    })
+
+    it('运行中锚定：活会话即本轮窗口锚——解析漂移（热切接手改变活跃账号）不抢窗', async () => {
+      const harness = createHarness()
+      harness.socket.tokenQueue = [OLD_TOKEN]
+      await harness.channel.readToken() // 运行起点：preflight 在 win-1 锚定
+      // 模拟热切完成：活跃账号切换 → 解析结果漂移到 win-2
+      harness.setProfileId('win-2')
+      await harness.channel.prepareRefresh()
+      // 删除链必须留在 win-1：不重开窗口、不新建 target
+      expect(harness.openCalls).toEqual(['win-1'])
+      expect(harness.socket.methodCount('Target.createTarget')).toBe(1)
+    })
+
+    it('无活会话时才按解析开窗（新一轮运行的起点语义）', async () => {
+      const harness = createHarness()
+      harness.socket.tokenQueue = [OLD_TOKEN]
+      await harness.channel.readToken()
+      await harness.channel.dispose() // 上一轮结束，会话释放
+      harness.setProfileId('win-2') // 新活跃账号绑定 win-2
+      await harness.channel.prepareRefresh()
+      expect(harness.openCalls).toEqual(['win-1', 'win-2'])
+    })
+
+    it('显式切窗重置 token 轮换基准（旧窗口基准对新窗口无意义）', async () => {
+      const harness = createHarness()
+      harness.socket.tokenQueue = [OLD_TOKEN]
+      await harness.channel.readToken() // lastKnownToken = old（win-1）
+      await harness.channel.openLoginPage('win-2') // 显式切窗：基准必须清空
+      // 若基准残留：deleteWhenReady 会等「≠ old」的轮换直到超时回退；
+      // 基准已清则跳过轮换守门，就绪后直接删除。
+      harness.socket.readinessQueue = [READY]
+      harness.socket.pollResultQueue = [JSON.stringify({ st: 200, body: '' })]
+      await harness.channel.prepareRefresh()
+      const result = await harness.channel.deleteWhenReady()
+      expect(result).toEqual({ kind: 'deleted' })
+      expect(harness.socket.fireCalled()).toBe(true)
+      expect(harness.openCalls).toEqual(['win-1', 'win-2'])
+    })
+
+    it('cleanupEnvironment 显式定向：活会话属于别的窗口时不做页面级清理，只清目标 profile', async () => {
+      const harness = createHarness()
+      harness.socket.tokenQueue = [OLD_TOKEN]
+      await harness.channel.readToken() // 活会话在 win-1
+      await harness.channel.cleanupEnvironment('win-2')
+      // win-1 的页面未被当作清理对象（无站点数据清理），仅释放 CDP；
+      // 清场事务（降级为关窗）落在目标 win-2 上
+      expect(harness.socket.methodCount('Storage.clearDataForOrigin')).toBe(0)
+      expect(harness.socket.methodCount('Target.closeTarget')).toBe(1)
+      expect(harness.closeWindowCalls).toEqual(['win-2'])
+    })
+
+    it('cleanupEnvironment 无 override：活会话属于目标窗口时先做页面级清理', async () => {
+      const harness = createHarness()
+      harness.socket.tokenQueue = [OLD_TOKEN]
+      await harness.channel.readToken()
+      await harness.channel.cleanupEnvironment()
+      expect(harness.socket.methodCount('Storage.clearDataForOrigin')).toBe(2)
+      expect(harness.closeWindowCalls).toEqual(['win-1'])
+    })
+  })
+
+  describe('deleteWhenReady 归属守门（expectedAccountId）', () => {
+    it('轮换后页面会话仍属被处理账号 → 放行页内删除', async () => {
+      const harness = createHarness()
+      harness.socket.tokenQueue = [OLD_TOKEN]
+      await harness.channel.readToken()
+      harness.socket.readinessQueue = [READY]
+      harness.socket.tokenQueue = [OLD_TOKEN, NEW_TOKEN]
+      harness.socket.pollResultQueue = [JSON.stringify({ st: 200, body: '' })]
+      await harness.channel.prepareRefresh()
+      const result = await harness.channel.deleteWhenReady('user_abc')
+      expect(result).toEqual({ kind: 'deleted' })
+      expect(harness.socket.fireCalled()).toBe(true)
+    })
+
+    it('轮换后页面会话已属其他账号 → 转协议链复核，绝不开火', async () => {
+      const harness = createHarness()
+      harness.socket.tokenQueue = [OLD_TOKEN]
+      await harness.channel.readToken()
+      harness.socket.readinessQueue = [READY]
+      // 轮换出了别的账号的 token（窗口被改登）
+      harness.socket.tokenQueue = [OLD_TOKEN, encodeURIComponent('user_xyz::other-jwt')]
+      await harness.channel.prepareRefresh()
+      const result = await harness.channel.deleteWhenReady('user_abc')
+      expect(result.kind).toBe('retry_legacy')
+      if (result.kind === 'retry_legacy') expect(result.message).toContain('归属')
+      expect(harness.socket.fireCalled()).toBe(false)
+    })
+
+    it('删除前读不到会话（登录态丢失）→ 转协议链复核，绝不开火', async () => {
+      const harness = createHarness()
+      // 不走 readToken（无轮换基准 → 跳过轮换守门），直接删除链
+      harness.socket.readinessQueue = [READY]
+      harness.socket.tokenQueue = [undefined]
+      await harness.channel.prepareRefresh()
+      const result = await harness.channel.deleteWhenReady('user_abc')
+      expect(result.kind).toBe('retry_legacy')
+      if (result.kind === 'retry_legacy') expect(result.message).toContain('归属')
+      expect(harness.socket.fireCalled()).toBe(false)
     })
   })
 

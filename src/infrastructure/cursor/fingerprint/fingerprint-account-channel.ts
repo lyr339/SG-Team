@@ -213,19 +213,33 @@ export class FingerprintAccountChannel implements AccountAutomationBrowserHost {
   private requireProfileId(): string {
     const profileId = this.resolveProfileId()
     if (!profileId) {
-      throw new Error('未选择指纹浏览器窗口（请在账号管线设置里按当前网络选择「代理/直连」窗口）')
+      throw new Error('当前账号未绑定指纹浏览器窗口，且未设置默认窗口（请在「导入来源」选择窗口后导入，导入即自动绑定）')
     }
     return profileId
   }
 
   /**
    * 打开窗口并建立 CDP 会话；已打开时复用（奥仔处理期间保持热连接）。
-   * profileId 或 client 实例变化时重开（切「代理/直连」窗口走这里）。
+   *
+   * 窗口来源的两类语义：
+   *   - 显式 override（用户操作/运行起点锚定）：会话身份必须匹配，不同即重开；
+   *   - 无 override（自动化链运行中的后续调用）：**活会话即本轮窗口锚**——
+   *     热切接手会改变活跃账号，进而改变解析结果，但运行中的删除链绝不允许
+   *     跳到另一个窗口（否则会在接手账号的登录态里误删官网账号）。
+   *     无活会话时才按解析规则（活跃账号绑定 ?? 默认窗口）开窗。
    */
-  private async ensureSession(): Promise<ChannelSession> {
-    const profileId = this.requireProfileId()
+  private async ensureSession(profileIdOverride?: string): Promise<ChannelSession> {
     const client = this.resolveClient()
-    if (this.session?.profileId === profileId && this.session.client === client) return this.session
+    const override = profileIdOverride?.trim()
+    if (override) {
+      if (this.session?.profileId === override && this.session.client === client) return this.session
+      return this.openSession(client, override)
+    }
+    if (this.session && this.session.client === client) return this.session
+    return this.openSession(client, this.requireProfileId())
+  }
+
+  private async openSession(client: FingerprintBrowser, profileId: string): Promise<ChannelSession> {
     // 仅同身份的进行中开窗可复用：不同 profileId/client 的并发调用各自开窗，
     // 谁后完成谁覆盖 session 缓存（断链回调按实例比对，不会误删）。
     if (this.opening && this.opening.profileId === profileId && this.opening.client === client) {
@@ -249,6 +263,8 @@ export class FingerprintAccountChannel implements AccountAutomationBrowserHost {
         socket.onClose(() => {
           if (this.session === next) this.session = undefined
         })
+        // 窗口锚切换：上一窗口的 token 轮换基准对新窗口无意义，随旧会话一并失效。
+        if (this.session && this.session.profileId !== profileId) this.lastKnownToken = undefined
         this.session = next
         return next
       } catch (error) {
@@ -273,8 +289,8 @@ export class FingerprintAccountChannel implements AccountAutomationBrowserHost {
     return found?.value ? decodeURIComponent(found.value) : undefined
   }
 
-  private async readTokenFromCdp(): Promise<string | undefined> {
-    return this.readTokenFromSession(await this.ensureSession())
+  private async readTokenFromCdp(profileIdOverride?: string): Promise<string | undefined> {
+    return this.readTokenFromSession(await this.ensureSession(profileIdOverride))
   }
 
   private async navigate(bustPrefix: string): Promise<void> {
@@ -310,9 +326,11 @@ export class FingerprintAccountChannel implements AccountAutomationBrowserHost {
    * 与导入链路的衔接：会话留在缓存且连接保持热——用户登录后点「从指纹浏览器导入」
    * 直接读到新 cookie，无需冷启动。**不关窗**（用户要自己操作，关窗交给用户或
    * 后续自动化链的 dispose）；断链感知兜底：用户手动关窗后缓存自动失效。
+   *
+   * profileIdOverride：用户显式操作恒传（「导入来源」选定的窗口），不受活跃账号绑定影响。
    */
-  async openLoginPage(): Promise<void> {
-    const session = await this.ensureSession()
+  async openLoginPage(profileIdOverride?: string): Promise<void> {
+    const session = await this.ensureSession(profileIdOverride)
     await session.cdp.send('Page.navigate', { url: CURSOR_ORIGIN }, session.sessionId)
     session.cursorPageOpened = true
   }
@@ -377,13 +395,13 @@ export class FingerprintAccountChannel implements AccountAutomationBrowserHost {
   }
 
   /** 手动配置入口与自动导入共用的单一业务出口。 */
-  async acknowledgeRequiredModelDataPolicies(): Promise<{
+  async acknowledgeRequiredModelDataPolicies(profileIdOverride?: string): Promise<{
     token: string
     changed: boolean
     policies: CursorModelDataPolicyConsentSuccess[]
   }> {
     // 一次操作固定锚定起始 session；并发切 profile 时，后续导航/查询/复读都不会串到另一窗口。
-    const session = await this.ensureSession()
+    const session = await this.ensureSession(profileIdOverride)
     const token = await this.readTokenFromSession(session)
     if (!token) throw new Error('指纹浏览器窗口内未登录 cursor.com（请先在该窗口手动登录一次）')
     const policies = await this.ensureRequiredModelDataPolicies(session, token)
@@ -401,15 +419,18 @@ export class FingerprintAccountChannel implements AccountAutomationBrowserHost {
   /**
    * preflight：读 profile 内的 WorkosCursorSessionToken（顺带开窗并缓存轮换基准）。
    * 未登录/指纹浏览器不可达/未选窗口时抛错，由调用方在消耗卡密前中止。
+   *
+   * profileIdOverride：调用方显式锚定目标窗口（自动化 preflight＝活跃账号绑定 ?? 默认；
+   * 指纹导入＝「导入来源」选定窗口）。缺省时走「活会话锚定 ?? 解析规则」。
    */
-  async readToken(): Promise<string> {
+  async readToken(profileIdOverride?: string): Promise<string> {
     if (!this.shouldAcknowledgeModelDataPolicies()) {
-      const token = await this.readTokenFromCdp()
+      const token = await this.readTokenFromCdp(profileIdOverride)
       if (!token) throw new Error('指纹浏览器窗口内未登录 cursor.com（请先在该窗口手动登录一次）')
       this.lastKnownToken = token
       return token
     }
-    return (await this.acknowledgeRequiredModelDataPolicies()).token
+    return (await this.acknowledgeRequiredModelDataPolicies(profileIdOverride)).token
   }
 
   /**
@@ -440,8 +461,13 @@ export class FingerprintAccountChannel implements AccountAutomationBrowserHost {
   /**
    * 页面就绪 + token 轮换完成后页内秒级删除。
    * 返回语义与 Edge 通道一致：deleted / not_logged_in / retry_legacy（回退纯协议链）。
+   *
+   * expectedAccountId（被处理账号的 userId 前缀）：发起删除前的归属守门——
+   * 当前页面会话的账号前缀必须与之相同，否则转协议链复核（由服务层拦停）。
+   * 防的是极端时序：热切接手后活跃账号已变更，若窗口此时被重登成其他账号
+   * （或会话刚失效被重建），绝不在错误登录态里删除官网账号。
    */
-  async deleteWhenReady(): Promise<InBrowserDeleteResult> {
+  async deleteWhenReady(expectedAccountId?: string): Promise<InBrowserDeleteResult> {
     const readyDeadline = this.now() + this.pageReadyTimeoutMs
     let authChainSince: number | undefined
     let ready = false
@@ -484,6 +510,15 @@ export class FingerprintAccountChannel implements AccountAutomationBrowserHost {
       }
       if (!rotated) {
         return { kind: 'retry_legacy', message: 'token 轮换超时（认证链未换发新会话，回退协议链）' }
+      }
+    }
+
+    // 归属守门：删除动作不可撤销，开火前必须确认页面会话仍属被处理账号。
+    if (expectedAccountId) {
+      const current = await this.readTokenFromCdp().catch(() => undefined)
+      const currentAccountId = current?.split('::', 1)[0]?.trim()
+      if (!currentAccountId || currentAccountId !== expectedAccountId) {
+        return { kind: 'retry_legacy', message: '页面会话归属与被处理账号不一致，转协议链复核' }
       }
     }
 
@@ -577,18 +612,23 @@ export class FingerprintAccountChannel implements AccountAutomationBrowserHost {
    * clear_local_cache / clear_server_cache / random_env。有活会话时先做页面级
    * 卸载清理再走事务。清理后该 profile 的 cursor.com 登录态清空（需重新登录），
    * 指纹轮换为全新环境——用于多账号隔离兜底与残场重置。
+   *
+   * profileIdOverride：用户显式操作恒传（「导入来源」选定的窗口）；活会话仅当
+   * 它属于目标窗口时才做页面级清理——绝不把别的窗口当成清理对象。
    */
-  async cleanupEnvironment(): Promise<void> {
+  async cleanupEnvironment(profileIdOverride?: string): Promise<void> {
+    const profileId = profileIdOverride?.trim() || this.requireProfileId()
     if (this.session) {
-      try {
-        await this.clearSiteData()
-      } catch {
-        // 页面级清理尽力而为；Roxy 本地缓存清理覆盖同样的数据面。
+      if (this.session.profileId === profileId) {
+        try {
+          await this.clearSiteData()
+        } catch {
+          // 页面级清理尽力而为；Roxy 本地缓存清理覆盖同样的数据面。
+        }
       }
       await this.releaseSession()
     }
     const client = this.resolveClient()
-    const profileId = this.requireProfileId()
     await this.finalizeProfileWithRetry(client, profileId)
   }
 

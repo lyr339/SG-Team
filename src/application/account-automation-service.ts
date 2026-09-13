@@ -27,13 +27,23 @@ export interface AccountAutomationServiceDeps {
   verifyCursorRuntime?: () => { ok: boolean; reason?: string }
   deleter: Pick<CursorAccountDeleter, 'deleteAccount'>
   /**
+   * 无感换号（热切）：奥仔退款成功后把运行中的 Cursor 热切到接手账号。
+   * 结果永不 throw（内部全降级）；缺省 = 未装配热切能力，自动化主链不受影响。
+   */
+  liveSwitch?: (accountId: string) => Promise<LiveSwitchResult>
+  /** 自动化预热入口：只兑换票据，commit 才触碰 Cursor 运行态。 */
+  prepareLiveSwitch?: (accountId: string) => Promise<{ commit(): Promise<LiveSwitchResult> }>
+  /** 选接手账号（排除当前处理号；updatedAt 最新优先）；无可接手号返回 undefined。 */
+  pickNextAccount?: (excludeId: string) => string | undefined
+  /**
    * 页内秒级通道（首选）：页面刷新 + token 轮换完成后直接在浏览器会话内删除官网账号——
    * 删除不需要 token 值，绕开 cookie 落盘等待（~20s → ~3s）。
    * 不可用时返回 retry_legacy，服务回退 cookie 轮换通道。
    */
   inBrowserDeleter?: {
     prepareRefresh: () => Promise<void>
-    deleteWhenReady: () => Promise<InBrowserDeleteResult>
+    /** expectedAccountId＝被处理账号的 userId 前缀：删除发起前的归属守门（指纹宿主执行）。 */
+    deleteWhenReady: (expectedAccountId?: string) => Promise<InBrowserDeleteResult>
     /**
      * 账号隔离：官网账号删除成功后、关窗前清空宿主内 cursor.com 站点数据
      * （cookie/匿名 id/localStorage——防下一账号被风控关联）。可选（旧宿主无）。
@@ -48,7 +58,32 @@ export interface AccountAutomationServiceDeps {
   sleep?: (ms: number) => Promise<void>
 }
 
+/** token 的账号归属（userId 前缀）；仅 user_xxx::jwt 形态可判定，其余形态不猜（守卫退化为不拦）。 */
+function tokenAccountId(token: string): string | undefined {
+  if (!token.includes('::')) return undefined
+  return token.split('::', 1)[0]?.trim() || undefined
+}
+
 type AccountAutomationListener = (run: AccountAutomationRun) => void
+
+interface LiveSwitchResult {
+  switched: boolean
+  reason?: string
+  warning?: string
+  retryable?: boolean
+  /** 自动化内部标记：本轮结果来自一次精准补投。 */
+  retried?: boolean
+}
+
+interface LiveSwitchPreparation {
+  runSeq: number
+  targetAccountId: string
+  targetLabel: string
+  prepared: Promise<
+    | { ok: true; commit: () => Promise<LiveSwitchResult> }
+    | { ok: false; result: LiveSwitchResult }
+  >
+}
 
 const TICK_MS = 500
 /** 限流退避：起始 5s、逐次翻倍、单次上限 120s、总窗口 5min（自首次限流起算）。 */
@@ -79,6 +114,11 @@ export class AccountAutomationService {
   private running = false
   /** 运行序号：新一轮触发取代倒计时中的旧轮，旧链检测到序号变化即静默退出。 */
   private runSeq = 0
+  /** 本轮退款成功后放出的热切；绑定 run 序号与目标，避免跨轮污染或补切旧账号。 */
+  private pendingLiveSwitch: {
+    runSeq: number
+    promise: Promise<LiveSwitchResult>
+  } | undefined
 
   constructor(private readonly deps: AccountAutomationServiceDeps) {
     this.now = deps.now ?? Date.now
@@ -201,18 +241,136 @@ export class AccountAutomationService {
   }
 
   /**
+   * 奥仔处理开始时预热接手票据（不触碰 Cursor 运行态）：开关关闭、能力未装配
+   * 或没有接手号时跳过；目标账号在这里冻结，后续不随列表变化漂移。
+   */
+  private prepareLiveSwitch(processedAccountId: string, runSeq: number): LiveSwitchPreparation | undefined {
+    if (this.getSettings().seamlessHandoverEnabled === false) return undefined
+    if ((!this.deps.prepareLiveSwitch && !this.deps.liveSwitch) || !this.deps.pickNextAccount) return undefined
+    const nextId = this.deps.pickNextAccount(processedAccountId)
+    if (!nextId) return undefined
+    const targetLabel = this.deps.accounts.list().find((account) => account.id === nextId)?.label ?? nextId
+    this.setRun({
+      handover: {
+        accountId: nextId,
+        label: targetLabel,
+        status: 'preparing',
+        message: '正在准备 Cursor 会话票据',
+        startedAt: this.now()
+      }
+    })
+    const prepared = (this.deps.prepareLiveSwitch
+      ? this.deps.prepareLiveSwitch(nextId)
+          .then((value) => ({ ok: true as const, commit: () => value.commit() }))
+          .catch((error: unknown) => ({
+            ok: false as const,
+            result: { switched: false, reason: error instanceof Error ? error.message : String(error) }
+          }))
+      : Promise.resolve({
+          ok: true as const,
+          commit: () => this.deps.liveSwitch!(nextId)
+        }))
+      .then((result) => {
+        if (this.runSeq === runSeq && this.run.handover?.accountId === nextId) {
+          this.setRun({
+            handover: {
+              ...this.run.handover,
+              status: result.ok ? 'preparing' : 'failed',
+              message: result.ok ? '票据已就绪，等待退款完成' : (result.result.reason ?? '票据准备失败'),
+              ...(result.ok ? {} : { finishedAt: this.now() })
+            }
+          })
+        }
+        return result
+      })
+    return {
+      runSeq,
+      targetAccountId: nextId,
+      targetLabel,
+      prepared
+    }
+  }
+
+  /** 退款确认后提交已预热票据，并把结果即时写入独立子状态。 */
+  private startLiveSwitch(preparation: LiveSwitchPreparation): typeof this.pendingLiveSwitch {
+    this.setRun({
+      handover: {
+        accountId: preparation.targetAccountId,
+        label: preparation.targetLabel,
+        status: 'switching',
+        message: '等待 Cursor 接收并确认',
+        startedAt: this.run.handover?.startedAt ?? this.now()
+      }
+    })
+    const run = async (): Promise<LiveSwitchResult> => {
+      const prepared = await preparation.prepared
+      return prepared.ok ? prepared.commit() : prepared.result
+    }
+    const promise = run().then(async (first) => {
+      if (!first.retryable || this.runSeq !== preparation.runSeq) return first
+      this.setRun({
+        handover: {
+          accountId: preparation.targetAccountId,
+          label: preparation.targetLabel,
+          status: 'switching',
+          message: '首次回执超时，正在补投一次',
+          startedAt: this.run.handover?.startedAt ?? this.now()
+        }
+      })
+      const retried = await run()
+      return { ...retried, retried: true }
+    }).then((result) => {
+      if (this.runSeq === preparation.runSeq) {
+        this.setRun({
+          handover: {
+            accountId: preparation.targetAccountId,
+            label: preparation.targetLabel,
+            status: result.switched ? 'done' : 'failed',
+            message: result.switched
+              ? result.retried ? 'Cursor 已在补投后完成接手' : 'Cursor 已完成接手'
+              : (result.reason ?? 'Cursor 未完成接手'),
+            startedAt: this.run.handover?.startedAt ?? this.now(),
+            finishedAt: this.now()
+          }
+        })
+      }
+      return result
+    })
+    return {
+      runSeq: preparation.runSeq,
+      promise
+    }
+  }
+
+  /** 等待已在退款后即时执行（含精准补投）的热切，并生成最终摘要。 */
+  private async settleLiveSwitch(runSeq: number): Promise<string | undefined> {
+    const pending = this.pendingLiveSwitch
+    if (!pending || pending.runSeq !== runSeq) return undefined
+    this.pendingLiveSwitch = undefined
+    const first = await pending.promise
+    if (first.switched) return first.warning
+      ? `无感换号已完成，但需处理：${first.warning}`
+      : first.retried
+        ? '无感换号已完成（补切，Cursor 未重启）'
+        : '无感换号已完成（Cursor 未重启）'
+    return `无感换号未完成（${first.reason ?? '未知原因'}），可在账号列表手动切换`
+  }
+
+  /**
    * 所有删除成功分支的唯一收口（Profile 事务）：
    * ① 本地凭据移除；② 浏览器清场事务。分别执行、分别记错，任一失败不阻断
    * 另一项——账号加固已成功是事实，收尾异常按降级口径呈现（不置 failed，
    * 不再让用户以为加固失败；旧版曾把清场失败误报成整个流程失败）。
    */
-  private async finishDeletedAccount(accountId: string, successMessage: string): Promise<void> {
+  private async finishDeletedAccount(accountId: string, successMessage: string, runSeq: number): Promise<void> {
     let localRemoveError: string | undefined
     try {
       this.deps.accounts.remove(accountId)
     } catch (error) {
       localRemoveError = error instanceof Error ? error.message : String(error)
     }
+    // 热切 settle 与浏览器清场并行：两条通道本就独立（回环泵 ↔ Roxy profile）。
+    const liveSwitchNotePromise = this.settleLiveSwitch(runSeq)
     const finalizer = this.deps.inBrowserDeleter?.finalizeDeletedAccount
     const legacyClear = this.deps.inBrowserDeleter?.clearSiteData
     let cleanupError: string | undefined
@@ -225,6 +383,8 @@ export class AccountAutomationService {
         cleanupError = error instanceof Error ? error.message : String(error)
       }
     }
+    const liveSwitchNote = await liveSwitchNotePromise
+    const message = liveSwitchNote ? `${successMessage}；${liveSwitchNote}` : successMessage
     if (localRemoveError || cleanupError) {
       const details = [
         localRemoveError ? `本地记录移除失败：${localRemoveError}` : undefined,
@@ -232,16 +392,17 @@ export class AccountAutomationService {
       ].filter((entry): entry is string => Boolean(entry)).join('；')
       this.setRun({
         phase: 'done',
-        message: `${successMessage}；收尾异常（不影响加固结果）：${details.replace(/\s+/g, ' ').slice(0, 200)}`,
+        message: `${message}；收尾异常（不影响加固结果）：${details.replace(/\s+/g, ' ').slice(0, 200)}`,
         finishedAt: this.now()
       })
       return
     }
-    this.setRun({ phase: 'done', message: successMessage, finishedAt: this.now() })
+    this.setRun({ phase: 'done', message, finishedAt: this.now() })
   }
 
   private async execute(planId: string): Promise<void> {
     const mySeq = ++this.runSeq
+    this.pendingLiveSwitch = undefined
     this.running = true
     this.cancelRequested = false
     const startedAt = this.now()
@@ -252,6 +413,7 @@ export class AccountAutomationService {
         planId,
         startedAt,
         finishedAt: undefined,
+        handover: undefined,
         remainingSec: settings.delaySec,
         message: `将在 ${settings.delaySec}s 后自动处理当前账号（可取消）`
       })
@@ -270,14 +432,21 @@ export class AccountAutomationService {
         // 消耗卡密前的最后一道闸：浏览器会话必须可读且与拾光凭据一致——
         // 否则会把已失效/错误账号的 token 提交给奥仔，失败还浪费一次排查时间
         if (this.deps.readBrowserToken) {
+          // 会话来源描述：指纹宿主精确到「账号绑定窗口 / 默认窗口」，外部宿主为系统浏览器。
+          // 绑定语义让报错能指到具体窗口与修法，而不是泛泛的「重新导入」。
+          const host = this.getSettings().browserHost ?? 'fingerprint'
+          const bound = Boolean(active.fingerprintProfileId)
+          const sessionSource = host === 'external'
+            ? '系统浏览器会话'
+            : bound ? `账号「${active.label}」绑定的指纹窗口` : '默认指纹窗口'
           let browserToken = ''
           try {
             browserToken = (await this.deps.readBrowserToken()).trim()
           } catch (error) {
             const detail = error instanceof Error ? error.message : String(error)
-            return `浏览器会话读取失败（${detail.replace(/\s+/g, ' ').slice(0, 80)}），自动化中止`
+            return `${sessionSource}读取失败（${detail.replace(/\s+/g, ' ').slice(0, 80)}），自动化中止`
           }
-          if (!browserToken) return '浏览器中未登录 cursor.com（请先登录并从浏览器导入 Token），自动化中止'
+          if (!browserToken) return `${sessionSource}未登录 cursor.com——请登录后重新导入 Token，自动化中止`
           let vaultToken = ''
           try {
             vaultToken = this.deps.accounts.credential(active.id).trim()
@@ -285,7 +454,10 @@ export class AccountAutomationService {
             vaultToken = ''
           }
           if (vaultToken && browserToken !== vaultToken) {
-            return '浏览器会话与拾光凭据不一致（请重新从浏览器导入 Token），自动化中止'
+            const guidance = host !== 'external' && bound
+              ? '该窗口可能已改登其他账号——请打开绑定窗口重新登录后导入，或在账号列表改绑窗口'
+              : '请重新从浏览器导入 Token'
+            return `${sessionSource}登录态与拾光凭据不一致（${guidance}），自动化中止`
           }
         }
         return undefined
@@ -322,6 +494,9 @@ export class AccountAutomationService {
 
       this.setRun({ phase: 'processing', message: '奥仔自助处理中…' })
       const previousToken = this.deps.accounts.credential(account.id)
+      // 目标在本轮固定；票据兑换与奥仔请求并行。预热不触碰 Cursor，只有退款
+      // 成功后的 startLiveSwitch 才提交运行态写票。
+      const liveSwitchPreparation = this.prepareLiveSwitch(account.id, mySeq)
       const processed = await this.deps.aozai.processToken(
         previousToken,
         (_state, message) => {
@@ -330,9 +505,21 @@ export class AccountAutomationService {
         { refreshRemaining: false }
       )
       if (!processed.ok) {
-        this.setRun({ phase: 'failed', message: `奥仔处理失败：${processed.message}（本地账号已保留）`, finishedAt: this.now() })
+        this.setRun({
+          phase: 'failed',
+          message: `奥仔处理失败：${processed.message}（本地账号已保留）`,
+          handover: undefined,
+          finishedAt: this.now()
+        })
         return
       }
+
+      // 退款成功即热切（对齐小辰 accountRefunded 点）：旧号额度已废，运行中的
+      // Cursor 必须尽快落到接手号上；加固倒计时/删除与热切并行，互不阻塞。
+      // fire-and-forget：结果在 finishDeletedAccount 收口时 settle 呈现。
+      this.pendingLiveSwitch = liveSwitchPreparation
+        ? this.startLiveSwitch(liveSwitchPreparation)
+        : undefined
 
       // 加固前第二段倒计时：奥仔已完成（卡密已扣），此段取消只跳过加固、保留本地账号。
       const beforeHardening = await this.waitCountdown({
@@ -353,7 +540,8 @@ export class AccountAutomationService {
         let fast: InBrowserDeleteResult
         try {
           await inBrowser.prepareRefresh()
-          fast = await inBrowser.deleteWhenReady()
+          // 归属守门透传：删除前核对页面会话仍属被处理账号（仅可判定形态生效）
+          fast = await inBrowser.deleteWhenReady(tokenAccountId(previousToken))
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error)
           fast = { kind: 'retry_legacy', message: detail.replace(/\s+/g, ' ').slice(0, 160) }
@@ -361,7 +549,8 @@ export class AccountAutomationService {
         if (fast.kind === 'deleted') {
           await this.finishDeletedAccount(
             account.id,
-            '自动化完成：已处理、账号已加固（浏览器会话内秒级执行）、浏览器环境已清场'
+            '自动化完成：已处理、账号已加固（浏览器会话内秒级执行）、浏览器环境已清场',
+            mySeq
           )
           return
         }
@@ -376,7 +565,12 @@ export class AccountAutomationService {
         const direct = await this.deleteWithTeamWait(previousToken)
         if (direct.ok) {
           this.deps.accounts.remove(account.id)
-          this.setRun({ phase: 'done', message: '自动化完成：已处理、账号已加固（当前会话直接执行）、本地记录已移除', finishedAt: this.now() })
+          const liveSwitchNote = await this.settleLiveSwitch(mySeq)
+          this.setRun({
+            phase: 'done',
+            message: `自动化完成：已处理、账号已加固（当前会话直接执行）、本地记录已移除${liveSwitchNote ? `；${liveSwitchNote}` : ''}`,
+            finishedAt: this.now()
+          })
           return
         }
         if (!direct.authExpired) {
@@ -398,7 +592,8 @@ export class AccountAutomationService {
           if (direct.ok) {
             await this.finishDeletedAccount(
               account.id,
-              '自动化完成：已处理、账号已加固（当前会话直接执行）、浏览器环境已清场'
+              '自动化完成：已处理、账号已加固（当前会话直接执行）、浏览器环境已清场',
+              mySeq
             )
             return
           }
@@ -408,6 +603,19 @@ export class AccountAutomationService {
         }
         const detail = error instanceof Error ? error.message : String(error)
         this.setRun({ phase: 'failed', message: `新 Token 获取失败：${detail}（本地账号已保留）`, finishedAt: this.now() })
+        return
+      }
+      // 归属复核（先于入库）：轮换出的新会话必须仍属被处理账号——热切后活跃账号
+      // 已变更，若执行窗口被重登成其他账号，绝不能用错账号的凭据入库并执行删除。
+      // 仅在两侧 token 都可判定归属（user_xxx::jwt 形态）时拦截，否则保持原链路。
+      const previousAccountId = tokenAccountId(previousToken)
+      const newAccountId = tokenAccountId(newToken)
+      if (previousAccountId && newAccountId && previousAccountId !== newAccountId) {
+        this.setRun({
+          phase: 'failed',
+          message: '浏览器刷新出的新会话已属于其他账号——已中止以防误删（请检查执行窗口登录态）；本地账号已保留',
+          finishedAt: this.now()
+        })
         return
       }
       try {
@@ -427,7 +635,8 @@ export class AccountAutomationService {
 
       await this.finishDeletedAccount(
         account.id,
-        '自动化完成：已处理、新凭据已用毕、账号已加固、浏览器环境已清场'
+        '自动化完成：已处理、新凭据已用毕、账号已加固、浏览器环境已清场',
+        mySeq
       )
     } catch (error) {
       if (this.runSeq !== mySeq) return // 静默让位给新一轮
@@ -435,6 +644,13 @@ export class AccountAutomationService {
       this.setRun({ phase: 'failed', message: `自动化异常中止：${detail}`, finishedAt: this.now() })
     } finally {
       if (this.runSeq === mySeq) {
+        // 成功收口已消费 pending；取消/失败也必须把已启动热切的结果呈现并清空。
+        if (this.pendingLiveSwitch?.runSeq === mySeq) {
+          const liveSwitchNote = await this.settleLiveSwitch(mySeq)
+          if (liveSwitchNote && this.runSeq === mySeq && this.run.phase !== 'done') {
+            this.setRun({ message: `${this.run.message}；${liveSwitchNote}` })
+          }
+        }
         this.running = false
         // 一轮结束即清理浏览器通道（关窗断连；cookie 保留在 profile）。
         // 被新一轮取代时不清理——新轮的 preflight 可能已复用同一通道。
