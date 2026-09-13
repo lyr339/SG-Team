@@ -21,9 +21,23 @@ npm run smoke:channel   # 通道角色 stdio 冒烟（构建产物）
 npm run verify:mac      # 或 verify:win：打包产物 + 真实多进程冒烟
 ```
 
-Packaged output: `release/mac-arm64/拾光.app` / `release/win-unpacked/拾光.exe`
-(directory targets, unsigned). Both `pack:*` scripts reuse the Electron in
+Packaged output: `release/mac-arm64/拾光.app` (directory target, unsigned) and
+`release/ShiGuang-Setup-<version>.exe` (NSIS installer; `pack:win:dir` gives the
+bare `release/win-unpacked/ShiGuang.exe`). Both `pack:*` scripts reuse the Electron in
 `node_modules/electron/dist`, so no Electron download is needed at pack time.
+
+Handing a build to someone else:
+
+- `npm run dist:mac` → `release/ShiGuang-<version>-mac-arm64.zip`: re-signs the app
+  ad hoc (an unsigned Electron bundle that arrives with a quarantine flag is shown as
+  "damaged" by Gatekeeper) and zips it with `ditto` so the framework symlinks survive.
+  The recipient drags `拾光.app` into Applications and runs once
+  `xattr -dr com.apple.quarantine /Applications/拾光.app`.
+- Pushing a tag `v<version>` (must equal `package.json` `version`) runs
+  `.github/workflows/release.yml`: mac zip + Windows installer → GitHub Release with
+  `.github/release-notes.md` as the body. The repository is public, so recipients only
+  need the link. `pack:mac` / `dist:mac` rewrite `release/mac-arm64/拾光.app` in place —
+  quit 拾光 first if `~/.cursor/mcp.json` points at that build (its MCP server runs from it).
 On Windows, electron-builder shells out to `powershell.exe`; make sure
 `C:\Windows\System32\WindowsPowerShell\v1.0` is on `PATH` in the shell you run
 it from.

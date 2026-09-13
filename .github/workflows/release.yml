@@ -1,0 +1,89 @@
+# 发版：推一个 v* tag（须等于 package.json 的 version，例如 v0.2.0）→ 打 mac zip 与 Windows 安装包
+# → 挂到 GitHub Release。仓库公开，收件人凭链接下载，不需要 GitHub 账号。
+# workflow_dispatch 手动触发时只产出 artifact，不建 Release（没有 tag 可挂）。
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+
+jobs:
+  mac:
+    # macos-latest 是 Apple Silicon runner；pack:mac 复用 npm ci 装下来的 arm64 Electron。
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: tag 必须等于 package.json 的版本
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          expected="v$(node -p "require('./package.json').version")"
+          if [ "$GITHUB_REF_NAME" != "$expected" ]; then
+            echo "tag $GITHUB_REF_NAME 与 package.json 版本 $expected 不一致；先改 version 再打 tag" >&2
+            exit 1
+          fi
+      - run: npm run typecheck
+      # pack:mac + adhoc 重签 + ditto 压缩（scripts/dist-mac.mjs：未签名的 Electron 包传到别的 Mac
+      # 会被 Gatekeeper 判「已损坏」；重签后变成「无法验证开发者」，系统设置里有「仍要打开」）。
+      - run: npm run dist:mac
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shiguang-mac-arm64
+          path: release/*.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run pack:win
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shiguang-windows-x64
+          path: release/*.exe
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    # mac 产物是硬要求；Windows 安装包从未在真实机器上验证过，它打包失败不阻塞发 mac 版，
+    # Release 里就只有 zip——日志会列出实际上传了什么。
+    needs: [mac, windows]
+    if: always() && startsWith(github.ref, 'refs/tags/v') && needs.mac.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: 建 Release（已存在则只覆盖上传产物）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -la artifacts
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" artifacts/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" artifacts/* \
+              --title "拾光 $GITHUB_REF_NAME" \
+              --notes-file .github/release-notes.md
+          fi
+          echo "Windows 打包结果：${{ needs.windows.result }}"
