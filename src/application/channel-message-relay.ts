@@ -20,7 +20,8 @@ import {
   normalizeEscapedNewlines,
   sniffedAttachmentMimeType,
   type ConversationEntry,
-  type MessageAttachment
+  type MessageAttachment,
+  type ProcessBlock
 } from '../domain/conversation-entry'
 import type { SqliteChannelMessageRepository } from '../infrastructure/channel-messages/sqlite-channel-message-repository'
 import type {
@@ -80,6 +81,22 @@ function canonicalConversationText(text: string): string {
 
 function visibleConversationText(text: string): string {
   return normalizeEscapedNewlines(text).trim()
+}
+
+/**
+ * 内存里仍在排队的用户条目对照 SQLite 行的去向：
+ * - 已投递 → 写入 deliveredAt（并结束「等待新会话」保持位：新会话已取走）；
+ * - 已退役（本轮结束）/ 已撤回 → 从时间线移除（它不再是待投递，也从未进入对话）；
+ * - 仍待投递、或不属本轮（行不在扫描窗口内）→ 原样保留。
+ */
+function queuedEntryChange(
+  entry: ConversationEntry,
+  row: ChannelOutboundMessage | undefined
+): 'keep' | 'drop' | ConversationEntry {
+  if (entry.role !== 'user' || entry.source !== 'desktop' || entry.deliveredAt !== undefined || !row) return 'keep'
+  if (row.deliveredAt !== undefined) return { ...entry, deliveredAt: row.deliveredAt, heldForNextSession: undefined }
+  if (row.retiredAt !== undefined || row.withdrawnAt !== undefined) return 'drop'
+  return 'keep'
 }
 
 function isRecentDuplicateEntry(left: ConversationEntry, right: ConversationEntry): boolean {
@@ -340,6 +357,9 @@ export class ChannelMessageRelay {
    */
   completeScope(completedAt = this.now()): void {
     this.repository.retireScopeBefore(completedAt + 1, completedAt)
+    // 刚被退役的未投递消息立刻离开内存时间线（与 SQLite 一致，不等下一次轮询）：
+    // 结束确认已告知用户「尚未取走的排队消息将归档」，它们不再是待投递。
+    this.refreshOutboundDeliveries()
     this.commandReceipts.clear()
     this.sessionCache.clear()
     this.emit()
@@ -397,8 +417,10 @@ export class ChannelMessageRelay {
 
   private entryFromOutbound(message: ChannelOutboundMessage): ConversationEntry | undefined {
     if (message.silent || isInternalCollaborationNotificationText(message.text)) return undefined
-    // 用户撤回的消息不回放：它从未投递，留在时间线只会像一条永远排队的消息。
+    // 用户撤回、或随本轮结束被退役的未投递消息不回放：它从未投递，留在会话页只会像一条
+    // 永远待投递的消息。
     if (message.withdrawnAt !== undefined) return undefined
+    if (message.retiredAt !== undefined && message.deliveredAt === undefined) return undefined
     return {
       id: `outbox:${message.id}`,
       channelId: message.channelId,
@@ -426,7 +448,8 @@ export class ChannelMessageRelay {
       replyToEntryId: reply.outboundId ? `outbox:${reply.outboundId}` : undefined,
       processBlocks: reply.processBlocks,
       processTruncatedItemCount: reply.processTruncatedItemCount,
-      turn: reply.processTurn
+      turn: reply.processTurn,
+      continuationBlocks: reply.continuationBlocks
     }
   }
 
@@ -464,6 +487,25 @@ export class ChannelMessageRelay {
     return true
   }
 
+  /**
+   * 把回复封口之后的续作过程持久绑定到该回复（整列幂等重写 + 内存会话缓存同步）。
+   * 调用方只传已结算的块；返回 true 仅表示 SQLite 写入成功。
+   */
+  attachContinuationToReply(entryId: string, blocks: ProcessBlock[]): boolean {
+    const replyId = entryId.startsWith('reply:') ? entryId.slice('reply:'.length) : ''
+    if (!replyId || !blocks.length) return false
+    if (!this.repository.attachReplyContinuation({ replyId, blocks })) return false
+    for (const [channelId, entries] of this.conversations) {
+      const index = entries.findIndex((entry) => entry.id === entryId)
+      if (index < 0) continue
+      const next = [...entries]
+      next[index] = { ...next[index]!, continuationBlocks: blocks }
+      this.conversations.set(channelId, next)
+      return true
+    }
+    return true
+  }
+
   start(intervalMs = DEFAULT_POLL_MS): void {
     this.stop()
     this.hydratePersistedScope()
@@ -485,7 +527,10 @@ export class ChannelMessageRelay {
     this.timer.unref?.()
   }
 
-  /** 把 MCP 进程写入的 delivered_at 同步到内存时间线，作为虚拟回合的权威边界。 */
+  /**
+   * 把 MCP 进程写入的 delivered_at 同步到内存时间线，作为虚拟回合的权威边界；
+   * 同一次扫描里，已被退役（本轮结束）或撤回的未投递消息从内存移除——它们不再是待投递。
+   */
   private refreshOutboundDeliveries(): boolean {
     if (this.scopeStartedAt === undefined || !this.conversations.size) return false
     const outbound = new Map<string, ChannelOutboundMessage>(this.repository
@@ -494,18 +539,19 @@ export class ChannelMessageRelay {
       .map((message) => [`outbox:${message.id}`, message] as const))
     let changed = false
     for (const [channelId, entries] of this.conversations) {
-      let next = entries
+      // 只在首个变化处开始复制：未变通道保持同一引用（渲染层 memo 依赖结构共享）。
+      let next: ConversationEntry[] | undefined
       for (let index = 0; index < entries.length; index += 1) {
-        const entry = entries[index]
-        if (!entry || entry.role !== 'user' || entry.source !== 'desktop' || entry.deliveredAt !== undefined) continue
-        const row = outbound.get(entry.id)
-        const deliveredAt = row?.deliveredAt
-        if (deliveredAt === undefined) continue
-        if (next === entries) next = [...entries]
-        // 投递即结束保持位（新会话已取走）：时间线不再显示「等待新会话」。
-        next[index] = { ...entry, deliveredAt, heldForNextSession: undefined }
+        const entry = entries[index]!
+        const change = queuedEntryChange(entry, outbound.get(entry.id))
+        if (change === 'keep') {
+          next?.push(entry)
+          continue
+        }
+        next ??= entries.slice(0, index)
+        if (change !== 'drop') next.push(change)
       }
-      if (next !== entries) {
+      if (next) {
         // 投递改变了排序时刻（排队 → 进入对话），重排一次让它落到前一回合的回复之后。
         this.conversations.set(channelId, sortConversationEntries(next))
         changed = true

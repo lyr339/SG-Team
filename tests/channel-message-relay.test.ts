@@ -290,6 +290,53 @@ describe('ChannelMessageRelay', () => {
     }
   })
 
+  it('completeScope retires still-queued messages out of the timeline at once and keeps them out after a restart', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'sg-channel-retire-')), 'channel.sqlite3')
+    const repository = new SqliteChannelMessageRepository(path)
+    let clock = 10_000
+    const relay = new ChannelMessageRelay(repository, () => clock)
+    const ids = (): string[] => (relay.applyTo(baseSnapshot()).conversations['1'] ?? []).map((entry) => entry.id)
+    try {
+      repository.markChannelEmbedded('1', 'workspace-a', '/workspace/a')
+      relay.resetScope('run-a', 10_000)
+      relay.start(250)
+      relay.sendMessage({ channelId: '1', text: '已被取走的消息' })
+      const delivered = repository.listPendingOutbound('1')[0]!
+      repository.markOutboundDelivered([delivered.id], 10_500)
+      clock = 11_000
+      relay.sendMessage({ channelId: '1', text: '还在排队的消息' })
+      clock = 11_200
+      relay.sendMessage({ channelId: '1', text: '等待新会话的保持位', holdSessionToken: 'seat-token-1' })
+      expect(ids()).toHaveLength(3)
+      expect(repository.countPendingOutbound('1')).toBe(2)
+
+      // run 结束：两条未投递消息在 SQLite 退役，同一刻离开内存时间线；已投递的保留。
+      clock = 12_000
+      relay.completeScope(12_000)
+      expect(ids()).toEqual([`outbox:${delivered.id}`])
+      expect(repository.countPendingOutbound('1')).toBe(0)
+      expect(relay.applyTo(baseSnapshot()).sessions[0]?.queueDepth).toBe(0)
+    } finally {
+      relay.stop()
+      repository.close()
+    }
+
+    // 重启水合：退役的未投递行不回流，不会再像永远待投递的消息。
+    const reopened = new SqliteChannelMessageRepository(path)
+    try {
+      const relayB = new ChannelMessageRelay(reopened, () => 20_000)
+      relayB.start(250)
+      try {
+        const hydrated = relayB.applyTo(baseSnapshot()).conversations['1'] ?? []
+        expect(hydrated.map((entry) => entry.text)).toEqual(['已被取走的消息'])
+      } finally {
+        relayB.stop()
+      }
+    } finally {
+      reopened.close()
+    }
+  })
+
   it('clears residual cursor_stopped phases when a new TeamRun scope begins (2026-09-01 incident)', () => {
     const { repository, relay, setNow } = fixture(10_000)
     try {
@@ -643,6 +690,33 @@ describe('ChannelMessageRelay', () => {
       }
     } finally {
       second.close()
+    }
+  })
+
+  it('attaches the post-reply continuation to the reply entry in memory and in SQLite', () => {
+    const { repository, relay } = fixture()
+    try {
+      repository.markChannelEmbedded('1', 'workspace-a', '/workspace/a')
+      relay.resetScope('run-x', 500)
+      relay.sendMessage({ channelId: '1', text: '【会话交接】来自 CH-1' })
+      const reply = repository.recordReply({ channelId: '1', content: '已接手' }, 1_000)
+      relay.pollReplies()
+      const entryId = `reply:${reply.id}`
+      const follow = [{ kind: 'tool' as const, id: 'follow-1', toolName: 'Shell', toolKind: 'command' as const, summary: 'npm test', status: 'done' as const }]
+
+      expect(relay.attachContinuationToReply('outbox:not-a-reply', follow)).toBe(false)
+      expect(relay.attachContinuationToReply(entryId, [])).toBe(false)
+      expect(relay.attachContinuationToReply(entryId, follow)).toBe(true)
+
+      // 内存会话缓存立即可见（快照不必等下一次 pollReplies）
+      const cached = relay.conversationsOf('1')?.find((entry) => entry.id === entryId)
+      expect(cached?.continuationBlocks?.map((block) => block.id)).toEqual(['follow-1'])
+      expect(cached?.processBlocks).toBeUndefined()
+      // SQLite 持久化：重新水合后仍在
+      expect(repository.listRepliesSince(0)[0]?.continuationBlocks?.map((block) => block.id)).toEqual(['follow-1'])
+    } finally {
+      relay.stop()
+      repository.close()
     }
   })
 

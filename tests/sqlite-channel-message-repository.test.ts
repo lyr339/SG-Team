@@ -231,6 +231,44 @@ describe('SqliteChannelMessageRepository', () => {
     }
   })
 
+  it('persists the post-reply continuation in its own column without touching the sealed process', () => {
+    const repository = fixture()
+    const path = repository.path
+    const reply = repository.recordReply({ channelId: '1', content: '已接手' }, 1_000)
+    expect(repository.attachReplyProcess({
+      replyId: reply.id, turn: 'cursor:t1:virtual:m1',
+      blocks: [{ kind: 'tool', id: 'sealed-1', toolName: 'read_file', toolKind: 'read', summary: 'transcript.jsonl', status: 'done' }]
+    })).toBe(true)
+    // 空块 / 不存在的回复都不写
+    expect(repository.attachReplyContinuation({ replyId: reply.id, blocks: [] })).toBe(false)
+    expect(repository.attachReplyContinuation({
+      replyId: 'missing',
+      blocks: [{ kind: 'thinking', id: 'x', text: 'x', status: 'done' }]
+    })).toBe(false)
+    expect(repository.attachReplyContinuation({
+      replyId: reply.id,
+      blocks: [{ kind: 'tool', id: 'follow-1', toolName: 'Shell', toolKind: 'command', summary: 'npm test', status: 'done', output: '1 passed' }]
+    })).toBe(true)
+    // 整列幂等重写（追加后的完整列表由调用方给出）
+    expect(repository.attachReplyContinuation({
+      replyId: reply.id,
+      blocks: [
+        { kind: 'tool', id: 'follow-1', toolName: 'Shell', toolKind: 'command', summary: 'npm test', status: 'done', output: '1 passed' },
+        { kind: 'tool', id: 'follow-2', toolName: 'edit_file', toolKind: 'edit', summary: 'a.ts', status: 'done' }
+      ]
+    })).toBe(true)
+    repository.close()
+
+    const reopened = new SqliteChannelMessageRepository(path)
+    try {
+      const restored = reopened.listRepliesSince(0)[0]
+      expect(restored?.processBlocks?.map((block) => block.id)).toEqual(['sealed-1'])
+      expect(restored?.continuationBlocks?.map((block) => block.id)).toEqual(['follow-1', 'follow-2'])
+    } finally {
+      reopened.close()
+    }
+  })
+
   it('dedupes turn-less duplicate reply contents within the retry window only', () => {
     const repository = fixture()
     try {

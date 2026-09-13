@@ -69,7 +69,8 @@ function outboundOf(row: SqliteRow): ChannelOutboundMessage {
     deliveredAt: row.delivered_at === null ? undefined : numberOf(row.delivered_at),
     silent: numberOf(row.silent) === 1 ? true : undefined,
     holdSessionToken: optionalString(row.hold_session_token),
-    withdrawnAt: row.withdrawn_at === null || row.withdrawn_at === undefined ? undefined : numberOf(row.withdrawn_at)
+    withdrawnAt: row.withdrawn_at === null || row.withdrawn_at === undefined ? undefined : numberOf(row.withdrawn_at),
+    retiredAt: row.retired_at === null || row.retired_at === undefined ? undefined : numberOf(row.retired_at)
   }
 }
 
@@ -93,7 +94,8 @@ function replyOf(row: SqliteRow): ChannelInboundReply {
     processBlocks: processBlocksOf(row.process_blocks_json),
     processTurn: optionalString(row.process_turn),
     processTruncatedItemCount: row.process_truncated_count === null || row.process_truncated_count === undefined
-      ? undefined : numberOf(row.process_truncated_count)
+      ? undefined : numberOf(row.process_truncated_count),
+    continuationBlocks: processBlocksOf(row.continuation_blocks_json)
   }
 }
 
@@ -646,6 +648,18 @@ export class SqliteChannelMessageRepository {
     return numberOf(result.changes) === 1
   }
 
+  /**
+   * 持久化回复封口之后的续作过程（幂等重写整列）。只写已结算的块；与
+   * process_blocks_json 分列，封口块的字节不可变契约不受影响。
+   */
+  attachReplyContinuation(input: { replyId: string; blocks: ProcessBlock[] }): boolean {
+    if (!input.replyId.trim() || !input.blocks.length) return false
+    const result = this.database.prepare(`
+      UPDATE channel_replies SET continuation_blocks_json = ? WHERE id = ?
+    `).run(JSON.stringify(input.blocks), input.replyId.trim())
+    return numberOf(result.changes) === 1
+  }
+
   /** MCP 进程刷新活性；通道首次出现时建立基线行。 */
   touchPresence(channelId: string, patch: PresencePatch, now = Date.now()): ChannelPresence {
     const normalizedChannel = String(channelId).trim()
@@ -1003,6 +1017,9 @@ export class SqliteChannelMessageRepository {
     this.migrateColumn('channel_replies', 'process_blocks_json', 'TEXT')
     this.migrateColumn('channel_replies', 'process_turn', 'TEXT')
     this.migrateColumn('channel_replies', 'process_truncated_count', 'INTEGER')
+    // 回复封口之后的续作过程单独一列：封口块（process_blocks_json）保持字节不变的
+    // 不可变契约不受续作追加影响。
+    this.migrateColumn('channel_replies', 'continuation_blocks_json', 'TEXT')
   }
 
   /** 老库增量迁移：把可见回复稳定关联到触发它的出站消息。 */
