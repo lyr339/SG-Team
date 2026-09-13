@@ -27,7 +27,7 @@ describe('用量采集到持久化的事件链', () => {
       else tracker.record({ composerId: p.c, generationId: p.g, modelId: p.m, inputTokens: p.i, outputTokens: p.o, cacheReadTokens: p.r, cacheWriteTokens: p.w, occurredAt: p.t })
     }
     let at = 1
-    const globals = { __qtComposerService: { composerDataService: { composerDataHandleManager: manager, getComposerDataIfLoaded: () => data } }, __sgTeamUsage: consume, sgTeamStream: () => {} }
+    const globals = { __sgComposerService: { composerDataService: { composerDataHandleManager: manager, getComposerDataIfLoaded: () => data } }, __sgTeamUsage: consume, sgTeamStream: () => {} }
     try {
       runInNewContext(CURSOR_STREAM_HOOK_EXPRESSION, { globalThis: globals, queueMicrotask, setTimeout, Promise, Date: { now: () => ++at } })
       manager.markDirty({ composerId: 'c' }); await Promise.resolve()

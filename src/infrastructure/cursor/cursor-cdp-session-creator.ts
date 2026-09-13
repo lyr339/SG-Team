@@ -3,19 +3,28 @@ import { realpathSync } from 'node:fs'
 import WebSocket from 'ws'
 import { sanitizeModelDisplayText } from '../../domain/model-output-sanitizer'
 import { CHANNEL_USER_DELIVERY_MARKER } from '../../domain/channel-delivery-policy'
+import type { ProcessDiff, ProcessDiffLine, ProcessQuestion, ProcessToolKind } from '../../domain/conversation-entry'
 import type { CursorModelSelection } from '../../domain/cursor-model'
 import type { CursorWorkspaceDetection } from '../../domain/cursor-workspace'
 import { workspaceIdentityOf } from './workspace-identity'
 import { nativeUsagePayload } from './cursor-native-usage'
+import { cursorStatusLineOf, parseCursorStatusLine, type CursorStatusLine } from '../../domain/cursor-status-line'
+import {
+  SG_COMPOSER_BRIDGE_PRELUDE,
+  SG_COMPOSER_SERVICE_GLOBAL,
+  ensureComposerServiceLocated
+} from './cursor-composer-service-locator'
 
 /**
  * 通过 Chrome DevTools Protocol 直连 Cursor 渲染进程创建 Agent 会话。
  *
- * 与晴天插件原生批量创建（silent_launch）同源；未指定模型走 bridge.createAgent，
- * 逐会话选模时直达 Cursor 自身 createComposer({ partialState.modelConfig })：
- *   window.__qtComposerService.createComposer({ partialState: { unifiedMode:'agent', modelConfig } })
- *   → window.__qtComposerBridge.submitByComposerId(composerId, text, { ignoreQueuing: true })
+ * 服务句柄来自拾光自带网关（cursor-composer-service-locator：CDP queryObjects
+ * 定位 composerService 并挂到 window.__sgComposerService，零文件修改），不再依赖
+ * 晴天时代的 bundle 补丁。创建链路：
+ *   window.__sgComposerService.createComposer({ partialState: { unifiedMode:'agent', … } })
+ *   → sgBridge.submitByComposerId(composerId, text, { ignoreQueuing: true })
  * 纯 API 调用，无 DOM、无焦点、无辅助功能权限依赖；回执即真实 composerId。
+ * 冷启动（观察器尚未定位）时 createAgentSession 先幂等 ensure 一次定位。
  *
  * 唯一前提：Cursor 以 --remote-debugging-port 启动（见 cursor-cdp-restart.ts）。
  */
@@ -41,8 +50,11 @@ export interface CursorCdpTarget {
 
 export interface CursorCdpWindowInfo {
   title: string
+  /** 拾光服务定位已在该窗口完成（__sgComposerService 在位）。 */
   bridgeReady: boolean
   workspaceScope: string
+  /** 窗口打开的本地文件夹（原生 vscode 配置读出）；scope 匹配的原始依据。 */
+  workspaceFolder?: string
 }
 
 export interface CursorCdpProbeResult {
@@ -71,12 +83,22 @@ export interface CursorStreamToolBlock {
   kind: 'tool'
   id: string
   toolName: string
-  toolKind: 'command' | 'read' | 'search' | 'edit' | 'write' | 'browser' | 'mcp' | 'todo' | 'other'
+  toolKind: ProcessToolKind
+  /** Cursor 原生工具 case 名（分组算法的精确依据）；旧 hook 帧缺失。 */
+  toolCase?: string
+  /** 模型给出的调用意图（Shell description / 子任务描述）。 */
+  title?: string
   summary: string
+  /** 结果侧紧凑提示（程序名、行范围、增删行数、文件数）。 */
+  hint?: string
   status: 'running' | 'done' | 'failed'
   input?: Record<string, unknown>
   output?: string
   error?: string
+  /** ask_question 的结构化状态（toolKind=question）。 */
+  question?: ProcessQuestion
+  /** 编辑工具的结构化 diff（toolKind=edit）。 */
+  diff?: ProcessDiff
   /** Cursor bubble 原生创建时间；虚拟回合分段优先使用。 */
   startedAt?: number
 }
@@ -127,6 +149,16 @@ export interface CursorComposerRuntimeEvidence {
   detail: string
   observedAt: number
   isGenerating?: boolean
+  /**
+   * Composer 正阻塞在需要用户决策的工具上（ask_question 等）：Cursor 此时把
+   * composer 标为非生成态，但 Agent 并没有停止——presence 必须继续续命，
+   * 否则等待用户作答超过 processing 宽限窗就会被误判离线并触发接管。
+   */
+  awaitingUser?: boolean
+  /** Cursor 回合状态原文（generating / aborted / completed / none），供非生成态区分 Stopped 与 Completed。 */
+  composerStatus?: string
+  /** Cursor 会话列表副标题（观察器离线时的 inspect 兜底；与写后 hook 同一算法）。 */
+  statusLine?: CursorStatusLine
   responseId?: string
   responseText?: string
   /** 当前回合全过程流（仅生成中的 composer 携带；stopped/空回合为 undefined）。 */
@@ -158,6 +190,12 @@ export interface CursorCdpSessionCreatorOptions {
   fetchTargets?: (port: number, timeoutMs: number) => Promise<CursorCdpTarget[]>
   evaluate?: (webSocketDebuggerUrl: string, expression: string, timeoutMs: number) => Promise<unknown>
   operationTimeoutMs?: number
+  /**
+   * 建会话前的服务定位兜底（幂等；已定位时单次 evaluate 短路）。
+   * 观察器在 attach/重载时负责常规定位；这里只覆盖「创建早于观察器完成 attach」
+   * 的冷启动竞态。失败不抛——创建表达式的 bridge_not_ready 门兜底。
+   */
+  ensureComposerService?: (webSocketDebuggerUrl: string) => Promise<boolean>
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -191,6 +229,14 @@ async function defaultFetchTargets(port: number, timeoutMs: number): Promise<Cur
   } finally {
     clearTimeout(timer)
   }
+}
+
+/**
+ * 一次性 CDP 求值（独立 socket，awaitPromise + returnByValue）。会话创建、运行时探测与
+ * 问卷回答共用同一条通道，页面脚本异常统一转成错误而不是静默成功。
+ */
+export async function evaluateCdpExpression(webSocketDebuggerUrl: string, expression: string, timeoutMs: number): Promise<unknown> {
+  return defaultEvaluate(webSocketDebuggerUrl, expression, timeoutMs)
 }
 
 async function defaultEvaluate(webSocketDebuggerUrl: string, expression: string, timeoutMs: number): Promise<unknown> {
@@ -268,11 +314,32 @@ function workspaceScopeCandidates(workspacePath: string): string[] {
   return [...variants].map((variant) => cursorWorkspaceScopeId(variant))
 }
 
-const WINDOW_PROBE_EXPRESSION = `({
-  bridge: !!(window.__qtComposerBridge && window.__qtComposerBridge.ready),
-  scope: String(window.__qtBatchWorkspaceScopeId || ''),
-  title: String(document.title || '')
-})`
+/**
+ * 窗口探针：工作区身份读原生 vscode 配置（与 CURRENT_WORKSPACE_EXPRESSION 同源，
+ * 补丁时代的 __qtBatchWorkspaceScopeId 已退役）；bridge 表示拾光服务定位是否已在
+ * 该窗口完成——团队窗口由观察器 attach 时定位，故可作多窗口兜底信号。
+ */
+const WINDOW_PROBE_EXPRESSION = `(() => {
+  let folder = '';
+  let authority = '';
+  try {
+    const config = window.vscode && window.vscode.context && window.vscode.context.configuration
+      ? window.vscode.context.configuration()
+      : undefined;
+    const uri = config && !config.remoteAuthority && config.workspace ? config.workspace.uri : undefined;
+    if (uri && uri.scheme === 'file' && typeof uri.path === 'string') {
+      folder = uri.path;
+      authority = String(uri.authority || '');
+    }
+  } catch (e) {}
+  const service = window.${SG_COMPOSER_SERVICE_GLOBAL};
+  return {
+    bridge: !!(service && typeof service.createComposer === 'function'),
+    folder: folder,
+    authority: authority,
+    title: String(document.title || '')
+  };
+})()`
 
 // Electron preload 暴露的窗口配置：读取真实工作区身份，不使用标题/最近记录推测。
 export const CURRENT_WORKSPACE_EXPRESSION = `(() => {
@@ -309,14 +376,15 @@ function buildCreateExpression(input: {
   const NAME = ${name};
   const TEXT = ${text};
   const MODEL_CONFIG = ${modelConfig};
-  const bridge = window.__qtComposerBridge;
-  if (!bridge || !bridge.ready) return { ok: false, error: 'bridge_not_ready' };
+  ${SG_COMPOSER_BRIDGE_PRELUDE}
+  const bridge = sgBridge;
+  if (!bridge) return { ok: false, error: 'bridge_not_ready' };
   let pre = [];
   try { pre = (bridge.listComposers() || []).map((c) => String(c && c.composerId || '')).filter(Boolean); } catch (e) {}
   let created;
   try {
     if (MODEL_CONFIG) {
-      const service = window.__qtComposerService;
+      const service = window.${SG_COMPOSER_SERVICE_GLOBAL};
       if (!service || !service.createComposer) return { ok: false, error: 'composer_service_not_ready' };
       created = await service.createComposer({
         skipShowAndFocus: true,
@@ -340,7 +408,7 @@ function buildCreateExpression(input: {
   }
   if (MODEL_CONFIG) {
     try {
-      const service = window.__qtComposerService;
+      const service = window.${SG_COMPOSER_SERVICE_GLOBAL};
       const modelService = service && service.modelConfigService;
       if (!modelService || !modelService.setModelConfigForComposer) {
         try { await service.deleteComposer(composerId); } catch (e) {}
@@ -439,8 +507,9 @@ function buildCreateExpression(input: {
 export function buildRuntimeInspectionExpression(composerIds: string[]): string {
   const ids = JSON.stringify(composerIds)
   return `(async () => {
-    const bridge = window.__qtComposerBridge;
-    if (!bridge || !bridge.ready || !bridge.getStatus) return { ok: false, error: 'bridge_not_ready' };
+    ${SG_COMPOSER_BRIDGE_PRELUDE}
+    const bridge = sgBridge;
+    if (!bridge) return { ok: false, error: 'bridge_not_ready' };
     const summaries = new Map();
     try {
       for (const item of bridge.listComposers ? (bridge.listComposers() || []) : []) {
@@ -521,6 +590,8 @@ export function buildRuntimeInspectionExpression(composerIds: string[]): string 
       } catch (e) { delivered = false; }
       const status = String(td.status || '').toLowerCase();
       // 忽略旧版缓存的 false；结果补齐后必须重新判定投递。
+      // （阴性不缓存是有意为之：completed 首帧可能尚未水合结果，误缓存会把真实投递
+      // 永久判成轮询余波。keepalive 阴性结果体积小，重解析成本可忽略。）
       if (key && delivered && status && status !== 'running' && status !== 'pending') {
         if (deliveryMemo.size > 2000) deliveryMemo.clear();
         deliveryMemo.set(key, delivered);
@@ -552,7 +623,11 @@ export function buildRuntimeInspectionExpression(composerIds: string[]): string 
         let responseId = '';
         let dataInspected = false;
         try {
-          const data = bridge.getComposerData ? bridge.getComposerData(composerId) : undefined;
+          // sgBridge.getComposerData 即原生 composerDataService 的 Map 查找（0ms）——
+          // 自有网关没有晴天补丁的 _qtTrace 包装，历史上「绕开 bridge 直读原生服务」的
+          // stringify 税规避（2026-09-12 CDP profile：9MB composer 单次 34–97ms）已随
+          // 补丁退役，不再需要双路径。
+          const data = bridge.getComposerData(composerId);
           const headers = data && data.fullConversationHeadersOnly || [];
           const map = data && data.conversationMap || {};
           dataInspected = headers.length > 0 || Object.keys(map).length > 0;
@@ -627,18 +702,35 @@ export function buildRuntimeInspectionExpression(composerIds: string[]): string 
           responseText = String(status && status.lastAiText || '');
           responseId = String(status && (status.lastAiBubbleId || status.chatGenerationUUID) || '');
         }
-        // 直接读原生 composer，而非 bridge 的精简摘要；与写后 hook 共用载荷口径。
+        // 读原生 composer 数据派生用量，与写后 hook 共用载荷口径。
         let usage = null;
         try {
-          const data = window.__qtComposerService?.composerDataService?.getComposerDataIfLoaded?.(composerId);
+          const data = bridge.getComposerData(composerId);
           const raw = (${nativeUsagePayload.toString()})(data, composerId);
           if (raw) usage = { generationId: raw.g, modelId: raw.m,
             inputTokens: raw.i || 0, outputTokens: raw.o || 0, cacheReadTokens: raw.r || 0, cacheWriteTokens: raw.w || 0,
             contextTokensUsed: raw.used, stopped: raw.stopped };
         } catch (e) {}
+        // 阻塞在用户决策（ask_question 等）：Cursor 把 composer 标为非生成态，但 Agent
+        // 仍在等待——作为独立生命证据带回，presence 据此续命。读取失败按 false 处理。
+        let awaitingUser = false;
+        try {
+          const cds = window.${SG_COMPOSER_SERVICE_GLOBAL}?.composerDataService;
+          const handle = cds?.getHandleIfLoaded?.(composerId);
+          awaitingUser = !!(handle && cds.getIsBlockingUserDecision?.(handle) === true);
+        } catch (e) {}
+        // 名册副标题兜底（观察器离线时唯一来源）：与写后 hook 同一算法、同一原始数据；
+        // 回合存活以 composer status 为权威（v31 规则），桥接摘要的 isGenerating 只作补充。
+        let statusLine = null;
+        let composerStatus = '';
+        try {
+          const data = bridge.getComposerData(composerId);
+          composerStatus = data && typeof data.status === 'string' ? data.status.toLowerCase() : '';
+          if (composerStatus === 'generating' || isGenerating) statusLine = (${cursorStatusLineOf.toString()})(data) || null;
+        } catch (e) {}
         // 过程块由 sgTeamProcess 写后事件直接推送；这里仅保留状态/正文兜底，
         // 避免 150ms inspect 与原生事件双写、重排或覆盖工具结果。
-        rows.push({ composerId, state, detail, observedAt: Date.now(), isGenerating, responseId, responseText, usage });
+        rows.push({ composerId, state, detail, observedAt: Date.now(), isGenerating, awaitingUser, responseId, responseText, usage, statusLine, composerStatus });
       } catch (e) {
         rows.push({ composerId, state: 'unknown', detail: 'Cursor 实时状态读取失败', observedAt: Date.now() });
       }
@@ -647,16 +739,141 @@ export function buildRuntimeInspectionExpression(composerIds: string[]): string 
   })()`
 }
 
+/** 探针返回的 uri.path → 本平台文件系统路径（与 detectCurrentWorkspace 同规则）。 */
+function normalizeProbeFolder(folder: string, authority: string): string {
+  if (!folder.startsWith('/')) return ''
+  if (process.platform === 'win32') {
+    const path = authority ? `//${authority}${folder}` : folder.replace(/^\/([a-zA-Z]:)/, '$1')
+    return path.replace(/\//g, '\\')
+  }
+  return authority ? '' : folder
+}
+
 function parseWindowInfo(value: unknown): CursorCdpWindowInfo | undefined {
   if (!isRecord(value)) return undefined
+  const folder = normalizeProbeFolder(
+    typeof value.folder === 'string' ? value.folder : '',
+    typeof value.authority === 'string' ? value.authority : ''
+  )
   return {
     title: typeof value.title === 'string' ? value.title.slice(0, 300) : '',
     bridgeReady: value.bridge === true,
-    workspaceScope: typeof value.scope === 'string' ? value.scope : ''
+    workspaceScope: folder ? cursorWorkspaceScopeId(folder) : '',
+    ...(folder ? { workspaceFolder: folder } : {})
   }
 }
 
-const STREAM_TOOL_KINDS = new Set(['command', 'read', 'search', 'edit', 'write', 'browser', 'mcp', 'todo', 'other'])
+/** 窗口侧全部 scope 变体（原始 + realpath + win32 小写），供与配置侧候选求交。 */
+function windowScopeCandidates(info: CursorCdpWindowInfo): string[] {
+  const scopes = info.workspaceScope ? [info.workspaceScope] : []
+  if (info.workspaceFolder) scopes.push(...workspaceScopeCandidates(info.workspaceFolder))
+  return [...new Set(scopes)]
+}
+
+function windowScopeMatches(info: CursorCdpWindowInfo | undefined, scopes: string[]): boolean {
+  if (!info) return false
+  return windowScopeCandidates(info).some((scope) => scopes.includes(scope))
+}
+
+const STREAM_TOOL_KINDS: ReadonlySet<string> = new Set<ProcessToolKind>([
+  'command', 'read', 'search', 'edit', 'write', 'browser', 'mcp', 'todo', 'task', 'question', 'other'
+])
+
+const QUESTION_MAX_QUESTIONS = 20
+const QUESTION_MAX_OPTIONS = 30
+const QUESTION_TEXT_LIMIT = 2_000
+
+function boundedText(value: unknown, limit: number): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const text = value.trim()
+  return text ? text.slice(0, limit) : undefined
+}
+
+/** 宽容解析 ask_question 载荷：题目/选项缺 id 或 prompt 的条目丢弃，数量与文本长度设上限。 */
+/** 结构化 diff 的传输上限：行数与单行字符数；超出部分只计数披露，不静默丢失。 */
+export const STREAM_DIFF_MAX_LINES = 240
+export const STREAM_DIFF_MAX_LINE_CHARS = 300
+const DIFF_LINE_TYPES: ReadonlySet<string> = new Set(['added', 'removed', 'context', 'hunk'])
+
+function lineNumberOf(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.floor(value) : undefined
+}
+
+/** 解析页面侧提取的结构化 diff（宽容：坏行跳过，超限截断并计数）。 */
+export function parseStreamDiff(value: unknown): ProcessDiff | undefined {
+  if (!isRecord(value) || !Array.isArray(value.lines)) return undefined
+  const lines: ProcessDiffLine[] = []
+  let dropped = 0
+  for (const raw of value.lines) {
+    if (!isRecord(raw) || typeof raw.type !== 'string' || !DIFF_LINE_TYPES.has(raw.type)) continue
+    if (lines.length >= STREAM_DIFF_MAX_LINES) {
+      dropped += 1
+      continue
+    }
+    const text = typeof raw.text === 'string' ? raw.text.slice(0, STREAM_DIFF_MAX_LINE_CHARS) : ''
+    const oldLine = lineNumberOf(raw.oldLine)
+    const newLine = lineNumberOf(raw.newLine)
+    lines.push({
+      type: raw.type as ProcessDiffLine['type'],
+      text,
+      ...(oldLine !== undefined ? { oldLine } : {}),
+      ...(newLine !== undefined ? { newLine } : {})
+    })
+  }
+  if (!lines.length) return undefined
+  const reported = typeof value.truncatedLineCount === 'number' && value.truncatedLineCount > 0
+    ? Math.min(Math.floor(value.truncatedLineCount), 1_000_000)
+    : 0
+  const truncatedLineCount = reported + dropped
+  return { lines, ...(truncatedLineCount ? { truncatedLineCount } : {}) }
+}
+
+export function parseStreamQuestion(value: unknown): ProcessQuestion | undefined {
+  if (!isRecord(value)) return undefined
+  const toolCallId = boundedText(value.toolCallId, 200)
+  if (!toolCallId) return undefined
+  const status = value.status === 'submitted' || value.status === 'cancelled' ? value.status : 'pending'
+  const questions = (Array.isArray(value.questions) ? value.questions : []).flatMap((item) => {
+    if (!isRecord(item)) return []
+    const id = boundedText(item.id, 200)
+    const prompt = boundedText(item.prompt, QUESTION_TEXT_LIMIT)
+    if (!id || !prompt) return []
+    const options = (Array.isArray(item.options) ? item.options : []).flatMap((option) => {
+      if (!isRecord(option)) return []
+      const optionId = boundedText(option.id, 200)
+      const label = boundedText(option.label, QUESTION_TEXT_LIMIT)
+      return optionId && label ? [{ id: optionId, label }] : []
+    }).slice(0, QUESTION_MAX_OPTIONS)
+    return [{ id, prompt, allowMultiple: item.allowMultiple === true, options }]
+  }).slice(0, QUESTION_MAX_QUESTIONS)
+  const answers = Array.isArray(value.answers)
+    ? value.answers.flatMap((answer) => {
+        if (!isRecord(answer)) return []
+        const questionId = boundedText(answer.questionId, 200)
+        if (!questionId) return []
+        const selectedOptionIds = Array.isArray(answer.selectedOptionIds)
+          ? answer.selectedOptionIds.flatMap((id) => {
+              const text = boundedText(id, 200)
+              return text ? [text] : []
+            }).slice(0, QUESTION_MAX_OPTIONS)
+          : []
+        const freeformText = boundedText(answer.freeformText, QUESTION_TEXT_LIMIT)
+        return [{ questionId, selectedOptionIds, ...(freeformText ? { freeformText } : {}) }]
+      }).slice(0, QUESTION_MAX_QUESTIONS)
+    : undefined
+  const title = boundedText(value.title, QUESTION_TEXT_LIMIT)
+  const note = boundedText(value.note, QUESTION_TEXT_LIMIT)
+  const skipReason = boundedText(value.skipReason, 80)
+  return {
+    toolCallId,
+    ...(title ? { title } : {}),
+    questions,
+    status,
+    ...(answers?.length ? { answers } : {}),
+    ...(note ? { note } : {}),
+    ...(skipReason ? { skipReason } : {})
+  }
+}
 
 /**
  * 内部协议工具名单与匹配规则——只收敛纯传输噪音：check_messages / record_reply
@@ -727,20 +944,32 @@ export function parseProcessStream(value: unknown): CursorProcessStream | undefi
       // （RC-5.1）；水合后的下一帧以真实名称到达，届时按 transport/business 分类。
       if (toolName.toLowerCase() === 'mcptoolcall') continue
       const toolKind = typeof item.toolKind === 'string' && STREAM_TOOL_KINDS.has(item.toolKind)
-        ? item.toolKind as CursorStreamToolBlock['toolKind']
+        ? item.toolKind as ProcessToolKind
         : 'other'
       const status = item.status === 'done' || item.status === 'failed' ? item.status : 'running'
       const input = isRecord(item.input) ? item.input : undefined
+      const question = toolKind === 'question' ? parseStreamQuestion(item.question) : undefined
+      const diff = toolKind === 'edit' ? parseStreamDiff(item.diff) : undefined
+      const title = boundedText(item.title, 300)
+      const hint = boundedText(item.hint, 160)
+      const toolCase = typeof item.toolCase === 'string' && /^[a-zA-Z]{1,60}$/.test(item.toolCase)
+        ? item.toolCase
+        : undefined
       items.push({
         kind: 'tool',
         id: item.id.slice(0, 120),
         toolName,
         toolKind,
+        ...(toolCase ? { toolCase } : {}),
+        ...(title ? { title } : {}),
         summary: typeof item.summary === 'string' ? item.summary.slice(0, 160) : '',
+        ...(hint ? { hint } : {}),
         status,
         input,
         output: typeof item.output === 'string' && item.output ? item.output.slice(0, 12_200) : undefined,
         error: typeof item.error === 'string' && item.error ? item.error.slice(0, 8_200) : undefined,
+        ...(question ? { question } : {}),
+        ...(diff ? { diff } : {}),
         startedAt: typeof item.startedAt === 'number' && Number.isFinite(item.startedAt) && item.startedAt > 0
           ? Math.floor(item.startedAt)
           : undefined
@@ -778,6 +1007,7 @@ export class CursorCdpSessionCreator {
   private readonly fetchTargets: NonNullable<CursorCdpSessionCreatorOptions['fetchTargets']>
   private readonly evaluate: NonNullable<CursorCdpSessionCreatorOptions['evaluate']>
   private readonly operationTimeoutMs: number
+  private readonly ensureComposerService: NonNullable<CursorCdpSessionCreatorOptions['ensureComposerService']>
 
   constructor(options: CursorCdpSessionCreatorOptions = {}) {
     const envPort = Number(process.env[CURSOR_CDP_PORT_ENV])
@@ -785,6 +1015,7 @@ export class CursorCdpSessionCreator {
     this.fetchTargets = options.fetchTargets ?? defaultFetchTargets
     this.evaluate = options.evaluate ?? defaultEvaluate
     this.operationTimeoutMs = options.operationTimeoutMs ?? DEFAULT_OPERATION_TIMEOUT_MS
+    this.ensureComposerService = options.ensureComposerService ?? ensureComposerServiceLocated
   }
 
   get debugPort(): number {
@@ -896,12 +1127,16 @@ export class CursorCdpSessionCreator {
             contextTokenLimit: usageToken(usageRaw.contextTokenLimit) || undefined
           }
         : undefined
+      const statusLine = parseCursorStatusLine(row.statusLine)
       result[composerId] = {
         composerId,
         state,
         detail: typeof row.detail === 'string' ? row.detail.slice(0, 300) : '',
         observedAt: typeof row.observedAt === 'number' ? row.observedAt : Date.now(),
         isGenerating: row.isGenerating === true,
+        ...(row.awaitingUser === true ? { awaitingUser: true } : {}),
+        ...(typeof row.composerStatus === 'string' && row.composerStatus ? { composerStatus: row.composerStatus.slice(0, 40) } : {}),
+        ...(statusLine ? { statusLine } : {}),
         responseId: typeof row.responseId === 'string' && row.responseId ? row.responseId.slice(0, 200) : undefined,
         responseText: typeof row.responseText === 'string' && row.responseText
           ? row.responseText.slice(0, 100_000)
@@ -934,7 +1169,7 @@ export class CursorCdpSessionCreator {
         if (!info) return { target: only }
         const scopes = workspaceScopeCandidates(workspacePath)
         if (info.workspaceScope) {
-          return scopes.includes(info.workspaceScope)
+          return windowScopeMatches(info, scopes)
             ? { target: only }
             : { error: `调试端口只发现了非当前团队工作区的 Cursor 窗口（${info.title || only.title || only.url}）；请打开团队工作区后重试` }
         }
@@ -960,10 +1195,7 @@ export class CursorCdpSessionCreator {
 
     if (workspacePath?.trim()) {
       const scopes = workspaceScopeCandidates(workspacePath)
-      const scopeMatches = targets.filter((target) => {
-        const info = probes.get(target.id)
-        return info?.workspaceScope && scopes.includes(info.workspaceScope)
-      })
+      const scopeMatches = targets.filter((target) => windowScopeMatches(probes.get(target.id), scopes))
       if (scopeMatches.length === 1) return { target: scopeMatches[0] }
 
       const baseName = workspacePath.trim().replace(/[/\\]+$/, '').split(/[/\\]/).pop() ?? ''
@@ -1002,6 +1234,14 @@ export class CursorCdpSessionCreator {
     const { target, error } = await this.resolveTarget(input.workspacePath)
     if (!target) return { ok: false, message: error ?? '未找到可用的 Cursor 窗口' }
 
+    // 冷启动兜底：观察器可能尚未完成 attach（定位常规由它负责）。幂等 ensure 一次，
+    // 失败不阻断——创建表达式的 bridge_not_ready 门给出明确错误。
+    try {
+      await this.ensureComposerService(target.webSocketDebuggerUrl)
+    } catch {
+      // 定位异常与定位失败同待遇：交给表达式门兜底
+    }
+
     let value: unknown
     try {
       value = await this.evaluate(
@@ -1025,7 +1265,7 @@ export class CursorCdpSessionCreator {
     }
     const detail = typeof value.error === 'string' && value.error ? value.error : '未知错误'
     if (detail === 'bridge_not_ready') {
-      return { ok: false, message: 'Cursor 窗口内拾光网关联接未就绪（__qtComposerBridge 不可用），请先在拾光面板执行网关注入' }
+      return { ok: false, message: 'Cursor 窗口内拾光服务定位未完成（网关未就绪）——Cursor 刚启动或窗口刚重载时工作台尚在加载，请稍候几秒重试' }
     }
     if (detail.startsWith('submit_') && composerId) {
       return { ok: false, message: `会话已创建但开场提示词提交失败（${detail}）`, composerId }

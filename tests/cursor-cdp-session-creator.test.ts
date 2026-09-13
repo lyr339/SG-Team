@@ -23,26 +23,35 @@ function target(id: string, title = ''): CursorCdpTarget {
 interface FakeWindow {
   title: string
   bridgeReady: boolean
-  scope: string
+  /** 窗口打开的本地文件夹（原生探针来源）；空串模拟识别失败/空工作区。 */
+  folder: string
   createResult?: unknown
   runtimeResult?: unknown
 }
 
-function createCreator(windows: Record<string, FakeWindow>, options: { failTargets?: boolean } = {}) {
+function createCreator(windows: Record<string, FakeWindow>, options: {
+  failTargets?: boolean
+  ensureComposerService?: (webSocketDebuggerUrl: string) => Promise<boolean>
+} = {}) {
   const targets = Object.keys(windows).map((id) => target(id, windows[id]!.title))
   const evaluatedExpressions: string[] = []
+  const ensuredSockets: string[] = []
   const creator = new CursorCdpSessionCreator({
     fetchTargets: async () => {
       if (options.failTargets) throw new Error('connect ECONNREFUSED')
       return targets
     },
+    ensureComposerService: options.ensureComposerService ?? (async (url) => {
+      ensuredSockets.push(url)
+      return true
+    }),
     evaluate: async (url, expression) => {
       evaluatedExpressions.push(expression)
       const id = url.split('/').pop() ?? ''
       const win = windows[id]
       if (!win) throw new Error('unknown target')
-      if (expression.includes('__qtBatchWorkspaceScopeId') && expression.includes('document.title')) {
-        return { bridge: win.bridgeReady, scope: win.scope, title: win.title }
+      if (expression.includes('document.title')) {
+        return { bridge: win.bridgeReady, folder: win.folder, authority: '', title: win.title }
       }
       if (expression.includes('bridge.getStatus') && expression.includes('rows.push')) {
         return win.runtimeResult ?? { ok: true, rows: [] }
@@ -52,7 +61,7 @@ function createCreator(windows: Record<string, FakeWindow>, options: { failTarge
       return win.createResult ?? { ok: true, composerId: `composer-${id}` }
     }
   })
-  return { creator, evaluatedExpressions }
+  return { creator, evaluatedExpressions, ensuredSockets }
 }
 
 const WS_PATH = '/Users/example/Projects/demo-app'
@@ -74,20 +83,22 @@ describe('CursorCdpSessionCreator.probe', () => {
     expect(result.issue).toContain('9333')
   })
 
-  it('端口可用时列出各窗口的桥接状态', async () => {
+  it('端口可用时列出各窗口的定位状态与工作区身份（原生探针，scope 由文件夹派生）', async () => {
     const { creator } = createCreator({
-      a: { title: 'sg-team — Cursor', bridgeReady: true, scope: WS_SCOPE }
+      a: { title: 'sg-team — Cursor', bridgeReady: true, folder: WS_PATH }
     })
     const result = await creator.probe()
     expect(result.available).toBe(true)
-    expect(result.windows).toEqual([{ title: 'sg-team — Cursor', bridgeReady: true, workspaceScope: WS_SCOPE }])
+    expect(result.windows).toEqual([{
+      title: 'sg-team — Cursor', bridgeReady: true, workspaceScope: WS_SCOPE, workspaceFolder: WS_PATH
+    }])
   })
 })
 
 describe('CursorCdpSessionCreator.createAgentSession', () => {
   it('单窗口直接使用，创建并提交成功返回真实 composerId', async () => {
-    const { creator, evaluatedExpressions } = createCreator({
-      only: { title: 'ws', bridgeReady: true, scope: '', createResult: { ok: true, composerId: 'composer-real' } }
+    const { creator, evaluatedExpressions, ensuredSockets } = createCreator({
+      only: { title: 'ws', bridgeReady: true, folder: '', createResult: { ok: true, composerId: 'composer-real' } }
     })
     const result = await creator.createAgentSession({ channelId: '2', name: 'CH-2 · 拾光会话', prompt: '开场白', workspacePath: WS_PATH })
     expect(result).toEqual({ ok: true, message: '会话已创建并提交开场提示词', composerId: 'composer-real' })
@@ -97,11 +108,23 @@ describe('CursorCdpSessionCreator.createAgentSession', () => {
     expect(createExpression).toContain('"开场白"')
     expect(createExpression).toContain('autoSubmit: false')
     expect(createExpression).toContain('submitByComposerId')
+    // 冷启动兜底：创建前对目标窗口幂等 ensure 一次服务定位。
+    expect(ensuredSockets).toEqual(['ws://127.0.0.1:9333/devtools/page/only'])
+  })
+
+  it('服务定位 ensure 失败/异常不阻断创建流程（表达式 bridge_not_ready 门兜底）', async () => {
+    const { creator } = createCreator(
+      { only: { title: 'ws', bridgeReady: true, folder: '', createResult: { ok: true, composerId: 'composer-x' } } },
+      { ensureComposerService: async () => { throw new Error('locate blew up') } }
+    )
+    const result = await creator.createAgentSession({ channelId: '1', name: 'n', prompt: 'p' })
+    expect(result.ok).toBe(true)
+    expect(result.composerId).toBe('composer-x')
   })
 
   it('creates a Composer with an independent per-session modelConfig before submitting', async () => {
     const { creator, evaluatedExpressions } = createCreator({
-      only: { title: 'ws', bridgeReady: true, scope: '', createResult: { ok: true, composerId: 'composer-model' } }
+      only: { title: 'ws', bridgeReady: true, folder: '', createResult: { ok: true, composerId: 'composer-model' } }
     })
     const result = await creator.createAgentSession({
       channelId: '2', name: 'CH-2', prompt: '开始',
@@ -116,7 +139,8 @@ describe('CursorCdpSessionCreator.createAgentSession', () => {
     })
     expect(result).toMatchObject({ ok: true, composerId: 'composer-model', modelId: 'claude-opus-5' })
     const expression = evaluatedExpressions.find((candidate) => candidate.includes('MODEL_CONFIG')) ?? ''
-    expect(expression).toContain('window.__qtComposerService')
+    expect(expression).toContain('window.__sgComposerService')
+    expect(expression).not.toContain('__qtComposer')
     expect(expression).toContain('service.createComposer')
     expect(expression).toContain('partialState')
     expect(expression).not.toContain('partialState: { unifiedMode: \'agent\', name: NAME, modelConfig: MODEL_CONFIG }')
@@ -131,13 +155,14 @@ describe('CursorCdpSessionCreator.createAgentSession', () => {
     expect(expression).toContain('"effort","value":"high"')
     expect(expression).toContain('max_mode_unconfirmed')
     expect(expression).toContain('model_parameters_unconfirmed')
-    expect(expression.indexOf('setModelConfigForComposer')).toBeLessThan(expression.indexOf('submitByComposerId'))
+    // PRELUDE 桥的方法定义在前；断言比较的是真实提交调用点（配置先于提交生效）。
+    expect(expression.indexOf('setModelConfigForComposer')).toBeLessThan(expression.indexOf('bridge.submitByComposerId(composerId'))
   })
 
   it('多窗口按工作区 scope 精确匹配', async () => {
     const { creator } = createCreator({
-      a: { title: 'other — Cursor', bridgeReady: true, scope: 'deadbeefdeadbeef' },
-      b: { title: 'demo-app — Cursor', bridgeReady: true, scope: WS_SCOPE, createResult: { ok: true, composerId: 'composer-b' } }
+      a: { title: 'other — Cursor', bridgeReady: true, folder: '/Users/example/Projects/other-app' },
+      b: { title: 'demo-app — Cursor', bridgeReady: true, folder: WS_PATH, createResult: { ok: true, composerId: 'composer-b' } }
     })
     const result = await creator.createAgentSession({ channelId: '1', name: 'n', prompt: 'p', workspacePath: WS_PATH })
     expect(result.ok).toBe(true)
@@ -146,7 +171,7 @@ describe('CursorCdpSessionCreator.createAgentSession', () => {
 
   it('单窗口但 scope 属于其他工作区时拒绝误用', async () => {
     const { creator } = createCreator({
-      only: { title: 'Agent Window — Cursor', bridgeReady: true, scope: 'deadbeefdeadbeef' }
+      only: { title: 'Agent Window — Cursor', bridgeReady: true, folder: '/Users/example/Projects/other-app' }
     })
     const result = await creator.createAgentSession({ channelId: '1', name: 'n', prompt: 'p', workspacePath: WS_PATH })
     expect(result.ok).toBe(false)
@@ -155,7 +180,7 @@ describe('CursorCdpSessionCreator.createAgentSession', () => {
 
   it('单窗口且桥接未就绪、标题不匹配时提示打开团队 IDE 工作区', async () => {
     const { creator } = createCreator({
-      only: { title: 'Agent Window — Cursor', bridgeReady: false, scope: '' }
+      only: { title: 'Agent Window — Cursor', bridgeReady: false, folder: '' }
     })
     const result = await creator.createAgentSession({ channelId: '1', name: 'n', prompt: 'p', workspacePath: WS_PATH })
     expect(result.ok).toBe(false)
@@ -164,8 +189,8 @@ describe('CursorCdpSessionCreator.createAgentSession', () => {
 
   it('scope 缺失时按窗口标题中的工作区名匹配', async () => {
     const { creator } = createCreator({
-      a: { title: 'unrelated — Cursor', bridgeReady: true, scope: '' },
-      b: { title: 'agent-launcher.ts — demo-app — Cursor', bridgeReady: true, scope: '', createResult: { ok: true, composerId: 'composer-title' } }
+      a: { title: 'unrelated — Cursor', bridgeReady: true, folder: '' },
+      b: { title: 'agent-launcher.ts — demo-app — Cursor', bridgeReady: true, folder: '', createResult: { ok: true, composerId: 'composer-title' } }
     })
     const result = await creator.createAgentSession({ channelId: '1', name: 'n', prompt: 'p', workspacePath: WS_PATH })
     expect(result.composerId).toBe('composer-title')
@@ -173,8 +198,8 @@ describe('CursorCdpSessionCreator.createAgentSession', () => {
 
   it('多窗口无法判定时明确报错并列出窗口标题', async () => {
     const { creator } = createCreator({
-      a: { title: 'window-a', bridgeReady: true, scope: '' },
-      b: { title: 'window-b', bridgeReady: true, scope: '' }
+      a: { title: 'window-a', bridgeReady: true, folder: '' },
+      b: { title: 'window-b', bridgeReady: true, folder: '' }
     })
     const result = await creator.createAgentSession({ channelId: '1', name: 'n', prompt: 'p', workspacePath: WS_PATH })
     expect(result.ok).toBe(false)
@@ -189,18 +214,19 @@ describe('CursorCdpSessionCreator.createAgentSession', () => {
     expect(result.message).toContain('未检测到 Cursor 调试端口')
   })
 
-  it('窗口内网关联接未就绪 → 明确提示注入', async () => {
+  it('窗口内服务定位未完成 → 明确提示稍候重试（不再引导手工注入）', async () => {
     const { creator } = createCreator({
-      only: { title: 'ws', bridgeReady: false, scope: '' }
+      only: { title: 'ws', bridgeReady: false, folder: '' }
     })
     const result = await creator.createAgentSession({ channelId: '1', name: 'n', prompt: 'p' })
     expect(result.ok).toBe(false)
-    expect(result.message).toContain('网关联接未就绪')
+    expect(result.message).toContain('网关未就绪')
+    expect(result.message).not.toContain('注入')
   })
 
   it('提交失败但已创建 → 保留 composerId 便于排查', async () => {
     const { creator } = createCreator({
-      only: { title: 'ws', bridgeReady: true, scope: '', createResult: { ok: false, error: 'submit_failed:chatService not ready', composerId: 'composer-x' } }
+      only: { title: 'ws', bridgeReady: true, folder: '', createResult: { ok: false, error: 'submit_failed:chatService not ready', composerId: 'composer-x' } }
     })
     const result = await creator.createAgentSession({ channelId: '1', name: 'n', prompt: 'p' })
     expect(result.ok).toBe(false)
@@ -210,7 +236,7 @@ describe('CursorCdpSessionCreator.createAgentSession', () => {
 
   it('持续对话模式下提交 promise 不了结 → 表达式具备异步受理核验（getStatus/lastHumanText）', async () => {
     const { creator, evaluatedExpressions } = createCreator({
-      only: { title: 'ws', bridgeReady: true, scope: '' }
+      only: { title: 'ws', bridgeReady: true, folder: '' }
     })
     await creator.createAgentSession({ channelId: '1', name: 'n', prompt: 'p' })
     const createExpression = evaluatedExpressions.find((expression) => expression.includes('createAgent')) ?? ''
@@ -225,7 +251,7 @@ describe('CursorCdpSessionCreator.createAgentSession', () => {
 
   it('异步受理回执 → 返回成功且文案区分', async () => {
     const { creator } = createCreator({
-      only: { title: 'ws', bridgeReady: true, scope: '', createResult: { ok: true, composerId: 'composer-async', submitAsync: true } }
+      only: { title: 'ws', bridgeReady: true, folder: '', createResult: { ok: true, composerId: 'composer-async', submitAsync: true } }
     })
     const result = await creator.createAgentSession({ channelId: '1', name: 'n', prompt: 'p' })
     expect(result.ok).toBe(true)
@@ -234,14 +260,14 @@ describe('CursorCdpSessionCreator.createAgentSession', () => {
   })
 
   it('通道号非法与空提示词直接拒绝', async () => {
-    const { creator } = createCreator({ only: { title: 'ws', bridgeReady: true, scope: '' } })
+    const { creator } = createCreator({ only: { title: 'ws', bridgeReady: true, folder: '' } })
     expect((await creator.createAgentSession({ channelId: 'abc', name: 'n', prompt: 'p' })).message).toContain('通道号无效')
     expect((await creator.createAgentSession({ channelId: '1', name: 'n', prompt: '  ' })).message).toContain('开场提示词为空')
   })
 
   it('创建表达式内嵌文本经过 JSON 转义（防注入）', async () => {
     const { creator, evaluatedExpressions } = createCreator({
-      only: { title: 'ws', bridgeReady: true, scope: '' }
+      only: { title: 'ws', bridgeReady: true, folder: '' }
     })
     const tricky = '包含"引号"与\n换行`模板`${inverse}'
     await creator.createAgentSession({ channelId: '1', name: 'n`', prompt: tricky })
@@ -250,6 +276,19 @@ describe('CursorCdpSessionCreator.createAgentSession', () => {
     expect(createExpression).toContain(JSON.stringify('n`'))
   })
 })
+
+/** inspect 表达式的 VM 夹具：自带网关形态（__sgComposerService），状态挂在 composerData 上。 */
+function inspectionWindow(dataById: Record<string, Record<string, unknown> | undefined>): Record<string, unknown> {
+  return {
+    __sgComposerService: {
+      createComposer: () => ({}),
+      composerDataService: {
+        getComposerDataIfLoaded: (id: string) => dataById[id],
+        allComposersData: { allComposers: Object.keys(dataById).map((composerId) => ({ composerId })) }
+      }
+    }
+  }
+}
 
 describe('CursorCdpSessionCreator.inspectComposerRuntime', () => {
   it('preserves native bubble timestamps for virtual user-turn projection', () => {
@@ -287,6 +326,50 @@ describe('CursorCdpSessionCreator.inspectComposerRuntime', () => {
     expect(populated?.snapshotComplete).toBe(true)
   })
 
+  it('parses structured diffs for edit blocks with bounds, and ignores them on other kinds', () => {
+    const lines = Array.from({ length: 250 }, (_, index) => ({ type: 'added', text: `l${index}`, newLine: index + 1 }))
+    const parsed = parseProcessStream({
+      turnId: 'turn', generatingBubbleCount: 0, snapshotComplete: true,
+      items: [
+        { kind: 'tool', id: 'cursor:edit', toolName: 'edit_file_v2', toolKind: 'edit', toolCase: 'editToolCall', status: 'done',
+          diff: { lines: [
+            { type: 'hunk', text: '@@ -1,2 +1,2 @@' },
+            { type: 'context', text: 'a', oldLine: 1, newLine: 1 },
+            { type: 'removed', text: 'b', oldLine: 2 },
+            { type: 'added', text: 'c'.repeat(400), newLine: 2 },
+            { type: 'bogus', text: 'x' },
+            { text: 'no type' }
+          ] } },
+        { kind: 'tool', id: 'cursor:big', toolName: 'edit_file_v2', toolKind: 'edit', status: 'done', diff: { lines, truncatedLineCount: 3 } },
+        { kind: 'tool', id: 'cursor:read', toolName: 'read_file_v2', toolKind: 'read', status: 'done', diff: { lines: [{ type: 'added', text: 'ignored' }] } },
+        { kind: 'tool', id: 'cursor:empty', toolName: 'edit_file_v2', toolKind: 'edit', status: 'done', diff: { lines: [] } }
+      ]
+    })
+    const tools = parsed?.items.filter((item) => item.kind === 'tool') ?? []
+    expect(tools[0]?.diff).toEqual({ lines: [
+      { type: 'hunk', text: '@@ -1,2 +1,2 @@' },
+      { type: 'context', text: 'a', oldLine: 1, newLine: 1 },
+      { type: 'removed', text: 'b', oldLine: 2 },
+      { type: 'added', text: 'c'.repeat(300), newLine: 2 }
+    ] })
+    expect(tools[1]?.diff?.lines).toHaveLength(240)
+    expect(tools[1]?.diff?.truncatedLineCount).toBe(3 + 10)
+    expect(tools[2]?.diff).toBeUndefined()
+    expect(tools[3]?.diff).toBeUndefined()
+  })
+
+  it('passes the native toolCase through with a strict shape and drops malformed values', () => {
+    const parsed = parseProcessStream({
+      turnId: 'turn', generatingBubbleCount: 0, snapshotComplete: true,
+      items: [
+        { kind: 'tool', id: 'cursor:ls', toolName: 'list_dir', toolKind: 'read', toolCase: 'lsToolCall', status: 'done' },
+        { kind: 'tool', id: 'cursor:legacy', toolName: 'read_file_v2', toolKind: 'read', status: 'done' },
+        { kind: 'tool', id: 'cursor:bad', toolName: 'read_file_v2', toolKind: 'read', toolCase: 'not a case!', status: 'done' }
+      ]
+    })
+    expect(parsed?.items.map((item) => item.kind === 'tool' ? item.toolCase : null)).toEqual(['lsToolCall', undefined, undefined])
+  })
+
   it('strips legacy MCP placeholder tool names from older hook frames (RC-5.1)', () => {
     // 旧版 hook（v14 及以前）的 MCP 首帧占位：真实名称未水合，不得展示；
     // 真名业务工具与内部协议工具照常分类处理。
@@ -303,6 +386,7 @@ describe('CursorCdpSessionCreator.inspectComposerRuntime', () => {
 
   it('reads final assistant text from Cursor data and excludes interim text followed by work', async () => {
     const data = {
+      status: 'generating',
       fullConversationHeadersOnly: [
         { type: 1, bubbleId: 'user-1' },
         { type: 2, bubbleId: 'interim' },
@@ -314,16 +398,9 @@ describe('CursorCdpSessionCreator.inspectComposerRuntime', () => {
         'tool-1': { toolFormerData: { name: 'read_file' } }
       }
     }
-    const window = {
-      __qtComposerBridge: {
-        ready: true,
-        listComposers: () => [{ composerId: 'composer-1', status: 'generating', isGenerating: true }],
-        getStatus: () => ({ found: true, status: 'generating', lastAiText: 'DOM 中混入的工具文字', lastAiBubbleId: 'dom' }),
-        getComposerData: () => data
-      }
-    }
+    const window = inspectionWindow({ 'composer-1': data })
     const withoutFinal = await runInNewContext(buildRuntimeInspectionExpression(['composer-1']), { window, Map, Date })
-    expect(withoutFinal.rows[0]).toMatchObject({ responseText: '', responseId: '' })
+    expect(withoutFinal.rows[0]).toMatchObject({ responseText: '', responseId: '', state: 'active' })
 
     data.fullConversationHeadersOnly.push({ type: 2, bubbleId: 'final-1' })
     Object.assign(data.conversationMap, { 'final-1': { text: '这是最终回答。' } })
@@ -335,32 +412,56 @@ describe('CursorCdpSessionCreator.inspectComposerRuntime', () => {
     expect(withFinal.rows[0]).toMatchObject({ responseText: '这是最终回答。', responseId: 'final-1' })
   })
 
+  it('derives everything from the self-owned gateway service; no legacy patch globals involved', async () => {
+    const data = {
+      status: 'generating',
+      fullConversationHeadersOnly: [{ type: 1, bubbleId: 'user-1' }, { type: 2, bubbleId: 'final-1' }],
+      conversationMap: { 'user-1': { text: '开始' }, 'final-1': { text: '最终回答。' } }
+    }
+    let nativeReads = 0
+    const window = {
+      __sgComposerService: {
+        createComposer: () => ({}),
+        composerDataService: {
+          getComposerDataIfLoaded: (id: string) => { nativeReads += 1; return id === 'composer-1' ? data : undefined },
+          allComposersData: { allComposers: [{ composerId: 'composer-1' }] }
+        }
+      }
+    }
+    const expression = buildRuntimeInspectionExpression(['composer-1'])
+    // 补丁时代的全局与 trace 包装桥已彻底退役。
+    expect(expression).not.toContain('__qtComposer')
+    const inspected = await runInNewContext(expression, { window, Map, Date })
+    expect(inspected.rows[0]).toMatchObject({ responseText: '最终回答。', responseId: 'final-1', state: 'active' })
+    expect(nativeReads).toBeGreaterThanOrEqual(1)
+
+    // 服务未定位（网关缺席）→ 结构化 bridge_not_ready，不伪装成功。
+    const missing = await runInNewContext(expression, { window: {}, Map, Date })
+    expect(missing).toEqual({ ok: false, error: 'bridge_not_ready' })
+  })
+
   it('still finds the final answer when only internal-protocol noise follows it (RC-6)', async () => {
     // 回复完成后 Agent 轮询：最终正文之后只剩 capability:30、keepalive thinking
     // 与 check_messages 调用。旧实现把 thinking/capability 当工作 → 最终正文被
     // 误判为中间过程（responseText 为空），正文重复进入过程与回复。
-    const window = {
-      __qtComposerBridge: {
-        ready: true,
-        listComposers: () => [{ composerId: 'composer-1', status: 'idle' }],
-        getStatus: () => ({ found: true, status: 'idle' }),
-        getComposerData: () => ({
-          fullConversationHeadersOnly: [
-            { type: 1, bubbleId: 'user-1' },
-            { type: 2, bubbleId: 'final-1' },
-            { type: 2, bubbleId: 'cap-1' },
-            { type: 2, bubbleId: 'th-keep' },
-            { type: 2, bubbleId: 'tool-check' }
-          ],
-          conversationMap: {
-            'final-1': { text: '这是最终回答。' },
-            'cap-1': { capabilityType: 30 },
-            'th-keep': { thinking: '没有新消息，继续等待。' },
-            'tool-check': { toolFormerData: { name: 'mcp-SG Team-check_messages' } }
-          }
-        })
+    const window = inspectionWindow({
+      'composer-1': {
+        status: 'idle',
+        fullConversationHeadersOnly: [
+          { type: 1, bubbleId: 'user-1' },
+          { type: 2, bubbleId: 'final-1' },
+          { type: 2, bubbleId: 'cap-1' },
+          { type: 2, bubbleId: 'th-keep' },
+          { type: 2, bubbleId: 'tool-check' }
+        ],
+        conversationMap: {
+          'final-1': { text: '这是最终回答。' },
+          'cap-1': { capabilityType: 30 },
+          'th-keep': { thinking: '没有新消息，继续等待。' },
+          'tool-check': { toolFormerData: { name: 'mcp-SG Team-check_messages' } }
+        }
       }
-    }
+    })
     const inspected = await runInNewContext(buildRuntimeInspectionExpression(['composer-1']), { window, Map, Date })
     expect(inspected.rows[0]).toMatchObject({ responseText: '这是最终回答。', responseId: 'final-1' })
   })
@@ -371,28 +472,24 @@ describe('CursorCdpSessionCreator.inspectComposerRuntime', () => {
     const mcpResult = (text: string): string => JSON.stringify({ result: JSON.stringify({ content: [{ type: 'text', text }] }) })
     const delivered = `新任务来了\n\n━━━━\n${CHANNEL_USER_DELIVERY_MARKER}\n━━━━\n\n[轮次 #7 · 队列剩余 0 条]`
     const inspect = async (checkResult: string) => {
-      const window = {
-        __qtComposerBridge: {
-          ready: true,
-          listComposers: () => [{ composerId: 'composer-1', status: 'generating', isGenerating: true }],
-          getStatus: () => ({ found: true, status: 'generating' }),
-          getComposerData: () => ({
-            fullConversationHeadersOnly: [
-              { type: 1, bubbleId: 'user-1' },
-              { type: 2, bubbleId: 'final-prev' },
-              { type: 2, bubbleId: 'tool-record' },
-              { type: 2, bubbleId: 'tool-check' },
-              { type: 2, bubbleId: 'th-next' }
-            ],
-            conversationMap: {
-              'final-prev': { text: '上一轮的回答。' },
-              'tool-record': { toolFormerData: { name: 'mcp-SG Team-record_reply', status: 'completed', result: mcpResult('{"ok":true}') } },
-              'tool-check': { toolFormerData: { name: 'mcp-SG Team-check_messages', status: 'completed', result: mcpResult(checkResult) } },
-              'th-next': { thinking: { text: '开始分析新任务。' } }
-            }
-          })
+      const window = inspectionWindow({
+        'composer-1': {
+          status: 'generating',
+          fullConversationHeadersOnly: [
+            { type: 1, bubbleId: 'user-1' },
+            { type: 2, bubbleId: 'final-prev' },
+            { type: 2, bubbleId: 'tool-record' },
+            { type: 2, bubbleId: 'tool-check' },
+            { type: 2, bubbleId: 'th-next' }
+          ],
+          conversationMap: {
+            'final-prev': { text: '上一轮的回答。' },
+            'tool-record': { toolFormerData: { name: 'mcp-SG Team-record_reply', status: 'completed', result: mcpResult('{"ok":true}') } },
+            'tool-check': { toolFormerData: { name: 'mcp-SG Team-check_messages', status: 'completed', result: mcpResult(checkResult) } },
+            'th-next': { thinking: { text: '开始分析新任务。' } }
+          }
         }
-      }
+      })
       return (await runInNewContext(buildRuntimeInspectionExpression(['composer-1']), { window, Map, Date })).rows[0]
     }
     expect(await inspect(delivered)).toMatchObject({ responseText: '', responseId: '' })
@@ -419,11 +516,9 @@ describe('CursorCdpSessionCreator.inspectComposerRuntime', () => {
     const inspect = async (checkResult: string) => {
       const window = {
         __sgTeamDeliveryByBubble: new Map([['tool-check', false]]),
-        __qtComposerBridge: {
-          ready: true,
-          listComposers: () => [{ composerId: 'composer-1', status: 'generating', isGenerating: true }],
-          getStatus: () => ({ found: true, status: 'generating' }),
-          getComposerData: () => ({
+        ...inspectionWindow({
+          'composer-1': {
+            status: 'generating',
             fullConversationHeadersOnly: [
               { type: 1, bubbleId: 'user-1' },
               { type: 2, bubbleId: 'final-prev' },
@@ -435,8 +530,8 @@ describe('CursorCdpSessionCreator.inspectComposerRuntime', () => {
               'tool-check': { toolFormerData: modern(checkResult) },
               'th-next': { thinking: { text: '开始分析新任务。' }, capabilityType: 30 }
             }
-          })
-        }
+          }
+        })
       }
       return (await runInNewContext(buildRuntimeInspectionExpression(['composer-1']), { window, Map, Date })).rows[0]
     }
@@ -446,41 +541,34 @@ describe('CursorCdpSessionCreator.inspectComposerRuntime', () => {
 
   it('still treats business work after the message as interim text', async () => {
     // 业务工作（team_task）跟在正文之后 → 正文是中间过程，不是最终回答。
-    const window = {
-      __qtComposerBridge: {
-        ready: true,
-        listComposers: () => [{ composerId: 'composer-1', status: 'idle' }],
-        getStatus: () => ({ found: true, status: 'idle' }),
-        getComposerData: () => ({
-          fullConversationHeadersOnly: [
-            { type: 1, bubbleId: 'user-1' },
-            { type: 2, bubbleId: 'interim-1' },
-            { type: 2, bubbleId: 'tool-team' },
-            { type: 2, bubbleId: 'final-1' }
-          ],
-          conversationMap: {
-            'interim-1': { text: '我先领取任务。' },
-            'tool-team': { toolFormerData: { name: 'mcp-SG Team-team_task' } },
-            'final-1': { text: '任务已领取，开始执行。' }
-          }
-        })
+    const window = inspectionWindow({
+      'composer-1': {
+        status: 'idle',
+        fullConversationHeadersOnly: [
+          { type: 1, bubbleId: 'user-1' },
+          { type: 2, bubbleId: 'interim-1' },
+          { type: 2, bubbleId: 'tool-team' },
+          { type: 2, bubbleId: 'final-1' }
+        ],
+        conversationMap: {
+          'interim-1': { text: '我先领取任务。' },
+          'tool-team': { toolFormerData: { name: 'mcp-SG Team-team_task' } },
+          'final-1': { text: '任务已领取，开始执行。' }
+        }
       }
-    }
+    })
     const inspected = await runInNewContext(buildRuntimeInspectionExpression(['composer-1']), { window, Map, Date })
     expect(inspected.rows[0]).toMatchObject({ responseText: '任务已领取，开始执行。', responseId: 'final-1' })
   })
 
-  it('uses live status fallback while Composer data is only an empty hydration shell', async () => {
-    const window = {
-      __qtComposerBridge: {
-        ready: true,
-        listComposers: () => [{ composerId: 'composer-empty', status: 'generating', isGenerating: true }],
-        getStatus: () => ({ found: true, status: 'generating', lastAiText: '仍然可见的实时回复', lastAiBubbleId: 'live-bubble' }),
-        getComposerData: () => ({ fullConversationHeadersOnly: [], conversationMap: {} })
-      }
-    }
+  it('keeps liveness from composer status while data is only an empty hydration shell', async () => {
+    // 自带网关为纯数据源：补丁时代的 DOM 兜底（水合空壳期从选择器捞实时正文）随补丁退役。
+    // 空壳期正文由 observer 写后帧承担；inspect 只保证状态不误判——回合存活以 status 为准。
+    const window = inspectionWindow({
+      'composer-empty': { status: 'generating', fullConversationHeadersOnly: [], conversationMap: {} }
+    })
     const inspected = await runInNewContext(buildRuntimeInspectionExpression(['composer-empty']), { window, Map, Date })
-    expect(inspected.rows[0]).toMatchObject({ responseText: '仍然可见的实时回复', responseId: 'live-bubble' })
+    expect(inspected.rows[0]).toMatchObject({ state: 'active', responseText: '', responseId: '' })
   })
 
   it('returns exact stopped evidence from the live Cursor bridge', async () => {
@@ -488,7 +576,7 @@ describe('CursorCdpSessionCreator.inspectComposerRuntime', () => {
       only: {
         title: 'demo-app — Cursor',
         bridgeReady: true,
-        scope: WS_SCOPE,
+        folder: WS_PATH,
         runtimeResult: {
           ok: true,
           rows: [{
@@ -520,7 +608,7 @@ describe('CursorCdpSessionCreator.inspectComposerRuntime', () => {
       only: {
         title: 'demo-app — Cursor',
         bridgeReady: true,
-        scope: WS_SCOPE,
+        folder: WS_PATH,
         runtimeResult: {
           ok: true,
           rows: [{
@@ -582,7 +670,7 @@ describe('CursorCdpSessionCreator.inspectComposerRuntime', () => {
     }))
     const { creator } = createCreator({
       only: {
-        title: 'demo-app — Cursor', bridgeReady: true, scope: WS_SCOPE,
+        title: 'demo-app — Cursor', bridgeReady: true, folder: WS_PATH,
         runtimeResult: {
           ok: true,
           rows: [{
@@ -603,7 +691,7 @@ describe('CursorCdpSessionCreator.inspectComposerRuntime', () => {
       only: {
         title: 'demo-app — Cursor',
         bridgeReady: true,
-        scope: WS_SCOPE,
+        folder: WS_PATH,
         runtimeResult: {
           ok: true,
           rows: [{
@@ -626,5 +714,67 @@ describe('CursorCdpSessionCreator.inspectComposerRuntime', () => {
     })
     const result = await creator.inspectComposerRuntime(WS_PATH, ['composer-quiet'])
     expect(result['composer-quiet']?.process).toBeUndefined()
+  })
+})
+
+describe('parseStreamQuestion / awaitingUser', () => {
+  it('parses ask_question payloads with bounds and drops malformed questions or options', () => {
+    const parsed = parseProcessStream({
+      turnId: 't', generatingBubbleCount: 0, snapshotComplete: true,
+      items: [{
+        kind: 'tool', id: 'cursor:q', toolName: 'ask_question', toolKind: 'question', status: 'running',
+        title: '方向', hint: '',
+        question: {
+          toolCallId: 'tc-1', title: '方向', status: 'pending',
+          questions: [
+            { id: 'q1', prompt: '选哪个？', allowMultiple: 'yes', options: [{ id: 'a', label: 'A' }, { id: '', label: '无 id' }, 'junk'] },
+            { id: '', prompt: '缺 id 的题', options: [] },
+            null
+          ],
+          answers: [{ questionId: 'q1', selectedOptionIds: ['a', 7, ''], freeformText: '' }],
+          note: '  附言  ',
+          skipReason: 'timeout'
+        }
+      }]
+    })
+    const block = parsed?.items[0]
+    expect(block?.kind === 'tool' ? block.question : undefined).toEqual({
+      toolCallId: 'tc-1',
+      title: '方向',
+      status: 'pending',
+      questions: [{ id: 'q1', prompt: '选哪个？', allowMultiple: false, options: [{ id: 'a', label: 'A' }] }],
+      answers: [{ questionId: 'q1', selectedOptionIds: ['a'] }],
+      note: '附言',
+      skipReason: 'timeout'
+    })
+    expect(block?.kind === 'tool' ? block.title : undefined).toBe('方向')
+    expect(block?.kind === 'tool' ? block.hint : undefined).toBeUndefined()
+  })
+
+  it('ignores question payloads on non-question tools and without a toolCallId', () => {
+    const parsed = parseProcessStream({
+      turnId: 't', generatingBubbleCount: 0, snapshotComplete: true,
+      items: [
+        { kind: 'tool', id: 'cursor:read', toolName: 'read_file_v2', toolKind: 'read', status: 'done', question: { toolCallId: 'x', questions: [] } },
+        { kind: 'tool', id: 'cursor:q', toolName: 'ask_question', toolKind: 'question', status: 'running', question: { questions: [] } }
+      ]
+    })
+    expect(parsed?.items.map((item) => item.kind === 'tool' ? item.question : 'n/a')).toEqual([undefined, undefined])
+  })
+
+  it('carries awaitingUser from the runtime inspection rows as independent liveness evidence', async () => {
+    const { creator } = createCreator({
+      w1: {
+        title: 'demo-app', bridgeReady: true, folder: WS_PATH,
+        runtimeResult: { ok: true, rows: [
+          { composerId: 'c-1', state: 'unknown', detail: '', observedAt: 1, isGenerating: false, awaitingUser: true },
+          { composerId: 'c-2', state: 'active', detail: '', observedAt: 1, isGenerating: true }
+        ] }
+      }
+    })
+    const evidence = await creator.inspectComposerRuntime(WS_PATH, ['c-1', 'c-2'])
+    expect(evidence['c-1']).toMatchObject({ awaitingUser: true, isGenerating: false })
+    expect(evidence['c-2']?.awaitingUser).toBeUndefined()
+    expect(buildRuntimeInspectionExpression(['c-1'])).toContain('getIsBlockingUserDecision')
   })
 })

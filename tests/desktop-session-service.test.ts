@@ -17,6 +17,7 @@ import { ChannelMessageRelay } from '../src/application/channel-message-relay'
 import { ChannelMessageService } from '../src/application/channel-message-service'
 import { SqliteChannelMessageRepository } from '../src/infrastructure/channel-messages/sqlite-channel-message-repository'
 import type { CursorComposerRuntimeEvidence } from '../src/infrastructure/cursor/cursor-cdp-session-creator'
+import { sessionRailActivity } from '../src/renderer/src/session-rail-view'
 
 function bridgeSnapshot(): DesktopSnapshot {
   return {
@@ -177,6 +178,11 @@ class FakeTeam implements DesktopSessionTeamSource {
     run.status = 'completed'
     run.updatedAt = at
     this.snapshot.activeRun = run
+    for (const listener of this.listeners) listener(this.getSnapshot())
+  }
+  /** 整体替换团队快照并通知订阅者（席位重建 / 绑定换 Composer 等场景）。 */
+  replace(snapshot: TeamControlSnapshot): void {
+    this.snapshot = snapshot
     for (const listener of this.listeners) listener(this.getSnapshot())
   }
 }
@@ -459,8 +465,9 @@ describe('desktop Cursor session enrichment', () => {
         composerId: 'composer-alpha-123', state: 'active', detail: 'generating', observedAt: 1_000_000,
         isGenerating: true, responseId: 'reply-unpersisted', responseText: '这条回复尚未通过 record_reply 落库'
       })
+      // inspect 兜底终结适用 2s 静默规则（对齐过程视图 inspectMayEndTurn）：防摘要抖动翻状态。
       update('1', {
-        composerId: 'composer-alpha-123', state: 'active', detail: 'done', observedAt: 1_001_000,
+        composerId: 'composer-alpha-123', state: 'active', detail: 'done', observedAt: 1_002_500,
         isGenerating: false, responseId: 'reply-unpersisted', responseText: '这条回复尚未通过 record_reply 落库'
       })
       vi.setSystemTime(1_020_000)
@@ -1077,6 +1084,258 @@ describe('desktop Cursor session enrichment', () => {
         composerId: 'composer-alpha-123', observedAt: Date.now() + 10, isGenerating: false
       })
       expect(service.getSnapshot().liveProcess?.['1']?.blocks.every((block) => block.status === 'done')).toBe(true)
+    } finally {
+      service.dispose()
+    }
+  })
+
+  it('publishes every in-place streaming diff revision instead of treating the live edit as an unchanged tool block', () => {
+    const service = new DesktopSessionService(
+      new FakeBridge(),
+      new FakeTeam(teamSnapshot('composer-alpha-123')),
+      { readWorkspace: () => telemetry() },
+      undefined,
+      { inspectComposerRuntime: async () => ({}) }
+    )
+    const frame = (observedAt: number, tail: string): void => service.notifyNativeProcessSnapshot({
+      composerId: 'composer-alpha-123', observedAt, isGenerating: true,
+      process: {
+        turnId: 'user-live-edit',
+        items: [{
+          kind: 'tool', id: 'cursor:edit-live', toolName: 'edit_file_v2', toolKind: 'edit', toolCase: 'editToolCall',
+          summary: '/workspace/src/live.ts', status: 'running',
+          diff: { lines: [
+            { type: 'context', text: 'before', oldLine: 40, newLine: 40 },
+            { type: 'added', text: tail, newLine: 41 }
+          ] }
+        }],
+        generatingBubbleCount: 1,
+        snapshotComplete: true
+      }
+    })
+    try {
+      service.refreshTelemetry()
+      frame(2_000, 'tail-1')
+      const first = service.getSnapshot().liveProcess?.['1']?.blocks[0]
+      expect(first?.kind === 'tool' ? first.diff?.lines.at(-1)?.text : undefined).toBe('tail-1')
+
+      // 除 diff 内容外 id/status/路径完全不变：旧 fingerprint 会在这里误判相同并吞帧。
+      frame(2_250, 'tail-2')
+      const second = service.getSnapshot().liveProcess?.['1']?.blocks[0]
+      expect(second?.kind === 'tool' ? second.diff?.lines.at(-1)?.text : undefined).toBe('tail-2')
+      expect(service.getSnapshot().liveProcess?.['1']?.updatedAt).toBe(2_250)
+    } finally {
+      service.dispose()
+    }
+  })
+
+  it('keeps the live turn alive across tool execution: observer frames with isGenerating=true but zero streaming bubbles never end the turn (名册活动条闪烁根因回归)', () => {
+    const service = new DesktopSessionService(
+      new FakeBridge(),
+      new FakeTeam(teamSnapshot('composer-alpha-123')),
+      { readWorkspace: () => telemetry() },
+      undefined,
+      { inspectComposerRuntime: async () => ({}) }
+    )
+    const thinking = (status: 'running' | 'done') => ({ kind: 'thinking' as const, id: 'cursor-th:th-1', text: '先看入口文件', status })
+    const read = (status: 'running' | 'done') => ({
+      kind: 'tool' as const, id: 'cursor:read-1', toolName: 'read_file_v2', toolKind: 'read' as const, toolCase: 'readToolCall',
+      summary: 'src/main/index.ts', status
+    })
+    // hook v31 帧：isGenerating = 回合存活（composer status === 'generating'）；
+    // generatingBubbleCount = 气泡级 token 流式，工具执行期恒为 0。
+    const frame = (observedAt: number, items: Array<ReturnType<typeof thinking> | ReturnType<typeof read>>, generatingBubbleCount: number, isGenerating = true): void => (
+      service.notifyNativeProcessSnapshot({
+        composerId: 'composer-alpha-123', observedAt, isGenerating,
+        process: { turnId: 'user-turn-1', items, generatingBubbleCount, snapshotComplete: true }
+      })
+    )
+    // 旧 hook 帧（无 statusLine）：名册行按过程块用同一套 Cursor 规则回退。
+    const activityOf = () => {
+      const snapshot = service.getSnapshot()
+      const session = snapshot.sessions.find((candidate) => candidate.channelId === '1')!
+      return sessionRailActivity(session, snapshot.liveProcess?.['1'], snapshot.liveAgentResponses?.['1'], snapshot.liveStatusLine?.['1'])
+    }
+    try {
+      service.refreshTelemetry()
+      frame(1_000, [thinking('running')], 1)
+      expect(service.getSnapshot().liveProcess?.['1']).toMatchObject({ generating: true })
+      expect(activityOf()).toMatchObject({ verb: 'Thinking', live: true })
+
+      // 工具执行期：气泡集为空、回合存活。旧实现把这一帧当终结帧——工具被收成 done、
+      // generating=false、活动条消失，下一个 thinking token 再把它拉回来（时有时无）。
+      frame(1_200, [thinking('done'), read('running')], 0)
+      const during = service.getSnapshot().liveProcess?.['1']
+      expect(during).toMatchObject({ generating: true, turn: 'cursor:user-turn-1' })
+      expect(during?.blocks.map((block) => [block.id, block.status])).toEqual([
+        ['cursor-th:th-1', 'done'], ['cursor:read-1', 'running']
+      ])
+      expect(activityOf()).toEqual({ kind: 'read', verb: 'Reading', detail: 'index.ts', live: true, muted: false })
+      // 工具执行期不归档回合（归档只属于回合终结）。
+      expect((service as unknown as { nativeProcessArchive: Map<string, unknown[]> }).nativeProcessArchive.has('1')).toBe(false)
+
+      // 工具结束、下一段 thinking 尚未开写的块间隙：仍存活；Cursor 副标题动词恒为 loading 形态。
+      frame(1_400, [thinking('done'), read('done')], 0)
+      expect(service.getSnapshot().liveProcess?.['1']).toMatchObject({ generating: true })
+      expect(activityOf()).toEqual({ kind: 'read', verb: 'Reading', detail: 'index.ts', live: true, muted: false })
+
+      frame(1_600, [thinking('done'), read('done'), { ...thinking('running'), id: 'cursor-th:th-2', text: '再看 preload' }], 1)
+      expect(activityOf()).toMatchObject({ verb: 'Thinking', live: true })
+
+      // 回合真正结束（composer status 离开 generating）：running 收尾、generating=false、归档一次；
+      // 名册行常驻，收口为 Completed（灰化、无转圈）。
+      frame(2_000, [thinking('done'), read('done'), { ...thinking('running'), id: 'cursor-th:th-2', text: '再看 preload' }], 0, false)
+      const ended = service.getSnapshot().liveProcess?.['1']
+      expect(ended).toMatchObject({ generating: false })
+      expect(ended?.blocks.every((block) => block.status === 'done')).toBe(true)
+      expect(activityOf()).toEqual({ kind: 'other', verb: 'Completed', live: false, muted: true })
+      expect((service as unknown as { nativeProcessArchive: Map<string, unknown[]> }).nativeProcessArchive.get('1')).toHaveLength(1)
+    } finally {
+      service.dispose()
+    }
+  })
+
+  it('keeps the Cursor status line as its own live fact (hook v32): standby seat reads Thinking with an empty process view, small frames carry it, stale/legacy frames never regress it, and the ended turn settles to Completed / Stopped (名册常驻状态行)', () => {
+    const service = new DesktopSessionService(
+      new FakeBridge(),
+      new FakeTeam(teamSnapshot('composer-alpha-123')),
+      { readWorkspace: () => telemetry() },
+      undefined,
+      { inspectComposerRuntime: async () => ({}) }
+    )
+    const activityOf = () => {
+      const snapshot = service.getSnapshot()
+      const session = snapshot.sessions.find((candidate) => candidate.channelId === '1')!
+      return sessionRailActivity(session, snapshot.liveProcess?.['1'], snapshot.liveAgentResponses?.['1'], snapshot.liveStatusLine?.['1'])
+    }
+    try {
+      service.refreshTelemetry()
+      // 待命席位（check_messages 长轮询）：传输噪音过滤后 items 为空，但 Cursor 副标题扫到轮询前的思考。
+      service.notifyNativeProcessSnapshot({
+        composerId: 'composer-alpha-123', observedAt: 1_000, isGenerating: true, composerStatus: 'generating',
+        statusLine: { kind: 'thinking', label: 'Thinking' },
+        process: { turnId: 'user-turn-1', items: [], generatingBubbleCount: 0, snapshotComplete: true }
+      })
+      expect(service.getSnapshot().liveProcess?.['1']).toBeUndefined()
+      expect(service.getSnapshot().liveStatusLine?.['1']).toMatchObject({
+        composerId: 'composer-alpha-123', generating: true, composerStatus: 'generating', statusLine: { kind: 'thinking', label: 'Thinking' }
+      })
+      expect(activityOf()).toEqual({ kind: 'thinking', verb: 'Thinking', live: true, muted: false })
+
+      // 节流窗内的小帧（无 process）同样携带：正文首行片段。
+      service.notifyNativeProcessSnapshot({
+        composerId: 'composer-alpha-123', observedAt: 1_100, isGenerating: true, composerStatus: 'generating',
+        statusLine: { kind: 'text', label: 'I dug into the Cursor 3.6.31 bundle and probed the…' }
+      })
+      expect(activityOf()).toEqual({ kind: 'message', verb: 'I dug into the Cursor 3.6.31 bundle and probed the…', live: true, muted: false })
+
+      // 未变化的帧不重建对象（渲染层 memo 红利）。
+      const stable = service.getSnapshot().liveStatusLine?.['1']
+      service.notifyNativeProcessSnapshot({
+        composerId: 'composer-alpha-123', observedAt: 1_200, isGenerating: true, composerStatus: 'generating',
+        statusLine: { kind: 'text', label: 'I dug into the Cursor 3.6.31 bundle and probed the…' }
+      })
+      expect(service.getSnapshot().liveStatusLine?.['1']).toBe(stable)
+
+      // 迟到的旧观测（比最近一次接受的帧更早）不回退。
+      service.notifyNativeProcessSnapshot({
+        composerId: 'composer-alpha-123', observedAt: 1_150, isGenerating: true, composerStatus: 'generating',
+        statusLine: { kind: 'thinking', label: 'Thinking' }
+      })
+      expect(activityOf().verb).toBe('I dug into the Cursor 3.6.31 bundle and probed the…')
+
+      // 旧 hook 帧（v31 及更早：无 statusLine / composerStatus）既不覆盖也不清空。
+      service.notifyNativeProcessSnapshot({ composerId: 'composer-alpha-123', observedAt: 1_300, isGenerating: true })
+      expect(activityOf().verb).toBe('I dug into the Cursor 3.6.31 bundle and probed the…')
+
+      // 工具执行期：Reading 拆成动词 + 对象两段，工具色相跟着走。
+      service.notifyNativeProcessSnapshot({
+        composerId: 'composer-alpha-123', observedAt: 1_400, isGenerating: true, composerStatus: 'generating',
+        statusLine: { kind: 'tool', label: 'Reading index.ts L1-40', detail: 'index.ts L1-40', toolKind: 'read' }
+      })
+      expect(activityOf()).toEqual({ kind: 'read', verb: 'Reading', detail: 'index.ts L1-40', live: true, muted: false })
+
+      // 回合结束：aborted → Stopped；否则 Completed。副标题不再显示。
+      service.notifyNativeProcessSnapshot({ composerId: 'composer-alpha-123', observedAt: 1_500, isGenerating: false, composerStatus: 'aborted' })
+      expect(service.getSnapshot().liveStatusLine?.['1']).toMatchObject({ generating: false, composerStatus: 'aborted' })
+      expect(service.getSnapshot().liveStatusLine?.['1']?.statusLine).toBeUndefined()
+      expect(activityOf()).toEqual({ kind: 'other', verb: 'Stopped', live: false, muted: true })
+      service.notifyNativeProcessSnapshot({ composerId: 'composer-alpha-123', observedAt: 1_600, isGenerating: false, composerStatus: 'completed' })
+      expect(activityOf()).toEqual({ kind: 'other', verb: 'Completed', live: false, muted: true })
+    } finally {
+      service.dispose()
+    }
+  })
+
+  it('takes the status line from runtime inspect when the observer is silent and drops it from the snapshot once the seat is rebuilt onto another composer', async () => {
+    const active = teamSnapshot('composer-alpha-123')
+    active.runs = [{
+      id: 'run-a', workspaceId: 'workspace-a', name: 'run', goal: 'goal', templateId: 'default',
+      status: 'running', createdAt: 1, updatedAt: 1
+    }]
+    active.activeRun = active.runs[0]
+    const team = new FakeTeam(active)
+    const service = new DesktopSessionService(
+      new FakeBridge(),
+      team,
+      { readWorkspace: () => telemetry() },
+      undefined,
+      {
+        inspectComposerRuntime: async () => ({
+          'composer-alpha-123': {
+            composerId: 'composer-alpha-123', state: 'active', detail: '正在生成', observedAt: 5_000,
+            // 桥接摘要的气泡级 isGenerating 为 false（工具执行期），回合存活由 composerStatus 判定。
+            isGenerating: false, composerStatus: 'generating',
+            statusLine: { kind: 'tool', label: 'Grepping sessionRailActivity (*.ts)', detail: 'sessionRailActivity (*.ts)', toolKind: 'search' }
+          }
+        })
+      }
+    )
+    try {
+      service.refreshTelemetry()
+      await vi.waitFor(() => {
+        expect(service.getSnapshot().liveStatusLine?.['1']).toMatchObject({ composerId: 'composer-alpha-123', generating: true })
+      })
+      const snapshot = service.getSnapshot()
+      const session = snapshot.sessions.find((candidate) => candidate.channelId === '1')!
+      expect(sessionRailActivity(session, snapshot.liveProcess?.['1'], snapshot.liveAgentResponses?.['1'], snapshot.liveStatusLine?.['1']))
+        .toEqual({ kind: 'search', verb: 'Grepping', detail: 'sessionRailActivity (*.ts)', live: true, muted: false })
+
+      // 席位重建到另一个 Composer：旧 Composer 的副标题不得挂在新席位上。
+      const rebuilt = teamSnapshot('composer-beta-456')
+      rebuilt.runs = active.runs
+      rebuilt.activeRun = active.activeRun
+      team.replace(rebuilt)
+      expect(service.getSnapshot().liveStatusLine?.['1']).toBeUndefined()
+    } finally {
+      service.dispose()
+    }
+  })
+
+  it('completes the live answer by its own bubble-level flag while the turn stays alive for record_reply (持续会话正文不悬挂 streaming)', () => {
+    const service = new DesktopSessionService(
+      new FakeBridge(),
+      new FakeTeam(teamSnapshot('composer-alpha-123')),
+      { readWorkspace: () => telemetry() },
+      undefined,
+      { inspectComposerRuntime: async () => ({}) }
+    )
+    const frame = (observedAt: number, text: string, generating: boolean): void => service.notifyNativeProcessSnapshot({
+      composerId: 'composer-alpha-123', observedAt, isGenerating: true,
+      response: { id: 'bubble-final', text, generating },
+      process: { turnId: 'user-turn-1', items: [], generatingBubbleCount: generating ? 1 : 0, snapshotComplete: true }
+    })
+    try {
+      service.refreshTelemetry()
+      // streaming 条目有 2.5s 断流时效（按真实时钟），观测时间必须贴着 Date.now()。
+      const base = Date.now()
+      frame(base, '结论：', true)
+      expect(service.getSnapshot().liveAgentResponses?.['1']).toMatchObject({ id: 'bubble-final', status: 'streaming', source: 'native' })
+      frame(base + 100, '结论：可以合并。', true)
+      expect(service.getSnapshot().liveAgentResponses?.['1']).toMatchObject({ text: '结论：可以合并。', status: 'streaming' })
+      // 正文写完，模型转去调 record_reply：回合仍存活（isGenerating=true），但正文气泡已不在流式集合里。
+      frame(base + 200, '结论：可以合并。', false)
+      expect(service.getSnapshot().liveAgentResponses?.['1']).toMatchObject({ text: '结论：可以合并。', status: 'complete' })
     } finally {
       service.dispose()
     }
@@ -1751,6 +2010,261 @@ describe('虚拟回合封口（阶段 B：outboundId 精确关闭边界）', () 
       expect(reply2Entry?.processBlocks?.map((block) => block.id)).toEqual(['cursor:work-2'])
       // 第一轮封口字节在整个过程中保持不变
       expect(readReplyRow().json).toBe(sealed.json)
+    } finally {
+      service.dispose()
+      relay.stop()
+      vi.useRealTimers()
+      repository.close()
+    }
+  })
+
+  it('persists post-reply work as the reply continuation (settled blocks only) and keeps the sealed column byte-stable', async () => {
+    // 会话交接事故（2026-09-10/11）：接手方 record_reply「已接手」之后不回 check_messages，
+    // 直接在同一原生回合里继续干活。此前这些块被判为封口后的传输空档——渲染丢弃、封口跳过，
+    // 用户看到的过程流从此消失。现在它们作为锚点回复的续作落库（只落已结算块）。
+    vi.useFakeTimers()
+    vi.setSystemTime(100_000)
+    const active = teamSnapshot('composer-alpha-123')
+    active.runs = [{
+      id: 'run-a', workspaceId: 'workspace-a', name: 'run', goal: 'goal', templateId: 'default',
+      status: 'running', createdAt: 1, updatedAt: 1
+    }]
+    active.activeRun = active.runs[0]
+    const repository = new SqliteChannelMessageRepository(
+      join(mkdtempSync(join(tmpdir(), 'sg-continuation-')), 'channel.sqlite3')
+    )
+    const relay = new ChannelMessageRelay(repository)
+    const channelService = new ChannelMessageService(repository)
+    const dbPath = repository.path
+    const service = new DesktopSessionService(
+      new FakeBridge(relay),
+      new FakeTeam(active),
+      { readWorkspace: () => telemetry() },
+      relay,
+      { inspectComposerRuntime: async () => ({}) }
+    )
+    const readReplyRows = (): Array<{ sealed: string | null; continuation: string | null }> => {
+      const raw = new DatabaseSync(dbPath, { readOnly: true })
+      try {
+        return (raw.prepare(
+          'SELECT process_blocks_json, continuation_blocks_json FROM channel_replies WHERE channel_id = ? ORDER BY created_at ASC'
+        ).all('1') as Array<{ process_blocks_json: string | null; continuation_blocks_json: string | null }>)
+          .map((row) => ({ sealed: row.process_blocks_json, continuation: row.continuation_blocks_json }))
+      } finally {
+        raw.close()
+      }
+    }
+    const idsOf = (json: string | null): string[] => (json ? (JSON.parse(json) as Array<{ id: string }>).map((block) => block.id) : [])
+    const frame = (observedAt: number, items: Array<Record<string, unknown>>): void => {
+      service.notifyNativeProcessSnapshot({
+        composerId: 'composer-alpha-123', observedAt, isGenerating: true,
+        process: { turnId: 'user-t1', items: items as never, generatingBubbleCount: 1 }
+      })
+    }
+    const work1 = { kind: 'tool', id: 'cursor:work-1', toolName: 'read_file', toolKind: 'read', summary: '读转录', status: 'done' }
+    const followRead = { kind: 'tool', id: 'cursor:follow-read', toolName: 'read_file', toolKind: 'read', summary: 'src/a.ts', status: 'done' }
+    const followShellRunning = { kind: 'tool', id: 'cursor:follow-shell', toolName: 'Shell', toolKind: 'command', summary: 'npm test', status: 'running', output: 'RUN v4' }
+    const followShellDone = { ...followShellRunning, status: 'done', output: 'RUN v4\n1 passed' }
+    try {
+      repository.markChannelEmbedded('1', 'workspace-a', '/workspace/alpha')
+      relay.resetScope('run-a', 1)
+      relay.start(250)
+
+      // 交接消息投递 → 回合内块 → 「已接手」落库封口
+      relay.sendMessage({ channelId: '1', text: '【会话交接】来自 CH-1' })
+      const m1 = repository.listPendingOutbound('1')[0]!
+      repository.markOutboundDelivered([m1.id], 100_500)
+      repository.touchPresence('1', {
+        waiting: false, connectionPhase: 'processing', lastSeenAt: 100_500,
+        pendingReplySyncSince: 100_500, pendingOutboundId: m1.id
+      }, 100_500)
+      vi.advanceTimersByTime(300)
+      service.refreshTelemetry()
+      frame(100_600, [work1])
+      vi.setSystemTime(101_000)
+      const reply1 = channelService.recordReply({ channelId: '1', content: '已接手 CH-1 的上下文。' })
+      vi.advanceTimersByTime(300)
+      const [sealedRow] = readReplyRows()
+      expect(idsOf(sealedRow?.sealed ?? null)).toEqual(['cursor:work-1'])
+      expect(sealedRow?.continuation).toBeNull()
+
+      // 续作帧 1：一个已完成的读文件 + 一个仍在运行的 shell
+      vi.setSystemTime(101_500)
+      frame(101_500, [work1, followRead, followShellRunning])
+      let rows = readReplyRows()
+      expect(idsOf(rows[0]?.continuation ?? null)).toEqual(['cursor:follow-read'])
+      expect(rows[0]?.sealed).toBe(sealedRow?.sealed)
+      // 运行中的块留在直播层（渲染层据此显示实时续作），已落库的续作块从直播层撤下
+      let live = service.getSnapshot().liveProcess?.['1']
+      expect(live?.blocks.map((block) => block.id)).toEqual(['cursor:follow-shell'])
+      expect(live?.blocks[0]?.status).toBe('running')
+
+      // 续作帧 2：shell 完成 → 追加落库；直播层清空
+      vi.setSystemTime(102_100)
+      frame(102_100, [work1, followRead, followShellDone])
+      rows = readReplyRows()
+      expect(idsOf(rows[0]?.continuation ?? null)).toEqual(['cursor:follow-read', 'cursor:follow-shell'])
+      const continuationJson = rows[0]?.continuation
+      expect(continuationJson).toContain('1 passed')
+      live = service.getSnapshot().liveProcess?.['1']
+      expect(live?.blocks ?? []).toEqual([])
+
+      // 同一帧回流（256 窗口水合）：续作列与封口列都字节不变
+      vi.setSystemTime(102_400)
+      frame(102_400, [work1, followRead, followShellDone])
+      rows = readReplyRows()
+      expect(rows[0]?.continuation).toBe(continuationJson)
+      expect(rows[0]?.sealed).toBe(sealedRow?.sealed)
+
+      // 会话快照里的回复条目携带续作块（渲染层据此回放）
+      const replyEntry = service.getSnapshot().conversations['1']?.find((entry) => entry.id === `reply:${reply1.id}`)
+      expect(replyEntry?.processBlocks?.map((block) => block.id)).toEqual(['cursor:work-1'])
+      expect(replyEntry?.continuationBlocks?.map((block) => block.id)).toEqual(['cursor:follow-read', 'cursor:follow-shell'])
+
+      // 下一条消息投递后：新块进新回合，前一回合的续作列不再变化
+      vi.setSystemTime(103_000)
+      relay.sendMessage({ channelId: '1', text: '继续' })
+      const m2 = repository.listPendingOutbound('1')[0]!
+      repository.markOutboundDelivered([m2.id], 103_500)
+      repository.touchPresence('1', {
+        waiting: false, connectionPhase: 'processing', lastSeenAt: 103_500,
+        pendingReplySyncSince: 103_500, pendingOutboundId: m2.id
+      }, 103_500)
+      vi.advanceTimersByTime(300)
+      frame(103_600, [work1, followRead, followShellDone,
+        { kind: 'tool', id: 'cursor:work-2', toolName: 'edit_file', toolKind: 'edit', summary: '新块', status: 'done' }])
+      vi.setSystemTime(104_000)
+      const reply2 = channelService.recordReply({ channelId: '1', content: '第二轮完成。' })
+      vi.advanceTimersByTime(300)
+      rows = readReplyRows()
+      expect(rows).toHaveLength(2)
+      expect(rows[0]?.continuation).toBe(continuationJson)
+      expect(idsOf(rows[1]?.sealed ?? null)).toEqual(['cursor:work-2'])
+      expect(rows[1]?.continuation).toBeNull()
+      expect(reply2.outboundId).toBe(m2.id)
+
+      // 重启回放：新 relay 从 SQLite 水合，续作块随回复条目一并恢复
+      const rehydrated = new ChannelMessageRelay(repository)
+      rehydrated.resetScope('run-a', 1)
+      rehydrated.start(250)
+      try {
+        const restored = rehydrated.conversationsOf('1')?.find((entry) => entry.id === `reply:${reply1.id}`)
+        expect(restored?.continuationBlocks?.map((block) => block.id)).toEqual(['cursor:follow-read', 'cursor:follow-shell'])
+      } finally {
+        rehydrated.stop()
+      }
+    } finally {
+      service.dispose()
+      relay.stop()
+      vi.useRealTimers()
+      repository.close()
+    }
+  })
+
+  it('keeps the full shell output live but persists only the 4k tail at seal time (running → partial → completed → record_reply)', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(100_000)
+    const active = teamSnapshot('composer-alpha-123')
+    active.runs = [{
+      id: 'run-a', workspaceId: 'workspace-a', name: 'run', goal: 'goal', templateId: 'default',
+      status: 'running', createdAt: 1, updatedAt: 1
+    }]
+    active.activeRun = active.runs[0]
+    const repository = new SqliteChannelMessageRepository(
+      join(mkdtempSync(join(tmpdir(), 'sg-shell-tail-')), 'channel.sqlite3')
+    )
+    const relay = new ChannelMessageRelay(repository)
+    const channelService = new ChannelMessageService(repository)
+    const dbPath = repository.path
+    const service = new DesktopSessionService(
+      new FakeBridge(relay),
+      new FakeTeam(active),
+      { readWorkspace: () => telemetry() },
+      relay,
+      { inspectComposerRuntime: async () => ({}) }
+    )
+    const readReplyJson = (): string | null => {
+      const raw = new DatabaseSync(dbPath, { readOnly: true })
+      try {
+        const row = raw.prepare('SELECT process_blocks_json FROM channel_replies WHERE channel_id = ? ORDER BY created_at ASC').get('1') as { process_blocks_json: string | null } | undefined
+        return row?.process_blocks_json ?? null
+      } finally {
+        raw.close()
+      }
+    }
+    const line = (index: number): string => `tick ${String(index).padStart(4, '0')} 20:50:${String(index % 60).padStart(2, '0')}\n`
+    const outputOf = (lines: number): string => Array.from({ length: lines }, (_, index) => line(index + 1)).join('')
+    const shellFrame = (observedAt: number, status: 'running' | 'done', output: string) => ({
+      composerId: 'composer-alpha-123', observedAt, isGenerating: status === 'running',
+      process: {
+        turnId: 'user-t1',
+        items: [{
+          kind: 'tool' as const, id: 'cursor:shell-1', toolName: 'run_terminal_command_v2', toolKind: 'command' as const,
+          toolCase: 'shellToolCall', title: '跑长命令', summary: 'for i in $(seq 1 400); do echo tick $i; done', hint: 'for, echo',
+          status, ...(output ? { output } : {})
+        }],
+        generatingBubbleCount: status === 'running' ? 1 : 0,
+        snapshotComplete: true
+      }
+    })
+    try {
+      repository.markChannelEmbedded('1', 'workspace-a', '/workspace/alpha')
+      relay.resetScope('run-a', 1)
+      relay.start(250)
+      relay.sendMessage({ channelId: '1', text: '跑一下' })
+      const m1 = repository.listPendingOutbound('1')[0]!
+      repository.markOutboundDelivered([m1.id], 100_500)
+      repository.touchPresence('1', {
+        waiting: false, connectionPhase: 'processing', lastSeenAt: 100_500,
+        pendingReplySyncSince: 100_500, pendingOutboundId: m1.id
+      }, 100_500)
+      vi.advanceTimersByTime(300)
+      service.refreshTelemetry()
+
+      // running(无输出) → running(部分输出 ~6k) → completed(~8k)：直播层每帧都是完整输出，状态不提前翻转。
+      service.notifyNativeProcessSnapshot(shellFrame(100_600, 'running', ''))
+      const partialOutput = outputOf(240)
+      expect(partialOutput.length).toBeGreaterThan(4_096)
+      service.notifyNativeProcessSnapshot(shellFrame(100_900, 'running', partialOutput))
+      let live = service.getSnapshot().liveProcess?.['1']?.blocks[0]
+      expect(live).toMatchObject({ kind: 'tool', status: 'running' })
+      expect(live && live.kind === 'tool' ? live.output : '').toBe(partialOutput)
+      const fullOutput = outputOf(320)
+      service.notifyNativeProcessSnapshot(shellFrame(101_200, 'done', fullOutput))
+      live = service.getSnapshot().liveProcess?.['1']?.blocks[0]
+      expect(live && live.kind === 'tool' ? live.output : '').toBe(fullOutput)
+
+      // 回复落库 → 封口：落库输出只留尾部 4k 并如实标注省略量；实时层从未被裁。
+      vi.setSystemTime(101_500)
+      const reply = channelService.recordReply({ channelId: '1', content: '跑完了。' })
+      vi.advanceTimersByTime(300)
+      const entry = service.getSnapshot().conversations['1']?.find((item) => item.id === `reply:${reply.id}`)
+      const persisted = entry?.processBlocks?.[0]
+      expect(persisted?.kind).toBe('tool')
+      const persistedOutput = persisted && persisted.kind === 'tool' ? persisted.output ?? '' : ''
+      expect(persistedOutput.startsWith(`…[已省略前 ${fullOutput.length - 4_096} 字符，仅保留输出尾部]\n`)).toBe(true)
+      expect(persistedOutput.endsWith(fullOutput.slice(-4_096))).toBe(true)
+      expect(persistedOutput.length).toBeLessThan(4_096 + 80)
+      const sealedJson = readReplyJson()
+      expect(sealedJson).not.toBeNull()
+      expect(sealedJson!.length).toBeLessThan(fullOutput.length)
+
+      // 封口后同一块再随 keepalive 帧回流（仍是 8k 全量）：已封口块不可变，字节不变。
+      vi.setSystemTime(102_000)
+      service.notifyNativeProcessSnapshot({
+        ...shellFrame(102_000, 'done', fullOutput),
+        isGenerating: true,
+        process: {
+          ...shellFrame(102_000, 'done', fullOutput).process,
+          items: [
+            ...shellFrame(102_000, 'done', fullOutput).process.items,
+            { kind: 'thinking' as const, id: 'cursor:keepalive-1', text: '保活思考', status: 'running' as const }
+          ],
+          generatingBubbleCount: 1
+        }
+      })
+      service.getSnapshot()
+      expect(readReplyJson()).toBe(sealedJson)
     } finally {
       service.dispose()
       relay.stop()
@@ -2538,6 +3052,126 @@ describe('直播正文改判为过程 message 时立即撤下（2026-09-04 双�
   })
 })
 
+describe('直播正文生命周期守卫：inspect 不得终结/复活 observer 来源的 streaming（2026-09-12 徽标闪烁）', () => {
+  function guardHarness() {
+    const active = teamSnapshot('composer-alpha-123')
+    active.runs = [{
+      id: 'run-a', workspaceId: 'workspace-a', name: 'run', goal: 'goal', templateId: 'default',
+      status: 'running', createdAt: 1, updatedAt: 1
+    }]
+    active.activeRun = active.runs[0]
+    const service = new DesktopSessionService(
+      new FakeBridge(),
+      new FakeTeam(active),
+      { readWorkspace: () => ({ ...telemetry(), composers: [] }) },
+      undefined,
+      { inspectComposerRuntime: async () => ({}) }
+    )
+    const update = (service as unknown as {
+      updateLiveAgentResponse(channelId: string, evidence: CursorComposerRuntimeEvidence): boolean
+    }).updateLiveAgentResponse.bind(service)
+    service.refreshTelemetry()
+    return { service, update }
+  }
+
+  const nativeFrame = (service: DesktopSessionService, observedAt: number, isGenerating: boolean, text: string): void => {
+    service.notifyNativeProcessSnapshot({
+      composerId: 'composer-alpha-123', observedAt, isGenerating,
+      process: { turnId: 'user-t1', items: [], generatingBubbleCount: isGenerating ? 1 : 0, snapshotComplete: true },
+      response: { id: 'bubble-final', text }
+    })
+  }
+
+  it('observer 在线：inspect 的「未在生成」只保活不终结，徽标不随 150ms 轮询闪烁', () => {
+    const { service, update } = guardHarness()
+    try {
+      const base = Date.now()
+      service.setNativeProcessStreamStatus({ state: 'connected', detail: '已连接', updatedAt: base })
+      nativeFrame(service, base, true, '正文片段')
+      expect(service.getSnapshot().liveAgentResponses?.['1']).toMatchObject({ id: 'bubble-final', status: 'streaming', source: 'native' })
+
+      // 工具执行期：inspect 摘要 isGenerating=false（模型不产生 token），但回合仍活着。
+      expect(update('1', {
+        composerId: 'composer-alpha-123', state: 'unknown', detail: '', observedAt: base + 150,
+        isGenerating: false, responseId: 'bubble-final', responseText: '正文片段'
+      })).toBe(false)
+      const kept = service.getSnapshot().liveAgentResponses?.['1']
+      expect(kept).toMatchObject({ id: 'bubble-final', status: 'streaming' })
+      // 被拦帧视为保活：updatedAt 前进，2.5s 流式断帧时效不会在长工具调用中误扫。
+      expect(kept?.updatedAt).toBe(base + 150)
+
+      // inspect 的「生成中」同 id 刷新不夺取 observer 归属（守卫持续有效）。
+      update('1', {
+        composerId: 'composer-alpha-123', state: 'active', detail: '', observedAt: base + 300,
+        isGenerating: true, responseId: 'bubble-final', responseText: '正文片段更新'
+      })
+      expect(service.getSnapshot().liveAgentResponses?.['1']).toMatchObject({ status: 'streaming', source: 'native', text: '正文片段更新' })
+
+      // observer 权威终结帧（回合真正结束，携带最终正文）：照常翻 complete。
+      nativeFrame(service, base + 450, false, '正文片段更新完毕')
+      expect(service.getSnapshot().liveAgentResponses?.['1']).toMatchObject({ status: 'complete', text: '正文片段更新完毕' })
+    } finally {
+      service.dispose()
+    }
+  })
+
+  it('observer 在线：inspect 迟到的「生成中」不复活已权威终结的同 id 条目；新 id 正常建立', () => {
+    const { service, update } = guardHarness()
+    try {
+      const base = Date.now()
+      service.setNativeProcessStreamStatus({ state: 'connected', detail: '已连接', updatedAt: base })
+      nativeFrame(service, base, true, '正文')
+      nativeFrame(service, base + 100, false, '正文最终')
+      expect(service.getSnapshot().liveAgentResponses?.['1']).toMatchObject({ status: 'complete' })
+
+      // 迟到的 inspect 帧仍称「生成中」（摘要滞后）：不得把 complete 翻回 streaming。
+      expect(update('1', {
+        composerId: 'composer-alpha-123', state: 'active', detail: '', observedAt: base + 200,
+        isGenerating: true, responseId: 'bubble-final', responseText: '正文最终'
+      })).toBe(false)
+      expect(service.getSnapshot().liveAgentResponses?.['1']).toMatchObject({ status: 'complete' })
+
+      // 新回合的新正文 id 不受守卫影响：inspect 兜底仍能建立直播条目。
+      expect(update('1', {
+        composerId: 'composer-alpha-123', state: 'active', detail: '', observedAt: base + 400,
+        isGenerating: true, responseId: 'bubble-next', responseText: '下一段'
+      })).toBe(true)
+      expect(service.getSnapshot().liveAgentResponses?.['1']).toMatchObject({ id: 'bubble-next', status: 'streaming', source: 'inspect' })
+    } finally {
+      service.dispose()
+    }
+  })
+
+  it('observer 离线：inspect 兜底终结遵守 2s 静默规则（对齐过程视图 inspectMayEndTurn）', () => {
+    const { service, update } = guardHarness()
+    try {
+      const base = Date.now()
+      // 不 setNativeProcessStreamStatus：默认 reconnecting = observer 离线。
+      expect(update('1', {
+        composerId: 'composer-alpha-123', state: 'active', detail: '', observedAt: base,
+        isGenerating: true, responseId: 'bubble-solo', responseText: '生成中'
+      })).toBe(true)
+      expect(service.getSnapshot().liveAgentResponses?.['1']).toMatchObject({ status: 'streaming', source: 'inspect' })
+
+      // 2s 内的「未在生成」帧不终结（摘要抖动窗口）。
+      expect(update('1', {
+        composerId: 'composer-alpha-123', state: 'unknown', detail: '', observedAt: base + 1_000,
+        isGenerating: false, responseId: 'bubble-solo', responseText: '生成中'
+      })).toBe(false)
+      expect(service.getSnapshot().liveAgentResponses?.['1']).toMatchObject({ status: 'streaming' })
+
+      // 静默满 2s 后 inspect 才允许兜底终结。
+      expect(update('1', {
+        composerId: 'composer-alpha-123', state: 'unknown', detail: '', observedAt: base + 2_100,
+        isGenerating: false, responseId: 'bubble-solo', responseText: '生成中'
+      })).toBe(true)
+      expect(service.getSnapshot().liveAgentResponses?.['1']).toMatchObject({ status: 'complete' })
+    } finally {
+      service.dispose()
+    }
+  })
+})
+
 describe('会话交接「等待新会话」：sendMessage 把意图换算为席位现任会话令牌', () => {
   function relayHarness(sessionToken?: string) {
     const active = teamSnapshot('composer-alpha-123')
@@ -2694,6 +3328,91 @@ describe('遥测落盘态 contextTokensUsed → 用量采样转发（长会话�
       expect(service.getSnapshot().sessions[0]?.contextUsage?.ratio).toBeCloseTo(0.63, 2)
     } finally {
       service.dispose()
+    }
+  })
+})
+
+describe('ask_question 等待用户决策', () => {
+  it('keeps the pending question running through the non-generating frame, refreshes presence, and patches it in place once answered', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(500_000)
+    const active = teamSnapshot('composer-alpha-123')
+    active.runs = [{
+      id: 'run-a', workspaceId: 'workspace-a', name: 'run', goal: 'goal', templateId: 'default',
+      status: 'running', createdAt: 1, updatedAt: 1
+    }]
+    active.activeRun = active.runs[0]
+    const repository = new SqliteChannelMessageRepository(
+      join(mkdtempSync(join(tmpdir(), 'sg-question-')), 'channel.sqlite3')
+    )
+    const relay = new ChannelMessageRelay(repository)
+    const service = new DesktopSessionService(
+      new FakeBridge(relay),
+      new FakeTeam(active),
+      { readWorkspace: () => telemetry() },
+      relay,
+      { inspectComposerRuntime: async () => ({}) }
+    )
+    const question = {
+      toolCallId: 'tc-1', title: '方向', status: 'pending' as const,
+      questions: [{ id: 'q', prompt: '选哪个？', allowMultiple: false, options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }] }]
+    }
+    try {
+      repository.markChannelEmbedded('1', 'workspace-a', '/workspace/alpha')
+      relay.resetScope('run-a', 1)
+      repository.touchPresence('1', { lastSeenAt: 500_000, waiting: false, connectionPhase: 'processing' }, 500_000)
+      service.refreshTelemetry()
+
+      // 提问帧：Cursor 为等待用户停止生成（isGenerating=false），但会话没有结束。
+      service.notifyNativeProcessSnapshot({
+        composerId: 'composer-alpha-123', observedAt: 500_600, isGenerating: false, awaitingUser: true,
+        process: {
+          turnId: 'user-t1', snapshotComplete: true, generatingBubbleCount: 0,
+          items: [
+            { kind: 'thinking', id: 'cursor-th:1', text: '需要用户拍板', status: 'done', durationMs: 1_200 },
+            { kind: 'tool', id: 'cursor:q', toolName: 'ask_question', toolKind: 'question', title: '方向', summary: '', status: 'running', question }
+          ]
+        }
+      })
+      const blocks = service.getSnapshot().liveProcess?.['1']?.blocks ?? []
+      // 非生成帧不把等待回答的问卷收口成 done；其余块照常收口。
+      expect(blocks[0]).toMatchObject({ kind: 'thinking', status: 'done' })
+      expect(blocks[1]).toMatchObject({ kind: 'tool', toolKind: 'question', status: 'running', question: { status: 'pending' } })
+      expect(service.getSnapshot().sessions[0]?.awaitingUser).toBe(true)
+      // awaitingUser 是独立生命证据：presence 的 runtimeActiveAt 被刷新，5 分钟宽限不会把席位判死。
+      expect(repository.getPresence('1')?.runtimeActiveAt).toBe(500_600)
+      expect(service.findQuestion('1', 'tc-1')).toMatchObject({ toolCallId: 'tc-1', status: 'pending' })
+
+      // 只带状态的 inspect 帧（无 process、isGenerating=false）同样不得收口问卷。
+      const merge = (service as unknown as {
+        updateLiveCursorProcess(channelId: string, evidence: CursorComposerRuntimeEvidence): boolean
+      }).updateLiveCursorProcess.bind(service)
+      merge('1', { composerId: 'composer-alpha-123', state: 'unknown', detail: '', observedAt: 500_900, isGenerating: false, awaitingUser: true })
+      expect(service.getSnapshot().liveProcess?.['1']?.blocks[1]).toMatchObject({ status: 'running', question: { status: 'pending' } })
+
+      // 用户在拾光作答：结果就地写回（Cursor 随附言开启新回合，旧回合的问卷气泡不会再回传）。
+      let emitted = 0
+      const unsubscribe = service.subscribe(() => { emitted += 1 })
+      const before = emitted
+      expect(service.applyQuestionOutcome('1', {
+        toolCallId: 'tc-1', status: 'submitted', answers: [{ questionId: 'q', selectedOptionIds: ['a'] }], note: '选 A'
+      })).toBe(true)
+      // 推送在微任务里合并：等一拍再数。
+      await Promise.resolve()
+      expect(emitted).toBeGreaterThan(before)
+      unsubscribe()
+      expect(service.getSnapshot().liveProcess?.['1']?.blocks[1]).toMatchObject({
+        status: 'done',
+        question: { status: 'submitted', note: '选 A', answers: [{ questionId: 'q', selectedOptionIds: ['a'] }] }
+      })
+      expect(service.getSnapshot().sessions[0]?.awaitingUser).toBe(false)
+      expect(service.findQuestion('1', 'tc-1')?.status).toBe('submitted')
+      expect(service.applyQuestionOutcome('1', { toolCallId: 'unknown', status: 'cancelled' })).toBe(false)
+    } finally {
+      service.dispose()
+      relay.stop()
+      repository.close()
+      vi.useRealTimers()
     }
   })
 })

@@ -5,6 +5,7 @@ import {
   CURSOR_STREAM_HOOK_PROBE_EXPRESSION,
   CURSOR_STREAM_HOOK_VERSION,
   CursorStreamObserver,
+  parseNativeResponse,
   type CursorNativeProcessEvent,
   type StreamObserverSocket
 } from '../src/infrastructure/cursor/cursor-stream-observer'
@@ -83,16 +84,23 @@ function buildObserver(overrides: {
   onWriteSignal?: (composerId: string, at: number) => void
   onProcessEvent?: (event: CursorNativeProcessEvent) => void
   onStatus?: (status: { state: 'connected' | 'reconnecting' | 'unavailable'; detail: string; updatedAt: number }) => void
+  locateComposerService?: () => Promise<boolean>
 } = {}) {
   const socket = new FakeSocket()
+  const locateCalls: number[] = []
   const observer = new CursorStreamObserver({
     fetchPageSocketUrl: async () => 'ws://127.0.0.1:9333/devtools/page/abc',
     openSocket: () => socket,
+    // 默认桩：服务定位直接成功（真实 queryObjects 流程由 locator 单测覆盖）。
+    locateComposerService: async () => {
+      locateCalls.push(Date.now())
+      return overrides.locateComposerService ? overrides.locateComposerService() : true
+    },
     onWriteSignal: overrides.onWriteSignal ?? (() => {}),
     onProcessEvent: overrides.onProcessEvent,
     onStatus: overrides.onStatus
   })
-  return { socket, observer }
+  return { socket, observer, locateCalls }
 }
 
 describe('CursorStreamObserver', () => {
@@ -103,6 +111,110 @@ describe('CursorStreamObserver', () => {
     socket.emit('close', undefined)
     observer.dispose()
     expect(states).toEqual(['connected', 'reconnecting', 'unavailable'])
+  })
+
+  it('locates the composer service before installing the page hook（自带网关时序）', async () => {
+    const installedAtLocate: number[] = []
+    const socket = new FakeSocket()
+    const observer = new CursorStreamObserver({
+      fetchPageSocketUrl: async () => 'ws://127.0.0.1:9333/devtools/page/abc',
+      openSocket: () => socket,
+      locateComposerService: async () => {
+        installedAtLocate.push(socket.installCalls().length)
+        return true
+      }
+    })
+    expect(await observer.attach()).toBe(true)
+    // 定位是 installHook 的第一步：发生在 hook 注入 evaluate 之前。
+    expect(installedAtLocate).toEqual([0])
+    expect(socket.installCalls().length).toBeGreaterThanOrEqual(1)
+    observer.dispose()
+  })
+
+  it('disarms the legacy patch only after the own service is located, and again after a document reload（晴天补丁缴械时序）', async () => {
+    const events: string[] = []
+    const outcomes = [false, true, true]
+    const socket = new FakeSocket()
+    const observer = new CursorStreamObserver({
+      fetchPageSocketUrl: async () => 'ws://127.0.0.1:9333/devtools/page/abc',
+      openSocket: () => socket,
+      locateComposerService: async () => {
+        const located = outcomes.shift() ?? true
+        events.push(`locate:${located}`)
+        return located
+      },
+      disarmLegacyPatch: async (call) => {
+        events.push(`disarm:${socket.installCalls().length}`)
+        // 缴械经同一持久 socket 走 CDP，且返回值不影响链路
+        await call('Runtime.evaluate', { expression: '1', returnByValue: true })
+        return { present: true, stopped: true, unwrapped: 10, already: false }
+      }
+    })
+    vi.useFakeTimers()
+    try {
+      expect(await observer.attach()).toBe(true)
+      // 首次定位失败 → 不缴械；hook 照常安装
+      expect(events).toEqual(['locate:false'])
+      expect(socket.installCalls()).toHaveLength(1)
+      // 3s 后补试成功 → 紧随一次缴械（此时 hook 已装，缴械不阻断任何链路）
+      await vi.advanceTimersByTimeAsync(3_000)
+      expect(events).toEqual(['locate:false', 'locate:true', 'disarm:1'])
+      // 文档重载：新文档里补丁随 bundle 重新启动，定位与缴械随 hook 重装再走一遍
+      socket.hookAlive = false
+      socket.emit('message', JSON.stringify({ method: 'Runtime.executionContextsCleared' }))
+      socket.emit('message', JSON.stringify({ method: 'Runtime.executionContextCreated', params: { context: { auxData: { isDefault: true } } } }))
+      await vi.advanceTimersByTimeAsync(400)
+      expect(events).toEqual(['locate:false', 'locate:true', 'disarm:1', 'locate:true', 'disarm:1'])
+      expect(socket.installCalls()).toHaveLength(2)
+    } finally {
+      vi.useRealTimers()
+      observer.dispose()
+    }
+  })
+
+  it('a throwing disarm never blocks hook installation or the connected status', async () => {
+    const states: string[] = []
+    const socket = new FakeSocket()
+    const observer = new CursorStreamObserver({
+      fetchPageSocketUrl: async () => 'ws://127.0.0.1:9333/devtools/page/abc',
+      openSocket: () => socket,
+      locateComposerService: async () => true,
+      disarmLegacyPatch: async () => { throw new Error('patch stop exploded') },
+      onStatus: (status) => states.push(status.state)
+    })
+    expect(await observer.attach()).toBe(true)
+    expect(socket.installCalls()).toHaveLength(1)
+    expect(states).toEqual(['connected'])
+    observer.dispose()
+  })
+
+  it('keeps retrying service location on a fixed cadence until located, then stops（重载后 workbench 未就绪）', async () => {
+    vi.useFakeTimers()
+    try {
+      const outcomes = [false, false, true]
+      let attempts = 0
+      const socket = new FakeSocket()
+      const observer = new CursorStreamObserver({
+        fetchPageSocketUrl: async () => 'ws://127.0.0.1:9333/devtools/page/abc',
+        openSocket: () => socket,
+        locateComposerService: async () => {
+          attempts += 1
+          return outcomes.shift() ?? true
+        }
+      })
+      expect(await observer.attach()).toBe(true)
+      expect(attempts).toBe(1)
+      await vi.advanceTimersByTimeAsync(3_000)
+      expect(attempts).toBe(2)
+      await vi.advanceTimersByTimeAsync(3_000)
+      expect(attempts).toBe(3)
+      // 第三次成功 → 重试链停止，不再有后续定位调用。
+      await vi.advanceTimersByTimeAsync(9_000)
+      expect(attempts).toBe(3)
+      observer.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('emits write signals after Cursor model mutation, never one frame before', async () => {
@@ -125,7 +237,7 @@ describe('CursorStreamObserver', () => {
       queueMicrotask,
       setTimeout,
       globalThis: {
-        __qtComposerService: { composerDataService: { composerDataHandleManager: manager } },
+        __sgComposerService: { composerDataService: { composerDataHandleManager: manager } },
         sgTeamStream: () => observed.push(manager.value)
       }
     }
@@ -150,7 +262,7 @@ describe('CursorStreamObserver', () => {
       queueMicrotask,
       setTimeout,
       globalThis: {
-        __qtComposerService: {
+        __sgComposerService: {
           composerDataService: {
             composerDataHandleManager: manager,
             getComposerDataIfLoaded: () => ({
@@ -207,7 +319,7 @@ describe('CursorStreamObserver', () => {
       queueMicrotask,
       setTimeout,
       globalThis: {
-        __qtComposerService: {
+        __sgComposerService: {
           composerDataService: {
             composerDataHandleManager: manager,
             getComposerDataIfLoaded: () => ({
@@ -249,7 +361,7 @@ describe('CursorStreamObserver', () => {
       queueMicrotask,
       setTimeout,
       globalThis: {
-        __qtComposerService: {
+        __sgComposerService: {
           composerDataService: {
             composerDataHandleManager: manager,
             getComposerDataIfLoaded: () => ({
@@ -307,7 +419,7 @@ describe('CursorStreamObserver', () => {
       queueMicrotask,
       setTimeout,
       globalThis: {
-        __qtComposerService: {
+        __sgComposerService: {
           composerDataService: {
             composerDataHandleManager: manager,
             getComposerDataIfLoaded: () => ({
@@ -572,7 +684,8 @@ describe('CursorStreamObserver', () => {
       }
     }))
     expect(events).toHaveLength(2)
-    expect(events[0]?.response).toEqual({ id: 'bubble-final', text: '正在逐字生成的正文' })
+    // 气泡级 generating 随正文透传（v31：帧级 isGenerating 是回合存活，正文生命周期看它自己）。
+    expect(events[0]?.response).toEqual({ id: 'bubble-final', text: '正在逐字生成的正文', generating: true })
     expect(events[1]?.response).toBeUndefined()
     expect(events[1]?.process).toMatchObject({ turnId: 'user-turn-1', snapshotComplete: true })
     observer.dispose()
@@ -769,12 +882,14 @@ describe('阶段 D：Bubble 级内部协议相位分组（RC-5 / RC-5.1 / RC-6�
       queueMicrotask,
       setTimeout,
       globalThis: {
-        __qtComposerService: {
+        __sgComposerService: {
           composerDataService: {
             composerDataHandleManager: new Manager(),
             getComposerDataIfLoaded: () => data()
           }
         },
+        // 测试默认逐帧全量（0 = 关闭节流）；节流行为由专项用例覆盖。
+        __sgTeamProcessThrottleMs: 0,
         sgTeamStream: () => {},
         sgTeamProcess: (payload: string) => frames.push(JSON.parse(payload) as Record<string, unknown>)
       }
@@ -1090,6 +1205,384 @@ describe('阶段 D：Bubble 级内部协议相位分组（RC-5 / RC-5.1 / RC-6�
     expect(await collect(keepalive.context, keepalive.frames)).toEqual([])
   })
 
+  it('throttles heavy process payloads to a trailing 100ms window while response/state frames stay immediate (2026-09-12 卡顿根治)', async () => {
+    vi.useFakeTimers()
+    try {
+      let generating: string[] = ['msg-1']
+      const map: Record<string, Record<string, unknown>> = {
+        'tool-read': { toolFormerData: { name: 'read_file', status: 'running', params: { path: '/a.ts' } } },
+        'msg-1': { text: '正文片段' }
+      }
+      const frames: Array<Record<string, any>> = []
+      const context = {
+        Promise,
+        queueMicrotask,
+        setTimeout,
+        globalThis: {
+          __sgComposerService: {
+            composerDataService: {
+              composerDataHandleManager: new (class {
+                loadedComposers = { ids: ['composer-d'] }
+                markDirty(): void {}
+              })(),
+              getComposerDataIfLoaded: () => ({
+                fullConversationHeadersOnly: [
+                  { type: 1, bubbleId: 'user-1' },
+                  { type: 2, bubbleId: 'tool-read' },
+                  { type: 2, bubbleId: 'msg-1' }
+                ],
+                conversationMap: map,
+                generatingBubbleIds: generating
+              })
+            }
+          },
+          __sgTeamProcessThrottleMs: 100,
+          sgTeamStream: () => {},
+          sgTeamProcess: (payload: string) => frames.push(JSON.parse(payload) as Record<string, unknown>)
+        }
+      }
+      runInNewContext(CURSOR_STREAM_HOOK_EXPRESSION, context)
+      const schedule = (context.globalThis as Record<string, any>).__sgTeamProcessSchedule as (id: string) => void
+      const push = async () => { schedule('composer-d'); await Promise.resolve() }
+
+      // 首帧（leading edge）：全量携带过程块。
+      frames.length = 0
+      await push()
+      expect(frames).toHaveLength(1)
+      expect(frames[0]?.process).toBeDefined()
+      expect(frames[0]?.isGenerating).toBe(true)
+
+      // 窗口内的写入：正文/状态小载荷即时直推（打字机粒度不变），过程块不重复携带。
+      map['msg-1'] = { text: '正文片段更新' }
+      await push()
+      expect(frames).toHaveLength(2)
+      expect(frames[1]?.process).toBeUndefined()
+      expect(frames[1]?.response).toMatchObject({ id: 'msg-1', text: '正文片段更新' })
+
+      // 窗口尾帧（trailing flush）：用最新数据补一帧全量，过程最迟 100ms 收敛。
+      await vi.advanceTimersByTimeAsync(120)
+      expect(frames).toHaveLength(3)
+      expect(frames[2]?.process).toBeDefined()
+
+      // 回合终结帧（isGenerating=false）：不等窗口，立即全量。
+      generating = []
+      map['tool-read'] = { toolFormerData: { name: 'read_file', status: 'completed', params: { path: '/a.ts' } } }
+      frames.length = 0
+      await push()
+      expect(frames).toHaveLength(1)
+      expect(frames[0]?.process).toBeDefined()
+      expect(frames[0]?.isGenerating).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  describe('回合存活以 composer status 为权威（v31，2026-09-12 名册活动条闪烁根因）', () => {
+    // Cursor 3.6.31 ComposerData：无 isGenerating 字段；status ∈ generating / aborted / …；
+    // generatingBubbleIds 只在气泡吐 token 时非空，工具执行期恒为空（CDP 只读探针实证）。
+    const harness = (dataOf: () => Record<string, unknown>) => {
+      const frames: Array<Record<string, any>> = []
+      const context = {
+        Promise,
+        queueMicrotask,
+        setTimeout,
+        globalThis: {
+          __sgComposerService: {
+            composerDataService: {
+              composerDataHandleManager: new (class {
+                loadedComposers = { ids: [] as string[] }
+                markDirty(): void {}
+              })(),
+              getComposerDataIfLoaded: () => dataOf()
+            }
+          },
+          __sgTeamProcessThrottleMs: 100,
+          sgTeamStream: () => {},
+          sgTeamProcess: (payload: string) => frames.push(JSON.parse(payload) as Record<string, unknown>)
+        }
+      }
+      runInNewContext(CURSOR_STREAM_HOOK_EXPRESSION, context)
+      const schedule = (context.globalThis as Record<string, any>).__sgTeamProcessSchedule as (id: string) => void
+      return { frames, push: async () => { schedule('composer-s'); await Promise.resolve() } }
+    }
+    const turn = (patch: Record<string, unknown>, tool: { status: string; additional?: string }, generating: string[]) => ({
+      fullConversationHeadersOnly: [
+        { type: 1, bubbleId: 'user-1' },
+        { type: 2, bubbleId: 'th-1' },
+        { type: 2, bubbleId: 'tool-shell' }
+      ],
+      conversationMap: {
+        'th-1': { thinking: { text: '先跑一遍测试' } },
+        'tool-shell': {
+          toolFormerData: {
+            name: 'run_terminal_command_v2', status: tool.status,
+            params: { command: 'npm test' },
+            ...(tool.additional ? { additionalData: { status: tool.additional } } : {})
+          }
+        }
+      },
+      generatingBubbleIds: generating,
+      ...patch
+    })
+
+    it('工具执行中：status=generating 且气泡集为空 → isGenerating=true、工具保持 running、帧按节流窗口走（不是终结帧）', async () => {
+      const { frames, push } = harness(() => turn({ status: 'generating' }, { status: 'running', additional: 'running' }, []))
+      await push()
+      expect(frames).toHaveLength(1)
+      expect(frames[0]).toMatchObject({ isGenerating: true })
+      expect(frames[0]?.process).toMatchObject({ generatingBubbleCount: 0 })
+      const shell = (frames[0]?.process.items as Array<Record<string, unknown>>).find((item) => item.id === 'cursor:tool-shell')
+      expect(shell).toMatchObject({ kind: 'tool', status: 'running' })
+      // 紧接着的第二次写入落在 100ms 窗口内：非终结帧只带小载荷——证明它不再被当成回合终结。
+      await push()
+      expect(frames).toHaveLength(2)
+      expect(frames[1]?.process).toBeUndefined()
+      expect(frames[1]?.isGenerating).toBe(true)
+    })
+
+    it('回合真正结束：status=completed / aborted 且气泡集为空 → isGenerating=false，终结帧立即全量', async () => {
+      for (const status of ['completed', 'aborted']) {
+        const { frames, push } = harness(() => turn({ status }, { status: 'completed', additional: 'success' }, []))
+        await push()
+        await push()
+        expect(frames).toHaveLength(2)
+        expect(frames.every((frame) => frame.isGenerating === false && frame.process !== undefined)).toBe(true)
+      }
+    })
+
+    it('气泡在吐 token 时回合必然存活：status 缺省或异常值都不压过 generatingBubbleIds', async () => {
+      const streaming = harness(() => turn({}, { status: 'completed' }, ['th-1']))
+      await streaming.push()
+      expect(streaming.frames[0]?.isGenerating).toBe(true)
+      const odd = harness(() => turn({ status: 'none' }, { status: 'completed' }, ['th-1']))
+      await odd.push()
+      expect(odd.frames[0]?.isGenerating).toBe(true)
+    })
+
+    it('旧形态（无 status 字段）回退到气泡级：工具执行期仍判为未生成（v30 语义，供旧 Cursor 版本）', async () => {
+      const { frames, push } = harness(() => turn({}, { status: 'running', additional: 'running' }, []))
+      await push()
+      expect(frames[0]?.isGenerating).toBe(false)
+    })
+
+    it('正文气泡自带气泡级 generating：回合存活期间正文写完即为 false，供服务层判定 streaming → complete', async () => {
+      const withText = (generating: string[]) => ({
+        status: 'generating',
+        fullConversationHeadersOnly: [
+          { type: 1, bubbleId: 'user-1' },
+          { type: 2, bubbleId: 'msg-final' }
+        ],
+        conversationMap: { 'msg-final': { text: '结论：可以合并。' } },
+        generatingBubbleIds: generating
+      })
+      const live = harness(() => withText(['msg-final']))
+      await live.push()
+      expect(live.frames[0]).toMatchObject({ isGenerating: true, response: { id: 'msg-final', generating: true } })
+      const settled = harness(() => withText([]))
+      await settled.push()
+      expect(settled.frames[0]).toMatchObject({ isGenerating: true, response: { id: 'msg-final', generating: false } })
+    })
+  })
+
+  describe('hook v32：每帧携带 Cursor 会话列表副标题 statusLine（名册常驻状态行数据源）', () => {
+    const harness = (dataOf: () => Record<string, unknown>, throttleMs = 0) => {
+      const frames: Array<Record<string, any>> = []
+      const context = {
+        Promise,
+        queueMicrotask,
+        setTimeout,
+        clearTimeout,
+        globalThis: {
+          __sgComposerService: {
+            composerDataService: {
+              composerDataHandleManager: new (class {
+                loadedComposers = { ids: [] as string[] }
+                markDirty(): void {}
+              })(),
+              getComposerDataIfLoaded: () => dataOf()
+            }
+          },
+          __sgTeamProcessThrottleMs: throttleMs,
+          sgTeamStream: () => {},
+          sgTeamProcess: (payload: string) => frames.push(JSON.parse(payload) as Record<string, unknown>)
+        }
+      }
+      runInNewContext(CURSOR_STREAM_HOOK_EXPRESSION, context)
+      const schedule = (context.globalThis as Record<string, any>).__sgTeamProcessSchedule as (id: string) => void
+      return { frames, push: async () => { schedule('composer-v32'); await Promise.resolve() } }
+    }
+    const mcp = (toolName: string, status: 'loading' | 'completed') => ({
+      toolFormerData: { status, toolCall: { tool: { case: 'mcpToolCall', value: { args: { providerIdentifier: 'SG Team', toolName } } } } }
+    })
+
+    it('待命席位：items 为空（传输噪音已过滤）但 statusLine=Thinking——check_messages 被跳过，扫到轮询前的思考；composerStatus 一并携带', async () => {
+      const { frames, push } = harness(() => ({
+        status: 'generating',
+        fullConversationHeadersOnly: [
+          { type: 1, bubbleId: 'user-1' }, { type: 2, bubbleId: 'text' }, { type: 2, bubbleId: 'rr' },
+          { type: 2, bubbleId: 'th' }, { type: 2, bubbleId: 'cm' }
+        ],
+        conversationMap: {
+          text: { text: '已完成。' },
+          rr: mcp('record_reply', 'completed'),
+          th: { thinking: { text: '没有新消息，继续等待。' } },
+          cm: mcp('check_messages', 'loading')
+        },
+        generatingBubbleIds: []
+      }))
+      await push()
+      expect(frames).toHaveLength(1)
+      expect(frames[0]).toMatchObject({ isGenerating: true, composerStatus: 'generating', statusLine: { kind: 'thinking', label: 'Thinking' } })
+      expect(frames[0]?.process.items).toEqual([])
+    })
+
+    it('回复后直接轮询（无思考）：statusLine 是正文首行片段；工具执行期是动词 + 对象', async () => {
+      const polling = harness(() => ({
+        status: 'generating',
+        fullConversationHeadersOnly: [{ type: 1, bubbleId: 'user-1' }, { type: 2, bubbleId: 'text' }, { type: 2, bubbleId: 'cm' }],
+        conversationMap: { text: { text: '**结论**：可以合并。\n\n细节如下。' }, cm: mcp('check_messages', 'loading') },
+        generatingBubbleIds: []
+      }))
+      await polling.push()
+      expect(polling.frames[0]?.statusLine).toEqual({ kind: 'text', label: '结论：可以合并。' })
+
+      const reading = harness(() => ({
+        status: 'generating',
+        fullConversationHeadersOnly: [{ type: 1, bubbleId: 'user-1' }, { type: 2, bubbleId: 'th' }, { type: 2, bubbleId: 'read' }],
+        conversationMap: {
+          th: { thinking: { text: '先看入口' } },
+          read: { toolFormerData: { status: 'loading', toolCall: { tool: { case: 'readToolCall', value: { args: { path: 'src/main/index.ts', offset: 1, limit: 40 } } } } } }
+        },
+        generatingBubbleIds: []
+      }))
+      await reading.push()
+      expect(reading.frames[0]?.statusLine).toEqual({ kind: 'tool', label: 'Reading index.ts L1-41', detail: 'index.ts L1-41', toolKind: 'read' })
+    })
+
+    it('节流窗内的小帧（无 process）同样携带 statusLine；回合结束帧不携带（Cursor 非生成态不扫气泡）', async () => {
+      let status = 'generating'
+      const { frames, push } = harness(() => ({
+        status,
+        fullConversationHeadersOnly: [{ type: 1, bubbleId: 'user-1' }, { type: 2, bubbleId: 'th' }],
+        conversationMap: { th: { thinking: { text: '想' } } },
+        generatingBubbleIds: []
+      }), 100)
+      await push()
+      await push()
+      expect(frames).toHaveLength(2)
+      expect(frames[1]?.process).toBeUndefined()
+      expect(frames[1]?.statusLine).toEqual({ kind: 'thinking', label: 'Thinking' })
+      status = 'aborted'
+      await push()
+      expect(frames[2]).toMatchObject({ isGenerating: false, composerStatus: 'aborted' })
+      expect(frames[2]?.statusLine).toBeUndefined()
+    })
+  })
+
+  it('parseNativeResponse 保留气泡级 generating，缺省时不编造', () => {
+    expect(parseNativeResponse({ id: 'b1', text: '正文', generating: false })).toEqual({ id: 'b1', text: '正文', generating: false })
+    expect(parseNativeResponse({ id: 'b1', text: '正文', generating: true })).toEqual({ id: 'b1', text: '正文', generating: true })
+    expect(parseNativeResponse({ id: 'b1', text: '正文' })).toEqual({ id: 'b1', text: '正文' })
+    expect(parseNativeResponse({ id: 'b1', text: '正文', generating: 'yes' })).toEqual({ id: 'b1', text: '正文' })
+  })
+
+  it('incremental fact cache is byte-identical to full recompute across a growing turn (等价性防线)', async () => {
+    const headers: Array<Record<string, unknown>> = [{ type: 1, bubbleId: 'user-1' }]
+    const map: Record<string, Record<string, unknown>> = {}
+    let generating: string[] = []
+    const dataOf = () => ({
+      fullConversationHeadersOnly: headers,
+      conversationMap: map,
+      generatingBubbleIds: generating
+    })
+    const mk = (factCache: boolean) => {
+      const frames: Array<Record<string, any>> = []
+      const context = {
+        Promise,
+        queueMicrotask,
+        setTimeout,
+        globalThis: {
+          __sgComposerService: {
+            composerDataService: {
+              composerDataHandleManager: new (class {
+                loadedComposers = { ids: [] as string[] }
+                markDirty(): void {}
+              })(),
+              getComposerDataIfLoaded: () => dataOf()
+            }
+          },
+          __sgTeamProcessThrottleMs: 0,
+          __sgTeamFactCache: factCache,
+          sgTeamStream: () => {},
+          sgTeamProcess: (payload: string) => frames.push(JSON.parse(payload) as Record<string, unknown>)
+        }
+      }
+      runInNewContext(CURSOR_STREAM_HOOK_EXPRESSION, context)
+      return { context, frames }
+    }
+    const cached = mk(true)   // 增量化（缓存开）
+    const fresh = mk(false)   // 全量重算（缓存关）
+    const step = async () => {
+      for (const side of [cached, fresh]) {
+        const schedule = (side.context.globalThis as Record<string, any>).__sgTeamProcessSchedule as (id: string) => void
+        schedule('composer-d')
+        await Promise.resolve()
+      }
+      expect(cached.frames.length).toBe(fresh.frames.length)
+      // observedAt 是两帧各自的挂钟时间，不参与等价比较。
+      const strip = (frame: Record<string, any> | undefined) => {
+        if (!frame) return frame
+        const { observedAt, ...rest } = frame
+        return rest
+      }
+      expect(strip(cached.frames.at(-1))).toEqual(strip(fresh.frames.at(-1)))
+    }
+
+    // 1. 思考流式增长（同气泡内容原地变长）
+    headers.push({ type: 2, bubbleId: 'th-1' })
+    map['th-1'] = { thinking: { text: '先想' } }
+    generating = ['th-1']
+    await step()
+    map['th-1'] = { thinking: { text: '先想清楚整个方案，再动手实现它。' } }
+    await step()
+
+    // 2. MCP 工具 pending → 水合真实名（RC-5.1：args.toolName 后出现）
+    headers.push({ type: 2, bubbleId: 'tool-mcp' })
+    map['tool-mcp'] = { toolFormerData: { toolCall: { tool: { case: 'mcpToolCall', value: {} } } } }
+    generating = ['tool-mcp']
+    await step()
+    map['tool-mcp'] = { toolFormerData: mcpToolFormerData('SG Team', 'check_messages', '<sg_team_keepalive n="1"/>') }
+    await step()
+
+    // 3. 业务工具 running → completed + 结果到齐
+    headers.push({ type: 2, bubbleId: 'tool-read' })
+    map['tool-read'] = { toolFormerData: { name: 'read_file', status: 'loading', params: { path: '/x.ts' } } }
+    generating = ['tool-read']
+    await step()
+    map['tool-read'] = { toolFormerData: { name: 'read_file', status: 'completed', params: { path: '/x.ts' }, result: 'file content here' } }
+    await step()
+
+    // 4. edit 流式 diff 增长（params.streamingContent 原地变长）
+    headers.push({ type: 2, bubbleId: 'tool-edit' })
+    map['tool-edit'] = { toolFormerData: { toolCall: { tool: { case: 'editToolCall', value: { args: { path: '/y.ts' } } } }, status: 'loading', params: { streamingContent: '@@ -1 +1 @@\n-a' } } }
+    generating = ['tool-edit']
+    await step()
+    map['tool-edit'] = { toolFormerData: { toolCall: { tool: { case: 'editToolCall', value: { args: { path: '/y.ts' } } } }, status: 'loading', params: { streamingContent: '@@ -1 +1 @@\n-a\n+b\n+bb' } } }
+    await step()
+
+    // 5. 正文流式（最终正文候选逐帧变长）
+    headers.push({ type: 2, bubbleId: 'msg-1' })
+    map['msg-1'] = { text: '完成' }
+    generating = ['msg-1']
+    await step()
+    map['msg-1'] = { text: '完成了全部工作。' }
+    await step()
+
+    // 6. 终结帧（freshAll 路径：归档内容全量重算）
+    generating = []
+    await step()
+  })
+
   it('renders modern MCP tool results as text (not a JSON dump of the case/value union) and names them by providerIdentifier', async () => {
     const { context, frames } = hookContext(() => ({
       fullConversationHeadersOnly: [{ type: 1, bubbleId: 'user-1' }, { type: 2, bubbleId: 'tool-nav' }],
@@ -1154,7 +1647,7 @@ describe('阶段 X：MCP pending 首帧不得把最终正文误判为中间过�
     const context = {
       Promise, queueMicrotask, setTimeout,
       globalThis: {
-        __qtComposerService: { composerDataService: {
+        __sgComposerService: { composerDataService: {
           composerDataHandleManager: new Manager(),
           getComposerDataIfLoaded: () => ({
             fullConversationHeadersOnly: [
@@ -1205,7 +1698,7 @@ describe('阶段 X：MCP pending 首帧不得把最终正文误判为中间过�
     const context = {
       Promise, queueMicrotask, setTimeout,
       globalThis: {
-        __qtComposerService: { composerDataService: {
+        __sgComposerService: { composerDataService: {
           composerDataHandleManager: new Manager(),
           getComposerDataIfLoaded: () => ({
             fullConversationHeadersOnly: [
@@ -1237,5 +1730,377 @@ describe('阶段 X：MCP pending 首帧不得把最终正文误判为中间过�
     // 正文之后的 keepalive thinking 仍是传输相位；正文本身由 response 载荷承载。
     expect(items.map((item) => item.id)).toEqual(['cursor-th:th-answer'])
     expect(frames[0]?.response).toMatchObject({ id: 'final-1', text: '这是微信的应用图标。' })
+  })
+})
+
+describe('hook v26：工具呈现与 ask_question 结构化载荷', () => {
+  /** 与 Cursor 3.6.31 内存模型同构的 fixture（现代 toolCall.tool.case + 旧字段并存）。 */
+  function composerData(input: { questionStatus: 'pending' | 'submitted'; blocking: boolean }) {
+    const questionParams = {
+      title: '设置页改造方向',
+      questions: [{
+        id: 'direction', prompt: '账号与 Cursor 页改造方向选择：', allowMultiple: false,
+        options: [{ id: 'a', label: '方案 A：左侧导航标准设置页（推荐）' }, { id: 'b', label: '方案 B：单页分区卡片轻改' }]
+      }]
+    }
+    return {
+      fullConversationHeadersOnly: [
+        { type: 1, bubbleId: 'user-1' },
+        { type: 2, bubbleId: 'shell-1' },
+        { type: 2, bubbleId: 'read-1' },
+        { type: 2, bubbleId: 'edit-1' },
+        { type: 2, bubbleId: 'question-1' }
+      ],
+      conversationMap: {
+        'shell-1': {
+          createdAt: '2026-09-09T05:00:00.000Z',
+          toolFormerData: {
+            toolCallId: 'toolu_shell', status: 'completed', name: 'run_terminal_command_v2', tool: 15,
+            toolCall: { tool: { case: 'shellToolCall', value: {
+              args: {
+                command: 'cd /tmp/sg-probe && python3 - <<EOF\nprint(1)\nEOF', description: '查看新消息提交时对待答问卷的处理逻辑',
+                simpleCommands: '["cd","python3"]', workingDirectory: '', timeout: '30000',
+                parsingResult: '{"executableCommands":[{"name":"cd"}]}'
+              },
+              result: { result: { case: 'success', value: { exitCode: 1, stdout: 'hello', stderr: 'warn', interleavedOutput: 'hello\nwarn\n' } } }
+            } } },
+            additionalData: { status: 'success', startedAtMs: 1 }
+          }
+        },
+        'read-1': {
+          toolFormerData: {
+            toolCallId: 'toolu_read', status: 'completed', name: 'read_file_v2', tool: 40,
+            toolCall: { tool: { case: 'readToolCall', value: {
+              args: { path: '/workspace/src/a.ts', offset: '1', limit: '120' },
+              result: { result: { case: 'success', value: { output: 'const a = 1', totalLines: 500, readRange: { startLine: 1, endLine: 120 } } } }
+            } } }
+          }
+        },
+        'edit-1': {
+          toolFormerData: {
+            toolCallId: 'toolu_edit', status: 'completed', name: 'edit_file_v2', tool: 38,
+            toolCall: { tool: { case: 'editToolCall', value: {
+              args: { path: '/workspace/src/a.ts', streamContent: 'x'.repeat(5_000) },
+              result: { result: { case: 'success', value: { linesAdded: 12, linesRemoved: 3, diffString: '@@ -1 +1 @@', afterFullFileContent: 'y'.repeat(5_000) } } }
+            } } }
+          }
+        },
+        'question-1': {
+          createdAt: '2026-09-09T05:01:00.000Z',
+          toolFormerData: {
+            toolCallId: '3752a71b-a419-4cea-9f6b-ab13cf39de13', status: 'completed', name: 'ask_question', tool: 51,
+            params: questionParams,
+            additionalData: input.questionStatus === 'pending'
+              ? { status: 'pending' }
+              : { status: 'submitted', currentSelections: { direction: ['a'] } },
+            toolCall: { tool: { case: 'askQuestionToolCall', value: {
+              args: questionParams,
+              ...(input.questionStatus === 'submitted'
+                ? { result: { result: { case: 'success', value: { answers: [{ questionId: 'direction', selectedOptionIds: ['a'], freeformText: '' }] } } } }
+                : {})
+            } } }
+          }
+        }
+      },
+      generatingBubbleIds: [],
+      capabilities: [{ type: 15, getIsBlockingUserDecision: () => () => input.blocking }]
+    }
+  }
+
+  async function frameFor(data: ReturnType<typeof composerData>): Promise<Record<string, any>> {
+    class Manager { loadedComposers = { ids: ['composer-q'] }; markDirty(): void {} }
+    const frames: Array<Record<string, unknown>> = []
+    const context = {
+      Promise, queueMicrotask, setTimeout,
+      globalThis: {
+        __sgComposerService: { composerDataService: { composerDataHandleManager: new Manager(), getComposerDataIfLoaded: () => data } },
+        sgTeamStream: () => {},
+        sgTeamProcess: (payload: string) => frames.push(JSON.parse(payload) as Record<string, unknown>)
+      }
+    }
+    runInNewContext(CURSOR_STREAM_HOOK_EXPRESSION, context)
+    await Promise.resolve()
+    return frames[0] ?? {}
+  }
+
+  it('presents tools the way Cursor does: description as title, program names / line ranges / diff stats as hints', async () => {
+    const frame = await frameFor(composerData({ questionStatus: 'pending', blocking: true }))
+    const items = (frame.process as { items: Array<Record<string, any>> }).items
+    expect(items.map((item) => item.toolKind)).toEqual(['command', 'read', 'edit', 'question'])
+    // 原生 case 名随块下发：分组算法据此区分 read/ls、grep/glob（toolKind 粒度不够）。
+    expect(items.map((item) => item.toolCase)).toEqual(['shellToolCall', 'readToolCall', 'editToolCall', 'askQuestionToolCall'])
+    expect(items[0]).toMatchObject({
+      title: '查看新消息提交时对待答问卷的处理逻辑',
+      summary: expect.stringContaining('cd /tmp/sg-probe && python3'),
+      hint: 'cd, python3 · exit 1',
+      output: 'hello\nwarn',
+      status: 'done'
+    })
+    expect(items[0]!.input.parsingResult).toBe('[omitted]')
+    expect(items[1]).toMatchObject({ summary: '/workspace/src/a.ts', hint: 'L1-120', output: 'const a = 1' })
+    expect(items[2]).toMatchObject({ summary: '/workspace/src/a.ts', hint: '+12 −3', output: '@@ -1 +1 @@' })
+    expect(items[2]!.input.streamContent).toBe('[omitted]')
+    expect(items[2]!.output).not.toContain('yyyy')
+  })
+
+  it('keeps a shell running while Cursor flushes partial output into the legacy result (RC-A, 3.6.31 实测形态)', async () => {
+    const shellBubble = (input: { status: 'loading' | 'completed'; additional: 'running' | 'success'; legacy?: Record<string, unknown>; modern?: boolean }) => ({
+      toolFormerData: {
+        toolCallId: 'toolu_tick', status: input.status, name: 'run_terminal_command_v2', tool: 15,
+        toolCall: { tool: { case: 'shellToolCall', value: {
+          args: { command: 'for i in 1 2 3; do echo tick $i; sleep 1; done', description: '持续输出的命令', simpleCommands: '["for","echo","sleep"]' },
+          ...(input.modern ? { result: { result: { case: 'success', value: { exitCode: 0, stdout: 'tick 1\ntick 2\ntick 3\n', stderr: '', interleavedOutput: 'tick 1\ntick 2\ntick 3\n', executionTime: 3_100 } } } } : {})
+        } } },
+        ...(input.legacy ? { result: input.legacy } : {}),
+        additionalData: { status: input.additional, startedAtMs: 1 }
+      }
+    })
+    const dataWith = (bubble: Record<string, unknown>) => ({
+      isGenerating: false,
+      fullConversationHeadersOnly: [{ type: 1, bubbleId: 'user-1' }, { type: 2, bubbleId: 'shell-tick' }],
+      conversationMap: { 'shell-tick': bubble },
+      generatingBubbleIds: [],
+      capabilities: []
+    })
+    // 1) 运行中、尚无任何输出：旧形态 result 还不存在。
+    const silent = await frameFor(dataWith(shellBubble({ status: 'loading', additional: 'running' })) as never)
+    expect((silent.process as { items: Array<Record<string, unknown>> }).items[0]).toMatchObject({ status: 'running', toolKind: 'command' })
+    // 2) 运行中、部分输出已 flush 进 legacy result（exitCode 0 / notInterrupted false 是运行期形态）：
+    //    必须仍为 running，且部分输出可见——旧规则「有 result 即完成」会在此刻误判完成。
+    const partial = await frameFor(dataWith(shellBubble({
+      status: 'loading', additional: 'running',
+      legacy: { output: 'tick 1\ntick 2\n', exitCode: 0, endedReason: 0, notInterrupted: false, rejected: false, outputRaw: '' }
+    })) as never)
+    const partialItem = (partial.process as { items: Array<Record<string, unknown>> }).items[0]!
+    expect(partialItem).toMatchObject({ status: 'running', output: 'tick 1\ntick 2', hint: 'for, echo, sleep' })
+    // 3) 完成：现代 result 到齐，输出取 interleavedOutput。
+    const done = await frameFor(dataWith(shellBubble({
+      status: 'completed', additional: 'success', modern: true,
+      legacy: { output: 'tick 1\ntick 2\ntick 3\n', exitCode: 0, endedReason: 0, notInterrupted: true, rejected: false, outputRaw: '' }
+    })) as never)
+    expect((done.process as { items: Array<Record<string, unknown>> }).items[0]).toMatchObject({ status: 'done', output: 'tick 1\ntick 2\ntick 3' })
+    // 4) 旧形态（无 additionalData 运行标记、status 缺省）但已有 result：保留「有 result 即完成」回退。
+    const legacyShape = await frameFor(dataWith({
+      toolFormerData: {
+        toolCallId: 'toolu_old', name: 'run_terminal_command_v2', tool: 15,
+        params: { command: 'ls' }, result: { output: 'a.ts\n', exitCode: 0 }
+      }
+    }) as never)
+    expect((legacyShape.process as { items: Array<Record<string, unknown>> }).items[0]).toMatchObject({ status: 'done', output: 'a.ts' })
+  })
+
+  it('ships a structured diff for edits: precomputedDiff lines when present, otherwise parsed from the unified diffString (hook v29)', async () => {
+    const editBubble = (id: string, extra: Record<string, unknown>, additional?: Record<string, unknown>) => ({
+      toolFormerData: {
+        toolCallId: id, status: 'completed', name: 'edit_file_v2', tool: 38,
+        toolCall: { tool: { case: 'editToolCall', value: {
+          args: { path: '/workspace/src/a.ts', streamContent: 'x' },
+          result: { result: { case: 'success', value: { path: '/workspace/src/a.ts', linesAdded: 2, linesRemoved: 1, message: 'The file /workspace/src/a.ts has been updated.', afterFullFileContent: 'y'.repeat(3_000), ...extra } } }
+        } } },
+        ...(additional ? { additionalData: additional } : {})
+      }
+    })
+    const unified = [
+      '--- a//workspace/src/a.ts',
+      '+++ b//workspace/src/a.ts',
+      '@@ -10,4 +10,5 @@',
+      ' const a = 1',
+      '-const b = 2',
+      '+const b = 3',
+      '+const c = 4',
+      ' export { a }'
+    ].join('\n')
+    const frame = await frameFor({
+      isGenerating: false,
+      fullConversationHeadersOnly: [{ type: 1, bubbleId: 'user-1' }, { type: 2, bubbleId: 'e-unified' }, { type: 2, bubbleId: 'e-pre' }, { type: 2, bubbleId: 'e-hunk-only' }],
+      conversationMap: {
+        // 替换式编辑：precomputedDiff.lines 为空（3.6.31 实测），只能解析 diffString。
+        'e-unified': editBubble('toolu_e1', { diffString: unified }, { precomputedDiff: { lines: [], hasChanges: true } }),
+        // 整文件写入：precomputedDiff.lines 直接可用。
+        'e-pre': editBubble('toolu_e2', { diffString: '@@ -0,0 +1,2 @@\n+one\n+two' }, {
+          precomputedDiff: { hasChanges: true, lines: [
+            { type: 'added', content: 'one', modifiedLineNumber: 1 },
+            { type: 'added', content: 'two', modifiedLineNumber: 2 }
+          ] }
+        }),
+        // 只有 hunk 头：无信息量，不产出结构化 diff，output 保持 diffString 文本回退。
+        'e-hunk-only': editBubble('toolu_e3', { diffString: '@@ -1 +1 @@' })
+      },
+      generatingBubbleIds: [],
+      capabilities: []
+    } as never)
+    const items = (frame.process as { items: Array<Record<string, any>> }).items
+    expect(items[0]!.diff).toEqual({
+      lines: [
+        { type: 'hunk', text: '@@ -10,4 +10,5 @@' },
+        { type: 'context', text: 'const a = 1', oldLine: 10, newLine: 10 },
+        { type: 'removed', text: 'const b = 2', oldLine: 11 },
+        { type: 'added', text: 'const b = 3', newLine: 11 },
+        { type: 'added', text: 'const c = 4', newLine: 12 },
+        { type: 'context', text: 'export { a }', oldLine: 12, newLine: 13 }
+      ]
+    })
+    // 有结构化 diff 时 output 只留结果消息，不再重复携带 diffString 原文。
+    expect(items[0]).toMatchObject({ hint: '+2 −1', output: 'The file /workspace/src/a.ts has been updated.' })
+    expect(items[1]!.diff).toEqual({ lines: [
+      { type: 'added', text: 'one', newLine: 1 },
+      { type: 'added', text: 'two', newLine: 2 }
+    ] })
+    expect(items[2]!.diff).toBeUndefined()
+    expect(items[2]).toMatchObject({ output: '@@ -1 +1 @@' })
+  })
+
+  it('streams an in-progress edit from args.streamContent and keeps the same block identity until completion', async () => {
+    const editBubble = (streamingContent: string, completed = false) => ({
+      toolFormerData: {
+        toolCallId: 'toolu_live_edit', status: completed ? 'completed' : 'loading', name: 'edit_file_v2', tool: 38,
+        // 3.6.31 真实增量落在 bubble.params.streamingContent；modern args 保持起始形态。
+        params: { relativeWorkspacePath: '/workspace/src/live.ts', streamingContent },
+        toolCall: { tool: { case: 'editToolCall', value: {
+          args: { path: '/workspace/src/live.ts' },
+          ...(completed ? { result: { result: { case: 'success', value: {
+            path: '/workspace/src/live.ts', linesAdded: 2, linesRemoved: 1,
+            diffString: '@@ -40,2 +40,3 @@\n before\n-old\n+new\n+tail', message: 'updated'
+          } } } } : {})
+        } } }
+      }
+    })
+    const frame = async (streamContent: string, completed = false) => frameFor({
+      isGenerating: !completed,
+      fullConversationHeadersOnly: [{ type: 1, bubbleId: 'user-1' }, { type: 2, bubbleId: 'edit-live' }],
+      conversationMap: { 'edit-live': editBubble(streamContent, completed) },
+      generatingBubbleIds: completed ? [] : ['edit-live'], capabilities: []
+    } as never)
+
+    const first = (await frame('@@ -40,2 +40,2 @@\n before\n+new')).process as { items: Array<Record<string, any>> }
+    const growing = (await frame('@@ -40,2 +40,3 @@\n before\n+new\n+tail\n')).process as { items: Array<Record<string, any>> }
+    const long = (await frame(Array.from({ length: 300 }, (_, index) => `+line ${index}`).join('\n'))).process as { items: Array<Record<string, any>> }
+    const done = (await frame('', true)).process as { items: Array<Record<string, any>> }
+
+    expect(first.items[0]).toMatchObject({ id: 'cursor:edit-live', status: 'running', hint: '+1 −0' })
+    expect(first.items[0]!.diff.lines.at(-1)).toMatchObject({ type: 'added', text: 'new', newLine: 41 })
+    expect(growing.items[0]).toMatchObject({ id: 'cursor:edit-live', status: 'running', hint: '+2 −0' })
+    expect(growing.items[0]!.diff.lines.at(-2)).toMatchObject({ type: 'added', text: 'tail', newLine: 42 })
+    expect(growing.items[0]!.input.streamContent).toBe('[omitted]')
+    expect(long.items[0]!.diff).toMatchObject({ truncatedLineCount: 60 })
+    expect(long.items[0]!.diff.lines).toHaveLength(240)
+    expect(long.items[0]!.diff.lines[0]).toMatchObject({ type: 'added', text: 'line 60', newLine: 61 })
+    expect(long.items[0]!.diff.lines.at(-1)).toMatchObject({ type: 'added', text: 'line 299', newLine: 300 })
+    expect(done.items[0]).toMatchObject({ id: 'cursor:edit-live', status: 'done', hint: '+2 −1', output: 'updated' })
+    expect(done.items[0]!.diff.lines.some((line: Record<string, unknown>) => line.type === 'removed')).toBe(true)
+  })
+
+  it('truncates very long diffs by line count and discloses the dropped lines', async () => {
+    const body = Array.from({ length: 300 }, (_, index) => `+line ${index}`).join('\n')
+    const frame = await frameFor({
+      isGenerating: false,
+      fullConversationHeadersOnly: [{ type: 1, bubbleId: 'user-1' }, { type: 2, bubbleId: 'e-long' }],
+      conversationMap: {
+        'e-long': { toolFormerData: {
+          toolCallId: 'toolu_long', status: 'completed', name: 'edit_file_v2', tool: 38,
+          toolCall: { tool: { case: 'editToolCall', value: {
+            args: { path: '/workspace/big.ts' },
+            result: { result: { case: 'success', value: { linesAdded: 300, linesRemoved: 0, diffString: `@@ -0,0 +1,300 @@\n${body}`, message: 'ok' } } }
+          } } }
+        } }
+      },
+      generatingBubbleIds: [],
+      capabilities: []
+    } as never)
+    const diff = (frame.process as { items: Array<Record<string, any>> }).items[0]!.diff
+    expect(diff.lines).toHaveLength(240)
+    expect(diff.truncatedLineCount).toBe(61)
+  })
+
+  it('summarizes grep results as matches · files and lists the hits per file', async () => {
+    const frame = await frameFor({
+      isGenerating: false,
+      fullConversationHeadersOnly: [{ type: 1, bubbleId: 'user-1' }, { type: 2, bubbleId: 'g-1' }, { type: 2, bubbleId: 'g-running' }],
+      conversationMap: {
+        'g-1': { toolFormerData: {
+          toolCallId: 'toolu_g1', status: 'completed', name: 'ripgrep_raw_search', tool: 30,
+          toolCall: { tool: { case: 'grepToolCall', value: {
+            args: { pattern: 'toolKind', path: '/workspace/src', outputMode: 'content' },
+            result: { result: { case: 'success', value: {
+              pattern: 'toolKind', path: '/workspace/src', outputMode: 'content',
+              workspaceResults: { '/workspace': { result: { case: 'content', value: {
+                matches: [
+                  { file: 'src/a.ts', matches: [{ lineNumber: 12, content: '  toolKind: item.toolKind,', isContextLine: false }, { lineNumber: 13, content: '  next', isContextLine: true }] },
+                  { file: 'src/b.ts', matches: [{ lineNumber: 4, content: 'toolKind?: ProcessToolKind', isContextLine: false }] }
+                ],
+                totalLines: 3, totalMatchedLines: 2, clientTruncated: false, ripgrepTruncated: false
+              } } } }
+            } } }
+          } } }
+        } },
+        'g-running': { toolFormerData: {
+          toolCallId: 'toolu_g2', status: 'loading', name: 'ripgrep_raw_search', tool: 30,
+          toolCall: { tool: { case: 'grepToolCall', value: { args: { pattern: 'foo', path: '/workspace/src/renderer' } } } },
+          additionalData: { status: 'running' }
+        } }
+      },
+      generatingBubbleIds: [],
+      capabilities: []
+    } as never)
+    const items = (frame.process as { items: Array<Record<string, any>> }).items
+    expect(items[0]).toMatchObject({ summary: 'toolKind', hint: '2 处匹配 · 2 个文件', status: 'done' })
+    expect(items[0]!.output).toBe('src/a.ts\n  L12: toolKind: item.toolKind,\nsrc/b.ts\n  L4: toolKind?: ProcessToolKind')
+    // 尚无结果：提示回退到路径 basename。
+    expect(items[1]).toMatchObject({ summary: 'foo', hint: 'renderer', status: 'running' })
+  })
+
+  it('presents awaitToolCall as a background-command wait (command kind, runtime hint), not a subagent task (RC-B)', async () => {
+    const frame = await frameFor({
+      isGenerating: false,
+      fullConversationHeadersOnly: [{ type: 1, bubbleId: 'user-1' }, { type: 2, bubbleId: 'await-1' }, { type: 2, bubbleId: 'await-2' }],
+      conversationMap: {
+        'await-1': { toolFormerData: {
+          toolCallId: 'toolu_await1', status: 'completed', name: 'await', tool: 60,
+          toolCall: { tool: { case: 'awaitToolCall', value: {
+            args: { taskId: '837682' },
+            result: { result: { case: 'success', value: { awaitResult: { case: 'complete', value: { runtimeMs: 12_400, exitCode: 0, outputFilePath: '/tmp/x.txt' } } } } }
+          } } }
+        } },
+        'await-2': { toolFormerData: {
+          toolCallId: 'toolu_await2', status: 'loading', name: 'await', tool: 60,
+          toolCall: { tool: { case: 'awaitToolCall', value: { args: { taskId: '145470' } } } },
+          additionalData: { status: 'running' }
+        } }
+      },
+      generatingBubbleIds: [],
+      capabilities: []
+    } as never)
+    const items = (frame.process as { items: Array<Record<string, unknown>> }).items
+    expect(items[0]).toMatchObject({ toolKind: 'command', toolCase: 'awaitToolCall', summary: '837682', hint: '12s', status: 'done' })
+    expect(items[1]).toMatchObject({ toolKind: 'command', toolCase: 'awaitToolCall', summary: '145470', status: 'running' })
+  })
+
+  it('keeps a pending ask_question running with its full options and flags the composer as awaiting the user', async () => {
+    const frame = await frameFor(composerData({ questionStatus: 'pending', blocking: true }))
+    const question = (frame.process as { items: Array<Record<string, any>> }).items[3]!
+    expect(frame.awaitingUser).toBe(true)
+    // Cursor 把等待用户的气泡标成 completed 并停止生成；回合视角它仍在进行。
+    expect(question).toMatchObject({ toolKind: 'question', status: 'running', title: '设置页改造方向' })
+    expect(question.question).toMatchObject({
+      toolCallId: '3752a71b-a419-4cea-9f6b-ab13cf39de13',
+      status: 'pending',
+      questions: [{
+        id: 'direction', allowMultiple: false,
+        options: [{ id: 'a', label: '方案 A：左侧导航标准设置页（推荐）' }, { id: 'b', label: '方案 B：单页分区卡片轻改' }]
+      }]
+    })
+    // 输入明细不再在第 4 层截成 "[nested]"。
+    expect(question.input.questions[0].options[0]).toEqual({ id: 'a', label: '方案 A：左侧导航标准设置页（推荐）' })
+  })
+
+  it('reports the submitted answers once the questionnaire resolves and stops flagging awaitingUser', async () => {
+    const frame = await frameFor(composerData({ questionStatus: 'submitted', blocking: false }))
+    const question = (frame.process as { items: Array<Record<string, any>> }).items[3]!
+    expect(frame.awaitingUser).toBe(false)
+    expect(question).toMatchObject({ status: 'done' })
+    expect(question.question).toMatchObject({
+      status: 'submitted',
+      answers: [{ questionId: 'direction', selectedOptionIds: ['a'] }]
+    })
   })
 })
