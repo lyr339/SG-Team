@@ -185,6 +185,30 @@ describe('存储清理面板', () => {
     expect(failed.className).toContain('is-error')
   })
 
+  it('结果横幅可收起；同一结果保持收起，新一次清理的结果重新显示', async () => {
+    const first: CursorStorageCleanupResult = { ok: true, freedBytes: GB, done: ['caches'], skipped: [], message: '已清理 界面缓存，释放约 1 GB' }
+    const base = { storageScan: scan(), onScanCursorStorage: vi.fn(async () => {}) }
+    await render({ ...base, storageCleanupResult: first })
+    expect(container.querySelector('.storage-cleanup__result')).not.toBeNull()
+    await act(async () => { container.querySelector<HTMLButtonElement>('.storage-cleanup__result-dismiss')!.click() })
+    expect(container.querySelector('.storage-cleanup__result')).toBeNull()
+    await render({ ...base, storageCleanupResult: first })
+    expect(container.querySelector('.storage-cleanup__result')).toBeNull()
+    const second: CursorStorageCleanupResult = { ok: true, freedBytes: GB, done: ['logs'], skipped: [], message: '已清理 日志，释放约 1 GB' }
+    await render({ ...base, storageCleanupResult: second })
+    expect(container.querySelector('.storage-cleanup__result p')?.textContent).toBe('已清理 日志，释放约 1 GB')
+  })
+
+  it('确认框键盘可达：出现时焦点落在取消键，Escape 关闭并把焦点交还清理按钮', async () => {
+    await render({ storageScan: scan(), onScanCursorStorage: vi.fn(async () => {}), onCleanCursorStorage: vi.fn(async () => {}) })
+    await act(async () => { buttonByText('清理所选').click() })
+    const dialog = container.querySelector<HTMLElement>('[role="dialog"]')!
+    expect(document.activeElement).toBe(buttonByText('取消'))
+    await act(async () => { dialog.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
+    expect(container.querySelector('[role="dialog"]')).toBeNull()
+    expect(document.activeElement).toBe(buttonByText('清理所选'))
+  })
+
   it('空态：总览说明没有可清理的内容，清理按钮禁用，压实开关在没有候选时也禁用', async () => {
     const empty = scan(
       { cursorRunning: false, totalBytes: 0, entries: scan().entries.map((item) => ({ ...item, bytes: 0, count: 0, cleanable: false })) },
@@ -194,6 +218,8 @@ describe('存储清理面板', () => {
     const total = container.querySelector<HTMLElement>('.storage-cleanup__total')!
     expect(total.textContent).toBe('没有可清理的内容')
     expect(total.className).toContain('is-empty')
+    // 眉题不再与空态大字连读成「可清理：没有可清理的内容」。
+    expect(container.querySelector('.storage-cleanup__eyebrow')?.textContent).toBe('盘点结果')
     expect(buttonByText('清理所选').disabled).toBe(true)
     expect(row('chat-history').querySelector<HTMLInputElement>('.toggle-switch input')!.disabled).toBe(true)
     expect([...container.querySelectorAll<HTMLInputElement>('.storage-cleanup__row input[type="checkbox"]')].every((input) => input.disabled && !input.checked)).toBe(true)

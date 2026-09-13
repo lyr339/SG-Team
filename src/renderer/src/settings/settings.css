@@ -171,6 +171,9 @@
   border-radius: 14px;
   box-shadow: var(--shadow-hairline);
 }
+/* 透明卡片：设置正文保持阅读面下限（与会话名册同一规则）——
+   否则 4K 背景的高光区透进列表，「定位」等 10px 辅助文字对比度崩塌。 */
+html[data-card-transparency="clear"] .settings-section { background: color-mix(in srgb, var(--surface-solid) 74%, transparent); }
 
 .settings-section__head {
   min-height: 52px;
@@ -943,6 +946,15 @@
 .storage-cleanup__result.is-ok { border-color: color-mix(in srgb, var(--color-text-success) 35%, transparent); background: var(--color-background-success); }
 .storage-cleanup__result.is-error { border-color: var(--red-border); background: var(--red-soft); }
 .storage-cleanup__result ul { margin: 0; padding-left: 16px; color: var(--text-soft); font-size: var(--fs-10); line-height: 1.6; }
+/* 结果横幅可收起：反馈读完不该永远占一块（错误态常驻普查的同类项）。 */
+.storage-cleanup__result { position: relative; padding-right: 38px; }
+.storage-cleanup__result-dismiss {
+  position: absolute; top: 6px; right: 6px; width: 24px; height: 24px;
+  display: grid; place-items: center; padding: 0;
+  color: var(--muted); background: transparent; border: 0; border-radius: 7px;
+  font-size: 15px; line-height: 1; cursor: pointer;
+}
+.storage-cleanup__result-dismiss:hover { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
 
 @media (max-width: 760px) {
   .storage-cleanup__head { flex-direction: column; align-items: stretch; }

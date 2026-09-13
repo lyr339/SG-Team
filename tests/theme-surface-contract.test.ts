@@ -7,6 +7,7 @@ const foundation = readFileSync(join(process.cwd(), 'src/renderer/src/claude-the
 const controls = readFileSync(join(process.cwd(), 'src/renderer/src/controls.css'), 'utf8')
 const lobby = readFileSync(join(process.cwd(), 'src/renderer/src/lobby/lobby.css'), 'utf8')
 const run = readFileSync(join(process.cwd(), 'src/renderer/src/run/run.css'), 'utf8')
+const settings = readFileSync(join(process.cwd(), 'src/renderer/src/settings/settings.css'), 'utf8')
 
 describe('theme surface contracts', () => {
   it('keeps floating connection UI opaque even when card opacity is zero', () => {
@@ -49,8 +50,24 @@ describe('theme surface contracts', () => {
     expect(styles).toContain('shiguang-dark.png')
   })
 
+  it('never paints or hit-tests the toggle-switch checkbox (2026-09-13 ghost-box regression)', () => {
+    // 治本：共享「非开关型复选框」规则的每一条都排除 ToggleSwitch 内部视觉隐藏的输入，
+    // 否则它会被画成 17×17 方框，disabled 的 opacity 覆盖 opacity:0 后钉在视口显形。
+    const shared = controls.match(/:where\(\.cursor-model-dialog[^)]*\) input\[type="checkbox"\]/g) ?? []
+    const excluded = controls.match(/:where\(\.cursor-model-dialog[^)]*\) input\[type="checkbox"\]:not\(:where\(\.toggle-switch input\)\)/g) ?? []
+    expect(shared.length).toBeGreaterThan(0)
+    expect(excluded.length).toBe(shared.length)
+    // 加固：视觉隐藏配方保证它画不出（clip-path）也点不到（pointer-events）。
+    expect(styles).toMatch(/\.toggle-switch input\s*\{[^}]*clip-path:\s*inset\(50%\)/)
+    expect(styles).toMatch(/\.toggle-switch input\s*\{[^}]*pointer-events:\s*none/)
+  })
+
+  it('keeps the settings sections readable under clear card transparency, like the session pane', () => {
+    expect(settings).toMatch(/html\[data-card-transparency="clear"\] \.settings-section\s*\{[^}]*var\(--surface-solid\) 74%/)
+  })
+
   it('keeps custom controls and run-page primary actions on the new signal-orange system', () => {
-    expect(controls).toMatch(/input\[type="checkbox"\]:checked\s*\{[^}]*background-color:\s*var\(--accent\)/)
+    expect(controls).toMatch(/input\[type="checkbox"\][^{]*:checked\s*\{[^}]*background-color:\s*var\(--accent\)/)
     expect(controls).toMatch(/select:not\(\[multiple\]\):focus\s*\{[^}]*var\(--accent-border-strong\)/)
     // 运行页只用共享的 .primary-button（信号橙）；破坏性确认走红色，且不是主按钮样式。
     expect(styles).toMatch(/\.primary-button\s*\{[^}]*background:\s*var\(--accent\)/)

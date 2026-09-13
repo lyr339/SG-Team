@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   CHAT_HISTORY_DEFAULT_OLDER_THAN_DAYS,
   CHAT_HISTORY_OLDER_THAN_OPTIONS,
@@ -67,7 +67,8 @@ function CleanupRow({ spec, entry, scan, selected, blockedReason, disabled, onTo
         ) : (
           <input
             type="checkbox"
-            checked={selected}
+            /* 重新盘点后失去可清理内容的项不再显示为「勾着但禁用」：勾选态只反映会被执行的事实。 */
+            checked={selected && cleanable}
             disabled={disabled || !cleanable}
             aria-label={`清理${spec.label}`}
             onChange={(event) => onToggle(event.target.checked)}
@@ -116,6 +117,13 @@ export function SettingsCleanup({
   const [olderThanDays, setOlderThanDays] = useState<number>(CHAT_HISTORY_DEFAULT_OLDER_THAN_DAYS)
   const [compact, setCompact] = useState(false)
   const [confirming, setConfirming] = useState(false)
+  /** 已收起的结果横幅：按对象引用记忆，新一次清理的结果会重新显示。 */
+  const [dismissedResult, setDismissedResult] = useState<CleanupProps['storageCleanupResult']>()
+  const confirmCancelRef = useRef<HTMLButtonElement>(null)
+  const primaryButtonRef = useRef<HTMLButtonElement>(null)
+
+  // 确认块出现时焦点移入取消键；Escape / 取消后焦点交还「清理所选」。
+  useEffect(() => { if (confirming) confirmCancelRef.current?.focus() }, [confirming])
 
   // 首次进入分组时盘点一次；之后由「重新盘点」和阈值变化驱动。
   useEffect(() => {
@@ -145,6 +153,10 @@ export function SettingsCleanup({
     setConfirming(false)
     void onScanCursorStorage({ chatHistoryOlderThanDays: days })
   }
+  const closeConfirm = (): void => {
+    setConfirming(false)
+    primaryButtonRef.current?.focus()
+  }
   const confirm = async (): Promise<void> => {
     if (!plan || !onCleanCursorStorage) return
     setConfirming(false)
@@ -166,7 +178,8 @@ export function SettingsCleanup({
       <div className="storage-cleanup">
         <header className="storage-cleanup__head">
           <div className="storage-cleanup__headline">
-            <span className="storage-cleanup__eyebrow">{storageScanBusy ? '正在盘点…' : storageScan ? '可清理' : '尚未盘点'}</span>
+            {/* 空态眉题用「盘点结果」：「可清理：没有可清理的内容」连读矛盾。 */}
+            <span className="storage-cleanup__eyebrow">{storageScanBusy ? '正在盘点…' : !storageScan ? '尚未盘点' : storageScan.totalBytes > 0 ? '可清理' : '盘点结果'}</span>
             <b className={`storage-cleanup__total${storageScan && storageScan.totalBytes === 0 ? ' is-empty' : ''}`}>
               {!storageScan ? '—' : storageScan.totalBytes > 0 ? `约 ${formatFileSize(storageScan.totalBytes)}` : '没有可清理的内容'}
             </b>
@@ -177,6 +190,7 @@ export function SettingsCleanup({
               {storageScanBusy ? '盘点中…' : '重新盘点'}
             </button>
             <button
+              ref={primaryButtonRef}
               type="button"
               className={`storage-cleanup__button is-primary${plan?.irreversible.length ? ' is-danger' : ''}`}
               disabled={busy || !plan?.runnable.length || !onCleanCursorStorage}
@@ -190,7 +204,12 @@ export function SettingsCleanup({
         {storageScanError ? <p className="cursor-maintenance__error" role="alert">{storageScanError}</p> : null}
 
         {confirming && plan ? (
-          <div className={`storage-cleanup__confirm${plan.irreversible.length ? ' is-danger' : ''}`} role="dialog" aria-label="确认清理">
+          <div
+            className={`storage-cleanup__confirm${plan.irreversible.length ? ' is-danger' : ''}`}
+            role="dialog"
+            aria-label="确认清理"
+            onKeyDown={(event) => { if (event.key === 'Escape') closeConfirm() }}
+          >
             <p className="storage-cleanup__confirm-title">
               将清理 {plan.runnable.length} 项，释放约 {formatFileSize(plan.totalBytes)}
               {plan.irreversible.includes('chat-history') && chat ? `；其中 ${chat.candidateCount} 个 ${chat.olderThanDays} 天前的会话会永久删除，无法恢复` : '；目录内容进入系统回收站，可找回'}
@@ -203,7 +222,7 @@ export function SettingsCleanup({
               })}
             </ul>
             <div className="storage-cleanup__confirm-actions">
-              <button type="button" className="storage-cleanup__button" onClick={() => setConfirming(false)}>取消</button>
+              <button ref={confirmCancelRef} type="button" className="storage-cleanup__button" onClick={closeConfirm}>取消</button>
               <button type="button" className={`storage-cleanup__button is-primary${plan.irreversible.length ? ' is-danger' : ''}`} disabled={busy} onClick={() => void confirm()}>
                 {plan.irreversible.length ? '确认永久删除并清理' : '确认清理'}
               </button>
@@ -211,7 +230,7 @@ export function SettingsCleanup({
           </div>
         ) : null}
 
-        {storageCleanupResult ? (
+        {storageCleanupResult && storageCleanupResult !== dismissedResult ? (
           <div className={storageCleanupResult.ok ? 'storage-cleanup__result is-ok' : 'storage-cleanup__result is-error'} role={storageCleanupResult.ok ? 'status' : 'alert'}>
             <p>{storageCleanupResult.message}</p>
             {storageCleanupResult.skipped.length ? (
@@ -221,6 +240,7 @@ export function SettingsCleanup({
                 ))}
               </ul>
             ) : null}
+            <button type="button" className="storage-cleanup__result-dismiss" aria-label="收起清理结果" onClick={() => setDismissedResult(storageCleanupResult)}>×</button>
           </div>
         ) : null}
 

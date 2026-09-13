@@ -18,8 +18,12 @@ select:not([multiple]):focus { border-color: var(--accent-border-strong) !import
 select:not([multiple]):disabled { cursor: not-allowed; opacity: 0.58; }
 select::-ms-expand { display: none; }
 
-/* 非开关型复选框：统一为亮橙描边方框，保留原生键盘/表单语义。 */
-:where(.cursor-model-dialog, .team-setup-page, .task-page, .storage-cleanup) input[type="checkbox"] {
+/* 非开关型复选框：统一为亮橙描边方框，保留原生键盘/表单语义。
+   :not(:where(.toggle-switch input)) 把 ToggleSwitch 内部视觉隐藏的原生 checkbox 排除在外
+   （:where 包裹保持零优先级贡献）：这条规则曾把那枚 1px 隐形输入改画成 17×17 方框，
+   disabled 时 :disabled 的 opacity 又盖过它的 opacity:0——设置页出现过一枚滚动时钉在
+   视口不动、还拦截点击的幽灵方框（2026-09-13 存储清理页事故）。 */
+:where(.cursor-model-dialog, .team-setup-page, .task-page, .storage-cleanup) input[type="checkbox"]:not(:where(.toggle-switch input)) {
   appearance: none;
   -webkit-appearance: none;
   width: 17px;
@@ -34,8 +38,8 @@ select::-ms-expand { display: none; }
   cursor: pointer;
   transition: background 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
 }
-:where(.cursor-model-dialog, .team-setup-page, .task-page, .storage-cleanup) input[type="checkbox"]:hover:not(:disabled) { border-color: var(--accent); }
-:where(.cursor-model-dialog, .team-setup-page, .task-page, .storage-cleanup) input[type="checkbox"]:checked {
+:where(.cursor-model-dialog, .team-setup-page, .task-page, .storage-cleanup) input[type="checkbox"]:not(:where(.toggle-switch input)):hover:not(:disabled) { border-color: var(--accent); }
+:where(.cursor-model-dialog, .team-setup-page, .task-page, .storage-cleanup) input[type="checkbox"]:not(:where(.toggle-switch input)):checked {
   background-color: var(--accent);
   border-color: var(--accent);
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='m3.5 8.3 2.8 2.8 6.2-6.2' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
@@ -43,5 +47,5 @@ select::-ms-expand { display: none; }
   background-position: center;
   background-repeat: no-repeat;
 }
-:where(.cursor-model-dialog, .team-setup-page, .task-page, .storage-cleanup) input[type="checkbox"]:disabled { opacity: .45; cursor: not-allowed; }
-:where(.cursor-model-dialog, .team-setup-page, .task-page, .storage-cleanup) input[type="checkbox"]:focus-visible { outline: 0; box-shadow: 0 0 0 3px color-mix(in srgb, var(--anthropic-orange) 18%, transparent); }
+:where(.cursor-model-dialog, .team-setup-page, .task-page, .storage-cleanup) input[type="checkbox"]:not(:where(.toggle-switch input)):disabled { opacity: .45; cursor: not-allowed; }
+:where(.cursor-model-dialog, .team-setup-page, .task-page, .storage-cleanup) input[type="checkbox"]:not(:where(.toggle-switch input)):focus-visible { outline: 0; box-shadow: 0 0 0 3px color-mix(in srgb, var(--anthropic-orange) 18%, transparent); }
