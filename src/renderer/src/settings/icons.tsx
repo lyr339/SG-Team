@@ -39,3 +39,13 @@ export function SettingsAozaiIcon(props: IconProps): React.JSX.Element {
 export function SettingsMaintenanceIcon(props: IconProps): React.JSX.Element {
   return <Icon {...props}><path d="m14.8 6.2 3 3M4.5 19.5l1.2-4.2L14.9 6a1.9 1.9 0 0 1 2.7 0l.3.3a1.9 1.9 0 0 1 0 2.7l-9.2 9.2-4.2 1.3Z" {...stroke} /></Icon>
 }
+
+/** 存储清理：带盖整理箱（两道格线），与「维护」的扳手同一笔画语言。 */
+export function SettingsCleanupIcon(props: IconProps): React.JSX.Element {
+  return (
+    <Icon {...props}>
+      <path d="M5 8.5h14M6.2 8.5 7 18.2a1.6 1.6 0 0 0 1.6 1.5h6.8a1.6 1.6 0 0 0 1.6-1.5l.8-9.7" {...stroke} />
+      <path d="M9.5 8.5V6.3A1.8 1.8 0 0 1 11.3 4.5h1.4a1.8 1.8 0 0 1 1.8 1.8v2.2M10 12.5v4M14 12.5v4" {...stroke} />
+    </Icon>
+  )
+}

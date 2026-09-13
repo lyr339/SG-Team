@@ -1,19 +1,49 @@
 import { useEffect, useState } from 'react'
+import type { CursorAccountMetadata } from '../../../domain/cursor-account'
 import { RefreshIcon } from '../UiIcons'
+import { MenuSelect, type MenuSelectOption } from '../lobby/MenuSelect'
 import type { SettingsPageProps } from './settings-view'
-import { accountMembershipPlanFor, accountStatusLineFor } from './settings-view'
+import {
+  accountMembershipPlanFor,
+  accountStatusLineFor,
+  liveSwitchAvailability,
+  profileDisplayName
+} from './settings-view'
 import { SettingsSection } from './SettingsSection'
 
 type AccountsProps = Pick<SettingsPageProps,
-  | 'accounts' | 'busy' | 'onSave' | 'onSelect' | 'onRemove' | 'onRestartWithAccount'
+  | 'accounts' | 'busy' | 'onSave' | 'onSelect' | 'onRemove' | 'onRestartWithAccount' | 'onSwitchLiveAccount' | 'switchPumpStatus'
   | 'runtimeMatch' | 'membership' | 'accountMemberships' | 'onRefreshMembership'
   | 'aozaiStatus' | 'aozaiBusy' | 'aozaiProgress' | 'aozaiError' | 'aozaiFeedback' | 'onProcessAozaiAccount'
+  | 'bitProfiles' | 'onSetAccountFingerprintProfile'
 >
 
 interface SettingsAccountsProps extends AccountsProps {
   active?: boolean
   /** 空列表时「前往导入来源」的跨组导航（由 SettingsPage 注入）。 */
   onNavigateToImport?: () => void
+}
+
+/**
+ * 账号行的窗口绑定选项：「默认窗口」+ 当前窗口列表。
+ * 已绑定但窗口不在列表（Roxy 未连/窗口被删）时保留当前绑定项——如实显示，不吞掉。
+ */
+function windowBindingOptions(
+  account: CursorAccountMetadata,
+  profiles: SettingsPageProps['bitProfiles']
+): MenuSelectOption[] {
+  const options: MenuSelectOption[] = [
+    { value: '', label: '默认窗口' },
+    ...(profiles ?? []).map((profile) => ({
+      value: profile.id,
+      label: profileDisplayName(profiles, profile.id)
+    }))
+  ]
+  const bound = account.fingerprintProfileId
+  if (bound && !options.some((option) => option.value === bound)) {
+    options.push({ value: bound, label: profileDisplayName(profiles, bound) })
+  }
+  return options
 }
 
 /**
@@ -27,6 +57,8 @@ export function SettingsAccounts({
   onSelect,
   onRemove,
   onRestartWithAccount,
+  onSwitchLiveAccount,
+  switchPumpStatus,
   runtimeMatch,
   membership,
   accountMemberships,
@@ -37,7 +69,9 @@ export function SettingsAccounts({
   aozaiError,
   aozaiFeedback,
   onProcessAozaiAccount,
-  onNavigateToImport
+  onNavigateToImport,
+  bitProfiles,
+  onSetAccountFingerprintProfile
 }: SettingsAccountsProps): React.JSX.Element {
   const [confirmRemove, setConfirmRemove] = useState('')
   const [confirmRestart, setConfirmRestart] = useState('')
@@ -45,6 +79,7 @@ export function SettingsAccounts({
   const [refreshingMembershipAccountId, setRefreshingMembershipAccountId] = useState('')
   const activeAccount = accounts.find((account) => account.active)
   const aozaiEnabled = Boolean(onProcessAozaiAccount)
+  const liveSwitch = liveSwitchAvailability(switchPumpStatus)
   // 合并状态行上移卡片头：替换「当前 xxx」（email 重复），无信号时回退原文案
   const statusLine = accountStatusLineFor(runtimeMatch, membership)
 
@@ -74,12 +109,19 @@ export function SettingsAccounts({
         <div className="account-list settings-account-list">
           {accounts.map((account) => (
             <article className={account.active ? 'is-active' : ''} key={account.id}>
-              <button disabled={busy || account.active} onClick={() => void onSelect(account.id)}>
+              <button
+                className="account-card__main"
+                disabled={busy || account.active}
+                title={account.active ? '当前活跃账号' : `把 ${account.label} 设为当前账号`}
+                onClick={() => void onSelect(account.id)}
+              >
                 <i>{account.label.slice(0, 1).toUpperCase()}</i>
                 <span><strong>{account.label}</strong><small>{account.maskedToken}</small></span>
-                <em>{account.active ? '当前' : '选择'}</em>
+                <em className={account.active ? 'account-card__current' : 'account-card__select-hint'}>
+                  {account.active ? '当前' : '选择'}
+                </em>
               </button>
-              <div className="lobby-account__row-actions">
+              <div className="account-card__meta">
                 {(() => {
                   const accountMembership = accountMemberships?.[account.id]
                     ?? (account.active ? membership : undefined)
@@ -109,6 +151,29 @@ export function SettingsAccounts({
                   </span>
                   ) : null
                 })()}
+                {account.pendingMachineAlign ? (
+                  <small className="account-machine-pending" title="无感换号未更换机器码；下次「切换并重启」时自动对齐">待重启对齐</small>
+                ) : null}
+                {onSetAccountFingerprintProfile ? (
+                  <span
+                    className={`account-window-binding${account.fingerprintProfileId ? ' is-bound' : ''}`}
+                    title={account.fingerprintProfileId
+                      ? `自动化固定在此窗口执行（导入时绑定）；可改绑其他窗口或选「默认窗口」解绑`
+                      : `未绑定窗口：自动化将使用「导入来源」的默认窗口；在此选择窗口即绑定`}
+                  >
+                    <MenuSelect
+                      value={account.fingerprintProfileId ?? ''}
+                      placeholder="默认窗口"
+                      disabled={busy || aozaiBusy}
+                      ariaLabel={`${account.label} 的指纹窗口绑定`}
+                      menuMinWidth={240}
+                      options={windowBindingOptions(account, bitProfiles)}
+                      onChange={(value) => void onSetAccountFingerprintProfile(account.id, value || undefined)}
+                    />
+                  </span>
+                ) : null}
+              </div>
+              <div className="lobby-account__row-actions account-card__actions">
                 {aozaiEnabled && aozaiStatus?.saved && onProcessAozaiAccount ? (
                   <button
                     className="account-process"
@@ -117,6 +182,16 @@ export function SettingsAccounts({
                     onClick={() => void onProcessAozaiAccount(account.id)}
                   >
                     {aozaiBusy && aozaiProgress?.accountId === account.id ? '处理中…' : '处理'}
+                  </button>
+                ) : null}
+                {onSwitchLiveAccount && !account.active ? (
+                  <button
+                    className="account-process account-switch-live"
+                    disabled={busy || aozaiBusy || !liveSwitch.enabled}
+                    title={liveSwitch.title}
+                    onClick={() => void onSwitchLiveAccount(account.id)}
+                  >
+                    {busy ? '切换中…' : '无感切换'}
                   </button>
                 ) : null}
                 {onRestartWithAccount ? (

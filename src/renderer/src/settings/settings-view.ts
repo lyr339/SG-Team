@@ -2,12 +2,20 @@ import type { CursorAccountMetadata, CursorRuntimeAccountMatch } from '../../../
 import type { CursorMembershipStatus, CursorMembershipTier } from '../../../domain/cursor-membership'
 import { cursorMembershipTierLabel } from '../../../domain/cursor-membership'
 import type { AozaiCardStatus, AozaiProgressEvent } from '../../../domain/aozai-service'
+import { resolveExecutionProfileId } from '../../../domain/account-automation'
 import type {
   AccountAutomationPhase,
   AccountAutomationRun,
   AccountAutomationSettings
 } from '../../../domain/account-automation'
 import type { CursorUpdatePreferences } from '../../../domain/cursor-update'
+import type { CursorSwitchPumpStatus } from '../../../domain/cursor-switch-pump'
+import type {
+  CursorStorageCleanupRequest,
+  CursorStorageCleanupResult,
+  CursorStorageItemId,
+  CursorStorageScan
+} from '../../../domain/cursor-storage-cleanup'
 
 /**
  * 设置页视图模型与纯函数。
@@ -28,6 +36,28 @@ export interface AccountStatusLineView {
   text: string
   /** 鼠标悬停的完整说明（劈叉时含双账号明细）。 */
   detail?: string
+}
+
+export interface LiveSwitchAvailability {
+  enabled: boolean
+  title: string
+}
+
+/** 手动无感切换只依赖运行泵能力，与自动化开关完全解耦。 */
+export function liveSwitchAvailability(status: CursorSwitchPumpStatus | undefined): LiveSwitchAvailability {
+  if (!status) return { enabled: false, title: '正在检测 Cursor 无感换号能力…' }
+  if (status.kind === 'installed') {
+    return {
+      enabled: true,
+      title: status.managed === false
+        ? '使用现有兼容切号补丁，不重启 Cursor 切换到此账号'
+        : '不重启 Cursor 切换到此账号；机器码下次冷切换时对齐'
+    }
+  }
+  if (status.kind === 'not-installed') {
+    return { enabled: false, title: '请先到「Cursor 维护」安装切号补丁' }
+  }
+  return { enabled: false, title: status.message }
 }
 
 /** 档位着色类：卡片内采用 Free 绿、Trial 琥珀、Pro 蓝、Pro+ 靛、Ultra 紫、Enterprise 橙。 */
@@ -114,11 +144,13 @@ export interface SettingsPageProps {
   onRestartWithAccount?: (accountId: string) => Promise<void>
   onImportFromLocal?: () => Promise<void>
   onImportFromBrowser?: () => Promise<void>
-  /** 第一步「获取 Token」的指纹导入：读选中指纹 profile 登录态。 */
+  /** 第一步「获取 Token」的指纹导入：读选中指纹 profile 登录态（导入即绑定该窗口）。 */
   onImportFromFingerprint?: () => Promise<void>
   /** 打开选定的指纹浏览器窗口并导航 cursor.com（用户提前登录入口；窗口不自动关）。 */
   onOpenFingerprintLogin?: () => Promise<void>
   onCleanupFingerprintEnvironment?: () => Promise<void>
+  /** 绑定/改绑/解绑账号的指纹窗口（undefined 解绑，自动化回退默认窗口）。 */
+  onSetAccountFingerprintProfile?: (accountId: string, profileId?: string) => Promise<void>
   aozaiStatus?: AozaiCardStatus
   aozaiBusy?: boolean
   aozaiError?: string
@@ -159,6 +191,24 @@ export interface SettingsPageProps {
   onSetModelDataPolicyAutoAcknowledge?: (enabled: boolean) => Promise<{ message: string }>
   onSaveAutomationSettings?: (settings: AccountAutomationSettings) => void
   onCancelAutomation?: () => void
+  /** 无感换号（热切）：不重启 Cursor 直接把运行态切到指定账号；结果经账号区消息条呈现。 */
+  onSwitchLiveAccount?: (accountId: string) => Promise<void>
+  /** 切号补丁状态卡（维护页）：只读检测 + 一键安装/卸载。 */
+  switchPumpStatus?: CursorSwitchPumpStatus
+  switchPumpBusy?: boolean
+  switchPumpFeedback?: { ok: boolean; message: string }
+  onRefreshSwitchPumpStatus?: () => void
+  onEnsureSwitchPump?: () => Promise<void>
+  onRemoveSwitchPump?: () => Promise<void>
+  /** 存储清理页：盘点结果、进行中状态、上次清理结果与三个动作。 */
+  storageScan?: CursorStorageScan
+  storageScanBusy?: boolean
+  storageScanError?: string
+  storageCleanupBusy?: boolean
+  storageCleanupResult?: CursorStorageCleanupResult
+  onScanCursorStorage?: (input?: { chatHistoryOlderThanDays?: number }) => Promise<void>
+  onCleanCursorStorage?: (request: CursorStorageCleanupRequest) => Promise<void>
+  onRevealCursorStorage?: (id: CursorStorageItemId) => void
 }
 
 export type AccountFlowStepKey = 'acquire' | 'countdown' | 'processing' | 'deleting' | 'finish'
@@ -277,4 +327,34 @@ export function automationFailedStepHint(message: string): AccountFlowStepKey {
   // 删除链路的失败必含新凭据或删除语义；裸「会话」会误吞 preflight 失败（如浏览器会话读取失败），不用。
   if (/新 Token|删除|官网|入库/.test(message)) return 'deleting'
   return 'countdown'
+}
+
+/** 指纹窗口的展示名（#序号 名称；列表缺失时回退原始 id——窗口可能被删或 Roxy 未连接）。 */
+export function profileDisplayName(
+  profiles: readonly { id: string; name: string; seq?: number }[] | undefined,
+  profileId: string
+): string {
+  const found = profiles?.find((profile) => profile.id === profileId)
+  if (!found) return profileId
+  return `${found.seq !== undefined ? `#${found.seq} ` : ''}${found.name}`
+}
+
+/**
+ * 自动化「执行浏览器」跟随文案：解析规则与主进程 resolveExecutionProfileId 同一函数，
+ * 界面显示的执行窗口与实际执行窗口不分叉。
+ */
+export function automationBrowserFollowText(input: {
+  browserHost?: 'external' | 'fingerprint'
+  accounts: readonly CursorAccountMetadata[]
+  defaultProfileId?: string
+  profiles?: readonly { id: string; name: string; seq?: number }[]
+}): string {
+  if ((input.browserHost ?? 'fingerprint') === 'external') return '系统浏览器（Edge/Chrome）'
+  const active = input.accounts.find((account) => account.active)
+  if (!active) return '指纹浏览器（Roxy）· 跟随活跃账号窗口'
+  if (active.fingerprintProfileId) {
+    return `指纹浏览器（Roxy）· 跟随活跃账号 → ${profileDisplayName(input.profiles, active.fingerprintProfileId)}`
+  }
+  const fallback = resolveExecutionProfileId(input.accounts, input.defaultProfileId)
+  return `指纹浏览器（Roxy）· 未绑定，走默认窗口${fallback ? `「${profileDisplayName(input.profiles, fallback)}」` : '（未选择）'}`
 }

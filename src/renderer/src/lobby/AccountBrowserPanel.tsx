@@ -150,8 +150,8 @@ export function AccountBrowserPanel({
             )}
             </div>
             <i className="account-browser__divider" aria-hidden="true" />
-            <div className="account-browser__window-cell" title="Token 导入与自动化执行的窗口——按当前网络选择挂代理或直连，窗口需预先登录 cursor.com">
-              <span><b>执行窗口</b><small>{selectedProfile ? `已选择 ${selectedProfile.name}` : '选择已登录 cursor.com 的窗口'}</small></span>
+            <div className="account-browser__window-cell" title="新账号从此窗口导入并自动绑定；已绑定账号的自动化改用各自绑定窗口（账号列表可改绑），未绑定账号回退到此默认窗口。按当前网络选择挂代理或直连，窗口需预先登录 cursor.com">
+              <span><b>默认窗口</b><small>{selectedProfile ? `已选择 ${selectedProfile.name}` : '新账号导入与未绑定账号使用'}</small></span>
               <MenuSelect
                 value={settings.bitProfileId ?? ''}
                 placeholder="选择窗口…"

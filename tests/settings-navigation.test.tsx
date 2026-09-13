@@ -64,4 +64,33 @@ describe('settings navigation', () => {
     expect(container.querySelector('[aria-current="page"]')?.textContent).toBe('账号')
     expect(container.querySelectorAll('.settings-groups > div:not([hidden])')).toHaveLength(1)
   })
+
+  it('manual live switch is a per-account action and stays independent from automation settings', async () => {
+    const liveSwitch = vi.fn(async () => {})
+    await act(async () => root.render(<SettingsPage {...props}
+      accounts={[
+        { ...props.accounts[0]!, active: true },
+        { id: 'b', label: 'next@example.com', active: false, maskedToken: '***', createdAt: 2, updatedAt: 2 }
+      ]}
+      automationSettings={{ enabled: false, delaySec: 10, postProcessDelaySec: 10, seamlessHandoverEnabled: false }}
+      switchPumpStatus={{ kind: 'installed', managed: false, message: '兼容可用', config: { port: 51_824, key: 'key', revision: 2 } }}
+      onSwitchLiveAccount={liveSwitch} />))
+    const button = [...visible().querySelectorAll<HTMLButtonElement>('button')].find(candidate => candidate.textContent === '无感切换')!
+    expect(button.disabled).toBe(false)
+    await act(async () => button.click())
+    expect(liveSwitch).toHaveBeenCalledExactlyOnceWith('b')
+  })
+
+  it('keeps the per-account live switch visible but disabled with an actionable pump hint', async () => {
+    await act(async () => root.render(<SettingsPage {...props}
+      accounts={[
+        { ...props.accounts[0]!, active: true },
+        { id: 'b', label: 'next@example.com', active: false, maskedToken: '***', createdAt: 2, updatedAt: 2 }
+      ]}
+      switchPumpStatus={{ kind: 'not-installed', message: 'missing' }}
+      onSwitchLiveAccount={async () => {}} />))
+    const button = [...visible().querySelectorAll<HTMLButtonElement>('button')].find(candidate => candidate.textContent === '无感切换')!
+    expect(button.disabled).toBe(true)
+    expect(button.title).toBe('请先到「Cursor 维护」安装切号补丁')
+  })
 })

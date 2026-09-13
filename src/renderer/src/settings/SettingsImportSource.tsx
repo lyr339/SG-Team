@@ -83,7 +83,7 @@ export function SettingsImportSource({
           {onImportFromFingerprint && (automationSettings?.browserHost ?? 'fingerprint') === 'fingerprint' ? (
             <button className="lobby-account__quick-primary" disabled={busy || !automationSettings?.bitProfileId}
               title={automationSettings?.bitProfileId
-                ? '打开选定的指纹浏览器窗口读取登录态 Token（窗口生命周期沿用现有导入流程）'
+                ? '打开选定的指纹浏览器窗口读取登录态 Token——导入后该账号自动绑定此窗口，自动化固定在此窗口执行'
                 : '请先在上方选择指纹浏览器窗口'}
               onClick={() => void onImportFromFingerprint()}>
               {busy ? '导入中…' : '从指纹浏览器导入（推荐）'}

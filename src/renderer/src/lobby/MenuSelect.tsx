@@ -13,6 +13,8 @@ export interface MenuSelectProps {
   placeholder?: string
   disabled?: boolean
   ariaLabel?: string
+  /** 弹层最小宽度；触发器可保持紧凑，菜单按内容场景独立展开。 */
+  menuMinWidth?: number
   onChange: (value: string) => void
 }
 
@@ -20,7 +22,7 @@ export interface MenuSelectProps {
  * 账号管线的下拉选择：自绘按钮 + 弹出列表（点击外部 / Esc 关闭），
  * 视觉与卡片设计体系一致，替代原生 select 的系统样式。
  */
-export function MenuSelect({ value, options, placeholder = '请选择…', disabled, ariaLabel, onChange }: MenuSelectProps): React.JSX.Element {
+export function MenuSelect({ value, options, placeholder = '请选择…', disabled, ariaLabel, menuMinWidth = 0, onChange }: MenuSelectProps): React.JSX.Element {
   const [open, setOpen] = useState(false)
   const [menuStyle, setMenuStyle] = useState<CSSProperties>()
   const rootRef = useRef<HTMLDivElement>(null)
@@ -35,19 +37,21 @@ export function MenuSelect({ value, options, placeholder = '请选择…', disab
     const rect = button.getBoundingClientRect()
     const gap = 6
     const viewportPadding = 10
+    const width = Math.min(Math.max(rect.width, menuMinWidth), Math.max(0, window.innerWidth - viewportPadding * 2))
+    const left = Math.min(Math.max(viewportPadding, rect.left), Math.max(viewportPadding, window.innerWidth - viewportPadding - width))
     const below = window.innerHeight - rect.bottom - gap - viewportPadding
     const above = rect.top - gap - viewportPadding
     const placeAbove = below < 150 && above > below
     const maxHeight = Math.max(96, Math.min(224, placeAbove ? above : below))
     setMenuStyle({
       position: 'fixed',
-      left: rect.left,
+      left,
       top: placeAbove ? undefined : rect.bottom + gap,
       bottom: placeAbove ? window.innerHeight - rect.top + gap : undefined,
-      width: rect.width,
+      width,
       maxHeight
     })
-  }, [])
+  }, [menuMinWidth])
 
   useEffect(() => {
     if (!open) return
@@ -95,6 +99,7 @@ export function MenuSelect({ value, options, placeholder = '请选择…', disab
             <li key={option.value} role="option" aria-selected={option.value === value}>
               <button
                 type="button"
+                title={option.label}
                 className={`${option.value === value ? 'is-selected' : ''}${option.tone ? ` ${option.tone}` : ''}`}
                 onClick={() => {
                   onChange(option.value)

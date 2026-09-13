@@ -375,7 +375,9 @@
 .account-membership-plan.is-tier-ultra, .account-membership-refresh.is-tier-ultra { color: light-dark(#7040a1, #c29bea); }
 .account-membership-plan.is-tier-enterprise, .account-membership-refresh.is-tier-enterprise { color: light-dark(#aa4b22, #f4976f); }
 .account-membership-plan.is-tier-unknown, .account-membership-refresh.is-tier-unknown { color: var(--muted); }
-.lobby-account__row-actions .account-membership-refresh {
+/* 会员刷新按钮：样式与容器解耦（账号卡 meta 行 / 操作行均可放置）——
+   历史上挂在 .lobby-account__row-actions 作用域下，移出该容器即塌缩成无色块。 */
+.account-membership-refresh {
   width: 20px;
   min-width: 20px;
   height: 20px;
@@ -388,24 +390,24 @@
   border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
   border-radius: 6px;
 }
-.lobby-account__row-actions .account-membership-refresh svg {
+.account-membership-refresh svg {
   width: 12px;
   height: 12px;
   fill: none;
   stroke: currentColor;
 }
-.lobby-account__row-actions .account-membership-refresh.is-refreshing svg {
+.account-membership-refresh.is-refreshing svg {
   animation: account-membership-refresh-spin 680ms linear infinite;
   transform-origin: 50% 50%;
 }
-.lobby-account__row-actions .account-membership-refresh.is-refreshing { cursor: progress; opacity: .78; }
-.lobby-account__row-actions .account-membership-refresh:hover:not(:disabled) {
+.account-membership-refresh.is-refreshing { cursor: progress; opacity: .78; }
+.account-membership-refresh:hover:not(:disabled) {
   color: var(--text);
   background: var(--surface-strong);
 }
 @keyframes account-membership-refresh-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {
-  .lobby-account__row-actions .account-membership-refresh.is-refreshing svg { animation: none; }
+  .account-membership-refresh.is-refreshing svg { animation: none; }
 }
 
 .lobby-account__row-actions button {

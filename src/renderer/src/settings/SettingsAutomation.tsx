@@ -2,16 +2,19 @@ import { useState } from 'react'
 import {
   ACCOUNT_AUTOMATION_DELAY_MAX_SEC,
   ACCOUNT_AUTOMATION_DELAY_MIN_SEC,
+  selectAccountHandoverTarget,
   type AccountAutomationPhase
 } from '../../../domain/account-automation'
 import { ToggleSwitch } from '../lobby/ToggleSwitch'
 import { RangeField } from '../lobby/RangeField'
 import { FlowStatusIcon } from '../lobby/FlowStatusIcon'
+import { MenuSelect } from '../lobby/MenuSelect'
 import type { SettingsPageProps } from './settings-view'
 import {
   ACTIVE_PHASE_STEP,
   accountFlowStateLabel,
   accountFlowStatesFor,
+  automationBrowserFollowText,
   automationDurationText,
   automationFailedStepHint,
   isActiveAutomationPhase,
@@ -22,7 +25,7 @@ import { SettingsSection } from './SettingsSection'
 
 type AutomationProps = Pick<SettingsPageProps,
   | 'accounts' | 'automationSettings' | 'automationRun' | 'aozaiStatus'
-  | 'aozaiBusy' | 'onSaveAutomationSettings' | 'onCancelAutomation'
+  | 'aozaiBusy' | 'onSaveAutomationSettings' | 'onCancelAutomation' | 'bitProfiles'
 >
 
 const TRACKER_STEPS: readonly AccountFlowStepKey[] = ['acquire', 'countdown', 'processing', 'deleting', 'finish']
@@ -40,7 +43,8 @@ export function SettingsAutomation({
   aozaiStatus,
   aozaiBusy = false,
   onSaveAutomationSettings,
-  onCancelAutomation
+  onCancelAutomation,
+  bitProfiles
 }: AutomationProps): React.JSX.Element {
   const aozaiReady = Boolean(aozaiStatus?.saved)
   const automationEnabled = Boolean(automationSettings?.enabled)
@@ -62,6 +66,18 @@ export function SettingsAutomation({
   const durationText = automationRun ? automationDurationText(automationRun) : ''
   const automationControlsReady = aozaiReady && Boolean(automationSettings) && Boolean(onSaveAutomationSettings)
   const active = isActiveAutomationPhase(phase)
+  const activeAccount = accounts.find((account) => account.active)
+  const handoverCandidates = accounts.filter((account) => !account.active)
+  const preferredHandoverId = automationSettings?.seamlessHandoverAccountId
+  const handoverTarget = selectAccountHandoverTarget(accounts, activeAccount?.id, preferredHandoverId)
+  const effectivePreferredId = handoverCandidates.some((account) => account.id === preferredHandoverId)
+    ? preferredHandoverId ?? ''
+    : ''
+  const handoverDuration = automationRun?.handover?.finishedAt
+    ? Math.max(0, automationRun.handover.finishedAt - automationRun.handover.startedAt) / 1_000
+    : undefined
+  // 展开区可见性与父级联动：自动化关闭时整个参数区折叠，嵌套的接手账号区亦不标记展开。
+  const handoverOpen = automationSettings?.enabled === true && automationSettings.seamlessHandoverEnabled !== false
 
   return (
     <>
@@ -139,31 +155,44 @@ export function SettingsAutomation({
             {durationText ? (
               <p className="settings-flow-banner__duration">耗时 {durationText}</p>
             ) : null}
+            {automationRun?.handover ? (
+              <div className={`settings-handover-status is-${automationRun.handover.status}`}>
+                <span>接手账号</span>
+                <strong>{automationRun.handover.label}</strong>
+                <em>{automationRun.handover.message}{handoverDuration !== undefined ? ` · ${handoverDuration.toFixed(1)}s` : ''}</em>
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}
 
       <SettingsSection
         title="自动化"
-        description="会话创建全部提交成功后自动处理当前账号；处理完成后秒级完成账号加固（不可撤销），必要时自动刷新会话获取新 Token。"
-        aside={automationEnabled && automationSettings ? (
-          <span className="settings-section__meta">处理前 {automationSettings.delaySec} 秒 · 加固前 {automationSettings.postProcessDelaySec} 秒</span>
-        ) : undefined}
+        description="会话创建全部提交成功后，自动处理当前账号并按需接续到下一账号。"
       >
         {automationControlsReady && automationSettings && onSaveAutomationSettings ? (
           <div className="account-automation settings-automation">
-            <div className="account-automation__row">
+            <div className="settings-row">
+              <div className="settings-row__copy">
+                <span className="settings-row__label">会话创建后自动处理账号</span>
+                <span className="settings-row__hint">处理完成后秒级加固账号（不可撤销），必要时自动刷新会话获取新 Token</span>
+              </div>
               <ToggleSwitch
                 checked={automationSettings.enabled}
                 disabled={aozaiBusy || active}
+                label="会话创建后自动处理账号"
                 onChange={(enabled) => onSaveAutomationSettings({ ...automationSettings, enabled })}
-              >
-                会话创建后自动处理账号
-              </ToggleSwitch>
-              {automationSettings.enabled ? (
-                <div className="account-automation__delays">
-                  <div className="account-automation__delay">
-                    <span>处理前</span>
+              />
+            </div>
+
+            <div className={`settings-collapse${automationSettings.enabled ? ' is-open' : ''}`}>
+              <div className="settings-collapse__inner">
+                <div className="settings-subgroup">
+                  <div className="settings-row settings-row--sub">
+                    <div className="settings-row__copy">
+                      <span className="settings-row__label">处理前倒计时</span>
+                      <span className="settings-row__hint">处理前等待，期间可随时取消</span>
+                    </div>
                     <RangeField
                       value={automationSettings.delaySec}
                       min={ACCOUNT_AUTOMATION_DELAY_MIN_SEC}
@@ -175,8 +204,11 @@ export function SettingsAutomation({
                       onChange={(delaySec) => onSaveAutomationSettings({ ...automationSettings, delaySec })}
                     />
                   </div>
-                  <div className="account-automation__delay">
-                    <span>加固前</span>
+                  <div className="settings-row settings-row--sub">
+                    <div className="settings-row__copy">
+                      <span className="settings-row__label">加固前倒计时</span>
+                      <span className="settings-row__hint">处理完成后等待，随后秒级加固账号</span>
+                    </div>
                     <RangeField
                       value={automationSettings.postProcessDelaySec}
                       min={ACCOUNT_AUTOMATION_DELAY_MIN_SEC}
@@ -189,16 +221,57 @@ export function SettingsAutomation({
                     />
                   </div>
                 </div>
-              ) : null}
+
+                <div className="settings-row settings-row--divided">
+                  <div className="settings-row__copy">
+                    <span className="settings-row__label">退款完成后无感切换</span>
+                    <span className="settings-row__hint">不重启 Cursor，接续到下一可用账号</span>
+                  </div>
+                  <ToggleSwitch
+                    checked={automationSettings.seamlessHandoverEnabled !== false}
+                    disabled={aozaiBusy || active}
+                    label="退款完成后无感切换"
+                    title="奥仔退款成功后，经切号补丁把运行中的 Cursor 直接换到指定接手账号（不换机器码、不中断会话）"
+                    onChange={(seamlessHandoverEnabled) => onSaveAutomationSettings({ ...automationSettings, seamlessHandoverEnabled })}
+                  />
+                </div>
+
+                <div className={`settings-collapse${handoverOpen ? ' is-open' : ''}`}>
+                  <div className="settings-collapse__inner">
+                    <div className="settings-subgroup">
+                      <div className="settings-row settings-row--sub">
+                        <div className="settings-row__copy">
+                          <span className="settings-row__label">接手账号</span>
+                          <span className="settings-row__hint">不指定时自动接续最近可用的账号</span>
+                        </div>
+                        <MenuSelect
+                          value={effectivePreferredId}
+                          disabled={aozaiBusy || active || handoverCandidates.length === 0}
+                          ariaLabel="自动化无感换号接手账号"
+                          options={[
+                            { value: '', label: `自动${handoverTarget ? ` · ${handoverTarget.label}` : ' · 暂无可用账号'}` },
+                            ...handoverCandidates.map((account) => ({ value: account.id, label: account.label }))
+                          ]}
+                          onChange={(value) => onSaveAutomationSettings({
+                            ...automationSettings,
+                            seamlessHandoverAccountId: value || undefined
+                          })}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <p className="account-automation__follow">
+                  执行浏览器：{automationBrowserFollowText({
+                    browserHost: automationSettings.browserHost,
+                    accounts,
+                    defaultProfileId: automationSettings.bitProfileId,
+                    profiles: bitProfiles
+                  })}
+                </p>
+              </div>
             </div>
-            {automationSettings.enabled ? (
-              <p className="account-automation__follow">
-                执行浏览器跟随「获取 Token」的来源：
-                {(automationSettings.browserHost ?? 'fingerprint') === 'fingerprint'
-                  ? `指纹浏览器（Roxy${automationSettings.bitProfileId ? '' : ' · 未选窗口'}）`
-                  : '系统浏览器（Edge/Chrome）'}
-              </p>
-            ) : null}
           </div>
         ) : (
           <p className="flow-step__hint">保存奥仔卡密后开启自动化。</p>

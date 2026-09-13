@@ -118,4 +118,22 @@ describe('MenuSelect（账号管线自绘下拉）', () => {
     await act(async () => { buttonOf().click() })
     expect(document.body.querySelector('.menu-select__menu .provider-anthropic .menu-select__swatch')).not.toBeNull()
   })
+
+  it('紧凑触发器可展开为更宽菜单，并在视口右缘自动左移', async () => {
+    await renderSelect({
+      value: 'window-7',
+      menuMinWidth: 240,
+      options: [{ value: 'window-7', label: '#7 这是一个较长的指纹浏览器窗口名称' }],
+      onChange: () => {}
+    })
+    vi.spyOn(buttonOf(), 'getBoundingClientRect').mockReturnValue({
+      x: 930, y: 100, left: 930, top: 100, right: 1010, bottom: 124,
+      width: 80, height: 24, toJSON: () => ({})
+    })
+    await act(async () => { buttonOf().click() })
+    const menu = document.body.querySelector<HTMLElement>('.menu-select__menu')!
+    expect(menu.style.width).toBe('240px')
+    expect(menu.style.left).toBe('774px')
+    expect(menu.querySelector('button')?.title).toBe('#7 这是一个较长的指纹浏览器窗口名称')
+  })
 })

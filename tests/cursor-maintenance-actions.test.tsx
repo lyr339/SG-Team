@@ -12,6 +12,7 @@ describe('Cursor 本机维护操作', () => {
 
   beforeEach(() => {
     ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+    history.replaceState(null, '', '#account:maintenance')
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
@@ -86,12 +87,13 @@ describe('Cursor 本机维护操作', () => {
       .find((candidate) => candidate.textContent?.includes('自动确认受限模型数据政策'))!
     const input = label.querySelector<HTMLInputElement>('input')!
     expect(input.disabled).toBe(false)
-    expect(label.title).toContain('重新开启前请先选择 Roxy 窗口')
+    expect(label.title).toContain('重新开启前请先在「导入来源」选择默认窗口')
     await act(async () => input.click())
     expect(setPolicy).toHaveBeenCalledWith(false)
   })
 
   it('会员等级刷新期间旋转并阻止重复点击，完成后恢复', async () => {
+    history.replaceState(null, '', '#account:accounts')
     let resolveRefresh!: () => void
     const refresh = vi.fn(() => new Promise<void>((resolve) => { resolveRefresh = resolve }))
     await act(async () => root.render(<LobbyAccountTile {...props({
@@ -107,5 +109,56 @@ describe('Cursor 本机维护操作', () => {
     await act(async () => resolveRefresh())
     expect(button.className).not.toContain('is-refreshing')
     expect(button.disabled).toBe(false)
+  })
+
+  it('复用外部兼容切号泵时显示可用状态，但不给拾光卸载权限', async () => {
+    const remove = vi.fn(async () => {})
+    await act(async () => root.render(<LobbyAccountTile {...props({
+      switchPumpStatus: {
+        kind: 'installed', managed: false, message: '检测到兼容切号补丁',
+        config: { port: 51_824, key: 'masked', revision: 2 }
+      },
+      onEnsureSwitchPump: async () => {},
+      onRemoveSwitchPump: remove
+    })} />))
+    const row = container.querySelector('.cursor-maintenance__switch-pump')!
+    expect(row.classList.contains('is-compatible')).toBe(true)
+    expect(row.textContent).toContain('兼容切号补丁可用（端口 51824）')
+    expect(row.querySelector('input')).toBeNull()
+    expect(row.querySelector('button')).toBeNull()
+    expect(row.textContent).toContain('兼容可用')
+    expect(row.textContent).toContain('拾光只复用，不覆盖或卸载')
+    expect(remove).not.toHaveBeenCalled()
+  })
+
+  it('未安装与拾光管理的已安装补丁使用明确的安装／移除动作', async () => {
+    const ensure = vi.fn(async () => {})
+    const remove = vi.fn(async () => {})
+    const render = (installed: boolean) => root.render(<LobbyAccountTile {...props({
+      switchPumpStatus: installed
+        ? { kind: 'installed', managed: true, message: 'ok', config: { port: 51_824, key: 'key', revision: 1 } }
+        : { kind: 'not-installed', message: '切号补丁未安装' },
+      onEnsureSwitchPump: ensure, onRemoveSwitchPump: remove
+    })} />)
+    await act(async () => render(false))
+    expect(container.querySelector('.cursor-maintenance__switch-pump')?.textContent).toContain('切号补丁未安装')
+    await act(async () => container.querySelector<HTMLButtonElement>('.cursor-maintenance__pump-action')!.click())
+    expect(ensure).toHaveBeenCalledTimes(1)
+    await act(async () => render(true))
+    expect(container.querySelector('.cursor-maintenance__switch-pump')?.textContent).toContain('拾光切号补丁已安装')
+    await act(async () => container.querySelector<HTMLButtonElement>('.cursor-maintenance__pump-action.is-remove')!.click())
+    expect(remove).toHaveBeenCalledTimes(1)
+  })
+
+  it('把内部 updateMode=none 翻译为用户可读状态', async () => {
+    await act(async () => root.render(<LobbyAccountTile {...props({
+      cursorUpdatePreferences: {
+        settingsPath: '/tmp/settings.json', updateMode: 'none',
+        autoUpdateDisabled: true, settingsExists: true
+      },
+      onSetCursorAutoUpdateDisabled: async () => {}
+    })} />))
+    expect(container.querySelector('.cursor-maintenance__action em')?.textContent).toBe('已关闭')
+    expect(container.textContent).not.toContain('none')
   })
 })

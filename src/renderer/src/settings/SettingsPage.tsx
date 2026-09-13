@@ -6,15 +6,17 @@ import { SettingsImportSource } from './SettingsImportSource'
 import { SettingsAutomation } from './SettingsAutomation'
 import { SettingsAozai } from './SettingsAozai'
 import { SettingsMaintenance } from './SettingsMaintenance'
+import { SettingsCleanup } from './SettingsCleanup'
 import {
   SettingsAccountsIcon,
   SettingsAozaiIcon,
   SettingsAutomationIcon,
+  SettingsCleanupIcon,
   SettingsImportIcon,
   SettingsMaintenanceIcon
 } from './icons'
 
-export type SettingsGroupId = 'accounts' | 'import' | 'automation' | 'aozai' | 'maintenance'
+export type SettingsGroupId = 'accounts' | 'import' | 'automation' | 'aozai' | 'maintenance' | 'cleanup'
 
 interface SettingsGroupDef {
   id: SettingsGroupId
@@ -28,7 +30,8 @@ const GROUPS = [
   { id: 'import', label: '导入来源', description: 'Token 的获取方式与执行浏览器', icon: SettingsImportIcon },
   { id: 'automation', label: '自动化', description: '会话创建后的账号自动处理流程', icon: SettingsAutomationIcon },
   { id: 'aozai', label: '奥仔服务', description: '自助处理的卡密与次数', icon: SettingsAozaiIcon },
-  { id: 'maintenance', label: 'Cursor 维护', description: '本机 Cursor 的更新与数据政策', icon: SettingsMaintenanceIcon }
+  { id: 'maintenance', label: 'Cursor 维护', description: '本机 Cursor 的更新与数据政策', icon: SettingsMaintenanceIcon },
+  { id: 'cleanup', label: '存储清理', description: '盘点 Cursor 本机数据，按项清理', icon: SettingsCleanupIcon }
 ] as const satisfies readonly SettingsGroupDef[]
 
 function initialGroup(): SettingsGroupId {
@@ -109,6 +112,7 @@ export function SettingsPage(props: SettingsPageProps): React.JSX.Element {
           <div hidden={group !== 'automation'}><SettingsAutomation {...props} /></div>
           <div hidden={group !== 'aozai'}><SettingsAozai {...props} /></div>
           <div hidden={group !== 'maintenance'}><SettingsMaintenance {...props} /></div>
+          <div hidden={group !== 'cleanup'}><SettingsCleanup {...props} active={group === 'cleanup'} /></div>
         </div>
       </div>
     </div>
