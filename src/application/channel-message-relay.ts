@@ -23,13 +23,17 @@ import {
   type MessageAttachment,
   type ProcessBlock
 } from '../domain/conversation-entry'
-import type { SqliteChannelMessageRepository } from '../infrastructure/channel-messages/sqlite-channel-message-repository'
+import type {
+  ChannelOutboundDeliveryState,
+  SqliteChannelMessageRepository
+} from '../infrastructure/channel-messages/sqlite-channel-message-repository'
 import type {
   DesktopSnapshot,
   LiveProcessState,
   SendMessageAccepted,
   SendMessageInput
 } from '../shared/desktop-api'
+import { imageExtensionForMime, imageMimeForPath, isLocalImagePath, localImageUrl } from '../shared/local-image'
 
 const MAX_ENTRIES_PER_CHANNEL = 500
 const MAX_MESSAGE_CHARS = 100_000
@@ -91,7 +95,7 @@ function visibleConversationText(text: string): string {
  */
 function queuedEntryChange(
   entry: ConversationEntry,
-  row: ChannelOutboundMessage | undefined
+  row: ChannelOutboundDeliveryState | undefined
 ): 'keep' | 'drop' | ConversationEntry {
   if (entry.role !== 'user' || entry.source !== 'desktop' || entry.deliveredAt !== undefined || !row) return 'keep'
   if (row.deliveredAt !== undefined) return { ...entry, deliveredAt: row.deliveredAt, heldForNextSession: undefined }
@@ -271,7 +275,10 @@ export class ChannelMessageRelay {
    *   落盘后清掉 data 只留 path；MCP 投递阶段会按文件类型读取 path，图片转 MCP image block，
    *   文本/小型二进制文件按内联附件格式投递；
    * - path 绝对路径引用不复制不落盘，Agent 直接读原文件；
-   * - 图片保留 data: 预览 URL 供 UI 缩略展示。
+   * - 图片缩略图走 `sg-image://` 本地路径协议（按需读盘），**不再**把 base64 预览
+   *   URL 写进 attachments_json / 会话 entry：一张截图的 data: URL 有 1–2MB，曾随每条
+   *   出站行常驻内存、每 250ms 被出站同步反复 JSON.parse、并随每次快照推送整体克隆到
+   *   渲染进程——是拾光长会话越用越卡的第二根因（见 ARCHITECTURE「1h+ 卡顿根因」）。
    */
   private prepareAttachments(messageId: string, input?: MessageAttachment[]): MessageAttachment[] | undefined {
     if (!input?.length) return undefined
@@ -281,15 +288,16 @@ export class ChannelMessageRelay {
     let totalBytes = 0
     const usedNames = new Set<string>()
     return input.map((attachment, index) => {
+      // MIME 兜底嗅探：扩展名可确认图片时纠正空/万金油声明（含路径引用附件）。
+      const rawName = String(attachment.name || `附件 ${index + 1}`).replace(/[/\\]/g, '_').slice(0, 120)
+      const mimeType = sniffedAttachmentMimeType(rawName, String(attachment.mimeType || '')).slice(0, 120)
       const name = uniqueAttachmentName(
-        String(attachment.name || `附件 ${index + 1}`).replace(/[/\\]/g, '_').slice(0, 120),
+        // 落盘图片必须带白名单扩展名，sg-image 协议才肯读它（剪贴板来源常只叫 "image"）
+        attachment.data && mimeType.startsWith('image/') && imageMimeForPath(rawName) === undefined
+          ? `${rawName}.${imageExtensionForMime(mimeType) ?? 'png'}`
+          : rawName,
         usedNames
       )
-      // MIME 兜底嗅探：扩展名可确认图片时纠正空/万金油声明（含路径引用附件）。
-      const mimeType = sniffedAttachmentMimeType(name, String(attachment.mimeType || '')).slice(0, 120)
-      const previewUrl = typeof attachment.previewUrl === 'string' && attachment.previewUrl.length <= 4_000_000
-        ? attachment.previewUrl
-        : undefined
       if (attachment.data) {
         const bytes = Buffer.from(String(attachment.data), 'base64')
         if (bytes.length > CHANNEL_ATTACHMENT_MAX_FILE_BYTES) {
@@ -309,17 +317,18 @@ export class ChannelMessageRelay {
           mimeType,
           size: bytes.length,
           path,
-          previewUrl: previewUrl ?? (mimeType.startsWith('image/') ? `data:${mimeType};base64,${attachment.data}` : undefined)
+          ...(isLocalImagePath(path) ? { previewUrl: localImageUrl(path) } : {})
         }
       }
       if (attachment.path) {
+        const path = String(attachment.path)
         return {
           id: String(attachment.id || randomUUID()),
           name,
           mimeType,
           size: Math.max(0, Math.round(Number(attachment.size) || 0)),
-          path: String(attachment.path),
-          previewUrl
+          path,
+          ...(isLocalImagePath(path) ? { previewUrl: localImageUrl(path) } : {})
         }
       }
       throw new Error(`附件「${name}」缺少内容：data（base64）与 path（路径引用）至少提供一个`)
@@ -533,8 +542,9 @@ export class ChannelMessageRelay {
    */
   private refreshOutboundDeliveries(): boolean {
     if (this.scopeStartedAt === undefined || !this.conversations.size) return false
-    const outbound = new Map<string, ChannelOutboundMessage>(this.repository
-      .listOutboundSince(Math.max(0, this.scopeStartedAt - CONVERSATION_SCOPE_CLOCK_SKEW_MS),
+    // 只读投递状态列：正文与附件（图片 base64 可达数 MB/行）不参与这条每 250ms 的同步
+    const outbound = new Map<string, ChannelOutboundDeliveryState>(this.repository
+      .listOutboundDeliveryStateSince(Math.max(0, this.scopeStartedAt - CONVERSATION_SCOPE_CLOCK_SKEW_MS),
         MAX_ENTRIES_PER_CHANNEL * Math.max(1, this.conversations.size))
       .map((message) => [`outbox:${message.id}`, message] as const))
     let changed = false

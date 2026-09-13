@@ -25,6 +25,15 @@ export function imageMimeForPath(path: string): string | undefined {
   return MIME_BY_EXTENSION[extension]
 }
 
+/** MIME → 首选扩展名（不含点）；非白名单图片类型返回 undefined。 */
+export function imageExtensionForMime(mimeType: string): string | undefined {
+  const normalized = mimeType.trim().toLowerCase()
+  for (const [extension, mime] of Object.entries(MIME_BY_EXTENSION)) {
+    if (mime === normalized) return extension
+  }
+  return undefined
+}
+
 /** 绝对路径（POSIX / Windows 盘符 / `~/`）且扩展名在图片白名单内。 */
 export function isLocalImagePath(path: string): boolean {
   const value = path.trim()

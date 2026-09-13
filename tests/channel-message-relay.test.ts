@@ -8,6 +8,7 @@ import { ChannelMessageRelay } from '../src/application/channel-message-relay'
 import { CHANNEL_PRESENCE_STALE_MS, CHANNEL_PROCESSING_STALE_MS } from '../src/domain/channel-message'
 import { SqliteChannelMessageRepository } from '../src/infrastructure/channel-messages/sqlite-channel-message-repository'
 import type { DesktopSnapshot } from '../src/shared/desktop-api'
+import { localImageUrl } from '../src/shared/local-image'
 
 function fixture(now = 10_000) {
   const path = join(mkdtempSync(join(tmpdir(), 'sg-channel-relay-')), 'channel.sqlite3')
@@ -944,11 +945,74 @@ describe('ChannelMessageRelay', () => {
       expect(dropped?.path).toContain('channel-attachments')
       expect(existsSync(dropped!.path!)).toBe(true)
       expect(readFileSync(dropped!.path!, 'utf8')).toBe('fake-png-bytes')
-      expect(dropped?.previewUrl).toMatch(/^data:image\/png;base64,/)
+      // 缩略图走本地图片协议按需读盘；base64 预览 URL 不再进入出站行/时间线
+      expect(dropped?.previewUrl).toBe(localImageUrl(dropped!.path!))
       expect(queued?.attachments?.[1]).toMatchObject({ name: '日志.txt', path: '/var/log/app.log' })
       // 时间线透出附件（UI 预览/展示用）
       const snapshot = relay.applyTo(baseSnapshot())
       expect(snapshot.conversations['1']?.[0]?.attachments).toHaveLength(2)
+    } finally {
+      repository.close()
+    }
+  })
+
+  it('never persists base64 previews: the composer-side data URL is dropped and the stored file gets an image extension', () => {
+    const { repository, relay } = fixture()
+    try {
+      repository.markChannelEmbedded('1', 'workspace-a', '/workspace/a')
+      const png = Buffer.from('clipboard-png').toString('base64')
+      relay.sendMessage({
+        channelId: '1',
+        text: '剪贴板截图',
+        attachments: [
+          // 渲染层为输入区预览带上的 data: URL，以及没有扩展名的剪贴板文件名
+          { id: 'a1', name: 'image', mimeType: 'image/png', size: 13, data: png, previewUrl: `data:image/png;base64,${png}` },
+          // 路径引用的图片：缩略图同样按路径派生；非图片路径没有缩略图
+          { id: 'a2', name: 'shot.jpg', mimeType: 'image/jpeg', size: 3, path: '/tmp/shots/shot.jpg' },
+          { id: 'a3', name: 'notes.md', mimeType: 'text/markdown', size: 3, path: '/tmp/notes.md' }
+        ]
+      })
+      const [queued] = repository.listPendingOutbound('1')
+      const [clipboard, referenced, plain] = queued!.attachments!
+      expect(clipboard!.name).toBe('image.png')
+      expect(clipboard!.path!.endsWith('/image.png')).toBe(true)
+      expect(clipboard!.previewUrl).toBe(localImageUrl(clipboard!.path!))
+      expect(referenced!.previewUrl).toBe(localImageUrl('/tmp/shots/shot.jpg'))
+      expect(plain!.previewUrl).toBeUndefined()
+      const stored = JSON.stringify(queued!.attachments)
+      expect(stored).not.toContain('base64,')
+      expect(stored.length).toBeLessThan(1_000)
+      // 时间线 entry 与出站行同一投影
+      const entry = relay.applyTo(baseSnapshot()).conversations['1']?.[0]
+      expect(JSON.stringify(entry?.attachments)).not.toContain('base64,')
+    } finally {
+      repository.close()
+    }
+  })
+
+  it('syncs delivered_at through the lightweight delivery-state query without touching attachment payloads', () => {
+    const { repository, relay } = fixture()
+    try {
+      repository.markChannelEmbedded('1', 'workspace-a', '/workspace/a')
+      relay.resetScope('run-a', 1_000)
+      relay.sendMessage({
+        channelId: '1',
+        text: '带图',
+        attachments: [{ id: 'a1', name: 'shot.png', mimeType: 'image/png', size: 3, data: Buffer.from('png').toString('base64') }]
+      })
+      const [queued] = repository.listPendingOutbound('1')
+      const heavy = vi.spyOn(repository, 'listOutboundSince')
+      const light = vi.spyOn(repository, 'listOutboundDeliveryStateSince')
+      expect(relay.applyTo(baseSnapshot()).conversations['1']?.[0]?.deliveredAt).toBeUndefined()
+      repository.markOutboundDelivered([queued!.id], 5_000)
+      expect(relay['refreshOutboundDeliveries']()).toBe(true)
+      expect(relay.applyTo(baseSnapshot()).conversations['1']?.[0]?.deliveredAt).toBe(5_000)
+      expect(light).toHaveBeenCalledTimes(1)
+      expect(heavy).not.toHaveBeenCalled()
+      // 无变化的一拍：同一引用、不重建时间线
+      const before = relay.applyTo(baseSnapshot()).conversations['1']
+      expect(relay['refreshOutboundDeliveries']()).toBe(false)
+      expect(relay.applyTo(baseSnapshot()).conversations['1']).toBe(before)
     } finally {
       repository.close()
     }
