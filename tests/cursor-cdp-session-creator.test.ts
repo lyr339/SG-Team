@@ -64,7 +64,13 @@ function createCreator(windows: Record<string, FakeWindow>, options: {
   return { creator, evaluatedExpressions, ensuredSockets }
 }
 
-const WS_PATH = '/Users/example/Projects/demo-app'
+// 夹具按宿主平台取形：配置侧工作区路径是本平台文件系统形态，探针侧 folder 是 file URL 的
+// uri.path 形态（Windows 上是 /C:/...，创建器再还原成 C:\...）。在 Windows runner 上直接喂
+// mac 路径会让 scope 哈希两边算不到一起（探针侧被转成反斜杠），用例无谓地红。
+const IS_WIN = process.platform === 'win32'
+const WS_PATH = IS_WIN ? 'C:\\Users\\example\\Projects\\demo-app' : '/Users/example/Projects/demo-app'
+const WS_PROBE_FOLDER = IS_WIN ? '/C:/Users/example/Projects/demo-app' : WS_PATH
+const OTHER_PROBE_FOLDER = IS_WIN ? '/C:/Users/example/Projects/other-app' : '/Users/example/Projects/other-app'
 const WS_SCOPE = createHash('sha256').update(WS_PATH).digest('hex').slice(0, 16)
 
 describe('cursorWorkspaceScopeId', () => {
@@ -85,7 +91,7 @@ describe('CursorCdpSessionCreator.probe', () => {
 
   it('端口可用时列出各窗口的定位状态与工作区身份（原生探针，scope 由文件夹派生）', async () => {
     const { creator } = createCreator({
-      a: { title: 'sg-team — Cursor', bridgeReady: true, folder: WS_PATH }
+      a: { title: 'sg-team — Cursor', bridgeReady: true, folder: WS_PROBE_FOLDER }
     })
     const result = await creator.probe()
     expect(result.available).toBe(true)
@@ -161,8 +167,8 @@ describe('CursorCdpSessionCreator.createAgentSession', () => {
 
   it('多窗口按工作区 scope 精确匹配', async () => {
     const { creator } = createCreator({
-      a: { title: 'other — Cursor', bridgeReady: true, folder: '/Users/example/Projects/other-app' },
-      b: { title: 'demo-app — Cursor', bridgeReady: true, folder: WS_PATH, createResult: { ok: true, composerId: 'composer-b' } }
+      a: { title: 'other — Cursor', bridgeReady: true, folder: OTHER_PROBE_FOLDER },
+      b: { title: 'demo-app — Cursor', bridgeReady: true, folder: WS_PROBE_FOLDER, createResult: { ok: true, composerId: 'composer-b' } }
     })
     const result = await creator.createAgentSession({ channelId: '1', name: 'n', prompt: 'p', workspacePath: WS_PATH })
     expect(result.ok).toBe(true)
@@ -171,7 +177,7 @@ describe('CursorCdpSessionCreator.createAgentSession', () => {
 
   it('单窗口但 scope 属于其他工作区时拒绝误用', async () => {
     const { creator } = createCreator({
-      only: { title: 'Agent Window — Cursor', bridgeReady: true, folder: '/Users/example/Projects/other-app' }
+      only: { title: 'Agent Window — Cursor', bridgeReady: true, folder: OTHER_PROBE_FOLDER }
     })
     const result = await creator.createAgentSession({ channelId: '1', name: 'n', prompt: 'p', workspacePath: WS_PATH })
     expect(result.ok).toBe(false)
@@ -576,7 +582,7 @@ describe('CursorCdpSessionCreator.inspectComposerRuntime', () => {
       only: {
         title: 'demo-app — Cursor',
         bridgeReady: true,
-        folder: WS_PATH,
+        folder: WS_PROBE_FOLDER,
         runtimeResult: {
           ok: true,
           rows: [{
@@ -608,7 +614,7 @@ describe('CursorCdpSessionCreator.inspectComposerRuntime', () => {
       only: {
         title: 'demo-app — Cursor',
         bridgeReady: true,
-        folder: WS_PATH,
+        folder: WS_PROBE_FOLDER,
         runtimeResult: {
           ok: true,
           rows: [{
@@ -670,7 +676,7 @@ describe('CursorCdpSessionCreator.inspectComposerRuntime', () => {
     }))
     const { creator } = createCreator({
       only: {
-        title: 'demo-app — Cursor', bridgeReady: true, folder: WS_PATH,
+        title: 'demo-app — Cursor', bridgeReady: true, folder: WS_PROBE_FOLDER,
         runtimeResult: {
           ok: true,
           rows: [{
@@ -691,7 +697,7 @@ describe('CursorCdpSessionCreator.inspectComposerRuntime', () => {
       only: {
         title: 'demo-app — Cursor',
         bridgeReady: true,
-        folder: WS_PATH,
+        folder: WS_PROBE_FOLDER,
         runtimeResult: {
           ok: true,
           rows: [{
@@ -765,7 +771,7 @@ describe('parseStreamQuestion / awaitingUser', () => {
   it('carries awaitingUser from the runtime inspection rows as independent liveness evidence', async () => {
     const { creator } = createCreator({
       w1: {
-        title: 'demo-app', bridgeReady: true, folder: WS_PATH,
+        title: 'demo-app', bridgeReady: true, folder: WS_PROBE_FOLDER,
         runtimeResult: { ok: true, rows: [
           { composerId: 'c-1', state: 'unknown', detail: '', observedAt: 1, isGenerating: false, awaitingUser: true },
           { composerId: 'c-2', state: 'active', detail: '', observedAt: 1, isGenerating: true }

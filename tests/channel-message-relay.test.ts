@@ -1,6 +1,6 @@
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { describe, expect, it, vi } from 'vitest'
 import { ChannelMessageService } from '../src/application/channel-message-service'
@@ -975,7 +975,8 @@ describe('ChannelMessageRelay', () => {
       const [queued] = repository.listPendingOutbound('1')
       const [clipboard, referenced, plain] = queued!.attachments!
       expect(clipboard!.name).toBe('image.png')
-      expect(clipboard!.path!.endsWith('/image.png')).toBe(true)
+      // 落盘路径由宿主 path 拼出（Windows runner 上是反斜杠）：只断言文件名。
+      expect(basename(clipboard!.path!)).toBe('image.png')
       expect(clipboard!.previewUrl).toBe(localImageUrl(clipboard!.path!))
       expect(referenced!.previewUrl).toBe(localImageUrl('/tmp/shots/shot.jpg'))
       expect(plain!.previewUrl).toBeUndefined()

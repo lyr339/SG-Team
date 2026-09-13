@@ -1,3 +1,4 @@
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import type { CursorStorageScanner } from '../src/infrastructure/cursor/cursor-storage-scanner'
 import { registerCursorStorageIpc } from '../src/main/register-cursor-storage-ipc'
@@ -57,14 +58,15 @@ describe('存储清理 IPC', () => {
     const bundle = '/Applications/Cursor.app/Contents/Resources/app/out/vs/workbench/workbench.desktop.main.js'
     const { invoke, dispose } = harness(bundle)
     const root = '/Users/demo/Library/Application Support/Cursor'
+    // 定位路径由注册器用宿主 path.join 拼出：Windows runner 上是反斜杠，期望值也用 join 生成。
     for (const [id, expected] of [
-      ['chat-history', `${root}/User/globalStorage/state.vscdb`],
-      ['stale-backups', `${root}/User/globalStorage/state.vscdb`],
-      ['snapshots', `${root}/snapshots`],
-      ['local-history', `${root}/User/History`],
-      ['orphan-workspaces', `${root}/User/workspaceStorage`],
-      ['caches', `${root}/Cache`],
-      ['logs', `${root}/logs`],
+      ['chat-history', join(root, 'User', 'globalStorage', 'state.vscdb')],
+      ['stale-backups', join(root, 'User', 'globalStorage', 'state.vscdb')],
+      ['snapshots', join(root, 'snapshots')],
+      ['local-history', join(root, 'User', 'History')],
+      ['orphan-workspaces', join(root, 'User', 'workspaceStorage')],
+      ['caches', join(root, 'Cache')],
+      ['logs', join(root, 'logs')],
       ['legacy-patch', bundle]
     ] as const) {
       shell.showItemInFolder.mockClear()
