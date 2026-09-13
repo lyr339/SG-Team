@@ -8,6 +8,7 @@ import {
   type CursorTelemetrySnapshot
 } from '../domain/cursor-telemetry'
 import type { RuntimeBinding, TeamControlSnapshot, TeamRunStatus } from '../domain/team-control'
+import type { SeatRotationNotice } from '../domain/seat-rotation'
 import type {
   DesktopSnapshot,
   LiveAgentResponseState,
@@ -189,7 +190,7 @@ function telemetryStatus(input: {
  */
 // statusLine 只喂名册状态行（有自己的变化判定），不参与遥测证据指纹。
 const RUNTIME_EVIDENCE_FINGERPRINT_REPLACER = (key: string, value: unknown): unknown => (
-  key === 'process' || key === 'responseText' || key === 'statusLine' ? undefined : value
+  key === 'process' || key === 'responseText' || key === 'statusLine' || key === 'bubbleCount' ? undefined : value
 )
 
 function applyRuntimeEvidence(
@@ -380,6 +381,23 @@ export class DesktopSessionService implements DesktopSessionBridge {
    * 对象分配与下游重渲，不是计算本身——语义不漂。
    */
   private readonly sessionViewCache = new Map<string, { fingerprint: string; view: AgentSession }>()
+  /**
+   * 每通道时间线数组的版本号。主进程内 relay 做结构共享（未变通道保持同一数组引用），
+   * 但快照经 IPC 结构化克隆后引用身份全部丢失，渲染层的 `===` 复用永不命中，每帧都把
+   * 全部历史回合重算重渲。这里把「引用未变」翻译成一个可跨进程比较的数字：同一数组
+   * 引用同一版本；换了引用就领新号（全局单调，通道消失再出现也不会撞号）。
+   */
+  private readonly conversationRevisions = new Map<string, { entries: readonly ConversationEntry[]; revision: number }>()
+  /** 模型目录同理：遥测层按原文记忆化，目录未变即同一数组引用。 */
+  private cursorModelsRevision?: { models: readonly CursorModelOption[]; revision: number }
+  private sectionRevisionSeed = 0
+  /**
+   * 每个 Composer 的气泡数（hook 帧与 inspect 同源，按观测时刻取新）。它是席位自动轮换的
+   * 阈值事实，随会话投影给渲染层；不进运行时证据指纹（自己有变化判定），不落库。
+   */
+  private readonly composerBubbleCounts = new Map<string, { count: number; observedAt: number }>()
+  /** 席位自动轮换的最近结果（按通道）；由 SeatRotationService 写入，随 run 切换清空。 */
+  private readonly seatRotations = new Map<string, SeatRotationNotice>()
   private readonly durationBySession = new Map<string, {
     accumulatedMs: number
     onlineSince?: number
@@ -430,9 +448,12 @@ export class DesktopSessionService implements DesktopSessionBridge {
         this.nativeProcessArchive.clear()
         this.pendingNativeProcessByComposer.clear()
         this.contextUsageByComposer.clear()
+        this.composerBubbleCounts.clear()
+        this.seatRotations.clear()
         this.refreshTelemetry()
       }
       if (runChanged && !workspaceChanged) {
+        this.seatRotations.clear()
         this.durationBySession.clear()
         this.liveAgentResponses.clear()
         this.finalizedLiveResponseIds.clear()
@@ -473,6 +494,8 @@ export class DesktopSessionService implements DesktopSessionBridge {
         if (session.contextUsage) this.contextUsageByComposer.set(key, session.contextUsage)
         const contextUsage = session.contextUsage ?? this.contextUsageByComposer.get(key)
         const activeDurationMs = this.trackActiveDuration(key, session)
+        const composerBubbleCount = session.composerId ? this.composerBubbleCounts.get(session.composerId)?.count : undefined
+        const seatRotation = this.seatRotations.get(session.channelId)
         // 增量缓存：值指纹命中即复用上轮视图引用。时长按分钟桶参与指纹
         //（与显示精度一致：分钟翻转才重建），其余字段逐值比较。
         const fingerprint = [
@@ -511,11 +534,20 @@ export class DesktopSessionService implements DesktopSessionBridge {
           session.changes?.deletions ?? '',
           session.healthEvidence.length,
           session.healthEvidence.at(-1) ?? '',
-          activeDurationMs === undefined ? '' : Math.floor(activeDurationMs / 60_000)
+          activeDurationMs === undefined ? '' : Math.floor(activeDurationMs / 60_000),
+          composerBubbleCount ?? '',
+          seatRotation ? `${seatRotation.status}:${seatRotation.at}:${seatRotation.bubbleCount}:${seatRotation.message}` : ''
         ].join('|')
         const cached = this.sessionViewCache.get(session.id)
         if (cached?.fingerprint === fingerprint) return cached.view
-        const view: AgentSession = { ...session, awaitingUser, contextUsage, activeDurationMs }
+        const view: AgentSession = {
+          ...session,
+          awaitingUser,
+          contextUsage,
+          activeDurationMs,
+          ...(composerBubbleCount === undefined ? {} : { composerBubbleCount }),
+          ...(seatRotation ? { seatRotation } : {})
+        }
         this.sessionViewCache.set(session.id, { fingerprint, view })
         return view
       })
@@ -523,7 +555,43 @@ export class DesktopSessionService implements DesktopSessionBridge {
     const liveAgentResponses = this.liveAgentResponseSnapshot(snapshot)
     const withResponses = liveAgentResponses ? { ...snapshot, liveAgentResponses } : snapshot
     const liveStatusLine = this.liveStatusLineSnapshot(withResponses)
-    return this.applyLiveCursorProcess(liveStatusLine ? { ...withResponses, liveStatusLine } : withResponses)
+    return this.withSectionRevisions(
+      this.applyLiveCursorProcess(liveStatusLine ? { ...withResponses, liveStatusLine } : withResponses)
+    )
+  }
+
+  /** 见 conversationRevisions 字段说明；只读内存 memo，不触碰 SQLite。 */
+  private withSectionRevisions(snapshot: DesktopSnapshot): DesktopSnapshot {
+    const conversationRevisions: Record<string, number> = {}
+    const present = new Set<string>()
+    for (const [channelId, entries] of Object.entries(snapshot.conversations)) {
+      present.add(channelId)
+      const tracked = this.conversationRevisions.get(channelId)
+      if (tracked && tracked.entries === entries) {
+        conversationRevisions[channelId] = tracked.revision
+        continue
+      }
+      const revision = ++this.sectionRevisionSeed
+      this.conversationRevisions.set(channelId, { entries, revision })
+      conversationRevisions[channelId] = revision
+    }
+    for (const channelId of [...this.conversationRevisions.keys()]) {
+      if (!present.has(channelId)) this.conversationRevisions.delete(channelId)
+    }
+    let cursorModelsRevision: number | undefined
+    if (snapshot.cursorModels) {
+      if (this.cursorModelsRevision?.models !== snapshot.cursorModels) {
+        this.cursorModelsRevision = { models: snapshot.cursorModels, revision: ++this.sectionRevisionSeed }
+      }
+      cursorModelsRevision = this.cursorModelsRevision.revision
+    } else {
+      this.cursorModelsRevision = undefined
+    }
+    return {
+      ...snapshot,
+      conversationRevisions,
+      ...(cursorModelsRevision === undefined ? {} : { cursorModelsRevision })
+    }
   }
 
   /**
@@ -575,6 +643,33 @@ export class DesktopSessionService implements DesktopSessionBridge {
     }
     this.liveStatusLines.set(channelId, next)
     return true
+  }
+
+  /** 气泡数事实（hook 帧 / inspect 同入口）：按观测时刻取新；值未变不算变化。 */
+  private updateComposerBubbleCount(evidence: CursorComposerRuntimeEvidence): boolean {
+    if (evidence.bubbleCount === undefined) return false
+    const previous = this.composerBubbleCounts.get(evidence.composerId)
+    if (previous && previous.observedAt > evidence.observedAt) return false
+    this.composerBubbleCounts.set(evidence.composerId, { count: evidence.bubbleCount, observedAt: evidence.observedAt })
+    return previous?.count !== evidence.bubbleCount
+  }
+
+  /**
+   * 席位自动轮换结果（SeatRotationService 写入）：进入会话视图供名册提示；传 undefined 清除。
+   * 与 run 生命周期一致——run 切换即清空，不落库。
+   */
+  noteSeatRotation(channelId: string, notice: SeatRotationNotice | undefined): void {
+    const key = String(channelId).trim()
+    const previous = this.seatRotations.get(key)
+    if (notice === undefined) {
+      if (!previous) return
+      this.seatRotations.delete(key)
+    } else {
+      if (previous && previous.status === notice.status && previous.at === notice.at
+        && previous.bubbleCount === notice.bubbleCount && previous.message === notice.message) return
+      this.seatRotations.set(key, { ...notice })
+    }
+    this.emit()
   }
 
   setNativeProcessStreamStatus(status: NativeProcessStreamStatus): void {
@@ -1215,6 +1310,7 @@ export class DesktopSessionService implements DesktopSessionBridge {
             liveChanged = this.updateLiveCursorProcess(binding.channelId, live) || liveChanged
             // 观察器离线时 inspect 是状态行唯一来源；在线时它只能补位（乱序守卫按观测时刻）。
             liveChanged = this.updateLiveStatusLine(binding.channelId, live) || liveChanged
+            liveChanged = this.updateComposerBubbleCount(live) || liveChanged
             // 用量捎带：轮询快照与事件同源，交给注入方做覆盖式聚合。
             if (live.usage) {
               try {
@@ -1297,12 +1393,14 @@ export class DesktopSessionService implements DesktopSessionBridge {
       ...(event.awaitingUser ? { awaitingUser: true } : {}),
       ...(event.composerStatus ? { composerStatus: event.composerStatus } : {}),
       ...(event.statusLine ? { statusLine: event.statusLine } : {}),
+      ...(event.bubbleCount === undefined ? {} : { bubbleCount: event.bubbleCount }),
       process: event.process
     }
     if (event.awaitingUser) this.embeddedRelay?.noteRuntimeActivity(channelId, event.observedAt)
     let changed = this.updateLiveCursorProcess(channelId, evidence, { authoritative: true })
     // 名册状态行事实与过程视图分开维护：小帧（无 process）同样携带，回合边界无关。
     changed = this.updateLiveStatusLine(channelId, evidence) || changed
+    changed = this.updateComposerBubbleCount(evidence) || changed
     // 直播正文的撤下路径：正文候选被改判为中间过程时立即收回（见方法注释）。
     if (event.process && this.revokeReclassifiedLiveResponse(channelId, event.process)) changed = true
     // 写后快照携带的流式正文：与 inspect 轮询同一 responseId（bubbleId），走同一

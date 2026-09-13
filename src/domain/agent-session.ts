@@ -101,6 +101,13 @@ export interface AgentSession {
   deliveryMode?: 'live' | 'queued'
   waiting: boolean
   contextUsage?: ContextUsage
+  /**
+   * 绑定 Composer 的气泡总数（Cursor 原生会话体积；hook 帧 / inspect 同源）。持续会话的
+   * 回合永不结束，气泡只增不减——它是席位自动轮换的阈值事实。未观测到时缺省。
+   */
+  composerBubbleCount?: number
+  /** 席位自动轮换的最近一次结果（进行中 / 已轮换 / 失败 / 已停用）；名册卡提示，随 run 结束清空。 */
+  seatRotation?: import('./seat-rotation').SeatRotationNotice
   changes?: ChangeSummary
   /** 该 Composer 的持久化累积 token 用量与费用估算。 */
   usage?: import('./cursor-usage').CursorSessionUsage

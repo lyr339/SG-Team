@@ -16,6 +16,7 @@ import type { AozaiCardStatus, AozaiProcessResult, AozaiProgressEvent } from '..
 import type { AgentLaunchPlan, AgentLaunchRequest } from '../domain/agent-launch'
 import type { SessionWarmupRun } from '../domain/session-warmup'
 import type { CdpAutoHealEvent, CursorCdpSettings } from '../domain/cursor-cdp'
+import type { SeatRotationSettings } from '../domain/seat-rotation'
 import type { AccountAutomationRun, AccountAutomationSettings } from '../domain/account-automation'
 import type { CursorSwitchPumpOutcome, CursorSwitchPumpStatus } from '../domain/cursor-switch-pump'
 import type { CursorUpdatePreferences, CursorUpdateWriteResult } from '../domain/cursor-update'
@@ -103,7 +104,17 @@ export interface BridgeConnection {
 export interface DesktopSnapshot {
   connection: BridgeConnection
   sessions: AgentSession[]
+  /**
+   * 每通道时间线。进程内与 `getSnapshot` 拉取回包里始终完整；`onSnapshot` 推送里
+   * 只含渲染层尚未持有该版本的通道（主进程按 `conversationRevisions` 瘦身，见 snapshot-push.ts），
+   * 渲染层按版本合并（snapshot-sharing.ts）。
+   */
   conversations: Record<string, ConversationEntry[]>
+  /**
+   * 每通道时间线的版本号，始终完整：主进程里同一数组引用 = 同一版本。IPC 结构化克隆抹掉引用身份，
+   * 渲染层据此按值复用上一份快照的数组，未变通道的历史回合不重渲，也据此识别推送里被省略的通道。
+   */
+  conversationRevisions?: Record<string, number>
   /**
    * 不进入会话时间线的投递回执（key = commandId）。
    * 用于系统内部通知等静默消息，让调度器能确认送达但不污染用户会话。
@@ -118,7 +129,10 @@ export interface DesktopSnapshot {
   /** Cursor 原生过程观察器健康度；断链时 UI 必须明确披露。 */
   nativeProcessStream?: NativeProcessStreamStatus
   protocolIssues: string[]
+  /** Cursor 模型目录（约 80KB）。与 conversations 同一套推送瘦身：渲染层已持有同版本时推送里省略。 */
   cursorModels?: CursorModelOption[]
+  /** 模型目录的版本号（同一数组引用 = 同一版本），与 conversationRevisions 同源。 */
+  cursorModelsRevision?: number
   updatedAt: number
 }
 
@@ -323,6 +337,9 @@ export interface SgDesktopApi {
   enableCursorCdp(): Promise<{ ok: boolean; message: string; suggestAutoHeal?: boolean }>
   getCursorCdpSettings(): Promise<CursorCdpSettings>
   saveCursorCdpSettings(settings: CursorCdpSettings): Promise<CursorCdpSettings>
+  /** 席位自动轮换（独立席位到气泡阈值换新 Composer）：开关与阈值。结果经会话快照 `seatRotation` 呈现。 */
+  getSeatRotationSettings(): Promise<SeatRotationSettings>
+  saveSeatRotationSettings(settings: SeatRotationSettings): Promise<SeatRotationSettings>
   getCursorUpdatePreferences(): Promise<CursorUpdatePreferences>
   setCursorAutoUpdateDisabled(disabled: boolean): Promise<CursorUpdateWriteResult>
   /** Cursor 本机存储盘点（只读）；对话历史阈值缺省 90 天。 */
@@ -454,6 +471,8 @@ export const IPC = {
   sessionWarmupProgress: 'session-warmup:progress',
   cursorCdpGetSettings: 'cursor-cdp:get-settings',
   cursorCdpSaveSettings: 'cursor-cdp:save-settings',
+  seatRotationGetSettings: 'seat-rotation:get-settings',
+  seatRotationSaveSettings: 'seat-rotation:save-settings',
   cursorUpdateGetPreferences: 'cursor-update:get-preferences',
   cursorUpdateSetAutoUpdateDisabled: 'cursor-update:set-auto-update-disabled',
   cursorStorageScan: 'cursor-storage:scan',

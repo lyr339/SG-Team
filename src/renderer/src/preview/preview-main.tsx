@@ -10,7 +10,7 @@ import { AGENT_AVATAR_IDS, TEAM_ROLE_TEMPLATES, createConfiguredTeamBundle, empt
 import type { TeamRunStatus } from '../../../domain/team-control'
 import type { LiveProcessState, LiveStatusLineState, SgDesktopApi, TeamSetupDraft } from '../../../shared/desktop-api'
 import type { WorkspaceReviewSummary } from '../../../domain/workspace-review'
-import { estimateUsageFromReference, priceForModel } from '../../../domain/cursor-usage'
+import { estimateTurnCostUsd, estimateUsageFromReference, priceForModel, projectUsage, type CursorUsageSnapshot, type UsageTurn } from '../../../domain/cursor-usage'
 import { CURSOR_STORAGE_CATALOG, buildCleanupPlan, type CursorStorageScan } from '../../../domain/cursor-storage-cleanup'
 import { formatFileSize } from '../../../shared/format-file-size'
 import { App } from '../App'
@@ -28,6 +28,7 @@ import '../styles.css'
 import '../team-setup.css'
 import '../lobby/lobby.css'
 import '../settings/settings.css'
+import '../settings/stats.css'
 import '../run/run.css'
 import '../controls.css'
 import '../workspace-inspector.css'
@@ -419,6 +420,37 @@ if (previewParameters.get('queued') === '1') {
     ? { ...session, status: 'running', connectionPhase: 'processing', waiting: false, online: true, deliveryMode: 'queued', queueDepth: 3 }
     : session)
 }
+// 计划页长清单走查：?plan=long —— 真实颗粒度的 10 项技术任务：多行长文本、路径 token、
+// 完成 / 进行中 / 待办 / 取消四态齐全，检验单行收拢、mono 渲染、分段进度与当前项示位。
+if (previewParameters.get('plan') === 'long') {
+  const live = state.desktop.liveProcess?.['2']
+  if (live) {
+    state.desktop.liveProcess = {
+      ...state.desktop.liveProcess,
+      '2': {
+        ...live,
+        blocks: live.blocks.map((block) => block.kind === 'tool' && block.toolKind === 'todo'
+          ? {
+              ...block,
+              summary: '任务清单 2/10',
+              todos: [
+                { content: '恢复上下文：确认 5a 已完成步骤（围栏逐轮复核、bubbleCount、prepareComposerRelaunch allowIdleOnline）', status: 'completed' },
+                { content: 'domain/seat-rotation.ts：设置类型/默认/归一化 + 纯决策函数 + 通知类型', status: 'in_progress' },
+                { content: 'application/seat-rotation-settings-store.ts（userData/seat-rotation.json）', status: 'pending' },
+                { content: 'application/seat-rotation-service.ts：订阅快照→待命计时→交接→轮换令牌→launch→通知/冷却/失败停用', status: 'pending' },
+                { content: 'AgentSession.seatRotation 投影：DesktopSessionService.noteSeatRotation + 指纹 + run 切换清理', status: 'pending' },
+                { content: 'IPC/preload/desktop-api：seatRotation get/save settings；主进程装配（index.ts）', status: 'pending' },
+                { content: '渲染层：设置页「席位自动轮换」区块 + 名册卡轮换徽标/气泡数提示', status: 'pending' },
+                { content: '旧版 usage 面板迁移（并入新会话页后不再需要）', status: 'cancelled' },
+                { content: 'typecheck / vitest 全量 / knip / build / smoke:channel；ARCHITECTURE 追加记录', status: 'pending' },
+                { content: '向用户汇报并 record_reply，回到 check_messages 待命', status: 'completed' }
+              ]
+            }
+          : block)
+      }
+    }
+  }
+}
 // 名册常驻状态行走查：?railactivity=1（搭配 sessions=many）—— 复刻 Cursor 会话列表副标题的全部形态同台：
 // 工具动词 + 对象（Cursor 侧事实 / 过程块回退两条路）、正文首行片段、To-Dos 进度、待命席位的 Thinking、
 // Awaiting approval、离线 Completed，以及 Cursor 一个都没扫到时的兜底 Planning next moves（第 9 席，仅本场景）。
@@ -472,6 +504,44 @@ if (['1', 'long'].includes(previewParameters.get('railactivity') ?? '')) {
     ? { ...session, status: 'running', connectionPhase: 'processing', waiting: false, online: true, awaitingUser: session.channelId === '5' }
     : session)
 }
+// 统计页走查：?stats=1 —— 三个在册席位 + 两个历史 Composer，账本铺满 30 天，
+// 小时（今天）与天（7/30 天）两种分桶、四桶构成、多模型分布、历史归属一次看全。
+const statsPreviewMode = previewParameters.has('stats')
+if (statsPreviewMode) {
+  state.desktop.sessions = state.desktop.sessions.map((session) => session.channelId === '3'
+    ? { ...session, composerId: 'composer-03' }
+    : session)
+}
+
+function previewStatsTurn(at: number, modelId: string, scale: number): UsageTurn {
+  const price = priceForModel(modelId)
+  const cacheReadTokens = Math.round(31_000 * scale)
+  const cacheWriteTokens = Math.round(2_400 * scale)
+  const fresh = Math.round(80 * scale)
+  const outputTokens = Math.round(760 * scale)
+  const counts = { inputTokens: cacheReadTokens + cacheWriteTokens + fresh, outputTokens, cacheReadTokens, cacheWriteTokens }
+  return { ...counts, estimatedCostUsd: estimateTurnCostUsd({ ...counts, occurredAt: at }, price), price, exact: true, at }
+}
+
+function previewStatsUsage(): CursorUsageSnapshot {
+  const hour = 3_600_000
+  // [composerId, 模型, 回合的「几小时前」序列]：近端密（今天有小时节奏）、远端疏（30 天有形状）。
+  const composers: Array<[string, string, number[]]> = [
+    ['composer-01', 'claude-fable-5', [0.4, 1.3, 2.6, 3.2, 4.7, 6.3, 7.9, 9.4, 25, 29, 49, 74, 97, 121, 168, 240, 380, 520, 700]],
+    ['composer-02', 'claude-fable-5', [0.8, 1.9, 3.5, 5.2, 8.3, 24, 48, 72, 120, 170, 238, 312, 430, 560]],
+    ['composer-03', 'gpt-5-6-sol', [1.1, 2.3, 6.5, 26, 50, 95, 144, 199, 300]],
+    ['hist-4f2a9c1e', 'claude-fable-5-1', [128, 250, 405, 552, 640]],
+    ['hist-b83d07aa', 'composer-2-5-fast', [88, 295, 630]]
+  ]
+  return Object.fromEntries(composers.map(([composerId, modelId, hoursAgo]) => {
+    const turns = Object.fromEntries(hoursAgo.map((back, index) => [
+      `gen-${composerId}-${index}`,
+      previewStatsTurn(previewNow - Math.round(back * hour), modelId, 0.55 + ((index * 7) % 9) * 0.45)
+    ]))
+    return [composerId, projectUsage(composerId, { turns })]
+  }))
+}
+
 const previewTasks = structuredClone(taskPoolSnapshot)
 if (previewRunStatus === 'completed') {
   for (const task of Object.values(previewTasks.tasks)) {
@@ -673,6 +743,8 @@ const api: SgDesktopApi = {
   enableCursorCdp: async () => ({ ok: true, message: 'Cursor 已重启并启用会话创建端口（9333）' }),
   getCursorCdpSettings: async () => ({ autoHealEnabled: false }),
   saveCursorCdpSettings: async (settings) => settings,
+  getSeatRotationSettings: async () => ({ enabled: true, bubbleThreshold: 400 }),
+  saveSeatRotationSettings: async (settings) => settings,
   getCursorUpdatePreferences: async () => ({
     settingsPath: '/Users/demo/Library/Application Support/Cursor/User/settings.json',
     updateMode: undefined,
@@ -1227,7 +1299,8 @@ const api: SgDesktopApi = {
     return () => desktopListeners.delete(listener)
   },
   // 用量预览：每个已绑定 Composer 都有独立累计，便于走查工作台顶部统计。
-  getCursorUsageSnapshot: async () => Object.fromEntries(state.desktop.sessions.flatMap((session, index) => (
+  // ?stats=1 换用带逐回合账本的整套快照（统计页时间序列走查）。
+  getCursorUsageSnapshot: async () => statsPreviewMode ? previewStatsUsage() : Object.fromEntries(state.desktop.sessions.flatMap((session, index) => (
     session.composerId ? [[session.composerId, {
       composerId: session.composerId,
       turns: index + 2,

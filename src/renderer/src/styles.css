@@ -38,6 +38,9 @@
   --accent-bright: light-dark(#ff6b35, #ff8056);
   --accent-soft: color-mix(in srgb, var(--anthropic-orange) 16%, var(--color-background-primary));
   --accent-wash: color-mix(in srgb, var(--anthropic-orange) 7%, var(--color-background-primary));
+  /* 用量四桶里 Output 的数据分类色：固定出厂橙、不随主题色——否则黛蓝下与 Input（信息蓝）、
+     墨玉下与两段缓存灰撞色，四桶不可辨。数据色板与状态色一样，不跟主题色走。 */
+  --usage-output: #ff6b35;
   --blue: var(--color-text-info);
   --blue-soft: var(--color-background-info);
   --amber: var(--color-text-warning);
@@ -420,6 +423,32 @@ html[data-platform="darwin"] .topbar__context { position: relative; left: -8px; 
 .appearance-mode button { min-height: 30px; padding: 0 7px; color: var(--color-text-tertiary); background: transparent; border: 0; border-radius: var(--border-radius-sm); font-size: var(--font-text-xs-size); font-weight: var(--font-weight-medium); }
 .appearance-mode button:hover { color: var(--color-text-primary); }
 .appearance-mode button.is-active { color: var(--color-text-primary); background: var(--color-background-primary); box-shadow: var(--shadow-hairline); font-weight: var(--font-weight-semibold); }
+/* 主题色：圆点色卡（--swatch 由内联样式携带基色），选中双环描边，即点即生效；
+   标签行右端写出当前预设名（与「卡片透明度 · 90%」同一形制），名字本身用该色的深读色。 */
+.appearance-accent { display: grid; gap: 8px; }
+.appearance-accent > div:first-child { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.appearance-accent span { color: var(--text-soft); font-size: var(--font-text-xs-size); font-weight: var(--font-weight-semibold); }
+.appearance-accent em { color: var(--accent-deep); font-size: var(--fs-11); font-style: normal; font-weight: 600; }
+.appearance-accent > div[role="group"] { display: flex; gap: 9px; flex-wrap: wrap; }
+.appearance-accent__swatch {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--swatch);
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+.appearance-accent__swatch:hover { transform: scale(1.12); }
+.appearance-accent__swatch.is-active {
+  box-shadow: 0 0 0 2px var(--surface-solid), 0 0 0 4px var(--swatch);
+}
+.appearance-accent__swatch:focus-visible { outline: 2px solid var(--color-ring-primary); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  .appearance-accent__swatch { transition: none; }
+}
+
 .appearance-opacity { display: grid; gap: 9px; }
 .appearance-opacity > div:first-child { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .appearance-opacity label { color: var(--text-soft); font-size: var(--fs-11); font-weight: 600; }
@@ -677,6 +706,13 @@ body.is-resizing-columns .resizable-columns { transition: none; }
 .session-row__changes > em { color: var(--color-text-danger); font-style: normal; font-weight: 600; }
 .session-row__time { flex: 0 0 auto; margin-left: auto; color: var(--muted); font: 500 11px/14px var(--font-numeric); white-space: nowrap; }
 .session-row__queue { display: inline-flex; align-items: center; padding: 2px 6px; color: var(--color-text-warning); background: var(--color-background-warning); border-radius: var(--border-radius-full); font-size: var(--fs-10); font-weight: 600; line-height: 1; }
+/* 席位自动轮换提示：与排队胶囊同一形制；进行中蓝、已轮换绿、未交接上下文橙、失败红、已停用灰——状态色只表状态。 */
+.session-row__rotation { display: inline-flex; align-items: center; padding: 2px 6px; border-radius: var(--border-radius-full); font-size: var(--fs-10); font-weight: 600; line-height: 1; white-space: nowrap; }
+.session-row__rotation.is-rotating { color: var(--color-text-info); background: var(--color-background-info); }
+.session-row__rotation.is-done { color: var(--color-text-success); background: var(--color-background-success); }
+.session-row__rotation.is-partial { color: var(--color-text-warning); background: var(--color-background-warning); }
+.session-row__rotation.is-failed { color: var(--color-text-danger); background: var(--color-background-danger); }
+.session-row__rotation.is-disabled { color: var(--muted); background: var(--surface-soft); }
 .session-row.is-offline .session-row__model { color: var(--muted); }
 
 /* 状态行是卡片的底行：横跨头像列与文字列（头像左沿 → 卡片右沿），每行等宽，
@@ -770,7 +806,7 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 .usage-breakdown-list li > span { color: var(--text); font-size: var(--fs-12); }
 .usage-breakdown-list li > b { color: var(--text); font-family: var(--font-numeric); font-size: var(--fs-12); font-weight: 600; font-variant-numeric: lining-nums tabular-nums; }
 .usage-breakdown-list li > i.is-input, .usage-breakdown-bar > i.is-input { background: var(--color-text-info); }
-.usage-breakdown-list li > i.is-output, .usage-breakdown-bar > i.is-output { background: var(--anthropic-orange); }
+.usage-breakdown-list li > i.is-output, .usage-breakdown-bar > i.is-output { background: var(--usage-output); }
 .usage-breakdown-list li > i.is-cacheread, .usage-breakdown-bar > i.is-cacheread { background: var(--color-text-tertiary); }
 .usage-breakdown-list li > i.is-cachewrite, .usage-breakdown-bar > i.is-cachewrite { background: var(--color-border-secondary); }
 .usage-popover footer { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 5px 10px; padding-top: 9px; border-top: var(--border-width-regular) solid var(--line-faint); color: var(--color-text-tertiary); font-size: var(--fs-10); overflow-wrap: anywhere; }

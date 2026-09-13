@@ -751,6 +751,60 @@ describe('TeamControlService', () => {
     }
   })
 
+  it('prepareComposerRelaunch：默认只放行离线席位；allowIdleOnline 放行「在线且待命」，在途 / 排队 / 待回复 / 等用户一律拒绝', () => {
+    const { repository, bridge, service } = fixture(true)
+    try {
+      const before = service.getSnapshot()
+      const binding = before.bindings.find((candidate) => candidate.channelId === '1')!
+      service.recordComposerBinding({
+        runId: binding.runId, slotId: binding.slotId, generation: binding.generation,
+        bindingKey: binding.composerBindingKey, composerId: 'composer-1', method: 'launch_marker'
+      })
+      const bound = service.getSnapshot().bindings.find((candidate) => candidate.channelId === '1')!
+      expect(bound.composerId).toBe('composer-1')
+      const oldToken = bound.sessionToken
+      expect(oldToken).toBeTruthy()
+
+      // 在线待命：默认拒绝（换席重建只对离线席位开放）
+      expect(service.prepareComposerRelaunch('1')).toBeUndefined()
+      // 不在待命（keepalive 间隙 / 处理中 / 有排队 / 待同步回复 / 等用户）：即便 allowIdleOnline 也拒绝
+      const withSession = (patch: Partial<DesktopSnapshot['sessions'][number]>): void => {
+        const snapshot = bridge.getSnapshot()
+        bridge['snapshot'] = {
+          ...snapshot,
+          sessions: snapshot.sessions.map((session) => session.channelId === '1' ? { ...session, ...patch } : session),
+          updatedAt: snapshot.updatedAt + 1
+        }
+        for (const listener of bridge['listeners']) listener(bridge.getSnapshot())
+      }
+      withSession({ waiting: false, connectionPhase: 'keepalive' })
+      expect(service.prepareComposerRelaunch('1', { allowIdleOnline: true })).toBeUndefined()
+      withSession({ waiting: false, connectionPhase: 'processing' })
+      expect(service.prepareComposerRelaunch('1', { allowIdleOnline: true })).toBeUndefined()
+      withSession({ waiting: true, connectionPhase: 'waiting', queueDepth: 1 })
+      expect(service.prepareComposerRelaunch('1', { allowIdleOnline: true })).toBeUndefined()
+      withSession({ waiting: true, connectionPhase: 'waiting', queueDepth: 0, pendingOutboundId: 'out-1', pendingReplySyncSince: Date.now() })
+      expect(service.prepareComposerRelaunch('1', { allowIdleOnline: true })).toBeUndefined()
+      withSession({ waiting: true, connectionPhase: 'waiting', queueDepth: 0, pendingOutboundId: undefined, pendingReplySyncSince: undefined, awaitingUser: true })
+      expect(service.prepareComposerRelaunch('1', { allowIdleOnline: true })).toBeUndefined()
+      expect(service.getSnapshot().bindings.find((candidate) => candidate.channelId === '1')?.composerId).toBe('composer-1')
+
+      // 在线且待命 + allowIdleOnline：原子轮换绑定键与会话令牌，清空 composer 绑定
+      withSession({ waiting: true, connectionPhase: 'waiting', queueDepth: 0, awaitingUser: false })
+      const key = service.prepareComposerRelaunch('1', { allowIdleOnline: true })
+      expect(key).toMatch(/^[0-9a-f-]{36}$/)
+      const rotated = service.getSnapshot().bindings.find((candidate) => candidate.channelId === '1')!
+      expect(rotated.composerBindingKey).toBe(key)
+      expect(rotated.composerId).toBeUndefined()
+      expect(rotated.sessionToken).toBeTruthy()
+      expect(rotated.sessionToken).not.toBe(oldToken)
+      expect(rotated.launchStatus).toBe('not_started')
+    } finally {
+      service.dispose()
+      repository.close()
+    }
+  })
+
   it('uses verified Cursor activity for Team member status instead of MCP heartbeat alone', async () => {
     const path = join(mkdtempSync(join(tmpdir(), 'sg-team-presence-')), 'control.sqlite3')
     const repository = new SqliteTeamControlRepository(path)

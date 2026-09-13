@@ -32,8 +32,9 @@ import type { AgentLaunchPlan, AgentLaunchRequest } from '../../domain/agent-lau
 import type { SessionWarmupRun } from '../../domain/session-warmup'
 import type { AccountAutomationRun, AccountAutomationSettings } from '../../domain/account-automation'
 import type { CdpAutoHealEvent } from '../../domain/cursor-cdp'
+import { DEFAULT_SEAT_ROTATION_SETTINGS, type SeatRotationSettings } from '../../domain/seat-rotation'
 import type { MessageAttachment } from '../../domain/conversation-entry'
-import { shareSnapshotStructure } from './snapshot-sharing'
+import { mergeDesktopSnapshot, snapshotGaps } from './snapshot-sharing'
 import { userFacingErrorMessage } from './error-message'
 import { resolveRuntimeLaunchGate } from './lobby/runtime-account-gate'
 import { RuntimeAccountGuardDialog } from './lobby/RuntimeAccountGuardDialog'
@@ -167,6 +168,8 @@ export function App(): React.JSX.Element {
   const [sessionWarmupEnabled, setSessionWarmupEnabled] = useState<boolean>(() => readSessionWarmupEnabled())
   const [accountAutomationSettings, setAccountAutomationSettings] = useState<AccountAutomationSettings>({ enabled: false, delaySec: 30, postProcessDelaySec: 30 })
   const [accountAutomationRun, setAccountAutomationRun] = useState<AccountAutomationRun | undefined>(undefined)
+  // 席位自动轮换设置（结果不在这里：轮换进度与结论投影在会话快照 seatRotation 上）。
+  const [seatRotationSettings, setSeatRotationSettings] = useState<SeatRotationSettings>({ ...DEFAULT_SEAT_ROTATION_SETTINGS })
   // 指纹浏览器窗口列表（账号自动化链的浏览器宿主；用户按当次网络选「代理/直连」窗口。
   // 提供方恒 RoxyBrowser，与平台无关）
   const [bitProfiles, setBitProfiles] = useState<Array<{ id: string; name: string; seq?: number }>>([])
@@ -224,10 +227,22 @@ export function App(): React.JSX.Element {
   }, [appearance.colorMode])
 
   // 快照来自两个来源（主进程推送 + 操作后的手动拉取），到达顺序不保证；
-  // 用 revision 单调守卫丢弃迟到的旧快照，作用域（runId/workspace）切换时无条件接受。
+  // 非时间线部分按 updatedAt 单调守卫丢弃迟到的旧快照，时间线按每通道版本合并
+  //（推送会省略本地已持有的通道），细则见 snapshot-sharing.ts。
   const acceptSnapshot = useCallback((incoming: DesktopSnapshot) => {
-    setSnapshot((previous) => incoming.updatedAt >= previous.updatedAt ? shareSnapshotStructure(previous, incoming) : previous)
+    setSnapshot((previous) => mergeDesktopSnapshot(previous, incoming))
   }, [])
+  // 推送瘦身与拉取回包竞态的窗口期：版本表里有、本地没有内容的段落，补拉一次完整快照。
+  // 同一组缺口只补一次；正常运行下不会触发。
+  const repairedSnapshotGap = useRef('')
+  useEffect(() => {
+    const gaps = snapshotGaps(snapshot)
+    if (!gaps.length) return
+    const key = gaps.join('|')
+    if (repairedSnapshotGap.current === key) return
+    repairedSnapshotGap.current = key
+    void window.sgDesktop.getSnapshot().then(acceptSnapshot).catch(() => {})
+  }, [snapshot, acceptSnapshot])
   const acceptTaskPool = useCallback((incoming: ReturnType<typeof emptyTaskPoolSnapshot>) => {
     setTaskPool((previous) => newestTaskPoolSnapshot(previous, incoming))
   }, [])
@@ -332,6 +347,9 @@ export function App(): React.JSX.Element {
       .catch(() => {})
     void window.sgDesktop.getAccountAutomationSettings()
       .then(setAccountAutomationSettings)
+      .catch(() => {})
+    void window.sgDesktop.getSeatRotationSettings()
+      .then(setSeatRotationSettings)
       .catch(() => {})
     void window.sgDesktop.getAccountAutomationRun()
       .then((run) => { if (run.phase !== 'idle') setAccountAutomationRun(run) })
@@ -788,6 +806,16 @@ export function App(): React.JSX.Element {
       })
     }
   }, [cursorUsage, snapshot, taskPool, teamControl.activeRun?.actingLeadSlotId, teamControl.members])
+  // 统计页席位来源：引用随 sessions 走——推流高频渲染下不触发统计视图模型重算。
+  const statsSeats = useMemo(() => visibleSnapshot.sessions.map((session) => ({
+    channelId: session.channelId,
+    roleName: session.roleName,
+    displayName: session.displayName,
+    avatarId: session.avatarId,
+    online: session.online,
+    composerId: session.composerId,
+    telemetryChannelComposerId: session.telemetryChannelComposerId
+  })), [visibleSnapshot.sessions])
   const selectedSession = visibleSnapshot.sessions.find((session) => session.channelId === selectedChannelId)
   const selectedMember = teamControl.members.find((member) => (
     (member.binding?.channelId ?? member.slot.channelId) === selectedSession?.channelId
@@ -1179,6 +1207,9 @@ export function App(): React.JSX.Element {
       }
     },
     onRevealCursorStorage: (id) => { void window.sgDesktop.revealCursorStorage(id).catch(() => {}) },
+    // 统计页（纯只读投影）：全部会话用量 + 当前席位来源，历史 Composer 的账由视图模型归入「历史会话」。
+    usageSnapshot: cursorUsage,
+    statsSeats,
     onSetModelDataPolicyAutoAcknowledge: async (enabled) => {
       let message = '已关闭自动确认；官网已有确认保持不变'
       if (enabled) {
@@ -1201,6 +1232,14 @@ export function App(): React.JSX.Element {
     },
     onCancelAutomation: () => {
       void window.sgDesktop.cancelAccountAutomation().catch(() => {})
+    },
+    seatRotationSettings,
+    onSaveSeatRotationSettings: (settings) => {
+      // 乐观更新：滑杆拖动即时反馈；主进程归一化后的值回写覆盖。
+      setSeatRotationSettings(settings)
+      void window.sgDesktop.saveSeatRotationSettings(settings)
+        .then(setSeatRotationSettings)
+        .catch((reason: unknown) => setTeamNotice(`席位自动轮换设置未保存：${userFacingErrorMessage(reason)}`))
     }
   }
 
@@ -1242,9 +1281,11 @@ export function App(): React.JSX.Element {
       teamChannelIds={memberChannelIds}
       cardOpacity={appearance.cardOpacity}
       colorMode={appearance.colorMode}
+      accent={appearance.accent}
       onModuleChange={changeModule}
       onCardOpacityChange={(cardOpacity) => setAppearance((current) => ({ ...current, cardOpacity }))}
       onColorModeChange={(colorMode) => setAppearance((current) => ({ ...current, colorMode }))}
+      onAccentChange={(accent) => setAppearance((current) => ({ ...current, accent }))}
       onOpenProjectConfiguration={() => changeModule('run')}
     >
       {activeModule === 'account' ? (

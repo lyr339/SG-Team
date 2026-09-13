@@ -217,4 +217,46 @@ describe('SessionRailCard（名册行）', () => {
     expect(fixed).toContain('draggable="false"')
     expect(fixed).not.toContain('拖动可调整')
   })
+
+  it('席位自动轮换提示：与排队徽记同列；成功提示只在冷却期内显示，失败 / 停用一直显示；气泡数进悬停详情', () => {
+    const online = { ...session, online: true, status: 'waiting' as const, waiting: true, queueDepth: 0, composerBubbleCount: 412 }
+    const done = renderToStaticMarkup(<SessionRailCard
+      session={{ ...online, seatRotation: { status: 'done', bubbleCount: 412, at: NOW - 60_000, message: '已自动轮换：上一段会话累计 412 个气泡' } }}
+      selected={false} onOpen={() => {}} now={NOW} />)
+    expect(done).toContain('session-row__rotation is-done')
+    expect(done).toContain('已自动轮换 · 412 气泡')
+    expect(done).toContain('title="已自动轮换：上一段会话累计 412 个气泡"')
+    expect(done).toContain('会话体积 412 气泡')
+    // 冷却期（10 分钟）过后成功提示撤下，气泡数仍在悬停详情里
+    const expired = renderToStaticMarkup(<SessionRailCard
+      session={{ ...online, seatRotation: { status: 'done', bubbleCount: 412, at: NOW - 11 * 60_000, message: 'm' } }}
+      selected={false} onOpen={() => {}} now={NOW} />)
+    expect(expired).not.toContain('session-row__rotation')
+    expect(expired).toContain('会话体积 412 气泡')
+    const failed = renderToStaticMarkup(<SessionRailCard
+      session={{ ...online, seatRotation: { status: 'failed', bubbleCount: 412, at: NOW - 3 * 3_600_000, message: '自动轮换失败：Cursor 调试端口未就绪' } }}
+      selected={false} onOpen={() => {}} now={NOW} />)
+    expect(failed).toContain('session-row__rotation is-failed')
+    expect(failed).toContain('自动轮换失败</span>')
+    const disabled = renderToStaticMarkup(<SessionRailCard
+      session={{ ...online, seatRotation: { status: 'disabled', bubbleCount: 412, at: NOW - 3 * 3_600_000, message: 'm' } }}
+      selected={false} onOpen={() => {}} now={NOW} />)
+    expect(disabled).toContain('session-row__rotation is-disabled')
+    expect(disabled).toContain('自动轮换已停用')
+    const rotating = renderToStaticMarkup(<SessionRailCard
+      session={{ ...online, seatRotation: { status: 'rotating', bubbleCount: 412, at: NOW, message: 'm' } }}
+      selected={false} onOpen={() => {}} now={NOW} />)
+    expect(rotating).toContain('session-row__rotation is-rotating')
+    expect(rotating).toContain('自动轮换中')
+    // 新会话就绪但交接消息没投出去：橙色警示，且不随冷却期消失
+    const partial = renderToStaticMarkup(<SessionRailCard
+      session={{ ...online, seatRotation: { status: 'partial', bubbleCount: 412, at: NOW - 3 * 3_600_000, message: '上下文交接消息没有投出去' } }}
+      selected={false} onOpen={() => {}} now={NOW} />)
+    expect(partial).toContain('session-row__rotation is-partial')
+    expect(partial).toContain('已轮换 · 未交接上下文')
+    // 没有轮换记录、没有气泡数：两处都不出现
+    const plain = renderToStaticMarkup(<SessionRailCard session={session} selected={false} onOpen={() => {}} now={NOW} />)
+    expect(plain).not.toContain('session-row__rotation')
+    expect(plain).not.toContain('会话体积')
+  })
 })
