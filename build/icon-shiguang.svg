@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0.85" y2="1">
+      <stop offset="0" stop-color="#fbf6eb"/>
+      <stop offset="1" stop-color="#eee3cf"/>
+    </linearGradient>
+    <linearGradient id="plum" x1="0.12" y1="0" x2="0.88" y2="1">
+      <stop offset="0" stop-color="#813967"/>
+      <stop offset="1" stop-color="#64284f"/>
+    </linearGradient>
+    <linearGradient id="saffron" x1="0" y1="0" x2="0.8" y2="1">
+      <stop offset="0" stop-color="#e2a42d"/>
+      <stop offset="1" stop-color="#c98718"/>
+    </linearGradient>
+    <filter id="tileShadow" x="-15%" y="-15%" width="130%" height="135%">
+      <feDropShadow dx="0" dy="13" stdDeviation="18" flood-color="#311c28" flood-opacity="0.16"/>
+    </filter>
+    <filter id="markShadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="5" stdDeviation="6" flood-color="#49223b" flood-opacity="0.11"/>
+    </filter>
+  </defs>
+
+  <!-- The tile occupies 86% of the canvas so its Dock weight matches native macOS icons. -->
+  <path
+    d="M330 72H694C800 72 860 72 906 118C952 164 952 224 952 330V694C952 800 952 860 906 906C860 952 800 952 694 952H330C224 952 164 952 118 906C72 860 72 800 72 694V330C72 224 72 164 118 118C164 72 224 72 330 72Z"
+    fill="url(#tile)"
+    filter="url(#tileShadow)"
+  />
+  <path
+    d="M330 72H694C800 72 860 72 906 118C952 164 952 224 952 330V694C952 800 952 860 906 906C860 952 800 952 694 952H330C224 952 164 952 118 906C72 860 72 800 72 694V330C72 224 72 164 118 118C164 72 224 72 330 72Z"
+    fill="none"
+    stroke="#7b5c6d"
+    stroke-opacity="0.12"
+    stroke-width="2"
+  />
+
+  <!-- Bespoke SG seal: two plum planes and one saffron counter-plane. -->
+  <g filter="url(#markShadow)">
+    <path
+      d="M345 244H718C770 244 796 270 796 313C796 356 770 382 718 382H520V568L274 457V326C274 272 300 244 345 244Z"
+      fill="url(#plum)"
+    />
+    <path
+      d="M274 517L664 700V790H350C300 790 274 763 274 714V517Z"
+      fill="url(#plum)"
+    />
+    <path
+      d="M622 414H727C773 414 796 438 796 484V720C796 767 773 790 727 790H664V629L566 582V474C566 434 586 414 622 414Z"
+      fill="url(#saffron)"
+    />
+  </g>
+
+  <!-- Restrained edge highlights keep the mark tactile without turning glossy. -->
+  <path d="M345 246H718C756 246 781 260 791 286" fill="none" stroke="#fff7ed" stroke-opacity="0.20" stroke-width="3" stroke-linecap="round"/>
+  <path d="M622 416H727C757 416 777 427 788 448" fill="none" stroke="#fff8df" stroke-opacity="0.24" stroke-width="3" stroke-linecap="round"/>
+</svg>

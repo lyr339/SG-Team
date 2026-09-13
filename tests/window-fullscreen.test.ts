@@ -10,10 +10,15 @@ import { syncWindowFullscreen } from '../src/main/register-window-chrome-ipc'
 describe('native fullscreen chrome', () => {
   it('syncs initial/reloaded documents and both transitions, ignores maximize, and cleans up', () => {
     let fullscreen = false
+    let destroyed = false
     const send = vi.fn()
     const webContents = Object.assign(new EventEmitter(), { send, isDestroyed: () => false })
-    const window = Object.assign(new EventEmitter(), {
-      webContents, isFullScreen: () => fullscreen, isDestroyed: () => false
+    const window = Object.assign(new EventEmitter(), { isFullScreen: () => fullscreen, isDestroyed: () => destroyed })
+    Object.defineProperty(window, 'webContents', {
+      get: () => {
+        if (destroyed) throw new TypeError('Object has been destroyed')
+        return webContents
+      }
     })
     syncWindowFullscreen(window as unknown as BrowserWindow)
     webContents.emit('dom-ready')
@@ -28,7 +33,10 @@ describe('native fullscreen chrome', () => {
     fullscreen = false
     window.emit('leave-full-screen')
     expect(send).toHaveBeenLastCalledWith(IPC.windowFullscreenChanged, false)
-    window.emit('closed')
+    // Electron 的 closed 语义是原生对象已经销毁；清理过程不得再读取
+    // BrowserWindow.webContents，否则正式包退出时会弹主进程异常框。
+    destroyed = true
+    expect(() => window.emit('closed')).not.toThrow()
     expect(window.listenerCount('enter-full-screen')).toBe(0)
     expect(window.listenerCount('leave-full-screen')).toBe(0)
     expect(webContents.listenerCount('dom-ready')).toBe(0)

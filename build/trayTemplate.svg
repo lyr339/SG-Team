@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36">
+  <!-- Filled template mark; Electron/macOS supplies the active menu-bar color. -->
+  <path d="M8 5H27C30 5 31 6.5 31 9C31 11.5 30 13 27 13H18V20L5 14V9C5 6.5 6 5 8 5Z" fill="#000"/>
+  <path d="M5 17L24 26V31H9C6.5 31 5 29.5 5 27V17Z" fill="#000"/>
+  <path d="M23 15H28C30 15 31 16 31 18V28C31 30 30 31 28 31H24V25L19 22.5V18C19 16 20 15 23 15Z" fill="#000"/>
+</svg>

@@ -34,17 +34,21 @@ export function registerWindowChromeIpc(getWindow: () => BrowserWindow | undefin
 
 /** 原生全屏状态只影响窗口装饰；dom-ready 同步覆盖渲染进程刷新/重载。 */
 export function syncWindowFullscreen(window: BrowserWindow): void {
+  // BrowserWindow 的 closed 事件触发时原生窗口已销毁，再读取 window.webContents
+  // 会由 Electron 抛出 “Object has been destroyed”。提前保存引用，清理阶段只走
+  // EventEmitter，不再访问已经销毁的 BrowserWindow 原生属性。
+  const webContents = window.webContents
   const publish = (): void => {
-    if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
-      window.webContents.send(IPC.windowFullscreenChanged, window.isFullScreen())
+    if (!window.isDestroyed() && !webContents.isDestroyed()) {
+      webContents.send(IPC.windowFullscreenChanged, window.isFullScreen())
     }
   }
   window.on('enter-full-screen', publish)
   window.on('leave-full-screen', publish)
-  window.webContents.on('dom-ready', publish)
+  webContents.on('dom-ready', publish)
   window.once('closed', () => {
     window.removeListener('enter-full-screen', publish)
     window.removeListener('leave-full-screen', publish)
-    window.webContents.removeListener('dom-ready', publish)
+    webContents.removeListener('dom-ready', publish)
   })
 }
