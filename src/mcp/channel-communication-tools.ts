@@ -257,10 +257,14 @@ export function registerChannelCommunicationTools(
       reply: input.reply,
       // 围栏已放行的令牌继续下传：保持位消息（会话交接「等待新会话」）按令牌投递。
       session: input.session,
+      // 长轮询期间逐轮复核：席位被换席/轮换时旧会话即刻退出，不再取走新消息。
+      ...(input.session ? { fence: () => fence(channelId, input.session) } : {}),
       signal,
       keepaliveTimeoutMs: deps.keepaliveTimeoutMs
     })
     switch (result.type) {
+      case 'retired':
+        return { content: [{ type: 'text' as const, text: buildSessionRetiredText({ channelId, reason: result.reason }) }] }
       case 'delivered': {
         const suffix = result.message.silent
           ? buildSilentDeliverySuffix({ channelId, tick: result.turnCount })

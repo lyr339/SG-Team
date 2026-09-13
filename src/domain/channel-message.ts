@@ -241,8 +241,34 @@ export function isAgentOnDuty(session: { online: boolean; waiting: boolean; conn
 /** check_messages 长轮询间隔（对齐插件 POLL_INTERVAL_MS）。 */
 export const CHANNEL_POLL_INTERVAL_MS = 1_000
 
-/** check_messages 空队列 keepalive 返回间隔（对齐插件默认 60s）。 */
-export const CHANNEL_KEEPALIVE_TIMEOUT_MS = 60_000
+/**
+ * check_messages 空队列 keepalive 返回间隔。
+ *
+ * 曾对齐插件默认 60s。每次 keepalive 返回都要让模型再想一轮、再发一次工具调用，
+ * 纯待命席位因此每个周期长 4–5 个气泡（Cursor 单会话体积随之线性增长，每次写入更慢）；
+ * 拉长窗口按比例减慢这一增长，而消息投递延迟不变（队列每秒轮询、到达即刻返回）。
+ * 上限依据（2026-09-13 只读核对 Cursor 的 cursor-mcp 扩展 bundle，SDK 1.25.1）：
+ * `client.callTool(..., { timeout: 36e5 })` —— 每次工具调用 1 小时超时，未开
+ * resetTimeoutOnProgress、无 maxTotalTimeout，workbench 侧调用链只有 abort 信号没有更短的
+ * 定时器。5 分钟留有 12 倍余量；可用环境变量 SG_TEAM_KEEPALIVE_MS 覆盖（见 resolveKeepaliveTimeoutMs）。
+ */
+export const CHANNEL_KEEPALIVE_TIMEOUT_MS = 5 * 60_000
+
+/** 环境变量覆盖的合法区间：低于下限会把 keepalive 变成噪音，高于上限逼近 Cursor 的 1 小时调用超时。 */
+export const CHANNEL_KEEPALIVE_TIMEOUT_MIN_MS = 10_000
+export const CHANNEL_KEEPALIVE_TIMEOUT_MAX_MS = 30 * 60_000
+
+/**
+ * 解析 keepalive 窗口的环境变量覆盖（毫秒整数）：缺省 / 非法 / 越界一律回落默认值，
+ * 让 mcp.json 里的 `env.SG_TEAM_KEEPALIVE_MS` 成为不重新打包即可回退的开关。
+ */
+export function resolveKeepaliveTimeoutMs(raw: string | undefined): number {
+  const trimmed = raw?.trim()
+  if (!trimmed || !/^\d{1,9}$/.test(trimmed)) return CHANNEL_KEEPALIVE_TIMEOUT_MS
+  const value = Number(trimmed)
+  if (value < CHANNEL_KEEPALIVE_TIMEOUT_MIN_MS || value > CHANNEL_KEEPALIVE_TIMEOUT_MAX_MS) return CHANNEL_KEEPALIVE_TIMEOUT_MS
+  return value
+}
 
 /**
  * 回复同步守门宽限（对齐插件 REPLY_SYNC_STALE_MS ≈ 290s）：

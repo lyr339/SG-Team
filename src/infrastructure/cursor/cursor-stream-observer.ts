@@ -80,8 +80,11 @@ export const CURSOR_PROCESS_BINDING_NAME = 'sgTeamProcess'
  * 先跑一次定位，未就绪时页面自轮询照旧等待，观察器侧另有低频定位重试兜底。
  * 定位成功后观察器顺手对晴天补丁运行时缴械（cursor-legacy-patch-disarm.ts：停其 8 个
  * 后台轮询、拆掉桥方法的 trace 包装），零文件修改；hook 版本不变。
+ * v34（2026-09-13）：每帧携带 `bubbleCount`（整个 composer 的气泡数，读自已在遍历的
+ * fullConversationHeadersOnly，零额外成本；小帧同样携带）。它是席位自动轮换的阈值事实：
+ * 持续会话的回合永不结束，Cursor 每次写入的持久化与重分组成本随气泡数线性增长。
  */
-export const CURSOR_STREAM_HOOK_VERSION = 33
+export const CURSOR_STREAM_HOOK_VERSION = 34
 const RETRY_BASE_MS = 5_000
 const RETRY_MAX_MS = 60_000
 const ATTACH_TIMEOUT_MS = 8_000
@@ -1003,6 +1006,9 @@ export const CURSOR_STREAM_HOOK_EXPRESSION = `(() => {
       isGenerating,
       composerStatus: composerStatus || undefined,
       statusLine,
+      // 会话体积事实（v34）：整个 composer 的气泡数。持续会话的 Cursor 回合永不结束，
+      // 气泡只增不减，Cursor 每次写入的成本随之线性增长——席位自动轮换以它为阈值。
+      bubbleCount: headers.length,
       awaitingUser: awaitingUserDecision(data),
       response,
       // 写后快照始终是当前回合可见窗口的完整集合（含空集）：snapshotComplete
@@ -1293,8 +1299,15 @@ export interface CursorNativeProcessEvent {
   composerStatus?: string
   /** Cursor 会话列表副标题（v32）：只在回合存活时携带；旧 hook 帧缺省。 */
   statusLine?: CursorStatusLine
+  /** 整个 composer 的气泡数（v34）；旧 hook 帧缺省。 */
+  bubbleCount?: number
   process?: CursorProcessStream
   response?: CursorNativeResponse
+}
+
+/** 气泡数：非负整数才算事实；其余（旧帧缺省、坏值）为 undefined。 */
+export function parseBubbleCount(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.floor(value) : undefined
 }
 
 /** 宽容解析写后快照里的正文载荷；缺失/非法时返回 undefined（不影响过程帧）。 */
@@ -1651,6 +1664,7 @@ export class CursorStreamObserver {
             const composerStatus = typeof raw.composerStatus === 'string' && raw.composerStatus
               ? raw.composerStatus.slice(0, 40)
               : undefined
+            const bubbleCount = parseBubbleCount(raw.bubbleCount)
             this.onProcessEvent({
               composerId,
               observedAt: typeof raw.observedAt === 'number' ? raw.observedAt : Date.now(),
@@ -1658,6 +1672,7 @@ export class CursorStreamObserver {
               ...(raw.awaitingUser === true ? { awaitingUser: true } : {}),
               ...(composerStatus ? { composerStatus } : {}),
               ...(statusLine ? { statusLine } : {}),
+              ...(bubbleCount === undefined ? {} : { bubbleCount }),
               process: parseProcessStream(raw.process),
               response: parseNativeResponse(raw.response)
             })

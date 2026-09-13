@@ -27,6 +27,7 @@ import type {
   CursorModelVariant
 } from '../../domain/cursor-model'
 import type { RuntimeBinding } from '../../domain/team-control'
+import { CHANNEL_KEEPALIVE_TIMEOUT_MS } from '../../domain/channel-message'
 import {
   BINDING_MARKER_PATTERN,
   cursorComposerBindingMarker,
@@ -57,11 +58,12 @@ const RECENT_TRANSCRIPT_GRACE_MS = 30_000
 // （构建/测试可达数分钟）执行期间暂停增长属正常——宽限期内不构成死亡证据
 const WORK_ACTIVITY_GRACE_MS = 5 * 60_000
 const MAX_PROJECT_DIRS = 512
-// 僵尸轮询硬上限：传输层声称 keepalive/waiting（每秒都在轮询 check_messages，
-// 每次轮询都会写转录），但通道转录沉默超过该时长——两者矛盾，判定为
-// 认证失效的僵尸会话（正面矛盾证据，不是「证据缺失」）
-// 注：从 6 分钟缩短到 60 秒，更快检测假在线
-const CHANNEL_POLL_SILENCE_MS = 60_000
+// 僵尸轮询硬上限：传输层声称 keepalive/waiting，但通道转录沉默超过该时长——按原设计视为矛盾，
+// 判定为认证失效的僵尸会话。上限跟随 keepalive 窗口（窗口 + 模型间隙），窗口拉长时不至于更早误判。
+// 注意（2026-09-13 实测，Cursor 3.6）：转录并不在每个 check_messages 周期落盘，而是在回合结束时
+// 才写全——6 个健康待命席位的转录在 70 分钟里都停在开场那 1KB。因此这条判定对持续会话几乎总会
+// 命中；它只影响 channelActivities 的注记文案，verifyAgentRuntime 在 MCP 心跳新鲜时不据此判离线。
+const CHANNEL_POLL_SILENCE_MS = CHANNEL_KEEPALIVE_TIMEOUT_MS + 60_000
 const CHANNEL_SCAN_MAX_FILES = 48
 /** 通道活性属于 presence 证据，不需要跟 250ms 流式正文同频；1s 足以判断监听状态。 */
 const DEFAULT_CHANNEL_ACTIVITY_POLL_MS = 1_000
@@ -430,20 +432,31 @@ function parseCursorModels(value: unknown): CursorModelOption[] {
     .slice(0, 80)
 }
 
-function readComposerModelState(database: DatabaseSync): {
+interface ComposerModelState {
   profile?: AgentExecutionProfile
   models: CursorModelOption[]
   root?: UnknownRecord
-} {
+}
+
+/**
+ * applicationUser（~400KB，含 38 条模型目录）原文未变时复用上次解析结果：
+ * 它随 Cursor 偏好变化而变，与会话写入无关，逐拍重新 JSON.parse 纯属浪费。
+ */
+let modelStateCache: { json: string; state: ComposerModelState } | undefined
+
+function readComposerModelState(database: DatabaseSync): ComposerModelState {
   try {
     const row = database.prepare(
       'SELECT value FROM ItemTable WHERE key = ?'
     ).get(APPLICATION_USER_KEY) as { value?: unknown } | undefined
     const json = sqliteText(row?.value)
     if (!json || Buffer.byteLength(json, 'utf8') > MAX_APPLICATION_USER_BYTES) return { models: [] }
+    if (modelStateCache?.json === json) return modelStateCache.state
     const value = JSON.parse(json)
     const root = recordOf(value)
-    return { profile: parseComposerProfile(value), models: parseCursorModels(value), root }
+    const state: ComposerModelState = { profile: parseComposerProfile(value), models: parseCursorModels(value), root }
+    modelStateCache = { json, state }
+    return state
   } catch {
     // Composer headers remain useful even if Cursor changes or is midway
     // through writing this unrelated global preference record.
@@ -938,38 +951,17 @@ function transcriptPathGlobalFallback(
       `${composerId}.jsonl`
     )
     try {
-      const stat = statSync(candidate)
-      if (!stat.isFile()) continue
+      // 候选不存在是常态：不让 stat 抛异常（异常路径比返回 undefined 贵一个数量级）
+      const stat = statSync(candidate, { throwIfNoEntry: false })
+      if (!stat?.isFile()) continue
       if (!newest || stat.mtimeMs > newest.modifiedAt) {
         newest = { path: candidate, modifiedAt: stat.mtimeMs }
       }
     } catch {
-      // 候选不存在——继续下一个项目目录
+      // 权限等其他错误——继续下一个项目目录
     }
   }
   return newest?.path
-}
-
-function transcriptPath(
-  paths: CursorComposerTelemetryPaths,
-  workspacePaths: string[],
-  composer: ParsedComposer
-): string | undefined {
-  const tried = new Set<string>()
-  for (const workspacePath of [...new Set(workspacePaths)]) {
-    for (const directoryName of cursorProjectDirectoryNames(workspacePath)) {
-      tried.add(directoryName)
-      const candidate = join(
-        paths.projectsRoot,
-        directoryName,
-        'agent-transcripts',
-        composer.telemetry.composerId,
-        `${composer.telemetry.composerId}.jsonl`
-      )
-      if (existsSync(candidate)) return candidate
-    }
-  }
-  return transcriptPathGlobalFallback(paths, composer.telemetry.composerId, tried)
 }
 
 /**
@@ -1060,7 +1052,10 @@ function composerActivity(
   }
 }
 
-/** 跨全部项目目录枚举转录文件（新→旧，截断上限），供通道级证据扫描。 */
+/**
+ * 跨全部项目目录枚举转录文件（新→旧，全量）。通道级证据扫描取前
+ * CHANNEL_SCAN_MAX_FILES 份；转录定位索引需要全量（老 composer 也要能定位）。
+ */
 function listTranscriptFiles(projectsRoot: string): { path: string; modifiedAt: number; composerId: string }[] {
   const files: { path: string; modifiedAt: number; composerId: string }[] = []
   for (const directoryName of projectDirectoryNames(projectsRoot)) {
@@ -1075,16 +1070,14 @@ function listTranscriptFiles(projectsRoot: string): { path: string; modifiedAt: 
       if (!SAFE_COMPOSER_ID.test(composerDir)) continue
       const candidate = join(transcriptsRoot, composerDir, `${composerDir}.jsonl`)
       try {
-        const stat = statSync(candidate)
-        if (stat.isFile()) files.push({ path: candidate, modifiedAt: stat.mtimeMs, composerId: composerDir })
+        const stat = statSync(candidate, { throwIfNoEntry: false })
+        if (stat?.isFile()) files.push({ path: candidate, modifiedAt: stat.mtimeMs, composerId: composerDir })
       } catch {
         // 转录在扫描期间被清理——跳过
       }
     }
   }
-  return files
-    .sort((left, right) => right.modifiedAt - left.modifiedAt)
-    .slice(0, CHANNEL_SCAN_MAX_FILES)
+  return files.sort((left, right) => right.modifiedAt - left.modifiedAt)
 }
 
 /**
@@ -1238,7 +1231,21 @@ export class CursorComposerTelemetryReader implements CursorComposerTelemetrySou
   }
   private transcriptFileIndex?: {
     at: number
+    /** 最新的 CHANNEL_SCAN_MAX_FILES 份（通道级证据扫描的读窗上限）。 */
     files: { path: string; modifiedAt: number; composerId: string }[]
+    /** 全量：composerId → 最新一份转录（同 composer 多目录取 mtime 最新）。 */
+    byComposer: Map<string, { path: string; modifiedAt: number }>
+  }
+  /**
+   * 会话索引解析缓存：`composer.composerHeaders` 原文未变（Cursor 写 WAL 的多数原因是
+   * 气泡/其他键，不是头部）时不重新 JSON.parse 0.8MB 并重建 1000+ 个头部对象；
+   * parseComposer 是 (header, workspace) 的纯函数，按原文 + 工作区键复用是精确的。
+   */
+  private headersParseCache?: {
+    json: string
+    workspace: string
+    rawComposers: unknown[]
+    parsed: ParsedComposer[]
   }
   /**
    * 快照级缓存：state.vscdb+wal 指纹（mtime/size/ino）、bindings、通道活性与上轮触及的
@@ -1315,6 +1322,7 @@ export class CursorComposerTelemetryReader implements CursorComposerTelemetrySou
   dispose(): void {
     this.channelActivityRun = undefined
     this.transcriptFileIndex = undefined
+    this.headersParseCache = undefined
     if (!this.sharedDatabase) return
     try {
       this.sharedDatabase.handle.close()
@@ -1341,11 +1349,45 @@ export class CursorComposerTelemetryReader implements CursorComposerTelemetrySou
   }
 
   private transcriptFiles(now: number): { path: string; modifiedAt: number; composerId: string }[] {
+    return this.refreshTranscriptIndex(now).files
+  }
+
+  /**
+   * 转录定位索引（与通道级扫描共用同一次目录枚举，TTL 相同）。
+   * 此前每个不在本工作区目录下的 composer 都要对 ~/.cursor/projects 的全部项目目录
+   * 逐个 statSync（249 个目录 × 每拍几十个 composer，且每次不存在都抛异常）——
+   * 这是遥测每拍 300–500ms 的主因。索引一次枚举（~5ms）后按 composerId O(1) 命中。
+   */
+  private transcriptLocations(now: number): Map<string, { path: string; modifiedAt: number }> {
+    return this.refreshTranscriptIndex(now).byComposer
+  }
+
+  private refreshTranscriptIndex(now: number): NonNullable<CursorComposerTelemetryReader['transcriptFileIndex']> {
     const cached = this.transcriptFileIndex
-    if (cached && now - cached.at < this.transcriptIndexTtlMs) return cached.files
-    const files = listTranscriptFiles(this.paths.projectsRoot)
-    this.transcriptFileIndex = { at: now, files }
-    return files
+    if (cached && now - cached.at < this.transcriptIndexTtlMs) return cached
+    const all = listTranscriptFiles(this.paths.projectsRoot)
+    const byComposer = new Map<string, { path: string; modifiedAt: number }>()
+    // all 已按 mtime 新→旧排序：首个命中即该 composer 最新的一份
+    for (const file of all) {
+      if (!byComposer.has(file.composerId)) byComposer.set(file.composerId, { path: file.path, modifiedAt: file.modifiedAt })
+    }
+    const index = { at: now, files: all.slice(0, CHANNEL_SCAN_MAX_FILES), byComposer }
+    this.transcriptFileIndex = index
+    return index
+  }
+
+  /**
+   * 某 composer 的转录路径：先按工作区推导的项目目录直接命中（新文件即时可见），
+   * 再查全局索引（≤ transcriptIndexTtlMs 陈旧）。不再逐目录 stat。
+   */
+  private transcriptPathOf(workspacePaths: string[], composerId: string, now: number): string | undefined {
+    for (const workspacePath of new Set(workspacePaths)) {
+      for (const directoryName of cursorProjectDirectoryNames(workspacePath)) {
+        const candidate = join(this.paths.projectsRoot, directoryName, 'agent-transcripts', composerId, `${composerId}.jsonl`)
+        if (existsSync(candidate)) return candidate
+      }
+    }
+    return this.transcriptLocations(now).get(composerId)?.path
   }
 
   /** vscdb+wal 的 mtime/size/ino 指纹；库不存在返回 undefined（不缓存，走原错误路径）。 */
@@ -1531,14 +1573,23 @@ export class CursorComposerTelemetryReader implements CursorComposerTelemetrySou
       if (Buffer.byteLength(json, 'utf8') > MAX_HEADERS_BYTES) {
         throw new Error('Cursor 会话索引异常过大，已停止读取')
       }
-      const root = recordOf(JSON.parse(json))
       const composerProfile = modelState.profile
-      const rawComposers = Array.isArray(root?.allComposers) ? root.allComposers : []
-      const parsed = rawComposers
-        .map((header) => parseComposer(header, normalizedWorkspace))
-        .filter((composer): composer is ParsedComposer => Boolean(composer))
-        .sort((left, right) => (right.telemetry.lastUpdatedAt ?? 0) - (left.telemetry.lastUpdatedAt ?? 0))
-        .slice(0, MAX_WORKSPACE_COMPOSERS)
+      const headersCache = this.headersParseCache
+      let rawComposers: unknown[]
+      let parsed: ParsedComposer[]
+      if (headersCache && headersCache.json === json && headersCache.workspace === normalizedWorkspace) {
+        rawComposers = headersCache.rawComposers
+        parsed = headersCache.parsed
+      } else {
+        const root = recordOf(JSON.parse(json))
+        rawComposers = Array.isArray(root?.allComposers) ? root.allComposers : []
+        parsed = rawComposers
+          .map((header) => parseComposer(header, normalizedWorkspace))
+          .filter((composer): composer is ParsedComposer => Boolean(composer))
+          .sort((left, right) => (right.telemetry.lastUpdatedAt ?? 0) - (left.telemetry.lastUpdatedAt ?? 0))
+          .slice(0, MAX_WORKSPACE_COMPOSERS)
+        this.headersParseCache = { json, workspace: normalizedWorkspace, rawComposers, parsed }
+      }
       // 全局水合：已绑定或通道转录定位到的 composer 可能属于其他工作区
       //（临时/e2e 工作区、数字时间戳窗口容器），其头部被工作区过滤掉会导致
       // 上下文用量与绑定候选双双断链。composerId 为全局 UUID，按 id 精确水合安全。
@@ -1572,14 +1623,14 @@ export class CursorComposerTelemetryReader implements CursorComposerTelemetrySou
         modelState.root,
         allComposers.map((composer) => composer.telemetry.composerId)
       )
+      const now = this.now()
       const transcriptSignals = new Map(allComposers.map((composer) => [
         composer.telemetry.composerId,
-        this.readTranscriptSignals([workspacePath, normalizedWorkspace], composer)
+        this.readTranscriptSignals([workspacePath, normalizedWorkspace], composer, now)
       ]))
       const bindingByComposer = new Map(bindings.flatMap((binding) =>
         binding.composerId ? [[binding.composerId, binding] as const] : []
       ))
-      const now = this.now()
       const composers = allComposers.map((composer): CursorComposerTelemetry => {
         const binding = bindingByComposer.get(composer.telemetry.composerId)
         const signals = transcriptSignals.get(composer.telemetry.composerId) ?? emptyTranscriptSignals()
@@ -1682,8 +1733,8 @@ export class CursorComposerTelemetryReader implements CursorComposerTelemetrySou
     this.transcriptDepsCollector?.push({ path, mtimeMs: stat.mtimeMs, size: stat.size })
   }
 
-  private readTranscriptSignals(workspacePaths: string[], composer: ParsedComposer): TranscriptSignals {
-    const path = transcriptPath(this.paths, workspacePaths, composer)
+  private readTranscriptSignals(workspacePaths: string[], composer: ParsedComposer, now: number): TranscriptSignals {
+    const path = this.transcriptPathOf(workspacePaths, composer.telemetry.composerId, now)
     if (!path) return emptyTranscriptSignals()
     try {
       const stat = statSync(path)

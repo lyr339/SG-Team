@@ -50,6 +50,22 @@ function readConfig(configPath: string): McpConfig {
   }
 }
 
+/** 允许用户在 mcp.json 里手写、注册器重写时原样保留的环境变量。 */
+const PRESERVED_OPERATOR_ENV_KEYS = ['SG_TEAM_KEEPALIVE_MS'] as const
+
+function preservedOperatorEnv(existing: unknown): Record<string, string> {
+  const env = existing && typeof existing === 'object' && !Array.isArray(existing)
+    ? (existing as { env?: unknown }).env
+    : undefined
+  if (!env || typeof env !== 'object' || Array.isArray(env)) return {}
+  const preserved: Record<string, string> = {}
+  for (const key of PRESERVED_OPERATOR_ENV_KEYS) {
+    const value = (env as Record<string, unknown>)[key]
+    if (typeof value === 'string' && value.trim()) preserved[key] = value.trim()
+  }
+  return preserved
+}
+
 /**
  * 全局 ~/.cursor/mcp.json 原生条目注册：启动时幂等 upsert「SG Team」统一服务器
  * 条目，Cursor 面板原生渲染（无 extension- 前缀）。用户自有服务器原样保留；
@@ -71,6 +87,8 @@ export function reconcileGlobalChannelServers(input: GlobalChannelRegistrationIn
     : {}
 
   // S4：单一原生条目「SG Team」，通道由工具参数 channel_id 区分。
+  // 用户手写的运维开关（目前只有 keepalive 窗口覆盖）随条目保留，否则每次启动的幂等重写
+  // 会把它抹掉，还顺带触发 Cursor 重载 MCP。
   const desired = new Map<string, unknown>()
   desired.set(SG_TEAM_MCP_SERVER_ID, {
     command: input.command,
@@ -78,7 +96,8 @@ export function reconcileGlobalChannelServers(input: GlobalChannelRegistrationIn
     env: {
       ELECTRON_RUN_AS_NODE: '1',
       SG_TEAM_DB: input.databasePath,
-      SG_TEAM_SERVER_ROLE: 'unified'
+      SG_TEAM_SERVER_ROLE: 'unified',
+      ...preservedOperatorEnv(servers[SG_TEAM_MCP_SERVER_ID])
     }
   })
   const serverNames = [SG_TEAM_MCP_SERVER_ID]

@@ -159,6 +159,8 @@ export interface CursorComposerRuntimeEvidence {
   composerStatus?: string
   /** Cursor 会话列表副标题（观察器离线时的 inspect 兜底；与写后 hook 同一算法）。 */
   statusLine?: CursorStatusLine
+  /** 整个 composer 的气泡数（席位自动轮换的阈值事实；hook 帧与 inspect 同源）。 */
+  bubbleCount?: number
   responseId?: string
   responseText?: string
   /** 当前回合全过程流（仅生成中的 composer 携带；stopped/空回合为 undefined）。 */
@@ -723,14 +725,16 @@ export function buildRuntimeInspectionExpression(composerIds: string[]): string 
         // 回合存活以 composer status 为权威（v31 规则），桥接摘要的 isGenerating 只作补充。
         let statusLine = null;
         let composerStatus = '';
+        let bubbleCount = null;
         try {
           const data = bridge.getComposerData(composerId);
           composerStatus = data && typeof data.status === 'string' ? data.status.toLowerCase() : '';
           if (composerStatus === 'generating' || isGenerating) statusLine = (${cursorStatusLineOf.toString()})(data) || null;
+          if (data && Array.isArray(data.fullConversationHeadersOnly)) bubbleCount = data.fullConversationHeadersOnly.length;
         } catch (e) {}
         // 过程块由 sgTeamProcess 写后事件直接推送；这里仅保留状态/正文兜底，
         // 避免 150ms inspect 与原生事件双写、重排或覆盖工具结果。
-        rows.push({ composerId, state, detail, observedAt: Date.now(), isGenerating, awaitingUser, responseId, responseText, usage, statusLine, composerStatus });
+        rows.push({ composerId, state, detail, observedAt: Date.now(), isGenerating, awaitingUser, responseId, responseText, usage, statusLine, composerStatus, bubbleCount });
       } catch (e) {
         rows.push({ composerId, state: 'unknown', detail: 'Cursor 实时状态读取失败', observedAt: Date.now() });
       }
@@ -1128,6 +1132,9 @@ export class CursorCdpSessionCreator {
           }
         : undefined
       const statusLine = parseCursorStatusLine(row.statusLine)
+      const bubbleCount = typeof row.bubbleCount === 'number' && Number.isFinite(row.bubbleCount) && row.bubbleCount >= 0
+        ? Math.floor(row.bubbleCount)
+        : undefined
       result[composerId] = {
         composerId,
         state,
@@ -1137,6 +1144,7 @@ export class CursorCdpSessionCreator {
         ...(row.awaitingUser === true ? { awaitingUser: true } : {}),
         ...(typeof row.composerStatus === 'string' && row.composerStatus ? { composerStatus: row.composerStatus.slice(0, 40) } : {}),
         ...(statusLine ? { statusLine } : {}),
+        ...(bubbleCount === undefined ? {} : { bubbleCount }),
         responseId: typeof row.responseId === 'string' && row.responseId ? row.responseId.slice(0, 200) : undefined,
         responseText: typeof row.responseText === 'string' && row.responseText
           ? row.responseText.slice(0, 100_000)

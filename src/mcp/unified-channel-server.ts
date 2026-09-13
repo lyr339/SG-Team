@@ -21,7 +21,7 @@ export interface UnifiedChannelServerOptions {
   refreshIdentity?: (channelId: string) => void
   /** team_check_in 返回的角色简报（S4 底层注入）。 */
   briefingFor?: (channelId: string) => string | undefined
-  /** keepalive 返回前的空队列等待时长；测试可注入短值，生产用默认 60s。 */
+  /** keepalive 返回前的空队列等待时长；测试可注入短值，生产用默认 CHANNEL_KEEPALIVE_TIMEOUT_MS（5 分钟，可由环境变量覆盖）。 */
   keepaliveTimeoutMs?: number
   /** record_reply 存储瞬断重试间隔；测试可注入短值。 */
   recordReplyRetryDelayMs?: number

@@ -11,7 +11,7 @@ import { SqliteChannelMessageRepository } from '../infrastructure/channel-messag
 import { ChannelMessageService } from '../application/channel-message-service'
 import { buildTeamRoleBriefing } from '../domain/team-control'
 import { TaskPoolError } from '../domain/task-pool'
-import { isPresenceOnline } from '../domain/channel-message'
+import { isPresenceOnline, resolveKeepaliveTimeoutMs } from '../domain/channel-message'
 import { createUnifiedChannelServer } from './unified-channel-server'
 import type { TeamChannelRuntime } from './team-tools'
 
@@ -128,9 +128,13 @@ async function serveUnified(databasePath: string): Promise<void> {
     return service
   }
 
+  // keepalive 窗口：默认 5 分钟（domain 常量）；mcp.json 的 env.SG_TEAM_KEEPALIVE_MS 可覆盖，
+  // 越界/非法回落默认，作为不重新打包即可回退到 60s 的开关。
+  const keepaliveTimeoutMs = resolveKeepaliveTimeoutMs(process.env.SG_TEAM_KEEPALIVE_MS)
   const handle = serveStdio(() => createUnifiedChannelServer({
     runtimeFor,
     channelServiceFor,
+    keepaliveTimeoutMs,
     // 会话围栏：通道在当前活动 run 内的席位归属；查询异常由工具层按「无法判定」放行。
     ownershipFor: (channelId) => teamRepository.resolveChannelSessionOwner(channelId),
     refreshIdentity: (channelId) => {
@@ -151,7 +155,7 @@ async function serveUnified(databasePath: string): Promise<void> {
     onerror: (error) => process.stderr.write(`[sg-team-mcp] ${error.stack ?? error.message}\n`)
   })
 
-  process.stderr.write('[sg-team-mcp] ready unified\n')
+  process.stderr.write(`[sg-team-mcp] ready unified (keepalive ${Math.round(keepaliveTimeoutMs / 1_000)}s)\n`)
 
   let closing = false
   async function shutdown(): Promise<void> {

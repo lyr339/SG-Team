@@ -1434,6 +1434,8 @@ describe('阶段 D：Bubble 级内部协议相位分组（RC-5 / RC-5.1 / RC-6�
       expect(frames).toHaveLength(1)
       expect(frames[0]).toMatchObject({ isGenerating: true, composerStatus: 'generating', statusLine: { kind: 'thinking', label: 'Thinking' } })
       expect(frames[0]?.process.items).toEqual([])
+      // v34：帧携带整个 composer 的气泡数（含用户气泡与被过滤的传输噪音），席位轮换以它为阈值
+      expect(frames[0]?.bubbleCount).toBe(5)
     })
 
     it('回复后直接轮询（无思考）：statusLine 是正文首行片段；工具执行期是动词 + 对象', async () => {

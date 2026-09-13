@@ -67,6 +67,28 @@ describe('global mcp registrar', () => {
     expect(Object.keys(JSON.parse(readFileSync(fresh.configPath, 'utf8')).mcpServers)).toEqual(['SG Team'])
   })
 
+  it('用户手写的 SG_TEAM_KEEPALIVE_MS 随条目保留：重写不抹掉，且未漂移时不改文件；其他自定义 env 不保留', () => {
+    const files = fixture()
+    writeFileSync(files.configPath, JSON.stringify({
+      mcpServers: {
+        'SG Team': {
+          command: '/old/electron', args: ['/old/index.mjs'],
+          env: { ELECTRON_RUN_AS_NODE: '1', SG_TEAM_KEEPALIVE_MS: ' 60000 ', SOMETHING_ELSE: 'x' }
+        }
+      }
+    }))
+    expect(reconcileGlobalChannelServers(inputOf(files)).changed).toBe(true)
+    const config = JSON.parse(readFileSync(files.configPath, 'utf8'))
+    expect(config.mcpServers['SG Team'].env).toEqual({
+      ELECTRON_RUN_AS_NODE: '1',
+      SG_TEAM_DB: files.database,
+      SG_TEAM_SERVER_ROLE: 'unified',
+      SG_TEAM_KEEPALIVE_MS: '60000'
+    })
+    // 第二次启动：条目已一致，不再改写（否则每次启动都触发 Cursor 重载 MCP）
+    expect(reconcileGlobalChannelServers(inputOf(files)).changed).toBe(false)
+  })
+
   it('refuses malformed global config without touching it', () => {
     const files = fixture()
     writeFileSync(files.configPath, '{ broken')

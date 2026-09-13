@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join, normalize } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { describe, expect, it } from 'vitest'
+import { CHANNEL_KEEPALIVE_TIMEOUT_MS } from '../src/domain/channel-message'
 import { cursorComposerBindingMarker } from '../src/domain/cursor-telemetry'
 import type { RuntimeBinding } from '../src/domain/team-control'
 import { CursorComposerTelemetryReader } from '../src/infrastructure/cursor/cursor-composer-telemetry'
@@ -1106,6 +1107,29 @@ describe('channel-level transcript activity evidence', () => {
     expect(snapshot.channelActivities?.['1']).toMatchObject({ channelId: '1', state: 'unknown' })
   })
 
+  it('僵尸判定上限跟随 keepalive 窗口：一个完整长轮询周期内的沉默不是死亡证据，超过窗口 + 模型间隙才是', () => {
+    // 健康席位在 check_messages 里待满一个窗口（5 分钟）转录都不会动；上限若仍是 60s，每个周期末尾都会误判。
+    const quiet = fixture()
+    writeChannelTranscript(
+      quiet.projectsRoot,
+      'composer-ch1-longpoll-123',
+      `${transcriptEntry('1', 'check_messages')}\n`,
+      CHANNEL_KEEPALIVE_TIMEOUT_MS + 30_000
+    )
+    expect(quiet.reader.readWorkspace(quiet.workspace, [binding('1')]).channelActivities?.['1'])
+      .toMatchObject({ channelId: '1', state: 'unknown' })
+
+    const zombie = fixture()
+    writeChannelTranscript(
+      zombie.projectsRoot,
+      'composer-ch1-longpoll-456',
+      `${transcriptEntry('1', 'check_messages')}\n`,
+      CHANNEL_KEEPALIVE_TIMEOUT_MS + 61_000
+    )
+    expect(zombie.reader.readWorkspace(zombie.workspace, [binding('1')]).channelActivities?.['1'])
+      .toMatchObject({ channelId: '1', state: 'stopped' })
+  })
+
   it('omits channels that never left any transcript trace', () => {
     const data = fixture()
     const snapshot = data.reader.readWorkspace(data.workspace, [binding('9')])
@@ -1259,5 +1283,96 @@ describe('global composer hydration for context and binding', () => {
       expect(rebound).not.toBe(first)
     })
 
+  })
+
+  describe('转录定位索引（替代逐项目目录 stat 的全局回退）', () => {
+    /** Cursor 3.6 对部分窗口用数字时间戳项目目录：转录不在「工作区路径推导」的目录下。 */
+    function writeTranscriptInWindowDirectory(projectsRoot: string, windowDirectory: string, composerId: string, text: string): void {
+      const directory = join(projectsRoot, windowDirectory, 'agent-transcripts', composerId)
+      mkdirSync(directory, { recursive: true })
+      writeFileSync(join(directory, `${composerId}.jsonl`), text)
+    }
+    const assistantLine = (text: string): string => JSON.stringify({ role: 'assistant', message: { content: [{ type: 'text', text }] } })
+
+    it('通过全局索引定位数字窗口目录里的转录，并在多份中取最新', () => {
+      const data = fixture()
+      const composerId = 'composer-window-dir-123'
+      // 大量无关项目目录：旧实现会对每个目录 stat 一次；新实现只枚举一次
+      for (let index = 0; index < 60; index += 1) mkdirSync(join(data.projectsRoot, `17764281648${String(index).padStart(2, '0')}`), { recursive: true })
+      writeHeaders(data.globalStateDatabase, [header({ composerId, workspace: data.workspace })])
+      writeTranscriptInWindowDirectory(data.projectsRoot, '1777441928799', composerId, `${assistantLine('旧窗口的回复')}\n`)
+      writeTranscriptInWindowDirectory(data.projectsRoot, '1779349462935', composerId, `${assistantLine('最新窗口的回复')}\n`)
+      const older = new Date(Date.now() - 60_000)
+      utimesSync(join(data.projectsRoot, '1777441928799', 'agent-transcripts', composerId, `${composerId}.jsonl`), older, older)
+
+      const composer = data.reader.readWorkspace(data.workspace, [{ ...binding('1'), composerId }]).composers[0]!
+      expect(composer.composerId).toBe(composerId)
+      expect(composer.lastAssistantResponse?.text).toBe('最新窗口的回复')
+    })
+
+    it('工作区目录下的转录优先于索引，且没有转录的 composer 不影响其他会话', () => {
+      const data = fixture()
+      const withTranscript = 'composer-local-first-123'
+      const withoutTranscript = 'composer-never-ran-123'
+      writeHeaders(data.globalStateDatabase, [
+        header({ composerId: withTranscript, workspace: data.workspace }),
+        header({ composerId: withoutTranscript, workspace: data.workspace })
+      ])
+      writeTranscriptInWindowDirectory(data.projectsRoot, '1777441928799', withTranscript, `${assistantLine('窗口目录副本')}\n`)
+      writeTranscript(data.projectsRoot, data.workspace, withTranscript, `${assistantLine('工作区目录副本')}\n`)
+
+      const snapshot = data.reader.readWorkspace(data.workspace, [{ ...binding('1'), composerId: withTranscript }])
+      const byId = new Map(snapshot.composers.map((composer) => [composer.composerId, composer]))
+      expect(byId.get(withTranscript)?.lastAssistantResponse?.text).toBe('工作区目录副本')
+      expect(byId.get(withoutTranscript)?.lastAssistantResponse).toBeUndefined()
+    })
+
+    it('索引过期后能发现新出现在其他目录的转录', () => {
+      const data = fixture()
+      let now = 1_000_000
+      const reader = new CursorComposerTelemetryReader({
+        globalStateDatabase: data.globalStateDatabase,
+        projectsRoot: data.projectsRoot,
+        workspaceStorageRoot: data.workspaceStorageRoot,
+        transcriptIndexTtlMs: 2_000,
+        now: () => now
+      })
+      const composerId = 'composer-late-transcript-123'
+      writeHeaders(data.globalStateDatabase, [header({ composerId, workspace: data.workspace })])
+      expect(reader.readWorkspace(data.workspace, [{ ...binding('1'), composerId }]).composers[0]?.lastAssistantResponse).toBeUndefined()
+
+      writeTranscriptInWindowDirectory(data.projectsRoot, '1779349462935', composerId, `${assistantLine('迟到的转录')}\n`)
+      // 快照级缓存以 vscdb 指纹 + bindings 为键；Cursor 真实运行时每次会话写入都会翻新指纹，测试里用绑定变化模拟
+      now += 2_500
+      const found = reader.readWorkspace(data.workspace, [{ ...binding('1'), composerId }, binding('2')]).composers[0]
+      expect(found?.lastAssistantResponse?.text).toBe('迟到的转录')
+      reader.dispose()
+    })
+
+    it('会话索引与模型目录原文未变时复用解析结果，变化时重新解析', () => {
+      const data = fixture()
+      writeHeaders(data.globalStateDatabase, [header({ composerId: 'composer-memo-123', workspace: data.workspace })])
+      const first = data.reader.readWorkspace(data.workspace, [binding('1')])
+      writeFileSync(`${data.globalStateDatabase}-wal`, 'unrelated-write')
+      const second = data.reader.readWorkspace(data.workspace, [binding('1')])
+      // vscdb 指纹变了（快照重算），但头部原文没变：composer 对象是复用的同一引用
+      expect(second).not.toBe(first)
+      expect(second.composers[0]?.composerId).toBe('composer-memo-123')
+      const database = new DatabaseSync(data.globalStateDatabase)
+      try {
+        database.prepare('INSERT OR REPLACE INTO ItemTable (key, value) VALUES (?, ?)').run(
+          'composer.composerHeaders',
+          JSON.stringify({ allComposers: [
+            header({ composerId: 'composer-memo-123', workspace: data.workspace }),
+            header({ composerId: 'composer-memo-456', workspace: data.workspace })
+          ] })
+        )
+      } finally {
+        database.close()
+      }
+      const bumped = new Date(Date.now() + 2_000)
+      utimesSync(data.globalStateDatabase, bumped, bumped)
+      expect(data.reader.readWorkspace(data.workspace, [binding('1')]).composers).toHaveLength(2)
+    })
   })
 })

@@ -7,7 +7,34 @@ import {
   buildStorageUnavailableMessage
 } from '../src/domain/channel-delivery-policy'
 import { buildChannelWaitInstruction } from '../src/domain/channel-wait-policy'
+import {
+  CHANNEL_KEEPALIVE_TIMEOUT_MAX_MS,
+  CHANNEL_KEEPALIVE_TIMEOUT_MIN_MS,
+  CHANNEL_KEEPALIVE_TIMEOUT_MS,
+  resolveKeepaliveTimeoutMs
+} from '../src/domain/channel-message'
 import { buildUnifiedServerInstructions } from '../src/mcp/team-tools'
+
+describe('keepalive 窗口', () => {
+  it('默认 5 分钟：远低于 Cursor cursor-mcp 扩展对每次工具调用的 1 小时超时，又把纯待命席位的气泡增长压到原来的 1/5', () => {
+    expect(CHANNEL_KEEPALIVE_TIMEOUT_MS).toBe(300_000)
+    expect(CHANNEL_KEEPALIVE_TIMEOUT_MS).toBeLessThan(36e5 / 10)
+  })
+
+  it('环境变量覆盖：合法毫秒整数按值生效，缺省 / 非数字 / 越界一律回落默认', () => {
+    expect(resolveKeepaliveTimeoutMs(undefined)).toBe(CHANNEL_KEEPALIVE_TIMEOUT_MS)
+    expect(resolveKeepaliveTimeoutMs('')).toBe(CHANNEL_KEEPALIVE_TIMEOUT_MS)
+    expect(resolveKeepaliveTimeoutMs(' 60000 ')).toBe(60_000)
+    expect(resolveKeepaliveTimeoutMs('600000')).toBe(600_000)
+    expect(resolveKeepaliveTimeoutMs(String(CHANNEL_KEEPALIVE_TIMEOUT_MIN_MS))).toBe(CHANNEL_KEEPALIVE_TIMEOUT_MIN_MS)
+    expect(resolveKeepaliveTimeoutMs(String(CHANNEL_KEEPALIVE_TIMEOUT_MAX_MS))).toBe(CHANNEL_KEEPALIVE_TIMEOUT_MAX_MS)
+    expect(resolveKeepaliveTimeoutMs(String(CHANNEL_KEEPALIVE_TIMEOUT_MIN_MS - 1))).toBe(CHANNEL_KEEPALIVE_TIMEOUT_MS)
+    expect(resolveKeepaliveTimeoutMs(String(CHANNEL_KEEPALIVE_TIMEOUT_MAX_MS + 1))).toBe(CHANNEL_KEEPALIVE_TIMEOUT_MS)
+    expect(resolveKeepaliveTimeoutMs('60s')).toBe(CHANNEL_KEEPALIVE_TIMEOUT_MS)
+    expect(resolveKeepaliveTimeoutMs('-60000')).toBe(CHANNEL_KEEPALIVE_TIMEOUT_MS)
+    expect(resolveKeepaliveTimeoutMs('1e5')).toBe(CHANNEL_KEEPALIVE_TIMEOUT_MS)
+  })
+})
 
 describe('channel protocol policy text', () => {
   it('does not instruct agents to record a reply when they only keep polling', () => {

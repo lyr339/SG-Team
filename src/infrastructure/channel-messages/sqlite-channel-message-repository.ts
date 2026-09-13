@@ -17,6 +17,9 @@ import {
 } from '../../domain/channel-message'
 import type { MessageAttachment, ProcessBlock } from '../../domain/conversation-entry'
 
+/** 出站行的投递状态投影（不含正文与附件），供主进程的高频状态同步使用。 */
+export type ChannelOutboundDeliveryState = Pick<ChannelOutboundMessage, 'id' | 'deliveredAt' | 'retiredAt' | 'withdrawnAt'>
+
 function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value ? value : undefined
 }
@@ -502,6 +505,29 @@ export class SqliteChannelMessageRepository {
     ).get() as SqliteRow | undefined
     const runId = row ? optionalString(row.run_id) : undefined
     return runId && row ? { runId, startedAt: numberOf(row.started_at) } : undefined
+  }
+
+  /**
+   * 主进程侧每 250ms 的投递状态同步只需要「哪条被取走 / 退役 / 撤回」：
+   * 不取 text 与 attachments_json（图片附件行可达数 MB，逐拍 SELECT * 再 JSON.parse
+   * 曾占主进程 20% 单核且随贴图数线性增长）。
+   */
+  listOutboundDeliveryStateSince(startedAt: number, limit = 500): ChannelOutboundDeliveryState[] {
+    const rows = this.database.prepare(`
+      SELECT id, delivered_at, retired_at, withdrawn_at FROM (
+        SELECT id, delivered_at, retired_at, withdrawn_at, created_at, seq FROM channel_outbox
+        WHERE created_at >= ?
+        ORDER BY created_at DESC, seq DESC
+        LIMIT ?
+      )
+      ORDER BY created_at ASC, seq ASC
+    `).all(Math.max(0, Math.floor(startedAt)), Math.max(1, limit)) as SqliteRow[]
+    return rows.map((row) => ({
+      id: String(row.id),
+      deliveredAt: row.delivered_at === null ? undefined : numberOf(row.delivered_at),
+      withdrawnAt: row.withdrawn_at === null || row.withdrawn_at === undefined ? undefined : numberOf(row.withdrawn_at),
+      retiredAt: row.retired_at === null || row.retired_at === undefined ? undefined : numberOf(row.retired_at)
+    }))
   }
 
   /** 主进程侧：按时间窗口读取已入队的可回放出站消息（含已投递/未投递）。 */

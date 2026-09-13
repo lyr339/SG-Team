@@ -856,8 +856,8 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
 
   /**
    * 会话围栏查询（通信工具每次调用）：当前活动 run 内该通道的席位归属。
-   * 轻量 SQL，不装配完整团队状态——check_messages 每 60s 一次 × 通道数，
-   * loadTeamControl 的十余条查询在这里是浪费。
+   * 轻量 SQL，不装配完整团队状态——check_messages 长轮询期间每轮取队列前都复核一次
+   *（每秒 × 通道数），loadTeamControl 的十余条查询在这里是浪费。
    * - undefined：没有活动 run，或该通道不属于活动 run（无绑定）；
    * - sessionToken 缺失：该绑定尚未签发令牌（旧会话 / 备用接替），按无令牌旧会话放行。
    */

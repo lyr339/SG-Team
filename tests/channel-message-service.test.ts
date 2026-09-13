@@ -343,6 +343,44 @@ describe('ChannelMessageService', () => {
     }
   })
 
+  it('长轮询途中席位被轮换：旧会话立即以 retired 退出，不取走随后到达的消息、不再刷新心跳', async () => {
+    const { repository, service } = fixture()
+    try {
+      // 首轮围栏放行（工具层已判定），随后席位换了令牌 → 复核判 retired
+      let owner = 'seat-A'
+      const fence = () => (owner === 'seat-A' ? { status: 'ok' as const } : { status: 'retired' as const, reason: 'token_mismatch' as const })
+      const poll = service.checkMessages({ channelId: '1', session: 'seat-A', fence, keepaliveTimeoutMs: 5_000, pollIntervalMs: 50 })
+      await new Promise((resolve) => setTimeout(resolve, 120))
+      const seenBeforeRotation = repository.getPresence('1')!.lastSeenAt
+      owner = 'seat-B'
+      // 轮换后用户发来一条普通消息（无保持位）：旧会话不得取走
+      repository.enqueueOutbound('1', '轮换后的新消息', 1_000)
+      const result = await poll
+      expect(result).toMatchObject({ type: 'retired', reason: 'token_mismatch' })
+      expect(repository.countPendingOutbound('1')).toBe(1)
+      // 退出后心跳不再推进（被换掉的会话不能替新席位续命）
+      await new Promise((resolve) => setTimeout(resolve, 120))
+      expect(repository.getPresence('1')!.lastSeenAt).toBeLessThanOrEqual(seenBeforeRotation + 120)
+      // 新会话首轮即取到
+      const delivered = await service.checkMessages({ channelId: '1', session: 'seat-B', fence: () => ({ status: 'ok' }) })
+      expect(delivered).toMatchObject({ type: 'delivered', message: { text: '轮换后的新消息' } })
+    } finally {
+      repository.close()
+    }
+  })
+
+  it('围栏复核抛错按 fail-open 放行，长轮询照常投递', async () => {
+    const { repository, service } = fixture()
+    try {
+      const fence = () => { throw new Error('database is locked') }
+      setTimeout(() => repository.enqueueOutbound('1', '照常投递', 1_000), 120)
+      const result = await service.checkMessages({ channelId: '1', session: 'seat-A', fence, keepaliveTimeoutMs: 5_000, pollIntervalMs: 50 })
+      expect(result).toMatchObject({ type: 'delivered', message: { text: '照常投递' } })
+    } finally {
+      repository.close()
+    }
+  })
+
   it('识别 SQLite 瞬时锁错误，其它错误不算瞬断', () => {
     expect(isTransientStorageError(busyError())).toBe(true)
     expect(isTransientStorageError(Object.assign(new Error('x'), { errcode: 6 }))).toBe(true)

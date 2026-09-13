@@ -8,6 +8,7 @@ import {
 } from '../domain/channel-message'
 import { buildReplySyncRequiredMessage } from '../domain/channel-delivery-policy'
 import { sanitizeModelGeneratedText } from '../domain/model-output-sanitizer'
+import type { SessionFenceRetiredReason, SessionFenceVerdict } from '../domain/session-fence'
 import type { SqliteChannelMessageRepository } from '../infrastructure/channel-messages/sqlite-channel-message-repository'
 
 export interface ChannelCheckInput {
@@ -19,6 +20,13 @@ export interface ChannelCheckInput {
    * 新会话；未携带令牌的旧会话取不到它们。
    */
   session?: string
+  /**
+   * 会话围栏的逐轮复核。围栏在调用开始时判定过一次，但长轮询会持续整个 keepalive 周期
+   *（CHANNEL_KEEPALIVE_TIMEOUT_MS）：席位在此期间被换席/轮换时，旧会话仍握着这条轮询，会把用户新发的消息取走，
+   * 随后 record_reply 又被围栏拒绝——消息被消费、回复丢失、新会话拿不到。
+   * 传入后每轮取队列前重新判定：一旦 retired 立即返回，不再取消息、不再刷新 presence。
+   */
+  fence?: () => SessionFenceVerdict
   signal?: AbortSignal
   keepaliveTimeoutMs?: number
   pollIntervalMs?: number
@@ -36,6 +44,8 @@ export type ChannelCheckResult =
   | { type: 'keepalive'; round: number; turnCount: number }
   | { type: 'reply_sync_required'; message: string; pendingSince?: number }
   | { type: 'stopped'; reason: string }
+  /** 长轮询进行中席位被换席/轮换：本会话的令牌已失效（见 ChannelCheckInput.fence）。 */
+  | { type: 'retired'; reason: SessionFenceRetiredReason }
   /**
    * 整个 keepalive 周期内存储层始终不可用（拾光桌面端启停时的锁竞争、磁盘异常）。
    * 不抛给 MCP SDK 变成裸的 "database is locked"，而是带 retryable 的结构化结果，
@@ -81,6 +91,8 @@ interface OpenTurn {
   turnCount: number
   deliveredCount: number
   keepaliveRound: number
+  /** 本次调用内已执行的取队列轮数（围栏复核从第二轮起）。 */
+  pollRound: number
 }
 
 /**
@@ -121,6 +133,13 @@ export class ChannelMessageService {
           if (opened.kind === 'gate') return opened.result
           turn = opened.turn
         }
+        // 围栏复核在取消息与刷心跳之前：被换掉的旧会话既不能取走新消息，也不能替新席位续命。
+        // 首轮不复核（工具层刚判定过）；复核抛错按围栏的 fail-open 原则放行。
+        if (turn.pollRound > 0 && input.fence) {
+          const verdict = this.fenceVerdict(input.fence)
+          if (verdict.status === 'retired') return { type: 'retired', reason: verdict.reason }
+        }
+        turn.pollRound += 1
         const delivered = this.deliverPending(channelId, session, turn)
         lastError = undefined
         if (delivered) {
@@ -176,7 +195,8 @@ export class ChannelMessageService {
     const turn: OpenTurn = {
       turnCount: presence.turnCount + 1,
       deliveredCount: presence.deliveredCount,
-      keepaliveRound: presence.keepaliveRound
+      keepaliveRound: presence.keepaliveRound,
+      pollRound: 0
     }
     this.repository.touchPresence(channelId, { turnCount: turn.turnCount })
 
@@ -239,6 +259,15 @@ export class ChannelMessageService {
       remainingQueue,
       turnCount: turn.turnCount,
       deliveredCount: turn.deliveredCount
+    }
+  }
+
+  /** 围栏复核只在证据确凿时拒绝：判定本身出错（库锁等）视为放行，与工具层同一原则。 */
+  private fenceVerdict(fence: () => SessionFenceVerdict): SessionFenceVerdict {
+    try {
+      return fence()
+    } catch {
+      return { status: 'legacy' }
     }
   }
 

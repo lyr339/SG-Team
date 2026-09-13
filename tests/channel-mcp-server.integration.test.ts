@@ -315,6 +315,28 @@ describe('SG Team unified MCP 会话围栏（session 令牌）', () => {
     }
   })
 
+  it('rotates the seat while a long-poll is in flight: the old session exits with the stop instruction and leaves the new message queued', async () => {
+    let ownership = owner()
+    const { repository, client, close } = await fixture({ ownershipFor: () => ownership })
+    try {
+      // 旧会话（CURRENT）进入长轮询；120ms 后席位换了令牌，紧接着用户发来新消息
+      const poll = client.callTool({ name: 'check_messages', arguments: { ...ch, session: CURRENT } })
+      await new Promise((resolve) => setTimeout(resolve, 120))
+      ownership = owner({ sessionToken: 'rotated-seat-token-0002' })
+      repository.enqueueOutbound('1', '轮换后发出的消息', 1_000)
+      const result = await poll
+      expect(result.isError).not.toBe(true)
+      expect(textOf(result)).toContain('[system] 会话围栏')
+      expect(textOf(result)).not.toContain('轮换后发出的消息')
+      expect(repository.countPendingOutbound('1')).toBe(1)
+      // 新会话首轮取到
+      const fresh = await client.callTool({ name: 'check_messages', arguments: { ...ch, session: 'rotated-seat-token-0002' } })
+      expect(textOf(fresh)).toContain('轮换后发出的消息')
+    } finally {
+      await close()
+    }
+  })
+
   it('refuses record_reply from a stale token with a session_retired error and stores nothing', async () => {
     const { repository, client, close } = await fixture({ ownershipFor: () => owner() })
     try {
