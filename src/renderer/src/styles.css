@@ -662,7 +662,9 @@ body.is-resizing-columns .resizable-columns { transition: none; }
 .session-row.is-offline .session-row__state, .session-row.is-offline .session-row__name { color: var(--muted); }
 @keyframes rail-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
 
-.session-row__line--meta { color: var(--muted); font: 500 var(--fs-11)/1 var(--font-numeric); }
+/* 行高 15px = Anthropic Sans 12px 的字形包围盒（升 12 + 降 3）：模型名 span 带 overflow:hidden 做省略号，
+   行高 1 时盒子只有 12px，g/p 这类降部会被切平（"gpt-…" 一类模型名踩中）。 */
+.session-row__line--meta { color: var(--muted); font: 500 var(--fs-11)/15px var(--font-numeric); }
 /* 模型只做身份，不做状态：厂商色收进一枚 7px 色块，文字保持中性。 */
 .session-row__model { min-width: 0; display: inline-flex; align-items: center; gap: 6px; overflow: hidden; color: var(--text-soft); font-family: var(--font-sans); font-weight: 500; white-space: nowrap; }
 .session-row__model > i { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 2px; background: var(--model-provider-fg, var(--muted)); box-shadow: 0 0 0 1px var(--model-provider-border, var(--line)); }
@@ -690,7 +692,9 @@ body.is-resizing-columns .resizable-columns { transition: none; }
   background: color-mix(in srgb, var(--tool-hue, var(--muted)) 7%, transparent);
   border: 1px solid color-mix(in srgb, var(--tool-hue, var(--muted)) 24%, transparent);
   border-radius: var(--border-radius-full);
-  font: 500 var(--fs-11)/1 var(--font-sans);
+  /* 行高 15px 而不是 1：主文与明细为了省略号带 overflow:hidden，裁切边界是它们自己的行盒；
+     行高 1（12px）装不下字体的升 12 + 降 3，Grepping 的 g 会被切平。胶囊 22px 由 height 锁定，不受行高影响。 */
+  font: 500 var(--fs-11)/15px var(--font-sans);
   transition: border-color 150ms ease, background-color 150ms ease;
 }
 .session-row__activity-glyph { flex: none; display: inline-flex; width: 12px; height: 12px; color: var(--tool-hue, var(--muted)); }
