@@ -11,13 +11,12 @@ on:
 permissions:
   contents: write
 
-env:
-  ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
-
+# 不设 ELECTRON_MIRROR：npmmirror 从 GitHub 的 runner 拉 Electron 二进制极慢，默认源最快。
 jobs:
   mac:
     # macos-latest 是 Apple Silicon runner；pack:mac 复用 npm ci 装下来的 arm64 Electron。
     runs-on: macos-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -49,6 +48,7 @@ jobs:
 
   windows:
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

@@ -6,6 +6,11 @@ on:
   pull_request:
   workflow_dispatch:
 
+# 同一分支的新推送取消还在跑的旧 run（打包 job 卡住时不用等它超时）。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   verify:
     strategy:
@@ -13,10 +18,8 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    env:
-      # GitHub Actions 的 Windows runner 拉 Electron 二进制偶发超时；
-      # 统一走 npmmirror，mac runner 同样可用且更快。
-      ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+    # 不设 ELECTRON_MIRROR：npmmirror 从 GitHub 的美区 runner 拉 Electron 二进制极慢
+    #（首次 install.js 跑了 15 分钟以上没下完），默认的 GitHub Releases 源对 runner 反而最快。
     steps:
       - uses: actions/checkout@v4
 
@@ -39,8 +42,7 @@ jobs:
     needs: verify
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: windows-latest
-    env:
-      ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
