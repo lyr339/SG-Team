@@ -96,4 +96,74 @@ describe('CursorAccountVault', () => {
     expect(() => vault.attachMachineIdentity(account!.id, { machineId: 'bad' } as ReturnType<typeof generateCursorMachineIdentity>))
       .toThrowError(/机器码身份格式无效/)
   })
+
+  it('commits live/cold activation and machine-alignment state in one vault write', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'sg-cursor-accounts-')), 'accounts.json')
+    const vault = new CursorAccountVault(path, crypto)
+    const first = vault.save({ label: 'A', token: 'cursor-token-aaaa' })[0]!
+    const second = vault.save({ label: 'B', token: 'cursor-token-bbbb', makeActive: false })
+      .find((account) => account.id !== first.id)!
+
+    let accounts = vault.activateAfterLiveSwitch(second.id)
+    expect(accounts.find((account) => account.id === second.id)).toMatchObject({ active: true, pendingMachineAlign: true })
+    expect(accounts.find((account) => account.id === first.id)?.pendingMachineAlign).toBe(false)
+
+    accounts = vault.activateAfterLiveSwitch(first.id)
+    expect(accounts.find((account) => account.id === first.id)).toMatchObject({ active: true, pendingMachineAlign: true })
+    expect(accounts.find((account) => account.id === second.id)?.pendingMachineAlign).toBe(false)
+
+    accounts = vault.activateAfterColdSwitch(second.id)
+    expect(accounts.find((account) => account.id === second.id)).toMatchObject({ active: true, pendingMachineAlign: false })
+    expect(accounts.every((account) => account.pendingMachineAlign === false)).toBe(true)
+    expect(() => vault.activateAfterLiveSwitch('missing')).toThrow(/不存在/)
+    expect(() => vault.activateAfterColdSwitch('missing')).toThrow(/不存在/)
+  })
+
+  describe('指纹窗口绑定（账号 ↔ Roxy profile）', () => {
+    it('导入即绑定：save 携带 fingerprintProfileId 并随 list 暴露', () => {
+      const path = join(mkdtempSync(join(tmpdir(), 'sg-cursor-accounts-')), 'accounts.json')
+      const vault = new CursorAccountVault(path, crypto)
+      const accounts = vault.save({ label: 'A', token: 'cursor-token-aaaa', fingerprintProfileId: 'win-1' })
+      expect(accounts[0]).toMatchObject({ fingerprintProfileId: 'win-1' })
+      // 重新加载后绑定仍在（持久化），且明文 token 不落盘
+      expect(new CursorAccountVault(path, crypto).list()[0]).toMatchObject({ fingerprintProfileId: 'win-1' })
+    })
+
+    it('save 缺省/空白绑定 → 字段缺省（回退默认窗口语义）', () => {
+      const path = join(mkdtempSync(join(tmpdir(), 'sg-cursor-accounts-')), 'accounts.json')
+      const vault = new CursorAccountVault(path, crypto)
+      expect(vault.save({ label: 'A', token: 'cursor-token-aaaa' })[0]).not.toHaveProperty('fingerprintProfileId')
+      expect(vault.save({ label: 'B', token: 'cursor-token-bbbb', fingerprintProfileId: '  ' })[1])
+        .not.toHaveProperty('fingerprintProfileId')
+    })
+
+    it('setFingerprintProfile：绑定 → 改绑 → 解绑；不触碰 updatedAt（不搅动接手账号排序）', () => {
+      const path = join(mkdtempSync(join(tmpdir(), 'sg-cursor-accounts-')), 'accounts.json')
+      let clock = 1000
+      const vault = new CursorAccountVault(path, crypto, () => clock)
+      const [account] = vault.save({ label: 'A', token: 'cursor-token-aaaa' })
+      const originalUpdatedAt = account!.updatedAt
+
+      clock = 2000
+      expect(vault.setFingerprintProfile(account!.id, 'win-1')[0]).toMatchObject({ fingerprintProfileId: 'win-1' })
+      expect(vault.setFingerprintProfile(account!.id, 'win-2')[0]).toMatchObject({ fingerprintProfileId: 'win-2' })
+      // 解绑：undefined / 空白都回到未绑定
+      expect(vault.setFingerprintProfile(account!.id, undefined)[0]).not.toHaveProperty('fingerprintProfileId')
+      expect(vault.setFingerprintProfile(account!.id, 'win-2')[0]).toMatchObject({ fingerprintProfileId: 'win-2' })
+      expect(vault.setFingerprintProfile(account!.id, '  ')[0]).not.toHaveProperty('fingerprintProfileId')
+      // 全链路 updatedAt 保持导入时刻
+      expect(vault.list()[0]!.updatedAt).toBe(originalUpdatedAt)
+      expect(() => vault.setFingerprintProfile('cursor-account:missing', 'win-1')).toThrow(/不存在/)
+    })
+
+    it('旧数据/脏数据回退：字段缺失或非字符串时按未绑定处理', () => {
+      const path = join(mkdtempSync(join(tmpdir(), 'sg-cursor-accounts-')), 'accounts.json')
+      const vault = new CursorAccountVault(path, crypto)
+      vault.save({ label: 'A', token: 'cursor-token-aaaa', fingerprintProfileId: 'win-1' })
+      const raw = JSON.parse(readFileSync(path, 'utf8')) as { accounts: Array<Record<string, unknown>> }
+      raw.accounts[0]!.fingerprintProfileId = 42
+      writeFileSync(path, JSON.stringify(raw), 'utf8')
+      expect(new CursorAccountVault(path, crypto).list()[0]).not.toHaveProperty('fingerprintProfileId')
+    })
+  })
 })

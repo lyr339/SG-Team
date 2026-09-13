@@ -80,7 +80,20 @@ describe('switchCursorAccountWithVault（vault 与 switcher 时序契约）', ()
     expect(result.switched).toBe(true)
     expect(suppressed).toBe(1)
     expect(vault.list().find((account) => account.active)?.id).toBe(secondId)
+    expect(vault.list().some((account) => account.pendingMachineAlign)).toBe(false)
     expect(spy.calls[0]).toMatchObject({ token: 'token-account-b-000000', email: 'b@example.com' })
+  })
+
+  it('clears a previous hot-switch alignment marker only after cold switch success', async () => {
+    const { vault, firstId, secondId } = vaultWithTwoAccounts()
+    vault.activateAfterLiveSwitch(firstId)
+    expect(vault.list().find((account) => account.id === firstId)?.pendingMachineAlign).toBe(true)
+    await switchCursorAccountWithVault({
+      vault,
+      switcher: { switchAccount: async () => successResult() }
+    }, secondId)
+    expect(vault.list().find((account) => account.active)?.id).toBe(secondId)
+    expect(vault.list().some((account) => account.pendingMachineAlign)).toBe(false)
   })
 
   it('keeps the previous active account untouched when the switch fails', async () => {

@@ -7,11 +7,14 @@ import { fetchCursorAccountMemberships } from '../application/cursor-account-mem
 import { CursorTokenImporter } from '../infrastructure/cursor/cursor-token-importer'
 import { CursorMembershipFetcher } from '../infrastructure/cursor/cursor-membership-profile'
 import { CursorAccountSwitcher } from '../infrastructure/cursor/cursor-account-switcher'
-import { CursorRuntimeAccountBridge } from '../infrastructure/cursor/cursor-runtime-account-bridge'
+import { CursorRuntimeAccountBridge, CURSOR_RUNTIME_SWITCH_KEY, CURSOR_RUNTIME_SWITCH_PORT } from '../infrastructure/cursor/cursor-runtime-account-bridge'
 import { CursorDesktopTokenExchanger } from '../infrastructure/cursor/cursor-desktop-token-exchanger'
 import { CursorBrowserTokenReader } from '../infrastructure/cursor/cursor-browser-token-reader'
 import type { CursorAccountProfile } from '../infrastructure/cursor/cursor-account-profile'
 import { CursorAccountProfileFetcher, profileLabel } from '../infrastructure/cursor/cursor-account-profile'
+import type { CursorLiveSwitcher } from '../infrastructure/cursor/cursor-live-switch'
+import type { CursorSwitchPumpInstaller } from '../infrastructure/cursor/cursor-switch-pump-installer'
+import type { CursorSwitchMutex } from '../infrastructure/cursor/cursor-switch-mutex'
 import { IPC } from '../shared/desktop-api'
 import { assertTrustedSender } from './ipc-security'
 
@@ -36,13 +39,15 @@ export interface CursorAccountIpcOptions {
   /**
    * 从指纹浏览器 profile 读取当前登录态 Token（第一步「获取 Token」的指纹导入来源）。
    * 返回 token（user_xxx::jwt）与可选 userId + 官网资料（email 等，识别失败缺省）；
-   * 读毕关窗（cookie 留 profile）。
+   * 读毕关窗（cookie 留 profile）。profileId 为实际读取的窗口——保存时写入账号绑定
+   * （导入即绑定：之后该账号的自动化链固定在此窗口执行，与全局默认窗口解耦）。
    */
   importFromFingerprint?: () => Promise<{
     token: string
     userId?: string
     browserName?: string
     profile?: CursorAccountProfile
+    profileId?: string
   }>
   /**
    * 官网资料识别器（系统浏览器导入用：token → email/name）。
@@ -61,6 +66,12 @@ export interface CursorAccountIpcOptions {
     changed: boolean
     policies: Array<{ kind: 'already_acknowledged' | 'acknowledged'; modelId: string; consentVersion: string }>
   }>
+  /** 无感换号核心（热切手动入口）；缺省时热切 IPC 报未装配。 */
+  liveSwitcher?: Pick<CursorLiveSwitcher, 'switchLive'>
+  /** 切号补丁安装器（维护页状态卡/一键安装）。 */
+  switchPumpInstaller?: Pick<CursorSwitchPumpInstaller, 'status' | 'ensure' | 'remove'>
+  /** 冷热切换互斥锁：注入冷切换器，热切持锁期间冷切换拒绝。 */
+  switchMutex?: CursorSwitchMutex
 }
 
 export function registerCursorAccountIpc(
@@ -76,7 +87,8 @@ export function registerCursorAccountIpc(
     cdpPort: options.cdpPort,
     workspacePath: options.workspacePath,
     runtimeBridge: new CursorRuntimeAccountBridge(),
-    tokenExchanger: new CursorDesktopTokenExchanger()
+    tokenExchanger: new CursorDesktopTokenExchanger(),
+    ...(options.switchMutex ? { switchMutex: options.switchMutex } : {})
   })
   const browserReader = new CursorBrowserTokenReader()
 
@@ -129,12 +141,20 @@ export function registerCursorAccountIpc(
     if (!options.importFromFingerprint) throw new Error('指纹浏览器通道未装配')
     const result = await options.importFromFingerprint()
     const userId = result.userId || result.token.split('::')[0] || 'cursor'
-    // 资料识别成功时 label 显示邮箱（官网 /api/auth/me）；失败回落 user_xxx
+    // 资料识别成功时 label 显示邮箱（官网 /api/auth/me）；失败回落 user_xxx。
+    // 导入即绑定：从哪个窗口读出 Token，就把该账号绑定到哪个窗口。
     return vault.save({
       label: profileLabel(result.profile, userId, result.browserName ?? '指纹浏览器'),
       token: result.token,
-      makeActive: true
+      makeActive: true,
+      fingerprintProfileId: result.profileId
     })
+  })
+  ipcMain.handle(IPC.cursorAccountsSetFingerprintProfile, (event, value: unknown) => {
+    assertTrustedSender(event, getWindow)
+    const input = (value && typeof value === 'object' ? value : {}) as Record<string, unknown>
+    const profileId = typeof input.profileId === 'string' && input.profileId.trim() ? input.profileId.trim() : undefined
+    return vault.setFingerprintProfile(accountIdOf(input.accountId), profileId)
   })
   ipcMain.handle(IPC.cursorAccountsOpenFingerprintLogin, async (event) => {
     assertTrustedSender(event, getWindow)
@@ -181,6 +201,34 @@ export function registerCursorAccountIpc(
       { vault, switcher, suppressCdpAutoHeal: options.suppressCdpAutoHeal },
       accountIdOf(accountId)
     )
+  })
+  ipcMain.handle(IPC.cursorAccountsSwitchLive, async (event, accountId: unknown) => {
+    assertTrustedSender(event, getWindow)
+    // 无感换号（热切）：不杀进程、不写库、不动机器码；结果不 throw——
+    // {switched:false, reason} 由 UI 原样亮出（热切降级语义，与自动化链同款）。
+    if (!options.liveSwitcher) throw new Error('无感换号未装配')
+    return options.liveSwitcher.switchLive({ accountId: accountIdOf(accountId) })
+  })
+  ipcMain.handle(IPC.cursorSwitchPumpStatus, (event) => {
+    assertTrustedSender(event, getWindow)
+    if (!options.switchPumpInstaller) throw new Error('切号补丁管理未装配')
+    return options.switchPumpInstaller.status()
+  })
+  ipcMain.handle(IPC.cursorSwitchPumpEnsure, async (event) => {
+    assertTrustedSender(event, getWindow)
+    if (!options.switchPumpInstaller) throw new Error('切号补丁管理未装配')
+    // 端口/密钥无所谓固定：热切按盘上配置绑定，冷切换每次重写；用既有常量即可。
+    const install = () => options.switchPumpInstaller!.ensure({
+      port: CURSOR_RUNTIME_SWITCH_PORT,
+      key: CURSOR_RUNTIME_SWITCH_KEY
+    })
+    return options.switchMutex ? options.switchMutex.withLock('安装切号补丁', install) : install()
+  })
+  ipcMain.handle(IPC.cursorSwitchPumpRemove, async (event) => {
+    assertTrustedSender(event, getWindow)
+    if (!options.switchPumpInstaller) throw new Error('切号补丁管理未装配')
+    const remove = () => options.switchPumpInstaller!.remove()
+    return options.switchMutex ? options.switchMutex.withLock('卸载切号补丁', remove) : remove()
   })
   ipcMain.handle(IPC.cursorAccountsVerifyRuntime, (event) => {
     assertTrustedSender(event, getWindow)
@@ -232,10 +280,15 @@ export function registerCursorAccountIpc(
     ipcMain.removeHandler(IPC.cursorAccountsImportFromLocal)
     ipcMain.removeHandler(IPC.cursorAccountsImportFromBrowser)
     ipcMain.removeHandler(IPC.cursorAccountsImportFromFingerprint)
+    ipcMain.removeHandler(IPC.cursorAccountsSetFingerprintProfile)
     ipcMain.removeHandler(IPC.cursorAccountsOpenFingerprintLogin)
     ipcMain.removeHandler(IPC.cursorAccountsCleanupFingerprintEnvironment)
     ipcMain.removeHandler(IPC.cursorAccountsAcknowledgeModelDataPolicies)
     ipcMain.removeHandler(IPC.cursorAccountsRestartWith)
+    ipcMain.removeHandler(IPC.cursorAccountsSwitchLive)
+    ipcMain.removeHandler(IPC.cursorSwitchPumpStatus)
+    ipcMain.removeHandler(IPC.cursorSwitchPumpEnsure)
+    ipcMain.removeHandler(IPC.cursorSwitchPumpRemove)
     ipcMain.removeHandler(IPC.cursorAccountsVerifyRuntime)
     ipcMain.removeHandler(IPC.cursorAccountsRefreshMembership)
     ipcMain.removeHandler(IPC.cursorAccountsRefreshMemberships)

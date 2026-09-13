@@ -19,6 +19,10 @@ interface StoredCursorAccount {
   updatedAt: number
   /** 账号绑定的 Cursor 机器码身份（首次切换账号时生成，之后回放同一套）。 */
   machineIdentity?: CursorMachineIdentity
+  /** 热切（无感换号）置位：运行中 Cursor 的机器码仍是上一账号的，待冷切换归一。 */
+  pendingMachineAlign?: boolean
+  /** 账号绑定的指纹浏览器窗口 id（导入时自动记录；自动化链锚定此窗口执行）。 */
+  fingerprintProfileId?: string
 }
 
 interface CursorAccountVaultFile {
@@ -45,11 +49,13 @@ export class CursorAccountVault {
       maskedToken: `••••${account.tokenSuffix}`,
       active: account.id === vault.activeId,
       createdAt: account.createdAt,
-      updatedAt: account.updatedAt
+      updatedAt: account.updatedAt,
+      pendingMachineAlign: account.pendingMachineAlign === true,
+      ...(account.fingerprintProfileId ? { fingerprintProfileId: account.fingerprintProfileId } : {})
     }))
   }
 
-  save(input: { label: string; token: string; makeActive?: boolean }): CursorAccountMetadata[] {
+  save(input: { label: string; token: string; makeActive?: boolean; fingerprintProfileId?: string }): CursorAccountMetadata[] {
     this.assertEncryption()
     const label = input.label.trim()
     const token = input.token.trim()
@@ -57,13 +63,15 @@ export class CursorAccountVault {
     if (token.length < 8 || token.length > 8_192) throw new Error('Cursor Token 长度无效')
     const vault = this.load()
     const at = this.now()
+    const fingerprintProfileId = input.fingerprintProfileId?.trim() || undefined
     const account: StoredCursorAccount = {
       id: `cursor-account:${randomUUID()}`,
       label,
       encryptedToken: this.crypto.encrypt(token).toString('base64'),
       tokenSuffix: token.slice(-4),
       createdAt: at,
-      updatedAt: at
+      updatedAt: at,
+      ...(fingerprintProfileId ? { fingerprintProfileId } : {})
     }
     vault.accounts.push(account)
     if (input.makeActive !== false || !vault.activeId) vault.activeId = account.id
@@ -76,6 +84,34 @@ export class CursorAccountVault {
     const id = accountId.trim()
     if (!vault.accounts.some((account) => account.id === id)) throw new Error('Cursor 账号不存在')
     vault.activeId = id
+    this.store(vault)
+    return this.list()
+  }
+
+  /**
+   * 热切硬回执后的单次提交：选中新账号，并把“运行态机器码仍属旧号”只标在
+   * 当前账号上。两件事共用一次原子文件替换，避免 Cursor 已换号而 Vault 只写一半。
+   */
+  activateAfterLiveSwitch(accountId: string): CursorAccountMetadata[] {
+    const id = accountId.trim()
+    const vault = this.load()
+    if (!vault.accounts.some((account) => account.id === id)) throw new Error('Cursor 账号不存在')
+    vault.activeId = id
+    for (const account of vault.accounts) {
+      if (account.id === id) account.pendingMachineAlign = true
+      else delete account.pendingMachineAlign
+    }
+    this.store(vault)
+    return this.list()
+  }
+
+  /** 冷切已同时写入目标机器码：选中新账号并一次清掉全部运行态待对齐标记。 */
+  activateAfterColdSwitch(accountId: string): CursorAccountMetadata[] {
+    const id = accountId.trim()
+    const vault = this.load()
+    if (!vault.accounts.some((account) => account.id === id)) throw new Error('Cursor 账号不存在')
+    vault.activeId = id
+    for (const account of vault.accounts) delete account.pendingMachineAlign
     this.store(vault)
     return this.list()
   }
@@ -129,6 +165,23 @@ export class CursorAccountVault {
       : undefined
   }
 
+  /**
+   * 绑定/改绑/解绑账号的指纹浏览器窗口（undefined 解绑，回退默认窗口）。
+   * 不触碰 updatedAt：窗口绑定是本机执行提示，不是账号活动信号——
+   * 接手账号的「最近更新优先」排序（selectAccountHandoverTarget）不应被改绑搅动。
+   */
+  setFingerprintProfile(accountId: string, profileId?: string): CursorAccountMetadata[] {
+    const id = accountId.trim()
+    const vault = this.load()
+    const account = vault.accounts.find((candidate) => candidate.id === id)
+    if (!account) throw new Error('Cursor 账号不存在')
+    const next = profileId?.trim() || undefined
+    if (account.fingerprintProfileId === next) return this.list()
+    account.fingerprintProfileId = next
+    this.store(vault)
+    return this.list()
+  }
+
   /** 绑定机器码身份（首次切换时生成后调用）；账号不存在时抛错。 */
   attachMachineIdentity(accountId: string, identity: CursorMachineIdentity): void {
     if (!isCursorMachineIdentity(identity)) throw new Error('机器码身份格式无效')
@@ -161,6 +214,12 @@ export class CursorAccountVault {
           isCursorMachineIdentity(account.machineIdentity)
             ? { ...account, machineIdentity: account.machineIdentity }
             : { ...account, machineIdentity: undefined }
+        )).map((account) => (
+          account.pendingMachineAlign === true ? account : { ...account, pendingMachineAlign: undefined }
+        )).map((account) => (
+          typeof account.fingerprintProfileId === 'string' && account.fingerprintProfileId.trim()
+            ? { ...account, fingerprintProfileId: account.fingerprintProfileId.trim() }
+            : { ...account, fingerprintProfileId: undefined }
         ))
       }
     } catch {

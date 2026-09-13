@@ -12,7 +12,7 @@ export function emailFromLabel(label: string | undefined): string | undefined {
 }
 
 export interface CursorAccountSwitchDeps {
-  vault: Pick<CursorAccountVault, 'credential' | 'list' | 'select' | 'machineIdentity' | 'attachMachineIdentity'>
+  vault: Pick<CursorAccountVault, 'credential' | 'list' | 'machineIdentity' | 'attachMachineIdentity' | 'activateAfterColdSwitch'>
   switcher: Pick<CursorAccountSwitcher, 'switchAccount'>
   /** 机器码生成注入点（测试替身）。 */
   generateIdentity?: () => CursorMachineIdentity
@@ -53,6 +53,7 @@ export async function switchCursorAccountWithVault(
     email: emailFromLabel(account?.label),
     identity
   })
-  vault.select(id)
+  // Cursor 写票/写机器码全部成功后，一次提交活跃账号与对齐状态。
+  vault.activateAfterColdSwitch(id)
   return result
 }

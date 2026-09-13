@@ -11,6 +11,7 @@ import {
   type CursorDesktopTokenExchangePort
 } from './cursor-desktop-token-exchanger'
 import { cursorUserDataRoot } from './cursor-install-paths'
+import { isCursorMainProcessRunning } from './cursor-process-probe'
 import { buildCursorWindowsStartArgs, resolveCursorWindowsExecutable, runningCursorWindowsExecutable } from './cursor-windows-launch'
 
 const execFileAsync = promisify(execFile)
@@ -88,6 +89,8 @@ export class CursorAccountSwitcher {
     runtimeBridge?: CursorRuntimeAccountBridgePort
     /** 网页 Token → IDE session Token 兑换器（测试注入点）。 */
     tokenExchanger?: CursorDesktopTokenExchangePort
+    /** 冷热切换互斥锁（热切持锁期间冷切换必须拒绝，防写库竞争/进程误杀）。 */
+    switchMutex?: { withLock<T>(name: string, fn: () => Promise<T>): Promise<T> }
   } = {}) {}
 
   private get platform(): () => NodeJS.Platform {
@@ -110,14 +113,17 @@ export class CursorAccountSwitcher {
   }
 
   async switchAccount(input: CursorAccountSwitchInput): Promise<CursorAccountSwitchResult> {
-    if (this.inFlight) throw new Error('账号切换正在进行，请等待当前操作完成')
-    const operation = this.switchAccountOnce(input)
-    this.inFlight = operation
-    try {
-      return await operation
-    } finally {
-      if (this.inFlight === operation) this.inFlight = undefined
+    const body = () => {
+      if (this.inFlight) throw new Error('账号切换正在进行，请等待当前操作完成')
+      const operation = this.switchAccountOnce(input)
+      this.inFlight = operation
+      return operation.finally(() => {
+        if (this.inFlight === operation) this.inFlight = undefined
+      })
     }
+    // 热切持锁期间（等补丁回执）冷切换必须拒：此时杀进程/写库会让热切拿不到回执，
+    // 且写库结果会被运行中的 Cursor flush 覆盖。
+    return this.options.switchMutex ? this.options.switchMutex.withLock('切换并重启', body) : body()
   }
 
   private async switchAccountOnce(input: CursorAccountSwitchInput): Promise<CursorAccountSwitchResult> {
@@ -213,28 +219,15 @@ export class CursorAccountSwitcher {
     return this.platform() === 'win32' ? 'Cursor.exe' : 'Cursor'
   }
 
-  /** pgrep/tasklist 探测主进程是否存活。 */
+  /**
+   * 主进程是否存活（探针见 cursor-process-probe.ts）。探测失败意味着无法证明 Cursor 已死——
+   * 必须中止切换，绝不带着不确定的进程状态写 state.vscdb（「Cursor 运行中抢写锁冻结主进程」
+   * 卡死根因的回归防线）。
+   */
   private async cursorRunning(): Promise<boolean> {
-    if (this.platform() === 'win32') {
-      try {
-        const { stdout } = await this.exec('tasklist', ['/NH', '/FI', `IMAGENAME eq ${this.cursorProcessName()}`])
-        return stdout.includes(this.cursorProcessName())
-      } catch (error) {
-        // 部分 tasklist 版本对过滤器无匹配返回退出码 1（同 pgrep 语义 = 确定未运行）；
-        // 其他失败（超时/命令被策略禁用）意味着无法证明 Cursor 已死——必须中止切换，
-        // 绝不带不确定的进程状态写 state.vscdb（macOS 侧同款冻结防线，win 对齐）。
-        if ((error as { code?: unknown } | null)?.code === 1) return false
-        throw new Error(`无法确认 Cursor 进程状态，已中止切换：${error instanceof Error ? error.message : String(error)}`)
-      }
-    }
     try {
-      const { stdout } = await this.exec('pgrep', ['-x', this.cursorProcessName()])
-      return stdout.trim().length > 0
+      return await isCursorMainProcessRunning(this.exec, this.platform())
     } catch (error) {
-      // pgrep 退出码 1 = 确定无匹配进程。其他失败（超时/命令缺失）意味着无法证明
-      // Cursor 已死——必须中止切换，绝不带着不确定的进程状态写 state.vscdb
-      // （「Cursor 运行中抢写锁冻结主进程」卡死根因的回归防线）。
-      if ((error as { code?: unknown } | null)?.code === 1) return false
       throw new Error(`无法确认 Cursor 进程状态，已中止切换：${error instanceof Error ? error.message : String(error)}`)
     }
   }
