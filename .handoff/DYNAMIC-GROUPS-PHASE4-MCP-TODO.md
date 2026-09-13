@@ -1,0 +1,182 @@
+# 交接任务书：会话池 + 动态分组 · 阶段 4 MCP 工具面收敛
+
+> **状态（2026-09-13）：待动工；依赖阶段 1（分组状态）与阶段 2（编排边界 D1、lease 决策 D3）。** 路线图见 `DYNAMIC-GROUPS-ROADMAP.md`。
+>
+> 项目：拾光 / SG Team（`shiguang-team`） · 工作区：仓库根目录（macOS / Windows 均可）
+>
+> 来源：CH-2 独立席位 2026-09-13 的度量（构建产物 `listTools` 实测 + 运行库 24 天使用数据 + MCP SDK v2 源码核对）。业务源码零变更。
+>
+> 需要用户拍板的一项决策见第 1 节；4A–4D 不依赖它，可先做。
+
+***
+
+## 0. 接手人先读
+
+### 0.1 一句话
+
+让 Cursor 每一轮只看到当前席位**用得上**的工具，并把协议约束从描述文字移进 schema 与服务端；
+删掉已证明无用或有害的动作与参数；团队消息不再经 outbox 信封二次投递。
+
+### 0.2 度量基线（2026-09-13，`out/mcp/index.mjs` 只读 `listTools`）
+
+| 项 | 现值 |
+|---|---|
+| 工具数 / 动作路径数 / 参数槽 | 9 / 34 / ≈73 |
+| 工具定义体积（Cursor 每轮吃进去） | 11.1K 字符 ≈ 3950 tokens |
+| 服务器 instructions | 1443 字符 ≈ 813 tokens |
+| 每席位每轮固定预付 | ≈ 4750 tokens |
+| 独立席位为用不到的 7 个团队工具付出 | ≈ 3300 tokens / 轮（84%） |
+| `team_check_in` 简报 | lead ≈ 1238 / builder ≈ 994 / reviewer ≈ 959 tokens |
+| keepalive 单行 | ≈ 46 tokens；空闲 8h ≈ 480 次 ≈ 22k tokens + 480 个工具调用块 |
+| 24 天使用 | 任务 29 个 0 完成；验收 0 次结论；`ping/pong/liveness` 4 行；outbox 757 条中 223 条（29%）是内部通知信封 |
+
+### 0.3 目标（完成定义的量化部分）
+
+| 项 | 目标 |
+|---|---|
+| 独立席位（工作区无分组）每轮预付 | ≤ 800 tokens（2 工具 + 精简 instructions） |
+| 团队席位每轮预付 | ≤ 2000 tokens |
+| 动作路径 | ≤ 24（4B/4C/4D 后）；若拍板 D5=合并形态则 ≤ 18 |
+| 一次「分派任务给成员」的工具调用 | 从 8–9 次降到 ≤ 3 次（plan → 成员醒来即见任务 → claim） |
+| 内部通知信封 | 0 条（团队消息随 `check_messages` 内联） |
+
+### 0.4 实施纪律
+
+1. 每一项改动先改 schema / 服务端约束，再删文字；不允许「描述里再加一句」式修补。
+2. 工具面变更需要 Cursor 重载 MCP：所有在跑长轮询会断一次（协议已有「瞬断续接」）；**旧会话拿到的 `nextAction` / 后缀文本指向旧动作名**——选一个所有会话结束的窗口切换，或保留旧名一版 no-op 别名并在 ARCHITECTURE 记录（与「不提供别名」既有决策的例外）。
+3. `verify-built-mcp.ts`（`EXPECTED_TOOLS` 断言）、`channel-mcp-server.integration.test.ts`、`channel-protocol-policy.test.ts` 与 `docs/TASK-MCP.md` 同步更新，缺一不合入。
+4. 度量脚本（`listTools` 体积统计）进 `scripts/`（非 gitignored），CI 不跑，作为验收工具。
+
+### 0.5 明确排除
+
+- Cursor 会话里工具调用块的可见性（keepalive 每分钟一条）——由 Cursor 客户端决定，非本仓库可控；只能靠拉长 keepalive（现 60s，`CHANNEL_KEEPALIVE_TIMEOUT_MS`）缓解，本阶段不改。
+- 任务板业务语义（lease 决策在阶段 2）。
+
+***
+
+## 1. 决策点
+
+| # | 决策 | 选项 | 建议 |
+|---|---|---|---|
+| D5 | 工具面形态 | (a) 保留 9 个名字，做 4A–4D（最小改动，行为几乎不变）；(b) 合并为 5 个：`check_messages / record_reply / task / team / check_in`（`task` = tasks+task+review，`team` = message+memory+run 的低频动作） | 先做 (a)；(b) 待阶段 2 编排边界稳定、任务板是否保留在工具面（阶段 2 D1/D3）有结论后再评估。(b) 的收益主要在路径数（34→18），风险在所有简报 / 后缀 / 文档的名字全换 |
+
+***
+
+## 2. 模块 4A · 工具可见性按工作区分组状态
+
+### 2.1 约束（先说清，避免误设计）
+
+- 一个 MCP 进程 = 一个 Cursor 窗口 = 该窗口内**全部**通道；`tools/list` 不带通道信息，因此**做不到按通道**过滤工具。可做到的是**按工作区**：无活动分组 → 只暴露通信工具；有活动分组 → 暴露团队工具。
+- MCP SDK v2（`@modelcontextprotocol/server` 2.0）已核对：`RegisteredTool.enable() / disable() / remove() / update()` 存在，且 `update` 自动发送 `notifications/tools/list_changed`（`mcp-*.mjs` 行 1719–1760、1814）。**Cursor 是否响应 `list_changed` 需实机验证**（第 7 节第 1 步）；若不响应，退化为「重载 MCP 才刷新」，此时改为在 instructions 里声明「团队工具仅在入组后有效」，并保持 4B–4D 的收益。
+
+### 2.2 实现
+
+- `unified-channel-server.ts`：`registerTeamTools` 返回 `RegisteredTool[]`；新增 `setTeamToolsEnabled(enabled)`。
+- `index.ts`：轮询（与 `refreshIdentity` 同频，或独立 2s 定时器）读取 `team_groups WHERE run_id = 池 run AND status='active'` 的计数 → 变化时调用 `enable/disable`。首次 `listTools` 前按当前计数初始化。
+- `check_messages` 的 membership 通知已含「先 `team_check_in`」；若 Cursor 不响应 `list_changed`，通知文案补一句「若当前工具列表里没有 team_*，请重载 SG Team MCP」——仅作退化提示。
+
+### 2.3 测试
+
+- 集成：无组 → `listTools` 只有 2 个；SQL 建组 → 收到 `list_changed` → 9 个；解散 → 2 个。
+- `verify-built-mcp.ts` 增加两段：建组前 / 后的工具面断言。
+
+***
+
+## 3. 模块 4B · schema 判别联合 + 删死参数
+
+### 3.1 判别联合
+
+`team_task / team_review / team_message / team_memory / team_run` 的 `inputSchema` 改为 `z.discriminatedUnion('action', [...])`（`team_tasks` 用 `view`），每个分支只含该动作的字段并标必填；`required()` 运行时兜底保留（旧客户端）。description 只保留一句「做什么」；「X 必填 Y」「仅主控」类文字全部删除（仅主控由服务端错误码表达，现状已如此）。
+
+预期：`team_task` 定义 2142 → ≈1500 字符；`team_memory` 1996 → ≈1400；总体 −20%～−25%。
+
+### 3.2 删死参数（阶段 0 后审查发现）
+
+| 参数 | 证据 | 动作 |
+|---|---|---|
+| `check_messages.reply` | 与 `record_reply` 同效（`channel-message-service.ts` 「顺带提交回复」路径），协议只该陈述一次 | 删；服务端 `inlineReply` 分支删 |
+| `record_reply.groupId / taskId / files` | relay / 渲染层零引用；`pendingGroupChat` 恒 `false`；`buildReplySyncRequiredMessage(groupChat)` 群聊分支不可达 | 删参数与 `pendingGroupChat / pendingGroupId` 相关代码路径（列保留，旧构建共库） |
+| `record_reply.title` | 渲染层 1 处引用 | 保留 |
+| `team_check_in.note` | 只落 `last_check_in_note` | 保留（阶段 0 用它做了观测锚点） |
+
+### 3.3 测试
+
+- `channel-protocol-policy.test.ts`：schema JSON 体积上限断言（防回退）；每个 action 分支缺字段 → zod 报错而非 `invalid_arguments`。
+- `channel-message-service.test.ts`：`reply` 路径删除后 need_reply_sync 守门行为不变。
+
+***
+
+## 4. 模块 4C · 团队消息随 `check_messages` 内联，删除信封转投
+
+### 4.1 现状路径
+
+`team_messages` 新行 → `TeamMessageDispatcher`（750ms）把 6 行信封写进 `channel_outbox`（silent）→ Agent `check_messages` 收信封 → `team_message read` → 正文 → （`respond`）。29% 的 Agent 唤醒是信封。
+
+### 4.2 改动
+
+- `ChannelMessageService.checkMessages`：取队首用户消息（或 keepalive）时，**同时**查询该通道席位的未读团队消息（`team_message_receipts.read_at IS NULL`，按 `group_id` 过滤，最多 N=10 条），把正文内联进返回体的结构化区块 `team: { messages: [{ id, kind, sender, subject, content, createdAt }] }`，并**原子标记 read**（`markRead` 与 `markOutboundDelivered` 同事务；现状 `read` 是 Agent 显式动作，改为「投递即已读」，`acknowledged / responded` 语义不变）。
+- 唤醒：`TeamMessageDispatcher` 保留为「唤醒信号」——不再写信封正文，只在 `channel_presence` 上写 `wake_requested_at`（additive 列）或向 outbox 写一条**空文本** `kind='wake'` 行（长轮询循环看到即返回）；两者选其一，推荐 presence 列（不产生出站行）。
+- `team_message action:'read'` 保留一版为「按 id 重读全文」，不再是必经步骤；`inbox` 保留（列摘要）。
+- 内部协作通知后缀 `buildSilentDeliverySuffix` 删除；membership 后缀保留（阶段 1）。
+- 无用户消息、仅有团队消息时的返回体：`type='delivered'`、`message.silent=true`、`user` 为空、`team.messages` 非空，后缀用一句：「以上为团队消息；处理后 directive/question 用 `team_message respond` 回应；不要 `record_reply`；然后 `check_messages`」。
+
+### 4.3 影响
+
+- `TeamMessage.receipt.notificationState` 的 `sending / notified / uncertain / failed` 退化为 `queued → notified(读取即)`；`teamMessageReceiptStage` 保持兼容。
+- 桌面「协作」面板的投递状态列改为「已送达（随轮询）」。
+
+### 4.4 测试
+
+- 集成：lead `plan` → dispatcher 建 directive → 成员 `check_messages` 返回体含该 directive 正文且 receipt 已 read → 成员 `respond` → lead `check_messages` 返回体含 response。全程 outbox 无信封行。
+- 并发：用户消息与团队消息同时到达 → 一次返回同时含 `user` 与 `team.messages`；回复守门只对 `user` 开。
+- 唤醒延迟：团队消息写入 → 成员长轮询在 ≤1s 内返回。
+
+***
+
+## 5. 模块 4D · 删探活动作与 renew
+
+- 删 `team_run action: ping / pong / liveness`；`channel_liveness` 表与 `recordLiveness / checkLiveness` 代码删除（24 天 4 行）；`claim_lead` 只看 `channel_presence`（`hasInFlightExecution / isExplicitlyStoppedPhase`）。
+- 删 `team_run action: start`（阶段 2B 已 no-op）；`transfer_lead / claim_lead / clear_acting_lead` 保留并作用于 `team_groups`。
+- `team_task action: renew` / `team_review action: renew`：按阶段 2 D3 结论——D3=a 则删除（服务端自动续）；D3=b 则保留。
+- 简报与 instructions 中所有涉及 ping / renew 的句子同步删除（`rg -n "ping|renew" src/domain src/mcp` 归零）。
+
+测试：`team_run` 枚举只剩三项；`claim_lead` 在 lead `processing` 相位下仍返回 `lead_busy`；`rg` 守护测试。
+
+***
+
+## 6. 模块 4E（依赖 D5=b）· 合并为 5 工具
+
+只在 D5 选 (b) 时实施；此处只记录形态，供评估：
+
+```text
+check_messages({channel_id, session?, tick?})            → 返回 { user?, team: {...}, tasks?: { assigned, reviews }, briefing?(首次入组后), tick }
+record_reply({channel_id, session?, content, title?, to?: 'user' | messageId})   → 合并 respond
+task({channel_id, op: view|claim|start|progress|submit|fail|plan|review_claim|review_submit, ...})
+team({channel_id, op: send|broadcast|collect|memory_search|memory_propose|memory_review|transfer_lead|claim_lead|clear_acting_lead, ...})
+team_check_in（可并入首次 check_messages；保留为显式刷新入口）
+```
+
+迁移代价：全部简报 / 后缀 / 文档 / 测试改名；旧会话 `nextAction` 文本失效窗口；`verify-built-mcp` 重写。
+
+***
+
+## 7. 实机验收
+
+1. **`list_changed` 验证**（决定 4A 形态）：桌面建组 → 观察 Cursor MCP 面板工具数是否从 2 变 9，不重载；解散 → 回 2。记录结论到第 9 节。
+2. 独立席位：`listTools` 只见 2 个；一次用户消息往返；keepalive 正常。
+3. 团队席位：lead `plan` 一个任务 → 成员下一次 `check_messages` 返回体含 directive 正文与任务摘要 → `claim → progress → submit` → 验收席 `check_messages` 含验收调度 → `review submit accept`；全程 outbox 无信封行；工具调用计数 ≤ 3 次 / 跳。
+4. 度量脚本：团队席预付 ≤ 2000、独立席 ≤ 800 tokens。
+
+***
+
+## 8. 落点
+
+`src/mcp/team-tools.ts`（schema、枚举、instructions）、`src/mcp/channel-communication-tools.ts`（删 `reply` 与死参数、返回体结构）、`src/mcp/unified-channel-server.ts` / `index.ts`（enable/disable 轮询）、`src/application/channel-message-service.ts`（内联团队消息 + 原子 read）、`src/application/team-message-dispatcher.ts`（唤醒信号）、`src/infrastructure/channel-messages/sqlite-channel-message-repository.ts`（`wake_requested_at`）、`src/infrastructure/team-collaboration/sqlite-team-collaboration-repository.ts`（`listUnreadForSlot` + `markReadBatch`）、`src/domain/channel-delivery-policy.ts`（删内部通知后缀、加团队消息后缀）、`src/domain/team-control.ts`（简报删句）、`scripts/verify-built-mcp.ts`、`scripts/verify-channel-mcp.ts`、`scripts/measure-mcp-surface.mjs`（新）、`docs/TASK-MCP.md`、`docs/ARCHITECTURE.md`。
+
+***
+
+## 9. 进度日志（每完成一步追加，最新在下）
+
+| 时间 | 模块 | 完成内容 | 验证 |
+|---|---|---|---|
+| 09-13 | 文档 | 建立本任务书；度量基线入档；SDK v2 `enable/disable/list_changed` 能力已核对源码；Cursor 是否响应 `list_changed` 待实机 | 只读，无代码改动 |
