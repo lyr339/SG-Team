@@ -48,7 +48,22 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm run pack:win
+      # 失败时把日志尾部写成 annotation：公开仓库的 Actions 日志要登录才能看，annotation 匿名可读（API / 页面）。
+      - name: pack:win
+        shell: pwsh
+        run: |
+          npm run pack:win 2>&1 | Tee-Object -FilePath pack-win.log
+          if ($LASTEXITCODE -ne 0) {
+            $tail = (Get-Content pack-win.log -Tail 30 | ForEach-Object { $_ -replace '%', '%25' }) -join '%0A'
+            Write-Output "::error title=pack:win failed::$tail"
+            exit 1
+          }
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pack-win-log
+          path: pack-win.log
+          retention-days: 7
       - uses: actions/upload-artifact@v4
         with:
           name: shiguang-windows-x64
