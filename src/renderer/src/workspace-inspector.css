@@ -66,11 +66,11 @@
   padding: 0 5px; color: var(--text); background: color-mix(in srgb, var(--canvas-solid) 70%, transparent);
   border-radius: var(--border-radius-full); font: 650 var(--fs-10)/1 var(--font-numeric);
 }
-/* 实时状态点挂在图标右上角：收起与展开两种形态里位置一致；描边用底板色把它从图标笔画里托出来。 */
+/* 实时状态点挂在图标右上角：收起与展开两种形态里位置一致；描边用底板色把它从图标笔画里托出来。
+   静态呈现：常亮点本身已表达“实时”，闪烁只添噪（用户反馈 2026-09-13）。 */
 .inspector-tab__dot {
   position: absolute; top: -3px; right: -3px; width: 6px; height: 6px; border-radius: 50%;
   background: var(--color-text-info); box-shadow: 0 0 0 1.5px var(--surface);
-  animation: inspector-pulse 1.6s ease-in-out infinite;
 }
 .inspector-tab.is-active .inspector-tab__dot { box-shadow: 0 0 0 1.5px var(--surface-solid); }
 .inspector-tab.is-live .inspector-tab__badge { color: var(--color-text-info); background: var(--color-background-info); }
@@ -483,7 +483,7 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .wor
 
 @media (prefers-reduced-motion: reduce) {
   .inspector-icon-button.is-spinning svg, .inspector-plan__list li.is-running > i, .inspector-state__spinner { animation: none; }
-  .inspector-tab__dot, .inspector-review__live i, .activity-turn__pulse, .activity-row__meta em.is-running i { animation: none; }
+  .inspector-review__live i, .activity-turn__pulse, .activity-row__meta em.is-running i { animation: none; }
   .inspector-panel, .artifact-card, .inspector-toast, .inspector-confirm, .inspector-skeleton > i { animation: none; }
   .inspector-tab, .inspector-tab__reveal, .inspector-tab__text, .inspector-collapsible, .review-file__head > svg, .activity-turn__meta svg, .activity-row__meta svg, .artifact-card__actions { transition: none; }
   .is-revealed { animation: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-text-info) 45%, transparent); }
