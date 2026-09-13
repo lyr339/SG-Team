@@ -71,7 +71,8 @@ describe('SessionWorkspace', () => {
       }
     })
     expect(html).toContain('live-agent-response')
-    expect(html).toContain('Cursor 实时生成中')
+    // 逐字生成的正文本身即"实时"表达，不再额外挂「Cursor 实时生成中」状态字（2026-09-13）。
+    expect(html).not.toContain('Cursor 实时生成中')
     expect(html).not.toContain('live-process-idle')
   })
 
@@ -174,13 +175,14 @@ describe('SessionWorkspace', () => {
     expect(html).not.toContain('sg-channel:5')
   })
 
-  it('Agent 运行中且无过程块时显示「正在处理」占位气泡', () => {
+  it('Agent 运行中且无过程块时显示处理占位气泡（无「正在处理」徽章）', () => {
     const html = renderWorkspace({
       session: { status: 'running', waiting: false, connectionPhase: 'processing' },
       entries: [entry({ id: 'u1', role: 'user', source: 'desktop', text: '继续处理' })]
     })
-    expect(html).toContain('正在处理')
     expect(html).toContain('live-process-idle')
+    expect(html).toContain('typing-indicator')
+    expect(html).not.toContain('正在处理')
     expect(html).not.toContain('实时过程中 ·')
   })
 
@@ -386,7 +388,7 @@ describe('SessionWorkspace', () => {
     }
     const idle = renderWorkspace(base)
     expect(idle).toContain('live-process-idle')
-    expect(idle).toContain('正在处理')
+    expect(idle).toContain('typing-indicator')
     // 占位与首帧过程共用同一 Agent 行（同一 chat-row 结构与宽列），不是独立的占位行。
     expect(idle.match(/chat-row chat-row--agent live-process-row chat-row--process/g)).toHaveLength(1)
     const streaming = renderWorkspace({
@@ -413,13 +415,13 @@ describe('SessionWorkspace', () => {
       }
     })
     expect(html.indexOf('旧过程')).toBeLessThan(html.indexOf('新消息'))
-    expect(html.indexOf('新消息')).toBeLessThan(html.indexOf('正在处理'))
+    expect(html.indexOf('新消息')).toBeLessThan(html.indexOf('live-process-idle'))
   })
 
 
   it('Agent 待命时不显示过程占位', () => {
     const html = renderWorkspace()
-    expect(html).not.toContain('正在处理')
+    expect(html).not.toContain('live-process-idle')
     expect(html).not.toContain('实时过程中 ·')
   })
 
@@ -622,7 +624,8 @@ describe('SessionWorkspace', () => {
     })
     expect(html).toContain('正在生成…')
     expect(html).toContain('typing-indicator')
-    expect(html).toContain('实时生成中')
+    // 尾注不再显示「实时生成中」状态字：打字指示器本身即进行中的表达（2026-09-13）。
+    expect(html).not.toContain('实时生成中')
   })
 
   it('空会话显示「本轮尚无消息」空态', () => {

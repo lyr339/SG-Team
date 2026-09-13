@@ -469,9 +469,9 @@ export function ProcessTurnCard({
         return (
           <article key={step.id} className={`cursor-native-thought is-${step.status} ${stepOpen ? 'is-open' : ''} ${nested ? 'is-nested' : ''}`} data-step-id={step.id}>
             <button className="cursor-native-thought__head" onClick={() => toggleExpanded(step.id)} aria-expanded={stepOpen}>
-              {/* 与 Cursor 自身一致：进行中是「Thinking」+ 脉冲点，结束后变成「Thought for Ns」。 */}
+              {/* 与 Cursor 自身一致：进行中是「Thinking」文字流光，结束后变成「Thought for Ns」。 */}
               {step.status === 'running'
-                ? <><strong>Thinking</strong><i className="cursor-native-thought__pulse" aria-hidden="true" /></>
+                ? <strong>Thinking</strong>
                 : <><strong>Thought</strong>{duration ? <time>for {duration}</time> : null}</>}
               {chevron(stepOpen)}
             </button>
@@ -543,11 +543,7 @@ export function ProcessTurnCard({
                 {step.hint ? <span className="cursor-native-tool__hint">{step.hint}</span> : null}
               </span>
               <span className="cursor-native-tool__meta">
-                {stateText ? (
-                  <span className="cursor-native-tool__state">
-                    {step.status === 'running' ? <><i />{stateText}</> : stateText}
-                  </span>
-                ) : null}
+                {stateText ? <span className="cursor-native-tool__state">{stateText}</span> : null}
                 {expandable ? chevron(stepOpen) : null}
               </span>
             </button>
@@ -571,11 +567,7 @@ export function ProcessTurnCard({
               <StepHint step={step} />
             </span>
             <span className="cursor-native-tool__meta">
-              {stateText ? (
-                <span className="cursor-native-tool__state">
-                  {step.status === 'running' ? <><i />{stateText}</> : stateText}
-                </span>
-              ) : null}
+              {stateText ? <span className="cursor-native-tool__state">{stateText}</span> : null}
               {hasDetails ? chevron(stepOpen) : null}
             </span>
           </button>
@@ -612,7 +604,6 @@ export function ProcessTurnCard({
               ) : null}
             </span>
             <span className="cursor-native-group__meta">
-              {group.status === 'running' ? <i className="cursor-native-group__pulse" aria-hidden="true" /> : null}
               <span className="cursor-native-group__count">{group.steps.length} 步</span>
               {chevron(groupOpen)}
             </span>
@@ -696,9 +687,7 @@ export function ProcessTurnCard({
                       {step.target ? <code title={step.target}>{step.target}</code> : null}
                       {step.hint ? <span className="process-turn-step__hint">{step.hint}</span> : null}
                       {stepDuration(step) ? <time>{stepDuration(step)}</time> : null}
-                      <span className="process-turn-step__status">
-                        {step.status === 'running' ? <><i />{step.stateText}</> : step.stateText}
-                      </span>
+                      <span className="process-turn-step__status">{step.stateText}</span>
                       {hasDetails ? <svg viewBox="0 0 16 16" aria-hidden="true"><path d={stepOpen ? 'm4 10 4-4 4 4' : 'm4 6 4 4 4-4'} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.4"/></svg> : null}
                     </button>
                     {pendingQuestion && step.question ? <QuestionCard question={step.question} actions={questionActions} /> : null}

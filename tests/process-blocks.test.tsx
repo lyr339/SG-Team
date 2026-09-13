@@ -63,9 +63,10 @@ describe('ProcessBlocks', () => {
     expect(html).toContain('1 search')
     expect(html).toContain('cursor-native-group__preview')
     expect(html).toContain('已搜索')
-    // 进行中的思考：标题即状态「Thinking」+ 脉冲点，不再并列 “Thought · thinking”
+    // 进行中的思考：标题即状态「Thinking」，流光由 CSS 按 is-running 应用（原脉冲点已移除，2026-09-13）
     expect(html).toContain('<strong>Thinking</strong>')
-    expect(html).toContain('cursor-native-thought__pulse')
+    expect(html).toContain('cursor-native-thought is-running')
+    expect(html).not.toContain('cursor-native-thought__pulse')
     expect(html).not.toContain('<strong>Thought</strong>')
     expect(html).toContain('aria-expanded="false"')
   })
@@ -322,7 +323,8 @@ describe('ProcessBlocks', () => {
     const running = renderToStaticMarkup(<ProcessBlocks blocks={[
       { kind: 'tool', id: 'r', toolName: 'read_file_v2', toolKind: 'read', summary: '/a.ts', status: 'running' }
     ]} />)
-    expect(running).toContain('<span class="cursor-native-tool__state"><i></i>进行中</span>')
+    // 运行态不再带脉冲点：状态字为静态文字，行标题的流光承担"进行中"表达（2026-09-13）。
+    expect(running).toContain('<span class="cursor-native-tool__state">进行中</span>')
     const failed = renderToStaticMarkup(<ProcessBlocks blocks={[
       { kind: 'tool', id: 'f', toolName: 'read_file_v2', toolKind: 'read', summary: '/a.ts', status: 'failed', error: 'ENOENT' }
     ]} />)

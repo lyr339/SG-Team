@@ -393,7 +393,6 @@ export function SessionWorkspace({
               <span className={`chat-state ${entry.status === 'failed' ? 'is-failed' : ''}`}>
                 {entry.status === 'pending' && '发送中…'}
                 {entry.status === 'complete' && `已发送 ${formatClock(entry.timestamp)}`}
-                {entry.status === 'streaming' && '实时生成中'}
                 {entry.status === 'failed' && `发送失败：${entry.error || '未知原因'}`}
               </span>
             </div>
@@ -498,9 +497,8 @@ export function SessionWorkspace({
           {!grouped && (
             <div className="chat-name">
               <strong>Agent</strong>
-              {idle
-                ? <span className="live-process-badge"><i className="process-pulse" />正在处理</span>
-                : <time>{formatClock(at)}</time>}
+              {/* 过程卡本身就是"进行中"的表达，无需再挂"正在处理"徽章（用户反馈 2026-09-13）。 */}
+              <time>{formatClock(at)}</time>
             </div>
           )}
           <div className={`chat-bubble${idle ? ' live-process-idle' : ''}`}>
@@ -583,12 +581,9 @@ export function SessionWorkspace({
                   </>
                 ) : null}
                 <span className={`chat-state ${reply.status === 'failed' ? 'is-failed' : ''}`}>
-                  {reply.status === 'streaming' && '实时生成中'}
                   {reply.status === 'failed' && `发送失败：${reply.error || '未知原因'}`}
                 </span>
               </>
-            ) : response?.status === 'streaming' ? (
-              <span className="chat-state">Cursor 实时生成中</span>
             ) : null}
           </div>
         </div>

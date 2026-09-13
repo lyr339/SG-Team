@@ -1642,8 +1642,29 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 /* Cursor 原生实时过程流：进行中回合与落库回复共用同一气泡外观——封口那一帧
    不再从透明块切换成带边框气泡（padding/边框/阴影同时出现即高度跳变）。 */
 .cursor-work-row .chat-bubble { padding: 0; background: transparent; border: 0; box-shadow: none; }
-.live-process-badge { display: inline-flex; align-items: center; gap: 5px; color: var(--accent); font-size: var(--fs-10); font-weight: 600; }
-.live-process-badge .process-pulse { display: inline-block; width: 6px; height: 6px; margin-right: 0; }
+/* 进行中的行标题：Cursor 原生同款文字流光（机制读自 3.6.31 workbench.desktop.main.css 的
+   task-title-shine）——基底为各自文字色的 60% 透明，高光带 2s 线性循环扫过；
+   替代原先的脉冲点（用户反馈闪烁烦扰，2026-09-13）。基色沿用既有规则（Thinking 紫 / tool-hue）。 */
+@keyframes process-shine { 0% { background-position: 200% 0; } to { background-position: -200% 0; } }
+.cursor-native-thought.is-running .cursor-native-thought__head strong,
+.cursor-native-tool.is-running .cursor-native-tool__label > strong,
+.cursor-native-tool.is-running .cursor-native-tool__label > em,
+.cursor-native-tool.is-running .cursor-native-tool__label > code,
+.cursor-native-group.is-running .cursor-native-group__label > strong,
+.cursor-native-group.is-running .cursor-native-group__details,
+.process-turn-step.is-running .process-turn-step__head > strong {
+  background-image: linear-gradient(90deg,
+    color-mix(in srgb, currentColor 60%, transparent) 0,
+    color-mix(in srgb, currentColor 60%, transparent) 25%,
+    currentColor 60%,
+    color-mix(in srgb, currentColor 60%, transparent) 75%,
+    color-mix(in srgb, currentColor 60%, transparent) 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: process-shine 2s linear infinite;
+}
 /* 续作行（回复封口后 Agent 继续工作）：紧贴回复之下；说明行只交代这一段是什么，直播态由过程卡自身标记表达 */
 .chat-row--continuation { margin-top: -2px; }
 .chat-continuation-caption { display: block; margin: 0 2px 6px; color: var(--text-soft); font-size: var(--fs-11); font-weight: 600; }
@@ -1658,10 +1679,6 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 /* Thinking 用紫色点缀（Claude 家族视觉语言），与工具色板中的 search 紫同族不同形 */
 .cursor-native-thought__head strong { color: light-dark(#7449cc, #b795ff); font-size: var(--fs-12); font-weight: 600; letter-spacing: -.01em; }
 .cursor-native-thought__head time { color: var(--muted); font: 500 var(--fs-11)/1 var(--mono); }
-.cursor-native-thought__head span { display: inline-flex; align-items: center; gap: 5px; color: var(--color-text-info); font: 500 var(--fs-10)/1 var(--mono); }
-.cursor-native-thought__head span i { width: 5px; height: 5px; background: currentColor; border-radius: 50%; animation: process-turn-pulse 1.2s ease-in-out infinite; }
-/* 进行中：标题即状态（Thinking），只留一颗脉冲点，不再并列 “thinking” 字样。 */
-.cursor-native-thought__pulse { width: 6px; height: 6px; align-self: center; background: light-dark(#7449cc, #b795ff); border-radius: 50%; animation: process-turn-pulse 1.2s ease-in-out infinite; }
 .cursor-native-thought__head > svg { width: 13px; height: 13px; align-self: center; margin-left: 2px; }
 
 /* ============================================================
@@ -1677,12 +1694,12 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 .process-turn__header:hover { background: var(--color-background-secondary); }
 .process-turn__header strong { font-size: var(--fs-12); font-weight: 600; letter-spacing: 0; }
 .process-turn__live-label { display: inline-flex; align-items: center; gap: 5px; padding: 3px 7px; color: var(--color-text-info); background: var(--color-background-info); border: 1px solid color-mix(in srgb, var(--color-border-info) 58%, transparent); border-radius: var(--border-radius-full); font-size: 9px; font-style: normal; font-weight: 600; }
-.process-turn__live-label i { width: 5px; height: 5px; background: currentColor; border-radius: 50%; animation: process-turn-pulse 1.2s ease-in-out infinite; }
+.process-turn__live-label i { width: 5px; height: 5px; background: currentColor; border-radius: 50%; }
 .process-turn__header > span:nth-of-type(2) { min-width: 0; overflow: hidden; color: var(--muted); font-size: var(--fs-11); text-overflow: ellipsis; white-space: nowrap; }
 .process-turn__header > svg { width: 16px; height: 16px; color: var(--muted); }
 .process-turn__state { width: 20px; height: 20px; display: grid; place-items: center; color: var(--accent); font-size: var(--fs-11); font-weight: 600; }
 .process-turn.is-failed .process-turn__state { color: var(--red); }
-.process-turn__state i { width: 7px; height: 7px; background: var(--accent); border-radius: 50%; animation: process-turn-pulse 1.45s ease-in-out infinite; }
+.process-turn__state i { width: 7px; height: 7px; background: var(--accent); border-radius: 50%; }
 .process-turn__content { padding: 0 14px; }
 .process-turn__expand-all { display: inline-flex; align-items: center; gap: 5px; margin: 9px 0 5px; padding: 3px 2px; color: var(--muted); background: transparent; border: 0; font-size: var(--fs-10); }
 .process-turn__expand-all:hover { color: var(--accent); }
@@ -1710,7 +1727,6 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 .process-turn-step__status { min-width: 44px; display: inline-flex; justify-content: flex-end; align-items: center; gap: 5px; color: var(--color-text-tertiary); font-size: var(--fs-10); }
 .process-turn-step.is-running .process-turn-step__status { color: var(--tool-hue, var(--accent)); }
 .process-turn-step.is-failed .process-turn-step__status { color: var(--red); }
-.process-turn-step__status i { width: 5px; height: 5px; background: currentColor; border-radius: 50%; animation: process-turn-pulse 1.3s ease-in-out infinite; }
 .process-turn-step__head > svg { width: 15px; height: 15px; color: var(--muted); }
 .process-turn-step__details { display: grid; gap: 8px; padding: 7px 8px 5px 0; }
 .process-turn-step__thinking { color: var(--color-text-tertiary); font-size: var(--fs-11); line-height: 1.65; }
@@ -1760,19 +1776,12 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 .process-turn__collapse { width: calc(100% + 28px); min-height: 34px; margin: 6px -14px 0; display: flex; justify-content: center; align-items: center; gap: 5px; color: var(--muted); background: var(--surface-warm-layer); border: 0; border-top: var(--border-width-regular) solid var(--color-border-tertiary); font-size: var(--fs-10); }
 .process-turn__collapse:hover { color: var(--accent); }
 .process-turn__collapse svg { width: 14px; height: 14px; }
-@keyframes process-turn-pulse { 0%, 100% { opacity: .38; transform: scale(.88); } 50% { opacity: 1; transform: scale(1.08); } }
-
 /* Cursor-native process：会话内直接按原生顺序铺开 Thought / tool，不再套总览大卡。 */
 .cursor-native-process { width: 100%; max-width: 100%; min-width: 0; margin: 2px 0 14px; overflow: visible; background: transparent; border: 0; border-radius: 0; box-shadow: none; }
 .cursor-native-process__live { width: fit-content; display: inline-flex; align-items: center; gap: 6px; margin: 0 0 10px 2px; color: var(--color-text-info); font-size: var(--fs-10); font-weight: 600; }
-.cursor-native-process__live i { width: 6px; height: 6px; background: currentColor; border-radius: 50%; animation: process-turn-pulse 1.2s ease-in-out infinite; }
+.cursor-native-process__live i { width: 6px; height: 6px; background: currentColor; border-radius: 50%; }
 .cursor-native-process__flow { width: 100%; max-width: 100%; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
 .cursor-native-thought { display: grid; gap: 7px; min-width: 0; padding: 0 2px; }
-.cursor-native-thought header { display: flex; align-items: baseline; gap: 5px; color: var(--color-text-tertiary); }
-.cursor-native-thought header strong { color: var(--text); font-size: var(--fs-12); font-weight: 600; letter-spacing: -.01em; }
-.cursor-native-thought header time { color: var(--muted); font: 500 var(--fs-11)/1 var(--mono); }
-.cursor-native-thought header span { display: inline-flex; align-items: center; gap: 5px; color: var(--color-text-info); font: 500 var(--fs-10)/1 var(--mono); }
-.cursor-native-thought header span i { width: 5px; height: 5px; background: currentColor; border-radius: 50%; animation: process-turn-pulse 1.2s ease-in-out infinite; }
 .cursor-native-thought__body { max-width: none; color: var(--text-soft); font-size: var(--fs-12); line-height: 1.68; }
 .cursor-native-thought__body > :first-child { margin-top: 0; }
 .cursor-native-thought__body > :last-child { margin-bottom: 0; }
@@ -1826,7 +1835,6 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 .cursor-native-tool__state { min-width: 42px; display: inline-flex; justify-content: flex-end; align-items: center; gap: 5px; color: var(--muted); font-size: var(--fs-10); }
 .cursor-native-tool.is-running .cursor-native-tool__state { color: var(--tool-hue, var(--color-text-info)); }
 .cursor-native-tool.is-failed .cursor-native-tool__state { color: var(--red); }
-.cursor-native-tool__state i { width: 5px; height: 5px; background: currentColor; border-radius: 50%; animation: process-turn-pulse 1.2s ease-in-out infinite; }
 .cursor-native-tool__meta > svg { width: 15px; height: 15px; color: var(--muted); }
 .cursor-native-tool > .process-turn-step__details { gap: 10px; padding: 10px 12px 12px; background: var(--color-background-secondary); border-top: var(--border-width-regular) solid var(--color-border-tertiary); }
 .cursor-native-tool > .process-turn-step__details dl { grid-template-columns: 44px minmax(0, 1fr); }
@@ -1853,13 +1861,8 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 .cursor-native-shell__output.is-expanded { max-height: 200px; overflow: auto; }
 .cursor-native-shell__error { margin: 0; padding: 6px 10px; color: var(--red); background: var(--surface-pure); border: var(--border-width-regular) solid var(--red-border); border-radius: 8px; font: 500 var(--fs-11)/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 200px; overflow: auto; }
 .cursor-native-shell__waiting { display: inline-flex; gap: 4px; padding: 2px 10px; }
-.cursor-native-shell__waiting i { width: 5px; height: 5px; background: var(--tool-hue, var(--muted)); border-radius: 50%; animation: process-turn-pulse 1.2s ease-in-out infinite; }
-.cursor-native-shell__waiting i:nth-child(2) { animation-delay: .2s; }
-.cursor-native-shell__waiting i:nth-child(3) { animation-delay: .4s; }
+.cursor-native-shell__waiting i { width: 5px; height: 5px; background: var(--tool-hue, var(--muted)); border-radius: 50%; opacity: .55; }
 .cursor-native-shell.is-failed .cursor-native-tool__hint { color: var(--red); }
-@media (prefers-reduced-motion: reduce) {
-  .cursor-native-shell__waiting i, .cursor-native-group__pulse { animation: none; }
-}
 
 /* Cursor 编辑卡：语言 / 文件名 / 增删统计是唯一头部信息；代码与头部共用外壳。 */
 .cursor-native-edit { min-width: 0; overflow: hidden; color: var(--text); background: color-mix(in srgb, var(--surface-pure) 97%, transparent); border: var(--border-width-regular) solid light-dark(#d9d1ca, #3a414b); border-radius: 15px; box-shadow: var(--shadow-hairline); }
@@ -1969,7 +1972,6 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 .cursor-native-group__stats i[data-kind="deletions"] { color: light-dark(#c2453f, #f28b82); }
 .cursor-native-group__meta { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); white-space: nowrap; }
 .cursor-native-group__count { font: 500 var(--fs-10)/1 var(--mono); }
-.cursor-native-group__pulse { width: 5px; height: 5px; background: var(--tool-hue, var(--color-text-info)); border-radius: 50%; animation: process-turn-pulse 1.2s ease-in-out infinite; }
 .cursor-native-group.is-running .cursor-native-group__label > strong { color: var(--tool-hue, var(--text)); }
 .cursor-native-group.is-failed .cursor-native-group__label > strong { color: var(--red); }
 .cursor-native-group__meta > svg { width: 15px; height: 15px; }
@@ -2033,10 +2035,16 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .cursor-native-process__live i,
-  .cursor-native-thought header span i,
-  .cursor-native-tool__state i { animation: none; }
-  /* todo 的 spinner、新条目淡入与进度段流光箭头同样属于可减 motion */
+  /* 进行中标题的流光回到静态实色；todo 的 spinner、新条目淡入与进度段流光箭头同样属于可减 motion */
+  .cursor-native-thought.is-running .cursor-native-thought__head strong,
+  .cursor-native-tool.is-running .cursor-native-tool__label > strong,
+  .cursor-native-tool.is-running .cursor-native-tool__label > em,
+  .cursor-native-tool.is-running .cursor-native-tool__label > code,
+  .cursor-native-group.is-running .cursor-native-group__label > strong,
+  .cursor-native-group.is-running .cursor-native-group__details,
+  .process-turn-step.is-running .process-turn-step__head > strong {
+    animation: none; background-image: none; -webkit-text-fill-color: currentColor;
+  }
   .todo-spinner svg,
   .process-turn-step__todos li { animation: none; }
   .todo-progress i, .todo-progress i.is-in_progress::after { transition: none; animation: none; }
