@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   CursorCdpKeeper,
+  WINDOWS_CURSOR_MAIN_PROCESS_SCRIPT,
   type CdpAutoHealEvent
 } from '../src/infrastructure/cursor/cursor-cdp-keeper'
 import type { CursorCdpRestartResult } from '../src/infrastructure/cursor/cursor-cdp-restart'
@@ -259,5 +260,31 @@ describe('CursorCdpKeeper（CDP 端口 auto-heal 看门）', () => {
     await keeper.checkNow()
     expect(events.filter((event) => event.phase === 'countdown')).toHaveLength(1)
     expect(restarts).toHaveLength(1)
+  })
+
+  it('windows: the PowerShell probe picks the main Cursor.exe (window owner, else earliest start) and outputs UTF-8', async () => {
+    // Windows 上主进程与渲染/GPU/utility 子进程全叫 Cursor.exe：任取一条会随子进程重启换指纹。
+    const calls: string[][] = []
+    const keeper = new CursorCdpKeeper({
+      port: 9333,
+      isEnabled: () => true,
+      emit: () => {},
+      execFileFn: (async (_command: string, args: string[]) => {
+        calls.push(args)
+        return { stdout: '', stderr: '' }
+      }) as never,
+      fetchFn: () => Promise.reject(new Error('connect ECONNREFUSED')),
+      platform: 'win32'
+    })
+    await keeper.checkNow()
+    const [args] = calls
+    expect(args?.slice(0, 2)).toEqual(['-NoProfile', '-Command'])
+    const script = args?.[2] ?? ''
+    // 输出编码前导必须在脚本正文之前：中文用户名/安装路径不再被 OEM 代码页写成乱码。
+    expect(script.startsWith('[Console]::OutputEncoding=New-Object System.Text.UTF8Encoding($false);')).toBe(true)
+    expect(script).toContain(WINDOWS_CURSOR_MAIN_PROCESS_SCRIPT)
+    expect(WINDOWS_CURSOR_MAIN_PROCESS_SCRIPT).toContain('$_.MainWindowHandle -ne 0')
+    expect(WINDOWS_CURSOR_MAIN_PROCESS_SCRIPT).toContain('Sort-Object StartTime|Select-Object -First 1')
+    expect(WINDOWS_CURSOR_MAIN_PROCESS_SCRIPT).toContain('Select-Object -Property Id,StartTime|ConvertTo-Json -Compress')
   })
 })

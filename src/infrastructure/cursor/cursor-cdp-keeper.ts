@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { CursorCdpRestartResult } from './cursor-cdp-restart'
 import { restartCursorWithCdp } from './cursor-cdp-restart'
+import { windowsPowerShellCommandArgs } from './cursor-windows-launch'
 import type { CdpAutoHealEvent } from '../../domain/cursor-cdp'
 
 export type { CdpAutoHealEvent }
@@ -26,12 +27,20 @@ export type { CdpAutoHealEvent }
 const execFileAsync = promisify(execFile)
 
 const CURSOR_PROCESS_PATTERN = 'Cursor.app/Contents/MacOS/Cursor'
-/** Windows 进程探测（PowerShell 一次拿 pid + StartTime，输出压缩 JSON）。 */
-const WINDOWS_CURSOR_PROCESS_ARGS = [
-  '-NoProfile',
-  '-Command',
-  'Get-Process -Name Cursor -ErrorAction SilentlyContinue | Select-Object -First 1 -Property Id,StartTime | ConvertTo-Json -Compress'
-]
+/**
+ * Windows 进程探测（PowerShell 一次拿 pid + StartTime，输出压缩 JSON）。
+ * Windows 上主进程、渲染、GPU、utility 全叫 Cursor.exe（mac 的 helper 叫 Cursor Helper），
+ * 任取一条会拿到随扩展宿主/渲染器重启而更换的子进程，指纹漂移 → 倒计时误触发。
+ * 主进程判据：持有主窗口句柄的那条；启动早期还没有窗口时退回最早启动的进程
+ * （子进程都由它 spawn，启动时间必然更晚）。
+ */
+export const WINDOWS_CURSOR_MAIN_PROCESS_SCRIPT = [
+  '$p=Get-Process -Name Cursor -ErrorAction SilentlyContinue',
+  '$m=$p|Where-Object{$_.MainWindowHandle -ne 0}|Select-Object -First 1',
+  'if(-not $m){$m=$p|Sort-Object StartTime|Select-Object -First 1}',
+  'if($m){$m|Select-Object -Property Id,StartTime|ConvertTo-Json -Compress}'
+].join(';')
+const WINDOWS_CURSOR_PROCESS_ARGS = windowsPowerShellCommandArgs(WINDOWS_CURSOR_MAIN_PROCESS_SCRIPT)
 const DEFAULT_INTERVAL_MS = 5_000
 const DEFAULT_COUNTDOWN_MS = 10_000
 const COUNTDOWN_POLL_SLICE_MS = 200

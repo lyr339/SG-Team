@@ -39,11 +39,22 @@ export function windowsPowerShellCandidates(env: NodeJS.ProcessEnv = process.env
   return ['powershell.exe', join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')]
 }
 
-const RUNNING_CURSOR_PATH_ARGS = [
-  '-NoProfile',
-  '-Command',
+/**
+ * Windows PowerShell 5.1 往管道写字符串时默认用 OEM 代码页（zh-CN 机器 = GBK），
+ * 而 execFile 按 UTF-8 解码——用户名或安装目录含中文时，读回的 Cursor 路径会变成
+ * 乱码，随后 `cmd start "" "<乱码路径>"` 直接失败。每条 -Command 前先把控制台输出
+ * 切成无 BOM 的 UTF-8，两端编码才一致（Node 侧不需要任何改动）。
+ */
+const POWERSHELL_UTF8_OUTPUT_PRELUDE = '[Console]::OutputEncoding=New-Object System.Text.UTF8Encoding($false);'
+
+/** 组装 `powershell.exe` 的参数：-NoProfile + UTF-8 输出前导 + 脚本正文。所有 Windows 进程探测统一走这里。 */
+export function windowsPowerShellCommandArgs(script: string): string[] {
+  return ['-NoProfile', '-Command', `${POWERSHELL_UTF8_OUTPUT_PRELUDE}${script}`]
+}
+
+const RUNNING_CURSOR_PATH_ARGS = windowsPowerShellCommandArgs(
   'Get-Process -Name Cursor -ErrorAction SilentlyContinue | Where-Object { $_.Path } | Select-Object -First 1 -ExpandProperty Path'
-]
+)
 
 /**
  * 正在运行的 Cursor 主进程可执行路径——用户实际在用的那份安装，比任何候选目录都可靠。

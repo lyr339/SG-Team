@@ -249,7 +249,9 @@ describe('WorkspaceReviewReader', () => {
     expect(readFileSync(join(root, 'app.ts'), 'utf8')).toBe('const value = 1\n')
 
     await expect(reader.apply({ path: 'notes.md', action: 'revert' })).resolves.toMatchObject({ ok: true, message: expect.stringContaining('回收站') })
-    expect(trashed).toEqual([join(realpathSync(root), 'notes.md')])
+    // reader 用 fs.promises.realpath（libuv 原生：Windows 上会把 RUNNER~1 这类 8.3 短名展开成长名）；
+    // 期望值必须走同一实现，JS 版 realpathSync 只解符号链接、不展开短名，Windows CI 上会对不上。
+    expect(trashed).toEqual([join(realpathSync.native(root), 'notes.md')])
     expect(existsSync(join(root, 'notes.md'))).toBe(false)
     await expect(reader.apply({ path: 'notes.md', action: 'revert' })).resolves.toMatchObject({ ok: false, message: expect.stringContaining('请刷新') })
     await expect(reader.apply({ path: '../escape.ts', action: 'stage' })).resolves.toMatchObject({ ok: false })
@@ -285,7 +287,7 @@ describe('WorkspaceReviewReader', () => {
   it('resolves workspace files for reveal / open and rejects escapes', async () => {
     const root = repository()
     const reader = new WorkspaceReviewReader(() => root)
-    await expect(reader.resolveWorkspaceFile('app.ts')).resolves.toBe(join(realpathSync(root), 'app.ts'))
+    await expect(reader.resolveWorkspaceFile('app.ts')).resolves.toBe(join(realpathSync.native(root), 'app.ts'))
     await expect(reader.resolveWorkspaceFile('../x')).rejects.toThrow('超出当前工作区')
     await expect(reader.resolveWorkspaceFile('/etc/hosts')).rejects.toThrow('文件路径无效')
   })

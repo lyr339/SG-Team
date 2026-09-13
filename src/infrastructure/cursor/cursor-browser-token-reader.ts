@@ -138,12 +138,3 @@ export class CursorBrowserTokenReader {
     throw new Error(`读取浏览器中的 Cursor Token 失败：${lastError}`)
   }
 }
-
-/** 仅用于运行时/测试可观测性（不输出 token 本身）。 */
-export function summarizeBrowserToken(token: string): { userId: string; jwtLength: number; suffix: string } {
-  const decoded = decodeURIComponent(token)
-  const separator = decoded.indexOf('::')
-  const userId = separator >= 0 ? decoded.slice(0, separator) : ''
-  const jwt = separator >= 0 ? decoded.slice(separator + 2) : decoded
-  return { userId, jwtLength: jwt.length, suffix: jwt.slice(-4) }
-}

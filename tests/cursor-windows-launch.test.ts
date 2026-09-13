@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   cursorWindowsExecutableCandidates,
   resolveCursorWindowsExecutable,
-  runningCursorWindowsExecutable
+  runningCursorWindowsExecutable,
+  windowsPowerShellCommandArgs
 } from '../src/infrastructure/cursor/cursor-windows-launch'
 
 const env = {
@@ -40,6 +41,22 @@ describe('Windows Cursor executable resolution', () => {
     expect(calls[0]).toContain('Get-Process -Name Cursor')
     await expect(runningCursorWindowsExecutable(exec(''))).resolves.toBeUndefined()
     await expect(runningCursorWindowsExecutable(exec('C:\\Windows\\explorer.exe'))).resolves.toBeUndefined()
+    // 中文用户名的安装路径：PowerShell 已按 UTF-8 写管道，Node 侧原样读回，不再是 GBK 乱码。
+    await expect(runningCursorWindowsExecutable(exec('C:\\Users\\张三\\AppData\\Local\\Programs\\Cursor\\Cursor.exe\r\n')))
+      .resolves.toBe('C:\\Users\\张三\\AppData\\Local\\Programs\\Cursor\\Cursor.exe')
+  })
+
+  it('prefixes every PowerShell command with a BOM-less UTF-8 output encoding (OEM code page would garble Chinese paths)', () => {
+    const args = windowsPowerShellCommandArgs('Get-Process -Name Cursor')
+    expect(args.slice(0, 2)).toEqual(['-NoProfile', '-Command'])
+    expect(args[2]).toBe('[Console]::OutputEncoding=New-Object System.Text.UTF8Encoding($false);Get-Process -Name Cursor')
+    // runningCursorWindowsExecutable 与 cdp-keeper 的探测都必须经过同一入口。
+    const calls: string[][] = []
+    void runningCursorWindowsExecutable(async (_file, commandArgs) => {
+      calls.push(commandArgs)
+      return { stdout: '' }
+    })
+    expect(calls[0]?.[2]?.startsWith('[Console]::OutputEncoding=New-Object System.Text.UTF8Encoding($false);')).toBe(true)
   })
 
   it('falls back to the System32 PowerShell on ENOENT and gives up on other failures', async () => {
