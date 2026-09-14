@@ -959,3 +959,179 @@ describe('TeamFailoverService', () => {
     }
   })
 })
+
+/**
+ * 会话池：独立批次 run + 三个 solo 席位，CH-1（lead）与 CH-2（builder）入组并签到，CH-3 保持独立在线。
+ * 池 run 长生命周期：任何离线组合都不得触发一次性团队 run 的收尾 / standby 接替 / lead 自动转移。
+ */
+function poolFixture() {
+  const path = join(mkdtempSync(join(tmpdir(), 'sg-team-pool-failover-')), 'team.sqlite3')
+  const controlRepository = new SqliteTeamControlRepository(path)
+  const taskRepository = new SqliteTaskPoolRepository(path)
+  const collaborationRepository = new SqliteTeamCollaborationRepository(path)
+  const continuityRepository = new SqliteTeamContinuityRepository(path)
+  const memoryRepository = new SqliteTeamMemoryRepository(path)
+  const channelIds = ['1', '2', '3']
+  const bridge = new MutableBridge(desktopSnapshot(channelIds))
+  const control = new TeamControlService(controlRepository, bridge)
+  const selected = control.configureIndependentWorkspace({
+    workspaceId: 'alpha', workspaceName: 'alpha', workspacePath: '/workspace/alpha',
+    members: channelIds.map((channelId) => ({
+      channelId, roleTemplateKey: 'solo', avatarId: 'researcher', skills: [], solo: true
+    }))
+  })
+  const runId = selected.activeRun!.id
+  control.recordInstallation({
+    workspaceId: 'alpha',
+    runId,
+    generation: 'generation123',
+    agents: channelIds.map((channelId) => ({
+      agentSessionId: `alpha:ch-${channelId}:generation123`,
+      workspaceId: 'alpha',
+      channelId,
+      generation: 'generation123',
+      runId,
+      capabilities: []
+    }))
+  })
+  const slotIdOf = (channelId: string) => selected.members.find((member) => member.slot.channelId === channelId)!.slot.id
+  const { group } = controlRepository.createGroup({
+    runId,
+    name: '验收组',
+    goal: '把接口重构收尾',
+    members: [{ slotId: slotIdOf('1'), roleTemplateKey: 'lead' }, { slotId: slotIdOf('2'), roleTemplateKey: 'builder' }],
+    leadSlotId: slotIdOf('1')
+  })
+  for (const channelId of ['1', '2']) {
+    controlRepository.recordAgentCheckIn(controlRepository.resolveChannelAgentIdentity(channelId), 'ready')
+  }
+  const tasks = new TaskPoolService(taskRepository, control)
+  const collaboration = new TeamCollaborationService(collaborationRepository, control)
+  const memory = new TeamMemoryService(memoryRepository, control)
+  const continuity = new TeamContinuityService(continuityRepository, collaborationRepository, {
+    team: control, tasks, collaboration, memory
+  })
+  const builder = control.getSnapshot().members.find((member) => member.slot.channelId === '2')!
+  const task = transactTaskPool(taskRepository, (pool) => {
+    const [planned] = pool.plan(runId, [{
+      key: 'build-core',
+      title: '实现核心接口',
+      targetSlotId: builder.slot.id,
+      requiredCapabilities: ['code']
+    }])
+    const lease = pool.leaseTask(planned!.id, {
+      runId,
+      slotId: builder.slot.id,
+      agentSessionId: builder.binding!.agentSessionId,
+      capabilities: builder.role.capabilities
+    })!
+    pool.startAttempt(lease.attempt.id, lease.leaseToken)
+    return planned!
+  })
+  let now = 1_000
+  const failover = new TeamFailoverService(
+    controlRepository, control, tasks, collaborationRepository, continuity,
+    { now: () => now, offlineGraceMs: 0, allOfflineGraceMs: 0 }
+  )
+  return {
+    bridge, control, controlRepository, taskRepository, failover, runId, group, task, slotIdOf,
+    advance: (milliseconds: number) => { now += milliseconds },
+    close: () => {
+      failover.stop()
+      continuity.dispose()
+      collaboration.dispose()
+      memory.dispose()
+      control.dispose()
+      continuityRepository.close()
+      collaborationRepository.close()
+      memoryRepository.close()
+      taskRepository.close()
+      controlRepository.close()
+    }
+  }
+}
+
+describe('TeamFailoverService · 会话池', () => {
+  it('never completes the pool, rebinds a seat or promotes a lead when grouped members confirm offline (I5)', () => {
+    const data = poolFixture()
+    try {
+      const tokensBefore = data.controlRepository.loadTeamControl().bindings
+        .filter((binding) => binding.runId === data.runId)
+        .map((binding) => [binding.channelId, binding.sessionToken, binding.composerBindingKey])
+      expect(data.control.getSnapshot().groups[0]?.attention).toBe(false)
+
+      // 有效 lead（CH-1）与成员（CH-2）都明确终止；CH-3 是在线待命的独立席位——在一次性团队 run 里它
+      // 正是会被选中的 standby，在池里绝不能被挪去接替别人的身份。
+      data.bridge.setChannelOnline('1', false)
+      data.bridge.setChannelOnline('2', false)
+      data.failover.reconcile()
+      data.advance(140_000)
+      data.failover.reconcile()
+      data.advance(60 * 60_000)
+      data.failover.reconcile()
+
+      const snapshot = data.control.getSnapshot()
+      expect(snapshot.activeRun?.status).toBe('running')
+      expect(data.controlRepository.listFailovers(data.runId)).toEqual([])
+      expect(snapshot.groups).toHaveLength(1)
+      expect(snapshot.groups[0]).toMatchObject({
+        attention: true,
+        effectiveLeadSlotId: data.slotIdOf('1'),
+        group: { id: data.group.id, status: 'active', actingLeadSlotId: undefined }
+      })
+      expect(snapshot.groups[0]!.members.map((member) => member.slot.channelId)).toEqual(['1', '2'])
+      // 令牌、Composer 键、注册全部原样；任务不被「全体离线」路径取消。
+      expect(data.controlRepository.loadTeamControl().bindings
+        .filter((binding) => binding.runId === data.runId)
+        .map((binding) => [binding.channelId, binding.sessionToken, binding.composerBindingKey])).toEqual(tokensBefore)
+      expect(data.controlRepository.listAgentRegistrations(data.runId)).toHaveLength(3)
+      expect(data.taskRepository.load().tasks[data.task.id]?.status).toBe('running')
+
+      // 连独立席位也全部离线：池依旧不收尾（只有用户显式 endActiveRun 才结束池）。
+      data.bridge.setChannelOnline('3', false)
+      data.failover.reconcile()
+      data.advance(60 * 60_000)
+      data.failover.reconcile()
+      expect(data.control.getSnapshot().activeRun?.status).toBe('running')
+      expect(data.controlRepository.listFailovers(data.runId)).toEqual([])
+
+      // 成员恢复在线：attention 立即回落，无需任何人工复位。
+      data.bridge.setChannelOnline('1', true)
+      data.bridge.setChannelOnline('2', true)
+      expect(data.control.getSnapshot().groups[0]?.attention).toBe(false)
+    } finally {
+      data.close()
+    }
+  })
+
+  it('refuses manual role handoff inside the pool (channel = seat)', () => {
+    const data = poolFixture()
+    try {
+      data.bridge.setChannelOnline('2', false)
+      data.failover.reconcile()
+      expect(() => data.failover.manualHandoffOptions(data.slotIdOf('2'))).toThrowError(
+        expect.objectContaining({ code: 'handoff_pool_run' })
+      )
+      expect(() => data.failover.manualHandoff({
+        sourceSlotId: data.slotIdOf('2'),
+        replacementAgentSessionId: 'alpha:ch-3:generation123'
+      })).toThrowError(expect.objectContaining({ code: 'handoff_pool_run' }))
+      expect(data.controlRepository.listFailovers(data.runId)).toEqual([])
+      expect(data.control.getSnapshot().members.find((member) => member.slot.channelId === '3')?.slot.solo).toBe(true)
+    } finally {
+      data.close()
+    }
+  })
+
+  it('still closes the pool tasks once the user explicitly ends the pool', () => {
+    const data = poolFixture()
+    try {
+      data.control.endActiveRun()
+      data.failover.reconcile()
+      expect(data.control.getSnapshot().activeRun?.status).toBe('completed')
+      expect(data.taskRepository.load().tasks[data.task.id]?.status).toBe('cancelled')
+    } finally {
+      data.close()
+    }
+  })
+})

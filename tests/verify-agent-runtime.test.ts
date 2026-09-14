@@ -31,7 +31,7 @@ function bridgeSnapshot(): DesktopSnapshot {
 
 function team(status: TeamControlState['runs'][number]['status'] = 'ready'): TeamControlState {
   return {
-    schemaVersion: 7,
+    schemaVersion: 8,
     revision: 1,
     activeWorkspaceId: 'workspace-a',
     workspaces: [{
@@ -68,6 +68,7 @@ function team(status: TeamControlState['runs'][number]['status'] = 'ready'): Tea
       lastCheckInNote: '',
       composerId: 'composer-alpha-123'
     }],
+    groups: [],
     updatedAt: 1
   }
 }

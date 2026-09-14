@@ -16,9 +16,9 @@ function member(id: string, capabilities: string[], solo = false): TeamMemberVie
 
 function team(members: TeamMemberView[]): TeamControlSnapshot {
   return {
-    schemaVersion: 7, revision: 1, workspaces: [], runs: [], roles: members.map((item) => item.role),
+    schemaVersion: 8, revision: 1, workspaces: [], runs: [], roles: members.map((item) => item.role),
     slots: members.map((item) => item.slot), bindings: members.map((item) => item.binding!), updatedAt: 1,
-    members, runtimeChannels: [], standbyChannels: [], failovers: [],
+    members, runtimeChannels: [], standbyChannels: [], failovers: [], groups: [],
     preflight: { bridgeConnected: true, workspaceBound: true, goalDefined: true, mcpInstalled: true, agentsWaiting: true, canLaunch: true, blockers: [] }
   }
 }

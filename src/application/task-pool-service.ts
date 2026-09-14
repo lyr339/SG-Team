@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { transactTaskPool, type TaskPoolRepository } from './task-pool-transaction'
-import type { PlanTaskInput, TaskPoolSnapshot, TaskPoolState, TeamTask } from '../domain/task-pool'
+import { sameTaskGroup, type PlanTaskInput, type TaskPoolSnapshot, type TaskPoolState, type TeamTask } from '../domain/task-pool'
 import type { TeamRunStatus } from '../domain/team-control'
 
 export interface ActiveTaskScope {
@@ -23,6 +23,8 @@ export interface CreateTaskInput {
   maxAttempts?: number
   dependsOnTaskIds?: string[]
   requiredCapabilities?: string[]
+  /** 目标协作组（会话池）：操作员为某个组创建任务；legacy 团队 run 留空。 */
+  groupId?: string
 }
 
 type TaskPoolListener = (snapshot: TaskPoolSnapshot) => void
@@ -62,10 +64,12 @@ export class TaskPoolService {
     if (acceptance.length > 4_000) throw new Error('验收标准不能超过 4000 个字符')
 
     const runId = this.requireMutableRunId()
+    const groupId = input.groupId?.trim() || undefined
     const rawState = this.repository.load()
     const dependencyKeys = [...new Set(input.dependsOnTaskIds ?? [])].map((taskId) => {
       const task = rawState.tasks[taskId]
       if (!task || task.runId !== runId) throw new Error('前置任务不属于当前 TeamRun')
+      if (!sameTaskGroup(task.groupId, groupId)) throw new Error('前置任务不属于同一协作组')
       return task.key
     })
     const requiredCapabilities = [...new Set((input.requiredCapabilities ?? [])
@@ -85,7 +89,7 @@ export class TaskPoolService {
       dependsOn: dependencyKeys,
       requiredCapabilities
     }
-    const [task] = transactTaskPool(this.repository, (pool) => pool.plan(runId, [plan]))
+    const [task] = transactTaskPool(this.repository, (pool) => pool.plan(runId, [plan], groupId))
     this.emit()
     return task!
   }
@@ -118,11 +122,34 @@ export class TaskPoolService {
   closeRun(runId: string, reason = '本轮团队已经结束'): TeamTask[] {
     const normalizedRunId = runId.trim()
     if (!normalizedRunId) throw new Error('runId 不能为空')
+    return this.cancelOpenTasks((task) => task.runId === normalizedRunId, reason)
+  }
+
+  /** 解散协作组：取消该组全部未完成任务（任务书 §7 规则 5）；消息与记忆由各自仓储保留只读。 */
+  closeGroup(runId: string, groupId: string, reason = 'group_dissolved'): TeamTask[] {
+    const normalizedRunId = runId.trim()
+    const normalizedGroupId = groupId.trim()
+    if (!normalizedRunId) throw new Error('runId 不能为空')
+    if (!normalizedGroupId) throw new Error('groupId 不能为空')
+    return this.cancelOpenTasks(
+      (task) => task.runId === normalizedRunId && task.groupId === normalizedGroupId,
+      reason
+    )
+  }
+
+  /** 成员出组：释放其持有的任务租约与验收（任务书 §7 规则 1、3），返回受影响的任务 id。 */
+  releaseAgentWork(input: { agentSessionId: string; slotId?: string; reason: string }): string[] {
+    const released = transactTaskPool(this.repository, (pool) => pool.releaseAgentWork(input))
+    if (released.length) this.emit()
+    return released
+  }
+
+  private cancelOpenTasks(matches: (task: TeamTask) => boolean, reason: string): TeamTask[] {
     const terminal = new Set(['done', 'failed', 'cancelled'])
     const state = this.repository.load()
     const taskIds = state.taskOrder.filter((taskId) => {
       const task = state.tasks[taskId]
-      return task?.runId === normalizedRunId && !terminal.has(task.status)
+      return task !== undefined && matches(task) && !terminal.has(task.status)
     })
     if (!taskIds.length) return []
     const cancelled = transactTaskPool(this.repository, (pool) => taskIds.flatMap((taskId) => {

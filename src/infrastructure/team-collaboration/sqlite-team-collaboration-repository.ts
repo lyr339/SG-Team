@@ -84,6 +84,29 @@ function normalizedText(value: string, field: string, maxLength: number): string
   return text
 }
 
+/**
+ * 有效主控判定（与 team-control 仓储 effectiveCapabilities 同口径）：
+ * - 入组席位：组的临时主控优先于组 lead；lead 与角色模板解耦（任何模板都能当组 lead）。
+ * - legacy 团队 run：run 级临时主控优先，否则 lead 模板角色即主控。
+ */
+function leadStatusOf(row: SqliteRow, slotId: string): { isActingLead: boolean; isEffectiveLead: boolean } {
+  if (optionalString(row.group_id)) {
+    const acting = optionalString(row.group_acting_lead_slot_id)
+    const effective = acting ?? optionalString(row.group_lead_slot_id)
+    return { isActingLead: acting === slotId, isEffectiveLead: effective === slotId }
+  }
+  const actingLeadSlotId = optionalString(row.acting_lead_slot_id)
+  return {
+    isActingLead: actingLeadSlotId === slotId,
+    isEffectiveLead: actingLeadSlotId ? actingLeadSlotId === slotId : String(row.template_key) === 'lead'
+  }
+}
+
+function tableHasColumn(database: DatabaseSync, table: string, column: string): boolean {
+  return (database.prepare(`PRAGMA table_info(${table})`).all() as SqliteRow[])
+    .some((row) => String(row.name) === column)
+}
+
 function messageFromRows(message: SqliteRow, receipt: Record<string, unknown>): TeamMessage {
   return {
     id: String(message.id),
@@ -96,6 +119,7 @@ function messageFromRows(message: SqliteRow, receipt: Record<string, unknown>): 
     replyToMessageId: optionalString(message.reply_to_message_id),
     clientMessageId: String(message.client_message_id),
     createdAt: numberOf(message.created_at),
+    groupId: optionalString(message.group_id),
     receipt: {
       notificationState: String(receipt.notification_state) as TeamMessageNotificationState,
       notificationCommandId: optionalString(receipt.notification_command_id),
@@ -130,19 +154,24 @@ export class SqliteTeamCollaborationRepository implements TeamCollaborationRepos
     return numberOf(row.revision)
   }
 
-  loadRun(runId: string): TeamCollaborationSnapshot {
+  loadRun(runId: string, groupId?: string): TeamCollaborationSnapshot {
     const normalizedRunId = runId.trim()
+    const normalizedGroupId = groupId?.trim() || undefined
     const meta = this.database.prepare(
       'SELECT revision, seq, updated_at FROM team_collaboration_meta WHERE id = 1'
     ).get() as SqliteRow
+    // 组作用域只多一个等值条件：省略即整个 run（操作员视角 / legacy 团队 run）。
+    const groupClause = normalizedGroupId ? 'AND group_id = ?' : ''
+    const scopeArguments = normalizedGroupId ? [normalizedRunId, normalizedGroupId] : [normalizedRunId]
     const threads = (this.database.prepare(`
-      SELECT * FROM team_message_threads WHERE run_id = ? ORDER BY updated_at DESC, id ASC
-    `).all(normalizedRunId) as SqliteRow[]).map((row): TeamMessageThread => ({
+      SELECT * FROM team_message_threads WHERE run_id = ? ${groupClause} ORDER BY updated_at DESC, id ASC
+    `).all(...scopeArguments) as SqliteRow[]).map((row): TeamMessageThread => ({
       id: String(row.id),
       runId: String(row.run_id),
       subject: String(row.subject),
       createdAt: numberOf(row.created_at),
-      updatedAt: numberOf(row.updated_at)
+      updatedAt: numberOf(row.updated_at),
+      groupId: optionalString(row.group_id)
     }))
     const rows = this.database.prepare(`
       SELECT m.*, r.notification_state, r.notification_command_id,
@@ -150,9 +179,9 @@ export class SqliteTeamCollaborationRepository implements TeamCollaborationRepos
         r.responded_at, r.response_message_id, r.updated_at AS receipt_updated_at
       FROM team_messages m
       JOIN team_message_receipts r ON r.message_id = m.id
-      WHERE m.run_id = ?
+      WHERE m.run_id = ? ${groupClause.replace('group_id', 'm.group_id')}
       ORDER BY m.created_at ASC, m.id ASC
-    `).all(normalizedRunId) as SqliteRow[]
+    `).all(...scopeArguments) as SqliteRow[]
     const messages: Record<string, TeamMessage> = {}
     const messageOrder: string[] = []
     for (const row of rows) {
@@ -188,6 +217,7 @@ export class SqliteTeamCollaborationRepository implements TeamCollaborationRepos
       revision: numberOf(meta.revision),
       seq: numberOf(meta.seq),
       runId: normalizedRunId,
+      groupId: normalizedGroupId,
       threads,
       messages,
       messageOrder,
@@ -200,11 +230,13 @@ export class SqliteTeamCollaborationRepository implements TeamCollaborationRepos
     assertAgentRegistrationAuthorized(this.database, identity)
     const row = this.database.prepare(`
       SELECT b.workspace_id, b.slot_id, b.channel_id, r.role_key, r.template_key,
-        r.name AS role_name, r.skills_json, tr.acting_lead_slot_id
+        r.name AS role_name, r.skills_json, tr.acting_lead_slot_id,
+        s.group_id, g.lead_slot_id AS group_lead_slot_id, g.acting_lead_slot_id AS group_acting_lead_slot_id
       FROM runtime_bindings b
       JOIN agent_slots s ON s.id = b.slot_id
       JOIN team_roles r ON r.id = s.role_id
       JOIN team_runs tr ON tr.id = b.run_id
+      LEFT JOIN team_groups g ON g.id = s.group_id
       WHERE b.agent_session_id = ? AND b.run_id = ? AND b.slot_id = ?
     `).get(identity.agentSessionId, identity.runId, identity.slotId) as SqliteRow | undefined
     if (!row) {
@@ -214,8 +246,7 @@ export class SqliteTeamCollaborationRepository implements TeamCollaborationRepos
       )
     }
     const slotId = String(row.slot_id)
-    const actingLeadSlotId = optionalString(row.acting_lead_slot_id)
-    const roleTemplateKey = String(row.template_key)
+    const lead = leadStatusOf(row, slotId)
     return {
       agentSessionId: identity.agentSessionId,
       workspaceId: String(row.workspace_id),
@@ -223,38 +254,43 @@ export class SqliteTeamCollaborationRepository implements TeamCollaborationRepos
       slotId,
       channelId: String(row.channel_id),
       roleKey: String(row.role_key),
-      roleTemplateKey,
+      roleTemplateKey: String(row.template_key),
       roleName: String(row.role_name),
       capabilities: [...identity.capabilities],
       skills: assignedSkillsOf(row.skills_json),
-      isActingLead: actingLeadSlotId === slotId,
-      isEffectiveLead: actingLeadSlotId ? actingLeadSlotId === slotId : roleTemplateKey === 'lead'
+      isActingLead: lead.isActingLead,
+      isEffectiveLead: lead.isEffectiveLead,
+      groupId: optionalString(row.group_id)
     }
   }
 
-  listRunMembers(runId: string): TeamMemberDirectoryEntry[] {
+  listRunMembers(runId: string, groupId?: string): TeamMemberDirectoryEntry[] {
+    const normalizedGroupId = groupId?.trim() || undefined
+    const scope = normalizedGroupId ? 'AND s.group_id = ?' : 'AND COALESCE(s.is_solo, 0) = 0'
+    const scopeArguments = normalizedGroupId ? [runId.trim(), normalizedGroupId] : [runId.trim()]
     return (this.database.prepare(`
       SELECT s.id AS slot_id, r.role_key, r.template_key, r.name AS role_name,
-        r.capabilities_json, r.skills_json, b.channel_id, tr.acting_lead_slot_id
+        r.capabilities_json, r.skills_json, b.channel_id, tr.acting_lead_slot_id,
+        s.group_id, g.lead_slot_id AS group_lead_slot_id, g.acting_lead_slot_id AS group_acting_lead_slot_id
       FROM agent_slots s
       JOIN team_roles r ON r.id = s.role_id
       JOIN team_runs tr ON tr.id = s.run_id
       LEFT JOIN runtime_bindings b ON b.slot_id = s.id AND b.run_id = s.run_id
-      WHERE s.run_id = ? AND COALESCE(s.is_solo, 0) = 0
+      LEFT JOIN team_groups g ON g.id = s.group_id
+      WHERE s.run_id = ? ${scope}
       ORDER BY s.slot_order ASC, s.id ASC
-    `).all(runId.trim()) as SqliteRow[]).map((row) => {
+    `).all(...scopeArguments) as SqliteRow[]).map((row) => {
       const slotId = String(row.slot_id)
-      const actingLeadSlotId = optionalString(row.acting_lead_slot_id)
-      const roleTemplateKey = String(row.template_key)
       return {
         slotId,
         roleKey: String(row.role_key),
-        roleTemplateKey,
+        roleTemplateKey: String(row.template_key),
         roleName: String(row.role_name),
         channelId: optionalString(row.channel_id),
         capabilities: stringArrayOf(row.capabilities_json),
         skills: assignedSkillsOf(row.skills_json),
-        isEffectiveLead: actingLeadSlotId ? actingLeadSlotId === slotId : roleTemplateKey === 'lead'
+        isEffectiveLead: leadStatusOf(row, slotId).isEffectiveLead,
+        groupId: optionalString(row.group_id)
       }
     })
   }
@@ -306,9 +342,10 @@ export class SqliteTeamCollaborationRepository implements TeamCollaborationRepos
     const clientMessageId = input.clientMessageId.trim()
     if (!CLIENT_MESSAGE_ID.test(clientMessageId)) throw new Error('clientMessageId 无效')
     if (!MESSAGE_KINDS.has(input.kind)) throw new Error('消息类型无效')
-    this.assertActorInRun(runId, input.sender)
-    this.assertActorInRun(runId, input.recipient)
+    const senderGroupId = this.assertActorInRun(runId, input.sender)
+    const recipientGroupId = this.assertActorInRun(runId, input.recipient)
     if (sameTeamMessageActor(input.sender, input.recipient)) throw new Error('不能给自己发送团队消息')
+    const groupId = this.resolveMessageGroup(input, senderGroupId, recipientGroupId)
 
     const duplicate = this.findIdempotentMessage(runId, input.sender, clientMessageId)
     if (duplicate) return duplicate
@@ -332,9 +369,13 @@ export class SqliteTeamCollaborationRepository implements TeamCollaborationRepos
 
       if (threadId) {
         const thread = this.database.prepare(
-          'SELECT run_id FROM team_message_threads WHERE id = ?'
+          'SELECT run_id, group_id FROM team_message_threads WHERE id = ?'
         ).get(threadId) as SqliteRow | undefined
         if (!thread || String(thread.run_id) !== runId) throw new Error('团队消息线程不存在')
+        // 线程随首条消息定组；后续消息（回复、催办）不能把线程拉到别的组。
+        if ((optionalString(thread.group_id) ?? '') !== (groupId ?? '')) {
+          throw new TaskPoolError('thread_group_mismatch', '团队消息线程不属于当前协作组')
+        }
       } else {
         threadId = `team-thread:${randomUUID()}`
         const subject = normalizedText(
@@ -343,16 +384,16 @@ export class SqliteTeamCollaborationRepository implements TeamCollaborationRepos
           160
         )
         this.database.prepare(`
-          INSERT INTO team_message_threads (id, run_id, subject, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?)
-        `).run(threadId, runId, subject, now, now)
+          INSERT INTO team_message_threads (id, run_id, subject, created_at, updated_at, group_id)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).run(threadId, runId, subject, now, now, groupId ?? null)
       }
 
       this.database.prepare(`
         INSERT INTO team_messages (
           id, run_id, thread_id, sender_key, recipient_key, kind, content,
-          reply_to_message_id, client_message_id, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          reply_to_message_id, client_message_id, created_at, group_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         messageId,
         runId,
@@ -363,7 +404,8 @@ export class SqliteTeamCollaborationRepository implements TeamCollaborationRepos
         content,
         replyTo?.id ?? null,
         clientMessageId,
-        now
+        now,
+        groupId ?? null
       )
       const operatorRecipient = input.recipient.type === 'operator'
       this.database.prepare(`
@@ -693,14 +735,41 @@ export class SqliteTeamCollaborationRepository implements TeamCollaborationRepos
     return message
   }
 
-  private assertActorInRun(runId: string, actor: TeamMessageActor): void {
+  /** 校验 actor 属于 run，并返回其席位当前所在的组（operator / 未入组为 undefined）。 */
+  private assertActorInRun(runId: string, actor: TeamMessageActor): string | undefined {
     const run = this.database.prepare('SELECT id FROM team_runs WHERE id = ?').get(runId)
     if (!run) throw new Error('TeamRun 不存在')
-    if (actor.type === 'operator') return
+    if (actor.type === 'operator') return undefined
     const row = this.database.prepare(
-      'SELECT id FROM agent_slots WHERE id = ? AND run_id = ?'
-    ).get(actor.slotId.trim(), runId)
+      'SELECT id, group_id FROM agent_slots WHERE id = ? AND run_id = ?'
+    ).get(actor.slotId.trim(), runId) as SqliteRow | undefined
     if (!row) throw new Error('AgentSlot 不属于当前 TeamRun')
+    return optionalString(row.group_id)
+  }
+
+  /**
+   * 消息的组作用域（写入时快照）：显式 groupId 时双方入组席位都必须在该组；
+   * 省略时按「接收方的组 → 发送方的组」推得，让操作员 / 编排器发给入组成员的消息自动落进该组。
+   * 两个 Agent 分属不同组不能互发——组是协作边界。
+   */
+  private resolveMessageGroup(
+    input: CreateTeamMessageInput,
+    senderGroupId: string | undefined,
+    recipientGroupId: string | undefined
+  ): string | undefined {
+    const explicit = input.groupId?.trim() || undefined
+    if (input.sender.type === 'agent' && input.recipient.type === 'agent' && (senderGroupId ?? '') !== (recipientGroupId ?? '')) {
+      throw new TaskPoolError('recipient_not_in_group', '目标成员不在当前协作组内')
+    }
+    if (!explicit) return recipientGroupId ?? senderGroupId
+    const agentGroups = [
+      ...(input.sender.type === 'agent' ? [senderGroupId] : []),
+      ...(input.recipient.type === 'agent' ? [recipientGroupId] : [])
+    ]
+    if (agentGroups.some((groupId) => groupId !== explicit)) {
+      throw new TaskPoolError('actor_not_in_group', '消息双方不在指定的协作组内')
+    }
+    return explicit
   }
 
   private appendEvent(input: {
@@ -755,7 +824,8 @@ export class SqliteTeamCollaborationRepository implements TeamCollaborationRepos
         run_id TEXT NOT NULL REFERENCES team_runs(id) ON DELETE CASCADE,
         subject TEXT NOT NULL,
         created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
+        updated_at INTEGER NOT NULL,
+        group_id TEXT
       );
 
       CREATE TABLE IF NOT EXISTS team_messages (
@@ -769,6 +839,7 @@ export class SqliteTeamCollaborationRepository implements TeamCollaborationRepos
         reply_to_message_id TEXT REFERENCES team_messages(id) ON DELETE RESTRICT,
         client_message_id TEXT NOT NULL,
         created_at INTEGER NOT NULL,
+        group_id TEXT,
         UNIQUE (run_id, sender_key, client_message_id)
       );
 
@@ -858,5 +929,19 @@ export class SqliteTeamCollaborationRepository implements TeamCollaborationRepos
     } else if (version !== SCHEMA_VERSION) {
       throw new Error(`团队协作数据库版本不兼容：${version}，当前支持 ${SCHEMA_VERSION}`)
     }
+    // 会话池 + 协作组：消息 / 线程按组作用域。列 additive、以存在性守卫而非版本号（任务书 §4.6），
+    // 桌面主进程与 MCP 进程各自迁移都幂等；旧构建仍能打开（它写入的消息没有 group_id，只影响 legacy run）。
+    for (const table of ['team_message_threads', 'team_messages']) {
+      if (tableHasColumn(this.database, table, 'group_id')) continue
+      try {
+        this.database.exec(`ALTER TABLE ${table} ADD COLUMN group_id TEXT`)
+      } catch (error) {
+        if (!/duplicate column/i.test(String(error))) throw error
+      }
+    }
+    this.database.exec(`
+      CREATE INDEX IF NOT EXISTS idx_team_messages_run_group
+      ON team_messages(run_id, group_id, created_at);
+    `)
   }
 }

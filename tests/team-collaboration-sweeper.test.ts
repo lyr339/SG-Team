@@ -68,6 +68,7 @@ function snapshotProvider(
       runtimeChannels: [],
       standbyChannels: [],
       failovers: [],
+      groups: [],
       preflight: {
         bridgeConnected: true,
         workspaceBound: true,

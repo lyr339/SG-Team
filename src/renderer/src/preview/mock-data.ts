@@ -599,7 +599,7 @@ const previewStandbyChannels = [
 ]
 
 export const teamControlSnapshot: TeamControlSnapshot = {
-  schemaVersion: 7,
+  schemaVersion: 8,
   revision: 42,
   activeWorkspaceId: bundle.workspace.id,
   workspaces: [bundle.workspace],
@@ -623,6 +623,7 @@ export const teamControlSnapshot: TeamControlSnapshot = {
     generation: 'gen7'
   })), ...previewStandbyChannels],
   standbyChannels: previewStandbyChannels,
+  groups: [],
   failovers: [{
     id: 'team-failover:preview-1',
     workspaceId: bundle.workspace.id,

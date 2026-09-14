@@ -10,10 +10,15 @@ import type {
 import type { ChannelLivenessRecord } from '../domain/team-collaboration'
 
 export interface TeamCollaborationRepository {
-  loadRun(runId: string): TeamCollaborationSnapshot
+  /** 装载 run 内消息；给出 `groupId` 时只装载该协作组的线程与消息（Agent 视角）。 */
+  loadRun(runId: string, groupId?: string): TeamCollaborationSnapshot
   revision(): number
   resolveAuthorizedAgent(identity: TeamAgentRuntimeIdentity): AuthorizedTeamAgent
-  listRunMembers(runId: string): TeamMemberDirectoryEntry[]
+  /**
+   * 成员目录：给出 `groupId` 时 = 该组成员；省略时保留旧语义 = run 内全部非 solo 席位
+   *（legacy 团队 run 的全员；会话池里则是所有已入组席位，跨组——只供池级视图使用）。
+   */
+  listRunMembers(runId: string, groupId?: string): TeamMemberDirectoryEntry[]
   clearRun(runId: string, at?: number): boolean
   createMessage(input: CreateTeamMessageInput): TeamMessage
   markNotificationSending(messageId: string, commandId: string, detail?: string, at?: number): TeamMessage

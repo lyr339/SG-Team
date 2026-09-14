@@ -68,9 +68,9 @@ export class SqliteTaskPoolRepository implements TaskPoolRepository, AgentRegist
         id, position, run_id, task_key, title, description, acceptance,
         priority, status, depends_on_json, capabilities_json, max_attempts,
         target_slot_id, attempt_count, progress, assignee_session_id, current_attempt_id,
-        current_review_id, result, failure_reason, created_at, updated_at
+        current_review_id, result, failure_reason, created_at, updated_at, group_id
       ) VALUES (
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
       )
     `)
     this.insertAttempt = this.database.prepare(`
@@ -125,7 +125,8 @@ export class SqliteTaskPoolRepository implements TaskPoolRepository, AgentRegist
         result: optionalString(row.result),
         failureReason: optionalString(row.failure_reason),
         createdAt: numberOf(row.created_at),
-        updatedAt: numberOf(row.updated_at)
+        updatedAt: numberOf(row.updated_at),
+        groupId: optionalString(row.group_id)
       }
       tasks[task.id] = task
       taskOrder.push(task.id)
@@ -250,7 +251,8 @@ export class SqliteTaskPoolRepository implements TaskPoolRepository, AgentRegist
           task.result ?? null,
           task.failureReason ?? null,
           task.createdAt,
-          task.updatedAt
+          task.updatedAt,
+          task.groupId ?? null
         )
       })
 
@@ -384,6 +386,7 @@ export class SqliteTaskPoolRepository implements TaskPoolRepository, AgentRegist
         failure_reason TEXT,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
+        group_id TEXT,
         UNIQUE (run_id, task_key)
       );
 
@@ -507,5 +510,16 @@ export class SqliteTaskPoolRepository implements TaskPoolRepository, AgentRegist
     if (databaseVersion !== SCHEMA_VERSION) {
       throw new Error(`任务池数据库版本不兼容：${databaseVersion}，当前支持 ${SCHEMA_VERSION}`)
     }
+    // 会话池 + 协作组：任务按组作用域。列 additive、以存在性守卫而非版本号（任务书 §4.6）——
+    // 桌面主进程与 Cursor 托管的 MCP 进程各自打开同一库、各自迁移，先后到达都幂等；
+    // 旧构建的进程仍能打开（它的 CAS 重写会丢掉 group_id，属已接受的部署顺序风险）。
+    if (!tableHasColumn(this.database, 'tasks', 'group_id')) {
+      try {
+        this.database.exec('ALTER TABLE tasks ADD COLUMN group_id TEXT')
+      } catch (error) {
+        if (!/duplicate column/i.test(String(error))) throw error
+      }
+    }
+    this.database.exec('CREATE INDEX IF NOT EXISTS idx_tasks_run_group_status ON tasks(run_id, group_id, status)')
   }
 }

@@ -95,7 +95,22 @@ function memberViews(team: TeamControlSnapshot): TeamCheckpointCapsule['members'
     roleKey: member.role.key,
     roleName: member.role.name,
     channelId: member.binding?.channelId ?? member.slot.channelId,
-    workingFiles: [...(member.runtime?.workingFiles ?? [])]
+    workingFiles: [...(member.runtime?.workingFiles ?? [])],
+    groupId: member.slot.groupId
+  }))
+}
+
+/** 会话池的协作组快照；legacy 团队 run 没有组 → 不写该字段，保持旧检查点摘要形态。 */
+function groupViews(team: TeamControlSnapshot): TeamCheckpointCapsule['groups'] {
+  if (!team.groups.length) return undefined
+  return team.groups.map((view) => ({
+    id: view.group.id,
+    name: view.group.name,
+    goal: view.group.goal,
+    status: view.group.status,
+    leadSlotId: view.group.leadSlotId,
+    actingLeadSlotId: view.group.actingLeadSlotId,
+    memberSlotIds: view.members.map((member) => member.slot.id)
   }))
 }
 
@@ -265,12 +280,14 @@ export class TeamContinuityService {
     const run = team.activeRun
     const workspaceId = team.activeWorkspaceId
     if (!run || !workspaceId) return undefined
+    const groups = groupViews(team)
     const base = {
       schemaVersion: 1 as const,
       goal: run.goal,
       runName: run.name,
       runStatus: run.status,
       members: memberViews(team),
+      ...(groups ? { groups } : {}),
       activeTasks: activeTaskViews(this.sources.tasks.getSnapshot()),
       pendingMessages: pendingMessageViews(this.sources.collaboration.getSnapshot()),
       sharedMemory: acceptedMemoryViews(this.sources.memory.getSnapshot())

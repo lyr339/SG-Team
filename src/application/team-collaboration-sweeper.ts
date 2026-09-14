@@ -1,12 +1,13 @@
 import { createHash } from 'node:crypto'
 import type { TeamCollaborationRepository } from './team-collaboration-repository'
-import type { TeamControlSnapshot } from '../domain/team-control'
+import { isSessionPoolRun, type TeamControlSnapshot } from '../domain/team-control'
 import {
   DEFAULT_UNANSWERED_TTL_MS,
   UNANSWERED_ALERT_DEBOUNCE_MS,
   findUnansweredDirectives,
   leadSilenceEvidence
 } from '../domain/team-collab-sweeps'
+import { groupScopedLead } from '../domain/team-orchestration'
 
 export interface TeamCollaborationSweeperOptions {
   unansweredTtlMs?: number
@@ -24,8 +25,8 @@ export class TeamCollaborationSweeper {
   private sweepTimer?: ReturnType<typeof setInterval>
   /** messageId → 上次提醒时间：同一条消息在防抖窗内只提醒一次。 */
   private readonly unansweredAlertedAt = new Map<string, number>()
-  /** 主控终止周期键 → 已广播；明确恢复后键变更自动复位。 */
-  private leadAlertedCycle?: string
+  /** 作用域（run 或组）→ 主控终止周期键；已广播过的周期不重复，明确恢复后键变更自动复位。 */
+  private readonly leadAlertedCycle = new Map<string, string>()
 
   constructor(
     private readonly collaboration: TeamCollaborationRepository,
@@ -56,26 +57,34 @@ export class TeamCollaborationSweeper {
     const control = this.controlSnapshot()
     const run = control.activeRun
     if (!run || !['launching', 'running', 'attention'].includes(run.status)) {
-      this.leadAlertedCycle = undefined
+      this.leadAlertedCycle.clear()
       return 0
     }
     const runId = run.id
-    return this.sweepUnanswered(runId, now) + this.sweepLeadHeartbeat(runId, now)
+    // 作用域：legacy 团队 run 只有一个 run 级作用域；会话池按活动协作组逐组清扫（任务书 §5.5）。
+    const scopes: Array<string | undefined> = isSessionPoolRun(run)
+      ? control.groups.filter((view) => view.group.status === 'active').map((view) => view.group.id)
+      : [undefined]
+    for (const key of [...this.leadAlertedCycle.keys()]) {
+      if (!scopes.some((scope) => (scope ?? 'run') === key)) this.leadAlertedCycle.delete(key)
+    }
+    return this.sweepUnanswered(control, runId, now)
+      + scopes.reduce((sent, groupId) => sent + this.sweepLeadHeartbeat(control, runId, groupId, now), 0)
   }
 
-  /** 超龄未获回应的 directive/question：向原发送者回执超时提醒，并通知有效主控（幂等）。 */
-  private sweepUnanswered(runId: string, now: number): number {
+  /** 超龄未获回应的 directive/question：向原发送者回执超时提醒，并通知该消息所属组的有效主控（幂等）。 */
+  private sweepUnanswered(control: TeamControlSnapshot, runId: string, now: number): number {
     const snapshot = this.collaboration.loadRun(runId)
     const existingClientIds = new Set(
       snapshot.messageOrder.map((id) => snapshot.messages[id]?.clientMessageId).filter(Boolean)
     )
     const ttlMs = this.options.unansweredTtlMs ?? DEFAULT_UNANSWERED_TTL_MS
     const stale = findUnansweredDirectives(snapshot, now, ttlMs)
-    const leadSlotId = this.effectiveLeadSlotId(this.controlSnapshot(), runId)
     let sent = 0
     for (const item of stale) {
       const lastAlerted = this.unansweredAlertedAt.get(item.id)
       if (lastAlerted !== undefined && now - lastAlerted < UNANSWERED_ALERT_DEBOUNCE_MS) continue
+      const leadSlotId = groupScopedLead(control, snapshot.messages[item.id]?.groupId)?.slot.id
       const minutes = Math.round(item.ageMs / 60_000)
       const debounceBucket = Math.floor(now / UNANSWERED_ALERT_DEBOUNCE_MS)
       // 不用 replyToMessageId：仓储要求回复双方与原消息严格对应，而提醒是系统
@@ -123,13 +132,18 @@ export class TeamCollaborationSweeper {
     return sent
   }
 
-  /** 有效主控失联：幂等广播一次「可 team_run claim_lead 接管」的提醒，恢复后自动复位。 */
-  private sweepLeadHeartbeat(runId: string, now: number): number {
-    const snapshot = this.controlSnapshot()
-    const leadSlotId = this.effectiveLeadSlotId(snapshot, runId)
-    if (!leadSlotId) return 0
-    const member = snapshot.members.find((candidate) => candidate.slot.id === leadSlotId)
-    if (!member) return 0
+  /**
+   * 有效主控失联：幂等广播一次「可 team_run claim_lead 接管」的提醒，恢复后自动复位。
+   * 会话池内按组：主控 = 组的有效 lead，接收者 = 该组其他成员；legacy 团队 run 为 run 级。
+   */
+  private sweepLeadHeartbeat(snapshot: TeamControlSnapshot, runId: string, groupId: string | undefined, now: number): number {
+    const scopeKey = groupId ?? 'run'
+    const member = groupScopedLead(snapshot, groupId)
+    if (!member) {
+      this.leadAlertedCycle.delete(scopeKey)
+      return 0
+    }
+    const leadSlotId = member.slot.id
     const channelId = member.binding?.channelId ?? member.slot.channelId
     const liveness = channelId ? this.collaboration.getLiveness(channelId, runId) : undefined
     const evidence = leadSilenceEvidence({
@@ -148,13 +162,13 @@ export class TeamCollaborationSweeper {
       now
     })
     if (!evidence) {
-      this.leadAlertedCycle = undefined
+      this.leadAlertedCycle.delete(scopeKey)
       return 0
     }
     // 周期键纳入心跳起点：主控活性恢复（lastSeenAt 刷新/online 翻正）后自动复位，可再次报警。
     const cycleKey = `${leadSlotId}:${member.runtime?.lastSeenAt ?? 0}:${member.runtime?.lastAgentActivityAt ?? 0}:${member.runtime?.connectionPhase ?? ''}:${member.runtime?.online ?? false}:${liveness?.liveness ?? 'unknown'}`
-    if (this.leadAlertedCycle === cycleKey) return 0
-    const members = this.collaboration.listRunMembers(runId)
+    if (this.leadAlertedCycle.get(scopeKey) === cycleKey) return 0
+    const members = this.collaboration.listRunMembers(runId, groupId)
       .filter((member) => member.channelId && member.slotId !== leadSlotId)
     if (!members.length) return 0
     // clientMessageId 上限 200：cycleKey 含长 slotId，压成短哈希保证持久幂等键合法。
@@ -180,18 +194,7 @@ export class TeamCollaborationSweeper {
       existingClientIds.add(alertKey)
       sent += 1
     }
-    this.leadAlertedCycle = cycleKey
+    this.leadAlertedCycle.set(scopeKey, cycleKey)
     return sent
-  }
-
-  /** 有效主控席位：临时主控优先于 lead 角色席位（与 team_run claim_lead 解析口径一致）。 */
-  private effectiveLeadSlotId(snapshot: TeamControlSnapshot, runId: string): string | undefined {
-    const run = snapshot.runs.find((candidate) => candidate.id === runId)
-    if (!run) return undefined
-    const leadRoleId = snapshot.roles.find((role) => role.runId === runId && role.templateKey === 'lead')?.id
-    const leadSlot = snapshot.slots.find((slot) => (
-      slot.runId === runId && (slot.id === run.actingLeadSlotId || (!run.actingLeadSlotId && slot.roleId === leadRoleId))
-    ))
-    return leadSlot?.id
   }
 }

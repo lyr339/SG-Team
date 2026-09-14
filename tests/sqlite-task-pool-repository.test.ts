@@ -189,7 +189,7 @@ describe('SqliteTaskPoolRepository', () => {
     repository.close()
   })
 
-  it('revokes the previous installed generation and prevents capability escalation', () => {
+  it('revokes the previous installed generation; the registration capability snapshot no longer participates in authorization', () => {
     const repository = new SqliteTaskPoolRepository(databasePath('agent-auth'))
     const firstIdentity = {
       agentSessionId: 'workspace:ch-1:generation1',
@@ -208,10 +208,15 @@ describe('SqliteTaskPoolRepository', () => {
       }]
     })
     expect(() => repository.assertAgentAuthorized(firstIdentity)).not.toThrow()
+    // 会话池里席位运行中入组换角色：能力来自当前角色行，注册时的 `[]` 快照不能再拦（阶段 0 阻塞点回归）。
     expect(() => repository.assertAgentAuthorized({
       ...firstIdentity,
       capabilities: ['code', 'devops']
-    })).toThrowError(/未注册的能力/)
+    })).not.toThrow()
+    expect(() => repository.assertAgentAuthorized({
+      ...firstIdentity,
+      runId: 'another-run'
+    })).toThrowError(/已被撤销/)
 
     const secondIdentity = {
       agentSessionId: 'workspace:ch-1:generation2',

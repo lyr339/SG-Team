@@ -8,6 +8,19 @@ export interface TeamCheckpointMember {
   roleName: string
   channelId?: string
   workingFiles: string[]
+  /** 所在协作组（会话池）；legacy 团队 run 成员没有。 */
+  groupId?: string
+}
+
+/** 会话池的协作组快照：组 + 成员 + lead（任务书 §4.5；restore 暂不恢复组结构，记为阶段 2 待办）。 */
+export interface TeamCheckpointGroup {
+  id: string
+  name: string
+  goal: string
+  status: 'active' | 'dissolved'
+  leadSlotId?: string
+  actingLeadSlotId?: string
+  memberSlotIds: string[]
 }
 
 export interface TeamCheckpointTask {
@@ -43,6 +56,8 @@ export interface TeamCheckpointCapsule {
   runName: string
   runStatus: string
   members: TeamCheckpointMember[]
+  /** 会话池的协作组；legacy 团队 run 与旧检查点没有该字段。 */
+  groups?: TeamCheckpointGroup[]
   activeTasks: TeamCheckpointTask[]
   pendingMessages: TeamCheckpointMessage[]
   sharedMemory: TeamCheckpointMemory[]

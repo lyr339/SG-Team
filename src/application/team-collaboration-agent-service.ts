@@ -58,14 +58,27 @@ export class TeamCollaborationAgentService {
       agentSessionId,
       runId,
       slotId,
-      capabilities: [...new Set(identity.capabilities.map((item) => item.trim()).filter(Boolean))]
+      capabilities: [...new Set(identity.capabilities.map((item) => item.trim()).filter(Boolean))],
+      groupId: identity.groupId?.trim() || undefined
     }
+  }
+
+  /**
+   * Agent 视角的成员目录与消息快照都以「当前所在组」为作用域（由仓储实时解析，
+   * 入组 / 出组即时生效）；legacy 团队 run 没有组 → 退回 run 级全员 / 全部消息。
+   */
+  private membersOf(agent: AuthorizedTeamAgent) {
+    return this.repository.listRunMembers(agent.runId, agent.groupId)
+  }
+
+  private snapshotOf(agent: AuthorizedTeamAgent) {
+    return this.repository.loadRun(agent.runId, agent.groupId)
   }
 
   getContext(): Record<string, unknown> {
     const agent = this.currentAgent()
-    const members = this.repository.listRunMembers(agent.runId)
-    const snapshot = this.repository.loadRun(agent.runId)
+    const members = this.membersOf(agent)
+    const snapshot = this.snapshotOf(agent)
     const self = { type: 'agent' as const, slotId: agent.slotId }
     const unread = snapshot.messageOrder
       .map((id) => snapshot.messages[id])
@@ -109,7 +122,7 @@ export class TeamCollaborationAgentService {
   listInbox(unreadOnly = true, limit = 30): TeamInboxEntry[] {
     const agent = this.currentAgent()
     const self = { type: 'agent' as const, slotId: agent.slotId }
-    const snapshot = this.repository.loadRun(agent.runId)
+    const snapshot = this.snapshotOf(agent)
     return snapshot.messageOrder
       .map((id) => snapshot.messages[id])
       .filter((message): message is TeamMessage => Boolean(message))
@@ -148,8 +161,8 @@ export class TeamCollaborationAgentService {
       throw new TaskPoolError('lead_only_directive', '只有主控协调可以发送任务指令')
     }
     const recipientSlotId = input.recipientSlotId.trim()
-    if (!this.repository.listRunMembers(agent.runId).some((member) => member.slotId === recipientSlotId)) {
-      throw new TaskPoolError('recipient_not_found', '目标 AgentSlot 不属于当前 TeamRun')
+    if (!this.membersOf(agent).some((member) => member.slotId === recipientSlotId)) {
+      throw new TaskPoolError('recipient_not_found', '目标 AgentSlot 不属于当前团队 / 协作组')
     }
     return this.repository.createMessage({
       runId: agent.runId,
@@ -179,7 +192,7 @@ export class TeamCollaborationAgentService {
     if (!agent.isEffectiveLead) {
       throw new TaskPoolError('lead_only_broadcast', '只有主控协调可以向全体成员广播')
     }
-    const recipients = this.repository.listRunMembers(agent.runId)
+    const recipients = this.membersOf(agent)
       .filter((member) => member.slotId !== agent.slotId)
     const baseId = input.clientMessageId?.trim() || generatedClientMessageId('agent-broadcast', [
       agent.runId,
@@ -212,7 +225,7 @@ export class TeamCollaborationAgentService {
     const requestedIds = (messageIds ?? []).map((id) => id.trim()).filter(Boolean)
     const requested = new Set(requestedIds)
     const requestedOrder = new Map(requestedIds.map((id, index) => [id, index]))
-    const snapshot = this.repository.loadRun(agent.runId)
+    const snapshot = this.snapshotOf(agent)
     const self = { type: 'agent' as const, slotId: agent.slotId }
     return snapshot.messageOrder
       .map((id) => snapshot.messages[id])
@@ -242,7 +255,7 @@ export class TeamCollaborationAgentService {
   }): TeamMessage | undefined {
     const agent = this.currentAgent()
     if (agent.isEffectiveLead) return undefined
-    const lead = this.repository.listRunMembers(agent.runId)
+    const lead = this.membersOf(agent)
       .find((member) => member.isEffectiveLead)
     if (!lead) return undefined
     return this.repository.createMessage({
@@ -262,7 +275,7 @@ export class TeamCollaborationAgentService {
     clientMessageId?: string
   }): TeamMessage {
     const agent = this.currentAgent()
-    const snapshot = this.repository.loadRun(agent.runId)
+    const snapshot = this.snapshotOf(agent)
     const original = snapshot.messages[input.messageId.trim()]
     const self = { type: 'agent' as const, slotId: agent.slotId }
     if (!original || !sameTeamMessageActor(original.recipient, self)) {
@@ -297,9 +310,9 @@ export class TeamCollaborationAgentService {
    */
   ping(input: { targetChannelId: string; timeoutMs?: number }): { pingId: string; sentAt: number } {
     const agent = this.currentAgent()
-    const members = this.repository.listRunMembers(agent.runId)
+    const members = this.membersOf(agent)
     const target = members.find((member) => member.channelId === input.targetChannelId)
-    if (!target) throw new TaskPoolError('target_channel_not_found', `目标通道 CH-${input.targetChannelId} 不属于当前 TeamRun`)
+    if (!target) throw new TaskPoolError('target_channel_not_found', `目标通道 CH-${input.targetChannelId} 不属于当前团队 / 协作组`)
     const pingId = `ping:${randomUUID()}`
     const sentAt = Date.now()
     this.repository.createMessage({
@@ -343,14 +356,14 @@ export class TeamCollaborationAgentService {
 
   planTasks(inputs: PlanTaskInput[]): ReturnType<TaskAgentService['plan']> {
     const agent = this.currentAgent()
-    const members = this.repository.listRunMembers(agent.runId)
+    const members = this.membersOf(agent)
     const memberBySlot = new Map(members.map((member) => [member.slotId, member]))
     for (const input of inputs) {
       const required = [...new Set((input.requiredCapabilities ?? []).map((item) => item.trim()).filter(Boolean))]
       if (input.targetSlotId) {
         const target = memberBySlot.get(input.targetSlotId.trim())
         if (!target) {
-          throw new TaskPoolError('target_slot_not_found', `指定 AgentSlot 不属于当前 TeamRun：${input.targetSlotId}`)
+          throw new TaskPoolError('target_slot_not_found', `指定 AgentSlot 不属于当前团队 / 协作组：${input.targetSlotId}`)
         }
         const available = new Set(target.capabilities)
         const missing = required.filter((capability) => !available.has(capability))
@@ -381,7 +394,7 @@ export class TeamCollaborationAgentService {
     if (!agent.isEffectiveLead) {
       throw new TaskPoolError('lead_only_takeover_context', '只有当前有效主控可以生成接管上下文')
     }
-    const snapshot = this.repository.loadRun(agent.runId)
+    const snapshot = this.snapshotOf(agent)
     const previousLeadSlotId = input.previousLeadSlotId?.trim()
     const pending = previousLeadSlotId
       ? snapshot.messageOrder

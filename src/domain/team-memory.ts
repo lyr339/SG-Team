@@ -30,6 +30,11 @@ export interface TeamMemoryItem {
   sources: TeamMemorySource[]
   createdAt: number
   updatedAt: number
+  /**
+   * 所属协作组（会话池）：写入时的快照，不回填。`scope='run'` 的记忆按 (run, group) 过滤；
+   * `scope='project'` 的项目级记忆跨组共享，不带组。空 = legacy 团队 run 的 run 级记忆。
+   */
+  groupId?: string
 }
 
 export interface TeamMemoryEvent {
@@ -49,6 +54,8 @@ export interface TeamMemorySnapshot {
   seq: number
   workspaceId?: string
   runId?: string
+  /** 快照作用域：给出时 run 级条目只含该组（项目级不受影响）；空 = 整个 run。 */
+  groupId?: string
   items: Record<string, TeamMemoryItem>
   itemOrder: string[]
   events: TeamMemoryEvent[]
@@ -66,6 +73,8 @@ export interface ProposeTeamMemoryInput {
   sources: TeamMemorySource[]
   supersedesId?: string
   clientProposalId: string
+  /** 目标协作组；省略时按提出者席位当时所在的组推得。项目级记忆忽略。 */
+  groupId?: string
 }
 
 export interface ReviewTeamMemoryInput {

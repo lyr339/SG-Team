@@ -7,7 +7,8 @@ import type { AssignedAgentSkill } from './agent-skill'
 import type { CursorModelSelection } from './cursor-model'
 import type { TeamFailoverRecord } from './team-failover'
 import { TEAM_REPLY_STYLE_INSTRUCTION } from './team-reply-style'
-import { SG_TEAM_MCP_SERVER_ID } from './channel-message'
+import { hasConfirmedRuntimeStop, SG_TEAM_MCP_SERVER_ID } from './channel-message'
+import { TaskPoolError } from './task-pool'
 
 export type TeamRunStatus =
   | 'draft'
@@ -23,6 +24,15 @@ export const INDEPENDENT_SESSION_TEMPLATE_ID = 'independent-session-v1'
 
 export function workspaceRunMode(run?: Pick<TeamRun, 'templateId'>): WorkspaceRunMode {
   return run?.templateId === INDEPENDENT_SESSION_TEMPLATE_ID ? 'independent' : 'team'
+}
+
+/**
+ * 会话池 run：独立批次 run 就是工作区的会话池——长生命周期、每个 Cursor 会话一个席位、
+ * 席位可随时入组/出组（team_groups）。与一次性团队 run（software-core-v1）的区别在于：
+ * 池永不被失效接管自动收尾、没有整体启动状态机、没有 standby 概念。
+ */
+export function isSessionPoolRun(run?: Pick<TeamRun, 'templateId'>): boolean {
+  return workspaceRunMode(run) === 'independent'
 }
 
 export type TeamRoleAccent = 'mint' | 'periwinkle' | 'apricot' | 'sky'
@@ -79,6 +89,8 @@ export interface TeamRole {
   skills: AssignedAgentSkill[]
   accent: TeamRoleAccent
   order: number
+  /** 组角色：随成员入组创建、出组/解散删除；空 = run 级角色（legacy 团队 run 或 solo 角色）。 */
+  groupId?: string
 }
 
 /**
@@ -93,12 +105,74 @@ export interface AgentSlot {
   avatarId: string
   /** 该席位下一次自动创建 Cursor Composer 时使用的独立模型配置。 */
   modelSelection?: CursorModelSelection
-  /** 独立席位：不入队，不参与团队调度；仅保留用户单聊与批量会话创建。 */
+  /**
+   * 独立席位：不入队，不参与团队调度；仅保留用户单聊与批量会话创建。
+   * 会话池内 `solo === true ⇔ groupId === undefined`（入组翻为 false，出组恢复）。
+   */
   solo?: boolean
   channelId?: string
   order: number
   createdAt: number
   updatedAt: number
+  /** 所在协作组（会话池）；空 = 未入组。成员关系的唯一真相源。 */
+  groupId?: string
+  /** 出组时恢复的角色（入组前的 solo 角色 id）；只在入组期间有值。 */
+  homeRoleId?: string
+  groupJoinedAt?: number
+}
+
+export type TeamGroupStatus = 'active' | 'dissolved'
+
+/**
+ * 协作组：会话池内随时可建可拆的协作上下文（目标、成员、角色、lead、任务、消息、记忆）。
+ * 入组 / 出组不触碰会话令牌、Composer 绑定与作用域——那些是池级事实。
+ */
+export interface TeamGroup {
+  id: string
+  runId: string
+  name: string
+  goal: string
+  status: TeamGroupStatus
+  /** 可为空：无 lead 的纯协作组（共享目标 + 消息 + 记忆）。 */
+  leadSlotId?: string
+  /** 临时主控（lead 离线时由系统或用户指定），优先级高于 leadSlotId。 */
+  actingLeadSlotId?: string
+  createdAt: number
+  updatedAt: number
+  dissolvedAt?: number
+}
+
+export type TeamGroupEventType =
+  | 'created'
+  | 'member_joined'
+  | 'member_left'
+  | 'member_checked_in'
+  | 'lead_changed'
+  | 'acting_lead_changed'
+  | 'goal_updated'
+  | 'dissolved'
+
+export interface TeamGroupEvent {
+  seq: number
+  groupId: string
+  type: TeamGroupEventType
+  slotId?: string
+  channelId?: string
+  /** `operator` 或 `agent:<slotId>`。 */
+  actor: string
+  detail?: string
+  at: number
+}
+
+/** 有效 lead：临时主控优先于组 lead。 */
+export function effectiveGroupLeadSlotId(group: Pick<TeamGroup, 'leadSlotId' | 'actingLeadSlotId'>): string | undefined {
+  return group.actingLeadSlotId ?? group.leadSlotId
+}
+
+/** 建组 / 加人时的成员配置：席位 + 组内角色模板（默认 specialist）。 */
+export interface TeamGroupMemberConfiguration {
+  slotId: string
+  roleTemplateKey: string
 }
 
 export interface RuntimeBinding {
@@ -128,7 +202,7 @@ export interface RuntimeBinding {
 }
 
 export interface TeamControlState {
-  schemaVersion: 7
+  schemaVersion: 8
   revision: number
   activeWorkspaceId?: string
   workspaces: TeamWorkspace[]
@@ -136,6 +210,8 @@ export interface TeamControlState {
   roles: TeamRole[]
   slots: AgentSlot[]
   bindings: RuntimeBinding[]
+  /** 全部 run 的协作组（含已解散）；快照按活动 run 投影为 TeamGroupView。 */
+  groups: TeamGroup[]
   updatedAt: number
 }
 
@@ -194,13 +270,64 @@ export interface TeamRuntimeChannelView {
   generation?: string
 }
 
-export interface TeamControlSnapshot extends TeamControlState {
+/** 活动 run 内一个协作组的投影：组 + 组内成员视图 + 有效 lead + 是否需要关注。 */
+export interface TeamGroupView {
+  group: TeamGroup
+  /** `slot.groupId === group.id` 的成员，按席位顺序。 */
+  members: TeamMemberView[]
+  effectiveLeadSlotId?: string
+  /** 有成员已确认离线（Cursor 明确终止）；由用户决定移出或交接，系统不自动处理。 */
+  attention: boolean
+}
+
+/** 快照里 roles / slots / bindings 都已按活动 run 过滤；groups 同理，并升格为带成员的视图。 */
+export interface TeamControlSnapshot extends Omit<TeamControlState, 'groups'> {
   activeRun?: TeamRun
   members: TeamMemberView[]
   runtimeChannels: TeamRuntimeChannelView[]
   standbyChannels: TeamRuntimeChannelView[]
   failovers: TeamFailoverRecord[]
   preflight: TeamPreflight
+  /** 活动 run 的协作组：active 全部 + 最近 24h 内解散的（只读卡片）。 */
+  groups: TeamGroupView[]
+}
+
+/** 已解散的组在快照里保留的时长（阶段 3 的历史折叠区之前，只读卡片）。 */
+export const DISSOLVED_GROUP_VISIBLE_MS = 24 * 60 * 60_000
+
+/**
+ * 把活动 run 的组行投影成视图：成员 = `slot.groupId === group.id`（按席位顺序），
+ * attention = 有成员已确认离线。解散超过 24h 的组不再出现。
+ */
+export function projectGroups(
+  groups: TeamGroup[],
+  activeRun: Pick<TeamRun, 'id'>,
+  members: TeamMemberView[],
+  now: number
+): TeamGroupView[] {
+  const membersByGroup = new Map<string, TeamMemberView[]>()
+  for (const member of members) {
+    const groupId = member.slot.groupId
+    if (!groupId) continue
+    const list = membersByGroup.get(groupId) ?? []
+    list.push(member)
+    membersByGroup.set(groupId, list)
+  }
+  return groups
+    .filter((group) => group.runId === activeRun.id)
+    .filter((group) => group.status === 'active'
+      || (group.dissolvedAt !== undefined && now - group.dissolvedAt <= DISSOLVED_GROUP_VISIBLE_MS))
+    .map((group): TeamGroupView => {
+      const groupMembers = membersByGroup.get(group.id) ?? []
+      return {
+        group,
+        members: groupMembers,
+        effectiveLeadSlotId: effectiveGroupLeadSlotId(group),
+        attention: groupMembers.some((member) => (
+          member.runtime !== undefined && !member.runtime.online && hasConfirmedRuntimeStop(member.runtime)
+        ))
+      }
+    })
 }
 
 export interface WorkspaceTeamBundle {
@@ -336,6 +463,8 @@ export const TEAM_ROLE_TEMPLATES: TeamRoleTemplate[] = [
 ]
 
 export const AGENT_AVATAR_IDS = ['lead', 'architect', 'reviewer', 'frontend', 'devops', 'researcher'] as const
+/** 主控模板能力：有效 lead（含临时主控）在授权时叠加，持 lead 模板但被替代的成员则被摘除。 */
+export const LEAD_ROLE_CAPABILITIES: readonly string[] = TEAM_ROLE_TEMPLATES.find((template) => template.key === 'lead')!.capabilities
 export const ALL_TEAM_CAPABILITIES = [...new Set(
   TEAM_ROLE_TEMPLATES.flatMap((template) => template.capabilities)
 )].sort()
@@ -363,13 +492,14 @@ function uniqueChannelIds(values: string[]): string[] {
 
 export function emptyTeamControlState(): TeamControlState {
   return {
-    schemaVersion: 7,
+    schemaVersion: 8,
     revision: 0,
     workspaces: [],
     runs: [],
     roles: [],
     slots: [],
     bindings: [],
+    groups: [],
     updatedAt: Date.now()
   }
 }
@@ -381,6 +511,7 @@ export function emptyTeamControlSnapshot(): TeamControlSnapshot {
     runtimeChannels: [],
     standbyChannels: [],
     failovers: [],
+    groups: [],
     preflight: {
       bridgeConnected: false,
       workspaceBound: false,
@@ -520,6 +651,68 @@ export function createDefaultTeamBundle(input: {
     }),
     runKey: input.runKey,
     now: input.now
+  })
+}
+
+/** 组 id 形如 `team-group:<workspaceId>:<uuid>`；角色 key 只取 uuid 尾 8 位作前缀。 */
+function groupKeyPrefix(groupId: string): string {
+  return `g${groupId.slice(-8)}`
+}
+
+/** 从组内既有角色 key（`g<short>:<template>` / `g<short>:<template>-<n>`）解析实例号。 */
+function groupRoleInstanceNumber(roleKey: string, prefix: string, templateKey: string): number | undefined {
+  const base = `${prefix}:${templateKey}`
+  if (roleKey === base) return 1
+  if (!roleKey.startsWith(`${base}-`)) return undefined
+  const value = Number(roleKey.slice(base.length + 1))
+  return Number.isInteger(value) && value > 0 ? value : undefined
+}
+
+/**
+ * 组角色行：每个组成员一行专属角色（出组时整行删除），id 以 (group, slot) 定址；
+ * role_key 带组短 id 前缀以满足 `UNIQUE(run_id, role_key)`；同模板多人按组内既有最大实例号续号
+ *（不是按数量——中间成员出组后再加人不能撞上仍在组里的编号）。solo 模板不能作组角色。
+ */
+export function buildGroupRoles(input: {
+  group: Pick<TeamGroup, 'id' | 'runId'>
+  members: TeamGroupMemberConfiguration[]
+  existingGroupRoles: Pick<TeamRole, 'key' | 'templateKey' | 'order'>[]
+  now?: number
+}): TeamRole[] {
+  const prefix = groupKeyPrefix(input.group.id)
+  const nextInstance = new Map<string, number>()
+  for (const role of input.existingGroupRoles) {
+    const instance = groupRoleInstanceNumber(role.key, prefix, role.templateKey)
+    if (instance !== undefined) {
+      nextInstance.set(role.templateKey, Math.max(nextInstance.get(role.templateKey) ?? 0, instance))
+    }
+  }
+  let order = input.existingGroupRoles.reduce((max, role) => Math.max(max, role.order + 1), 0)
+  const seen = new Set<string>()
+  return input.members.map((member): TeamRole => {
+    const slotId = member.slotId.trim()
+    if (!slotId) throw new TaskPoolError('group_member_slot_required', '组成员缺少席位 id')
+    if (seen.has(slotId)) throw new TaskPoolError('group_member_duplicate', `同一席位在成员列表里重复：${slotId}`)
+    seen.add(slotId)
+    const template = roleTemplateOf(member.roleTemplateKey)
+    if (template.key === 'solo') throw new TaskPoolError('group_role_solo_forbidden', '独立执行角色不能作为组内角色')
+    const instance = (nextInstance.get(template.key) ?? 0) + 1
+    nextInstance.set(template.key, instance)
+    const numbered = template.key === 'specialist' || instance > 1
+    return {
+      id: `team-role:${input.group.id}:${slotId}`,
+      runId: input.group.runId,
+      key: numbered ? `${prefix}:${template.key}-${instance}` : `${prefix}:${template.key}`,
+      templateKey: template.key,
+      name: numbered ? `${template.name} ${instance}` : template.name,
+      mission: template.mission,
+      instructions: template.instructions,
+      capabilities: [...template.capabilities],
+      skills: [],
+      accent: template.accent,
+      order: order++,
+      groupId: input.group.id
+    }
   })
 }
 

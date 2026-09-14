@@ -1,5 +1,5 @@
 import type { TeamControlRepository } from './team-control-repository'
-import type { TeamControlSnapshot, TeamRuntimeChannelView } from '../domain/team-control'
+import { isSessionPoolRun, type TeamControlSnapshot, type TeamRuntimeChannelView } from '../domain/team-control'
 import type { TeamCollaborationRepository } from './team-collaboration-repository'
 import type { TeamContinuityService } from './team-continuity-service'
 import type { TaskPoolService } from './task-pool-service'
@@ -108,6 +108,14 @@ export class TeamFailoverService {
       }
       this.reconcileAcknowledgements(snapshot)
       this.recoverIncompleteFailover(snapshot)
+      if (isSessionPoolRun(run)) {
+        // 会话池是长生命周期容器，不是一次性团队会话：成员（入组席位）离线只在其所在组上
+        // 表现为 attention（由投影给出，由用户决定移出 / 交接），绝不能触发「全体离线 → completeRun」
+        // 把整个池连同无关的独立会话一起收尾；池内每个注册通道都有自己的席位，也没有 standby
+        // 可以自动接替。run 级 lead 故障转移同样不适用——lead 是组内概念。
+        this.resetTransientState()
+        return
+      }
       this.reconcileLeadFailover(snapshot)
       if (!snapshot.preflight.bridgeConnected) return
 

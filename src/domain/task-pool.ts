@@ -33,6 +33,16 @@ export interface TeamTask {
   failureReason?: string
   createdAt: number
   updatedAt: number
+  /**
+   * 所属协作组（会话池）：规划时的快照，不回填。Agent 视角的查询 / 领取只见同组任务；
+   * 空 = legacy 团队 run 的 run 级任务（身份也没有 groupId 时视为同组）。
+   */
+  groupId?: string
+}
+
+/** 任务与身份是否同属一个组作用域：两边都为空（legacy 团队 run）也算同组。 */
+export function sameTaskGroup(left: string | undefined, right: string | undefined): boolean {
+  return (left ?? '') === (right ?? '')
 }
 
 export interface TaskReview {
@@ -117,6 +127,8 @@ export interface LeaseNextInput {
   agentSessionId: string
   slotId?: string
   capabilities?: string[]
+  /** 领取方所在组：只领同组任务；空 = legacy run 级作用域。 */
+  groupId?: string
   ttlMs?: number
 }
 
@@ -132,6 +144,8 @@ export interface LeaseReviewInput {
   agentSessionId: string
   slotId: string
   taskId?: string
+  /** 验收方所在组：只验收同组任务；空 = legacy run 级作用域。 */
+  groupId?: string
   ttlMs?: number
 }
 
@@ -238,10 +252,15 @@ export class TaskPoolAggregate {
     return structuredClone(this.state)
   }
 
-  plan(runId: string, inputs: PlanTaskInput[]): TeamTask[] {
+  /**
+   * 规划任务。`groupId` 是写入时的组快照（会话池内 lead 只能为本组规划）；任务 key 仍以 run 为
+   * 唯一域（`UNIQUE(run_id, task_key)`），跨组同名 key 会以 `duplicate_task_key` 拒绝。
+   */
+  plan(runId: string, inputs: PlanTaskInput[], groupId?: string): TeamTask[] {
     const normalizedRunId = runId.trim()
     if (!normalizedRunId) throw new TaskPoolError('missing_run_id', 'runId 不能为空')
     if (!inputs.length) throw new TaskPoolError('empty_plan', '任务计划不能为空')
+    const normalizedGroupId = groupId?.trim() || undefined
 
     const existingTasksForRun = Object.values(this.state.tasks).filter((task) => task.runId === normalizedRunId)
     const existingKeys = new Set(existingTasksForRun.map((task) => task.key))
@@ -258,7 +277,10 @@ export class TaskPoolAggregate {
 
     const idByKey = new Map<string, string>()
     for (const input of inputs) idByKey.set(input.key.trim(), this.nextTaskId())
-    const existingIdByKey = new Map(existingTasksForRun.map((task) => [task.key, task.id]))
+    // 依赖只能指向同组既有任务：跨组依赖会让一个组的进度被另一个组不可见的任务卡住。
+    const existingIdByKey = new Map(existingTasksForRun
+      .filter((task) => sameTaskGroup(task.groupId, normalizedGroupId))
+      .map((task) => [task.key, task.id]))
     const at = this.now()
 
     const planned = inputs.map((input): TeamTask => {
@@ -284,7 +306,8 @@ export class TaskPoolAggregate {
         attemptCount: 0,
         progress: 0,
         createdAt: at,
-        updatedAt: at
+        updatedAt: at,
+        groupId: normalizedGroupId
       }
     })
 
@@ -320,7 +343,7 @@ export class TaskPoolAggregate {
     const task = this.state.taskOrder
       .map((id) => this.state.tasks[id])
       .filter((candidate): candidate is TeamTask => Boolean(candidate))
-      .filter((candidate) => candidate.runId === runId)
+      .filter((candidate) => candidate.runId === runId && sameTaskGroup(candidate.groupId, input.groupId))
       .filter((candidate) => candidate.status === 'queued')
       .filter((candidate) => candidate.dependsOn.every((id) => this.state.tasks[id]?.status === 'done'))
       .filter((candidate) => candidate.requiredCapabilities.every((item) => capabilities.has(item)))
@@ -342,6 +365,7 @@ export class TaskPoolAggregate {
     }
     const task = this.taskOf(taskId)
     if (task.runId !== runId) throw new TaskPoolError('task_run_mismatch', '任务不属于当前 run')
+    if (!sameTaskGroup(task.groupId, input.groupId)) throw new TaskPoolError('task_group_mismatch', '任务不属于当前协作组')
     if (task.status !== 'queued') throw new TaskPoolError('task_not_queued', '任务当前不可领取')
     if (!task.dependsOn.every((id) => this.state.tasks[id]?.status === 'done')) {
       throw new TaskPoolError('dependencies_not_done', '任务的前置依赖尚未完成')
@@ -483,6 +507,7 @@ export class TaskPoolAggregate {
         .map((id) => this.state.tasks[id])
         .filter((candidate): candidate is TeamTask => Boolean(candidate))
         .filter((candidate) => candidate.runId === runId && candidate.status === 'review')
+        .filter((candidate) => sameTaskGroup(candidate.groupId, input.groupId))
         .filter((candidate) => {
           const review = candidate.currentReviewId ? this.state.reviews[candidate.currentReviewId] : undefined
           return review?.status === 'queued'
@@ -490,6 +515,7 @@ export class TaskPoolAggregate {
         .sort((left, right) => left.priority - right.priority || left.updatedAt - right.updatedAt)[0]
     if (!task) return null
     if (task.runId !== runId) throw new TaskPoolError('task_run_mismatch', '验收任务不属于当前 run')
+    if (!sameTaskGroup(task.groupId, input.groupId)) throw new TaskPoolError('task_group_mismatch', '验收任务不属于当前协作组')
     if (task.status !== 'review' || !task.currentReviewId) {
       throw new TaskPoolError('task_not_in_review', '任务当前不在验收状态')
     }
@@ -710,6 +736,53 @@ export class TaskPoolAggregate {
     }
     if (recovered.size) this.bumpRevision()
     return [...recovered]
+  }
+
+  /**
+   * 成员出组 / 解散专用（任务书 §7 规则 1、3）：该会话持有的 leased/running attempt → cancelled
+   *（error = reason），任务回 queued 等组内其他成员领取；其持有的验收 → queued 重新派验收。
+   * 与 recoverAgentWork 的区别：没有接管方，也不指向新席位——若任务原本定向给该席位，
+   * 定向随之清空，否则组内无人能再领。回队沿用 requeueOrFail：attempt 次数用尽时任务转 failed
+   *（与主控接管路径口径一致）。
+   */
+  releaseAgentWork(input: { agentSessionId: string; slotId?: string; reason: string }): string[] {
+    const agentSessionId = input.agentSessionId.trim()
+    const slotId = input.slotId?.trim() || undefined
+    const reason = input.reason.trim() || 'member_left'
+    if (!agentSessionId) throw new TaskPoolError('missing_agent_session', 'agentSessionId 不能为空')
+    const at = this.now()
+    const released = new Set<string>()
+    for (const attempt of Object.values(this.state.attempts)) {
+      if (attempt.agentSessionId !== agentSessionId || !['leased', 'running'].includes(attempt.status)) continue
+      const task = this.state.tasks[attempt.taskId]
+      if (!task || task.currentAttemptId !== attempt.id) continue
+      attempt.status = 'cancelled'
+      attempt.error = reason
+      attempt.completedAt = at
+      attempt.updatedAt = at
+      attempt.leaseToken = undefined
+      attempt.leaseExpiresAt = undefined
+      if (slotId && task.targetSlotId === slotId) task.targetSlotId = undefined
+      this.requeueOrFail(task, reason, at)
+      this.note('lease.released_by_membership', task.id, attempt.id, agentSessionId, reason)
+      released.add(task.id)
+    }
+    for (const review of Object.values(this.state.reviews)) {
+      if (review.reviewerSessionId !== agentSessionId || review.status !== 'leased') continue
+      const task = this.state.tasks[review.taskId]
+      if (!task || task.currentReviewId !== review.id || task.status !== 'review') continue
+      review.status = 'queued'
+      review.reviewerSessionId = undefined
+      review.reviewerSlotId = undefined
+      review.leaseToken = undefined
+      review.leaseExpiresAt = undefined
+      review.updatedAt = at
+      task.updatedAt = at
+      this.note('review.released_by_membership', task.id, review.attemptId, agentSessionId, reason)
+      released.add(task.id)
+    }
+    if (released.size) this.bumpRevision()
+    return [...released]
   }
 
   reclaimExpired(): string[] {

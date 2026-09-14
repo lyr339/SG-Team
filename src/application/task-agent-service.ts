@@ -1,6 +1,7 @@
 import { transactTaskPool, type TaskPoolRepository } from './task-pool-transaction'
 import {
   type PlanTaskInput,
+  sameTaskGroup,
   TaskPoolError,
   type TaskAttempt,
   type TaskReview,
@@ -66,11 +67,20 @@ export class TaskAgentService {
       agentSessionId,
       runId,
       slotId: identity.slotId?.trim(),
-      capabilities: [...new Set(identity.capabilities.map((item) => item.trim()).filter(Boolean))]
+      capabilities: [...new Set(identity.capabilities.map((item) => item.trim()).filter(Boolean))],
+      groupId: identity.groupId?.trim() || undefined
     }
     if (this.identity.slotId !== undefined && !/^[a-zA-Z0-9:_-]{3,240}$/.test(this.identity.slotId)) {
       throw new Error('Agent 槽位标识（slotId）无效')
     }
+    if (this.identity.groupId !== undefined && !/^[a-zA-Z0-9:_-]{3,240}$/.test(this.identity.groupId)) {
+      throw new Error('协作组标识（groupId）无效')
+    }
+  }
+
+  /** Agent 视角的作用域：同 run 且同组（legacy 团队 run 双方都无组）。 */
+  private inScope(task: TeamTask): boolean {
+    return task.runId === this.identity.runId && sameTaskGroup(task.groupId, this.identity.groupId)
   }
 
   checkIn(note = ''): AgentCheckInReceipt {
@@ -88,7 +98,7 @@ export class TaskAgentService {
     return state.taskOrder
       .map((id) => state.tasks[id])
       .filter((task): task is TeamTask => Boolean(task))
-      .filter((task) => task.runId === this.identity.runId && task.status === 'queued')
+      .filter((task) => this.inScope(task) && task.status === 'queued')
       .filter((task) => task.dependsOn.every((id) => state.tasks[id]?.status === 'done'))
       .filter((task) => task.requiredCapabilities.every((capability) => capabilities.has(capability)))
       .filter((task) => !task.targetSlotId || task.targetSlotId === this.identity.slotId)
@@ -102,7 +112,7 @@ export class TaskAgentService {
     return state.taskOrder
       .map((id) => state.tasks[id])
       .filter((task): task is TeamTask => Boolean(task))
-      .filter((task) => task.runId === this.identity.runId && task.assigneeSessionId === this.identity.agentSessionId)
+      .filter((task) => this.inScope(task) && task.assigneeSessionId === this.identity.agentSessionId)
       .map((task) => ({
         task: structuredClone(task),
         attempt: task.currentAttemptId && state.attempts[task.currentAttemptId]
@@ -126,7 +136,7 @@ export class TaskAgentService {
       .map((review) => {
         const task = state.tasks[review.taskId]
         const attempt = state.attempts[review.attemptId]
-        if (!task || !attempt || task.runId !== this.identity.runId) return undefined
+        if (!task || !attempt || !this.inScope(task)) return undefined
         if (attempt.agentSessionId === this.identity.agentSessionId) return undefined
         return {
           task: structuredClone(task),
@@ -236,6 +246,7 @@ export class TaskAgentService {
       runId: this.identity.runId,
       agentSessionId: this.identity.agentSessionId,
       slotId: this.identity.slotId!,
+      groupId: this.identity.groupId,
       taskId
     }))
     if (!leased) return null
@@ -285,7 +296,7 @@ export class TaskAgentService {
     this.ensureAuthorized()
     const state = this.repository.load()
     const task = state.tasks[taskId]
-    if (!task || task.runId !== this.identity.runId) throw new TaskPoolError('task_not_found', '任务不存在')
+    if (!task || !this.inScope(task)) throw new TaskPoolError('task_not_found', '任务不存在')
     const attempt = task.currentAttemptId ? state.attempts[task.currentAttemptId] : undefined
     return {
       task: structuredClone(task),
@@ -298,7 +309,7 @@ export class TaskAgentService {
     const state = this.repository.load()
     return state.taskOrder
       .map((id) => state.tasks[id])
-      .filter((task): task is TeamTask => Boolean(task && task.runId === this.identity.runId))
+      .filter((task): task is TeamTask => Boolean(task && this.inScope(task)))
       .map((task) => ({
         task: structuredClone(task),
         attempt: task.currentAttemptId && state.attempts[task.currentAttemptId]
@@ -312,7 +323,7 @@ export class TaskAgentService {
     if (!inputs.length || inputs.length > 30) {
       throw new TaskPoolError('invalid_plan_size', '一次必须规划 1 到 30 条任务')
     }
-    return transactTaskPool(this.repository, (pool) => pool.plan(this.identity.runId, inputs))
+    return transactTaskPool(this.repository, (pool) => pool.plan(this.identity.runId, inputs, this.identity.groupId))
   }
 
   recoverLeadWork(fromAgentSessionId: string, targetSlotId: string): string[] {

@@ -32,6 +32,7 @@ export class TeamMemoryAgentService {
     const accepted = this.repository.search({
       workspaceId: agent.workspaceId,
       runId: agent.runId,
+      groupId: agent.groupId,
       statuses: ['accepted'],
       limit: 50
     }).filter((item) => item.scope === 'run')
@@ -74,6 +75,7 @@ export class TeamMemoryAgentService {
     return this.repository.search({
       workspaceId: agent.workspaceId,
       runId: agent.runId,
+      groupId: agent.groupId,
       query: input.query,
       kinds: input.kinds,
       statuses,
@@ -104,7 +106,8 @@ export class TeamMemoryAgentService {
       proposedBy: { type: 'agent', slotId: agent.slotId },
       sources: input.sources,
       supersedesId: input.supersedesId,
-      clientProposalId: input.clientProposalId?.trim() || `agent-memory:${randomUUID()}`
+      clientProposalId: input.clientProposalId?.trim() || `agent-memory:${randomUUID()}`,
+      groupId: agent.groupId
     })
   }
 
@@ -117,7 +120,8 @@ export class TeamMemoryAgentService {
     if (!agent.isEffectiveLead && agent.roleTemplateKey !== 'reviewer') {
       throw new TaskPoolError('memory_reviewer_only', '只有主控协调或质量验证可以审核团队记忆')
     }
-    const snapshot = this.repository.load(agent.workspaceId, agent.runId)
+    // 组作用域装载：别组的提案在这里就是「不存在」。
+    const snapshot = this.repository.load(agent.workspaceId, agent.runId, agent.groupId)
     const item = snapshot.items[input.memoryId.trim()]
     if (!item) throw new TaskPoolError('memory_not_found', '团队记忆不存在')
     const reviewer: TeamMessageActor = { type: 'agent', slotId: agent.slotId }

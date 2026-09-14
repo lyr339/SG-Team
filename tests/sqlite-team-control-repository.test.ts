@@ -70,7 +70,7 @@ describe('SqliteTeamControlRepository', () => {
       })
       repository.upsertWorkspaceTeam(team)
       const state = repository.loadTeamControl()
-      expect(state.schemaVersion).toBe(7)
+      expect(state.schemaVersion).toBe(8)
       expect(state.roles.find((role) => role.templateKey === 'frontend')).toMatchObject({
         skills: [{ id: 'project:frontend-design', name: 'frontend-design' }]
       })
@@ -86,7 +86,7 @@ describe('SqliteTeamControlRepository', () => {
     }
   })
 
-  it('persists solo slots and rejects both identity resolution entry points with solo_channel', () => {
+  it('persists solo slots and rejects both identity resolution entry points with not_in_group', () => {
     const repository = repositoryFixture()
     try {
       const team = createConfiguredTeamBundle({
@@ -112,9 +112,9 @@ describe('SqliteTeamControlRepository', () => {
       ]) {
         try {
           resolve()
-          throw new Error('expected solo_channel')
+          throw new Error('expected not_in_group')
         } catch (error) {
-          expect(error).toMatchObject({ code: 'solo_channel' })
+          expect(error).toMatchObject({ code: 'not_in_group' })
           expect((error as Error).message).toContain('check_messages / record_reply')
         }
       }
@@ -677,7 +677,7 @@ describe('SqliteTeamControlRepository', () => {
       })).toBe(false)
 
       expect(repository.loadTeamControl()).toMatchObject({
-        schemaVersion: 7,
+        schemaVersion: 8,
         bindings: expect.arrayContaining([expect.objectContaining({
           slotId: first!.slotId,
           composerId: 'composer-alpha-123',
@@ -772,7 +772,7 @@ describe('SqliteTeamControlRepository', () => {
 
     const repository = new SqliteTeamControlRepository(path)
     try {
-      expect(repository.loadTeamControl().schemaVersion).toBe(7)
+      expect(repository.loadTeamControl().schemaVersion).toBe(8)
       const database = new DatabaseSync(path, { readOnly: true })
       try {
         const columns = database.prepare('PRAGMA table_info(runtime_bindings)').all() as { name: string }[]
@@ -811,7 +811,7 @@ describe('SqliteTeamControlRepository', () => {
     const migrated = new SqliteTeamControlRepository(path)
     try {
       const state = migrated.loadTeamControl()
-      expect(state.schemaVersion).toBe(7)
+      expect(state.schemaVersion).toBe(8)
       expect(state.roles.map((role) => [role.key, role.templateKey, role.skills])).toEqual([
         ['lead', 'lead', []],
         ['builder', 'builder', []],
@@ -845,7 +845,7 @@ describe('SqliteTeamControlRepository', () => {
     const migrated = new SqliteTeamControlRepository(path)
     try {
       const state = migrated.loadTeamControl()
-      expect(state.schemaVersion).toBe(7)
+      expect(state.schemaVersion).toBe(8)
       expect(state.slots.every((slot) => slot.solo === false)).toBe(true)
       const database = new DatabaseSync(path, { readOnly: true })
       try {
@@ -874,7 +874,7 @@ describe('SqliteTeamControlRepository', () => {
     const migrated = new SqliteTeamControlRepository(path)
     try {
       expect(migrated.loadTeamControl()).toMatchObject({
-        schemaVersion: 7,
+        schemaVersion: 8,
         activeWorkspaceId: team.workspace.id
       })
       const database = new DatabaseSync(path, { readOnly: true })

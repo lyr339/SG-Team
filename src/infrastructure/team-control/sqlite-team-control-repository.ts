@@ -10,17 +10,27 @@ import type {
 } from '../../application/agent-authorization'
 import type { AgentCheckInReceipt } from '../../application/agent-presence'
 import type { TeamControlRepository } from '../../application/team-control-repository'
-import type {
-  AgentSlot,
-  RuntimeBinding,
-  TeamControlState,
-  TeamRole,
-  TeamRoleAccent,
-  TeamRun,
-  TeamRunStatus,
-  TeamWorkspace,
-  WorkspaceTeamBundle
+import {
+  buildGroupRoles,
+  effectiveGroupLeadSlotId,
+  isSessionPoolRun,
+  LEAD_ROLE_CAPABILITIES,
+  type AgentSlot,
+  type RuntimeBinding,
+  type TeamControlState,
+  type TeamGroup,
+  type TeamGroupEvent,
+  type TeamGroupEventType,
+  type TeamGroupMemberConfiguration,
+  type TeamGroupStatus,
+  type TeamRole,
+  type TeamRoleAccent,
+  type TeamRun,
+  type TeamRunStatus,
+  type TeamWorkspace,
+  type WorkspaceTeamBundle
 } from '../../domain/team-control'
+import type { GroupMembershipChange, TeamGroupMutation } from '../../application/team-control-repository'
 import type { AssignedAgentSkill } from '../../domain/agent-skill'
 import type { CursorModelSelection } from '../../domain/cursor-model'
 import type { ChannelSessionOwnership } from '../../domain/session-fence'
@@ -37,7 +47,9 @@ import {
   revokeWorkspaceAgentRegistrations
 } from '../sqlite/agent-registrations'
 
-const TEAM_SCHEMA_VERSION = 7
+const TEAM_SCHEMA_VERSION = 8
+const GROUP_NAME_MAX_LENGTH = 80
+const GROUP_GOAL_MAX_LENGTH = 8_000
 const COMPOSER_ID_PATTERN = /^[a-zA-Z0-9_-]{8,128}$/
 const COMPOSER_BINDING_KEY_PATTERN = /^[a-zA-Z0-9_-]{1,128}$/
 const COMPOSER_BINDING_METHODS = new Set<ComposerBindingMethod>(['launch_marker', 'channel_marker'])
@@ -69,12 +81,27 @@ function stringArrayOf(value: unknown): string[] {
   return parsed.map(String).filter(Boolean)
 }
 
+/**
+ * 身份行的有效能力。
+ * - 组内席位：有效 lead（临时主控优先于组 lead）叠加主控模板能力；持 lead 模板却不是有效
+ *   lead 的成员被摘除主控能力。lead 权限与角色模板解耦——任何模板的成员都能被指定为组 lead。
+ * - legacy 团队 run：沿用 run 级 acting lead 与 run 内 lead 角色的能力交换。
+ */
 function effectiveCapabilities(row: SqliteRow): string[] {
   const base = new Set(stringArrayOf(row.capabilities_json))
-  const lead = new Set(stringArrayOf(row.lead_capabilities_json))
   const slotId = String(row.slot_id)
-  const actingLeadSlotId = optionalString(row.acting_lead_slot_id)
   const templateKey = String(row.template_key ?? '')
+  if (optionalString(row.group_id)) {
+    const effectiveLead = optionalString(row.group_acting_lead_slot_id) ?? optionalString(row.group_lead_slot_id)
+    if (effectiveLead === slotId) {
+      for (const capability of LEAD_ROLE_CAPABILITIES) base.add(capability)
+    } else if (templateKey === 'lead') {
+      for (const capability of LEAD_ROLE_CAPABILITIES) base.delete(capability)
+    }
+    return [...base]
+  }
+  const lead = new Set(stringArrayOf(row.lead_capabilities_json))
+  const actingLeadSlotId = optionalString(row.acting_lead_slot_id)
   if (actingLeadSlotId) {
     if (slotId === actingLeadSlotId) {
       for (const capability of lead) base.add(capability)
@@ -83,6 +110,77 @@ function effectiveCapabilities(row: SqliteRow): string[] {
     }
   }
   return [...base]
+}
+
+/**
+ * 身份解析共用的 SELECT 主体：注册 → 绑定 → 席位 → 角色 → run，并带出组（LEFT JOIN）。
+ * legacy 的 run 级 lead 角色只取 `group_id IS NULL` 的那一行——池 run 内每个组都可能有自己的
+ * lead 模板角色，不加限定会让 JOIN 出多行。
+ */
+const IDENTITY_SELECT = `
+  SELECT ar.agent_session_id, ar.run_id, b.slot_id, s.is_solo, s.group_id, r.template_key, r.capabilities_json,
+    tr.acting_lead_slot_id, lead.capabilities_json AS lead_capabilities_json,
+    g.lead_slot_id AS group_lead_slot_id, g.acting_lead_slot_id AS group_acting_lead_slot_id
+  FROM agent_registrations ar
+  JOIN runtime_bindings b
+    ON b.agent_session_id = ar.agent_session_id AND b.run_id = ar.run_id
+  JOIN agent_slots s ON s.id = b.slot_id AND s.run_id = b.run_id
+  JOIN team_roles r ON r.id = s.role_id AND r.run_id = b.run_id
+  JOIN team_runs tr ON tr.id = b.run_id
+  LEFT JOIN team_groups g ON g.id = s.group_id
+  LEFT JOIN team_roles lead ON lead.run_id = b.run_id AND lead.template_key = 'lead' AND lead.group_id IS NULL
+`
+
+/**
+ * 独立席位（is_solo=1 ⇔ 未入组）不参与团队协作：错误码 `not_in_group` 直接传播为工具结果，
+ * 让模型得到「未入组 → 只用通信工具；入组后拾光会投递成员关系通知」的指引，而非笼统授权错误。
+ */
+function assertGroupedIdentity(row: SqliteRow, channelId: string | undefined): void {
+  if (numberOf(row.is_solo) !== 1) return
+  const who = channelId ? `CH-${channelId}` : '当前通道'
+  throw new TaskPoolError(
+    'not_in_group',
+    `${who} 当前是独立席位，未加入任何协作组；请只用 check_messages / record_reply 与用户沟通。`
+      + '入组后拾光会投递成员关系通知，届时再调用 team_check_in。'
+  )
+}
+
+function identityFromRow(row: SqliteRow): AgentAuthorizationIdentity {
+  return {
+    agentSessionId: String(row.agent_session_id),
+    runId: String(row.run_id),
+    slotId: String(row.slot_id),
+    capabilities: effectiveCapabilities(row),
+    groupId: optionalString(row.group_id)
+  }
+}
+
+function groupFromRow(row: SqliteRow): TeamGroup {
+  return {
+    id: String(row.id),
+    runId: String(row.run_id),
+    name: String(row.name),
+    goal: String(row.goal),
+    status: String(row.status) as TeamGroupStatus,
+    leadSlotId: optionalString(row.lead_slot_id),
+    actingLeadSlotId: optionalString(row.acting_lead_slot_id),
+    createdAt: numberOf(row.created_at),
+    updatedAt: numberOf(row.updated_at),
+    dissolvedAt: optionalNumber(row.dissolved_at)
+  }
+}
+
+function groupEventFromRow(row: SqliteRow): TeamGroupEvent {
+  return {
+    seq: numberOf(row.seq),
+    groupId: String(row.group_id),
+    type: String(row.event_type) as TeamGroupEventType,
+    slotId: optionalString(row.slot_id),
+    channelId: optionalString(row.channel_id),
+    actor: String(row.actor_key),
+    detail: optionalString(row.detail),
+    at: numberOf(row.created_at)
+  }
 }
 
 function assignedSkillsOf(value: unknown): AssignedAgentSkill[] {
@@ -136,6 +234,20 @@ function tableHasColumn(database: DatabaseSync, table: string, column: string): 
 
 function normalizedNote(value: string): string {
   return value.replace(/\s+/g, ' ').trim().slice(0, 2_000)
+}
+
+function normalizedGroupName(value: string): string {
+  const name = value.replace(/\s+/g, ' ').trim()
+  if (!name) throw new TaskPoolError('group_name_required', '协作组名称不能为空')
+  if (name.length > GROUP_NAME_MAX_LENGTH) throw new TaskPoolError('group_name_too_long', `协作组名称不能超过 ${GROUP_NAME_MAX_LENGTH} 个字符`)
+  return name
+}
+
+/** 组目标可空（无 lead 的纯协作组可以只共享消息与记忆）。 */
+function normalizedGroupGoal(value: string): string {
+  const goal = value.replace(/\r\n/g, '\n').trim()
+  if (goal.length > GROUP_GOAL_MAX_LENGTH) throw new TaskPoolError('group_goal_too_long', `组目标不能超过 ${GROUP_GOAL_MAX_LENGTH} 个字符`)
+  return goal
 }
 
 function failoverFromRow(row: SqliteRow): TeamFailoverRecord {
@@ -227,8 +339,13 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
       capabilities: stringArrayOf(row.capabilities_json),
       skills: assignedSkillsOf(row.skills_json),
       accent: String(row.accent) as TeamRoleAccent,
-      order: numberOf(row.role_order)
+      order: numberOf(row.role_order),
+      groupId: optionalString(row.group_id)
     }))
+
+    const groups = (this.database.prepare(
+      'SELECT * FROM team_groups ORDER BY created_at ASC, id ASC'
+    ).all() as SqliteRow[]).map(groupFromRow)
 
     const modelSelectionBySlot = new Map((this.database.prepare(
       'SELECT slot_id, selection_json FROM agent_slot_model_selections'
@@ -249,7 +366,10 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
       channelId: optionalString(row.channel_id),
       order: numberOf(row.slot_order),
       createdAt: numberOf(row.created_at),
-      updatedAt: numberOf(row.updated_at)
+      updatedAt: numberOf(row.updated_at),
+      groupId: optionalString(row.group_id),
+      homeRoleId: optionalString(row.home_role_id),
+      groupJoinedAt: optionalNumber(row.group_joined_at)
     }))
 
     const bindings = (this.database.prepare(
@@ -277,7 +397,7 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
     }))
 
     return {
-      schemaVersion: numberOf(meta.schema_version) as 7,
+      schemaVersion: numberOf(meta.schema_version) as 8,
       revision: numberOf(meta.revision),
       activeWorkspaceId: optionalString(meta.active_workspace_id),
       workspaces,
@@ -285,6 +405,7 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
       roles,
       slots,
       bindings,
+      groups,
       updatedAt: numberOf(meta.updated_at)
     }
   }
@@ -306,13 +427,17 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
     try {
       const { workspace, run } = bundle
       const existingSlots = this.database.prepare(`
-        SELECT s.id, s.channel_id, s.avatar_id, s.is_solo, r.template_key, r.capabilities_json, r.skills_json,
+        SELECT s.id, s.channel_id, s.avatar_id, s.is_solo, s.group_id, r.template_key, r.capabilities_json, r.skills_json,
           ms.selection_json AS model_selection_json
         FROM agent_slots s
         JOIN team_roles r ON r.id = s.role_id
         LEFT JOIN agent_slot_model_selections ms ON ms.slot_id = s.id
         WHERE s.run_id = ? ORDER BY s.slot_order ASC
       `).all(run.id) as SqliteRow[]
+      // 拓扑 bundle 会把席位角色重写回 solo 角色；已入组的池 run 不能走这条整体重写路径。
+      if (existingSlots.some((slot) => optionalString(slot.group_id))) {
+        throw new Error('会话池内已有协作组成员，不能整体重写拓扑；请先解散协作组')
+      }
       const desiredTopology = new Map(bundle.slots.map((slot) => {
         const role = bundle.roles.find((candidate) => candidate.id === slot.roleId)!
         return [slot.id, {
@@ -448,10 +573,11 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
         }
       }
 
+      // 组角色不属于拓扑 bundle：同一 run 再次 upsert（历史遗留路径）不得把入组成员的角色行扫掉。
       const roleIds = bundle.roles.map((role) => role.id)
       const rolePlaceholders = roleIds.map(() => '?').join(', ')
       this.database.prepare(`
-        DELETE FROM team_roles WHERE run_id = ? AND id NOT IN (${rolePlaceholders})
+        DELETE FROM team_roles WHERE run_id = ? AND group_id IS NULL AND id NOT IN (${rolePlaceholders})
       `).run(run.id, ...roleIds)
 
       this.bumpRevision(workspace.id)
@@ -738,15 +864,7 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
     const normalizedIdentityKey = identityKey.trim()
     const normalizedRunId = runId.trim()
     const row = this.database.prepare(`
-      SELECT ar.agent_session_id, ar.run_id, b.slot_id, s.is_solo, r.template_key, r.capabilities_json,
-        tr.acting_lead_slot_id, lead.capabilities_json AS lead_capabilities_json
-      FROM agent_registrations ar
-      JOIN runtime_bindings b
-        ON b.agent_session_id = ar.agent_session_id AND b.run_id = ar.run_id
-      JOIN agent_slots s ON s.id = b.slot_id AND s.run_id = b.run_id
-      JOIN team_roles r ON r.id = s.role_id AND r.run_id = b.run_id
-      JOIN team_runs tr ON tr.id = b.run_id
-      LEFT JOIN team_roles lead ON lead.run_id = b.run_id AND lead.template_key = 'lead'
+      ${IDENTITY_SELECT}
       WHERE (ar.runtime_id = ? OR ar.agent_session_id = ?)
         AND (? = '' OR ar.run_id = ?) AND ar.revoked_at IS NULL
       ORDER BY ar.installed_at DESC LIMIT 1
@@ -764,18 +882,8 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
           : '当前 Agent generation 未注册或已被撤销'
       )
     }
-    if (numberOf(row.is_solo) === 1) {
-      throw new TaskPoolError(
-        'solo_channel',
-        '当前通道是独立席位，不参与团队协作；请直接通过 check_messages / record_reply 与用户沟通'
-      )
-    }
-    return {
-      agentSessionId: String(row.agent_session_id),
-      runId: String(row.run_id),
-      slotId: String(row.slot_id),
-      capabilities: effectiveCapabilities(row)
-    }
+    assertGroupedIdentity(row, undefined)
+    return identityFromRow(row)
   }
 
   /**
@@ -796,15 +904,7 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
       throw new TaskPoolError('agent_not_authorized', '当前没有活动 TeamRun，通道身份无法解析')
     }
     const row = this.database.prepare(`
-      SELECT ar.agent_session_id, ar.run_id, b.slot_id, s.is_solo, r.template_key, r.capabilities_json,
-        tr.acting_lead_slot_id, lead.capabilities_json AS lead_capabilities_json
-      FROM agent_registrations ar
-      JOIN runtime_bindings b
-        ON b.agent_session_id = ar.agent_session_id AND b.run_id = ar.run_id
-      JOIN agent_slots s ON s.id = b.slot_id AND s.run_id = b.run_id
-      JOIN team_roles r ON r.id = s.role_id AND r.run_id = b.run_id
-      JOIN team_runs tr ON tr.id = b.run_id
-      LEFT JOIN team_roles lead ON lead.run_id = b.run_id AND lead.template_key = 'lead'
+      ${IDENTITY_SELECT}
       WHERE ar.run_id = ? AND ar.channel_id = ? AND ar.revoked_at IS NULL
       ORDER BY ar.installed_at DESC LIMIT 1
     `).get(activeRun.id, normalizedChannelId) as SqliteRow | undefined
@@ -840,18 +940,8 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
           : `CH-${normalizedChannelId} 未注册到当前 TeamRun`
       )
     }
-    if (numberOf(row.is_solo) === 1) {
-      throw new TaskPoolError(
-        'solo_channel',
-        `CH-${normalizedChannelId} 是独立席位，不参与团队协作；请直接通过 check_messages / record_reply 与用户沟通`
-      )
-    }
-    return {
-      agentSessionId: String(row.agent_session_id),
-      runId: String(row.run_id),
-      slotId: String(row.slot_id),
-      capabilities: effectiveCapabilities(row)
-    }
+    assertGroupedIdentity(row, normalizedChannelId)
+    return identityFromRow(row)
   }
 
   /**
@@ -1408,7 +1498,7 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
     this.database.exec('BEGIN IMMEDIATE')
     try {
       row = this.database.prepare(`
-        SELECT b.workspace_id, b.run_id, b.slot_id, r.name AS role_name, tr.status AS run_status
+        SELECT b.workspace_id, b.run_id, b.slot_id, b.channel_id, s.group_id, r.name AS role_name, tr.status AS run_status
         FROM runtime_bindings b
         JOIN agent_slots s ON s.id = b.slot_id
         JOIN team_roles r ON r.id = s.role_id
@@ -1441,6 +1531,18 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
       if (numberOf(updated.changes) !== 1) {
         throw new TaskPoolError('runtime_binding_missing', '当前 Agent RuntimeBinding 已失效')
       }
+      const groupId = optionalString(row.group_id)
+      if (groupId) {
+        this.appendGroupEvent({
+          groupId,
+          type: 'member_checked_in',
+          slotId: String(row.slot_id),
+          channelId: optionalString(row.channel_id),
+          actor: `agent:${String(row.slot_id)}`,
+          detail: normalizedNote(note) || undefined,
+          at
+        })
+      }
 
       const totals = this.database.prepare(`
         SELECT
@@ -1471,6 +1573,381 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
       roleName: String(row!.role_name),
       acknowledgedAt: at
     }
+  }
+
+  // ------------------------------------------------------------------ 协作组（会话池）
+  //
+  // 每个公开方法 = 一次 BEGIN IMMEDIATE 事务：校验 → 改 team_groups / agent_slots / team_roles →
+  // 写 team_group_events 审计行 → bumpRevision。成员关系的唯一真相源是 agent_slots.group_id；
+  // `is_solo` 与之同步翻转，让既有的「非 solo 成员」过滤器（编排器、简报、失效接管）自动生效。
+  // 绝不触碰 runtime_bindings 的令牌 / Composer / generation，也不改 run 状态。
+  //
+  // 池状态守卫只加在「扩大成员关系」的路径（createGroup / addGroupMembers 要求池 running）：
+  // 已结束的池不再接纳新成员，但仍允许移出 / 换 lead / 改目标 / 解散，让用户能收拾残局。
+
+  createGroup(input: {
+    runId: string
+    name: string
+    goal?: string
+    members: TeamGroupMemberConfiguration[]
+    leadSlotId?: string
+    at?: number
+  }): TeamGroupMutation {
+    const runId = input.runId.trim()
+    const name = normalizedGroupName(input.name)
+    const goal = normalizedGroupGoal(input.goal ?? '')
+    if (!input.members.length) throw new TaskPoolError('group_members_required', '协作组至少需要 1 名成员')
+    const leadSlotId = input.leadSlotId?.trim() || undefined
+    if (leadSlotId && !input.members.some((member) => member.slotId.trim() === leadSlotId)) {
+      throw new TaskPoolError('group_lead_not_member', 'lead 必须是本组成员')
+    }
+    const at = input.at ?? Date.now()
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      const run = this.requirePoolRun(runId)
+      const groupId = `team-group:${run.workspaceId}:${randomUUID()}`
+      this.database.prepare(`
+        INSERT INTO team_groups (
+          id, run_id, name, goal, status, lead_slot_id, acting_lead_slot_id, created_at, updated_at, dissolved_at
+        ) VALUES (?, ?, ?, ?, 'active', NULL, NULL, ?, ?, NULL)
+      `).run(groupId, runId, name, goal, at, at)
+      this.appendGroupEvent({ groupId, type: 'created', actor: 'operator', detail: name, at })
+      const joined = this.joinMembers(groupId, runId, input.members, at)
+      if (leadSlotId) {
+        this.database.prepare('UPDATE team_groups SET lead_slot_id = ? WHERE id = ?').run(leadSlotId, groupId)
+        this.appendGroupEvent({
+          groupId, type: 'lead_changed', slotId: leadSlotId, actor: 'operator', detail: `无 → ${leadSlotId}`, at
+        })
+      }
+      this.bumpRevision()
+      this.database.exec('COMMIT')
+      return {
+        group: this.requireGroup(groupId),
+        joined,
+        left: [],
+        leadChange: leadSlotId ? { nextSlotId: leadSlotId } : undefined
+      }
+    } catch (error) {
+      if (this.database.isTransaction) this.database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  addGroupMembers(input: { groupId: string; members: TeamGroupMemberConfiguration[]; at?: number }): TeamGroupMutation {
+    if (!input.members.length) throw new TaskPoolError('group_members_required', '至少指定 1 名要加入的成员')
+    const at = input.at ?? Date.now()
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      const group = this.requireActiveGroup(input.groupId)
+      this.requirePoolRun(group.runId)
+      const joined = this.joinMembers(group.id, group.runId, input.members, at)
+      this.database.prepare('UPDATE team_groups SET updated_at = ? WHERE id = ?').run(at, group.id)
+      this.bumpRevision()
+      this.database.exec('COMMIT')
+      return { group: this.requireGroup(group.id), joined, left: [] }
+    } catch (error) {
+      if (this.database.isTransaction) this.database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  removeGroupMember(input: { groupId: string; slotId: string; at?: number; force?: boolean }): TeamGroupMutation {
+    const slotId = input.slotId.trim()
+    const at = input.at ?? Date.now()
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      const group = this.requireActiveGroup(input.groupId)
+      const memberCount = numberOf((this.database.prepare(
+        'SELECT COUNT(*) AS count FROM agent_slots WHERE group_id = ?'
+      ).get(group.id) as SqliteRow).count)
+      if (effectiveGroupLeadSlotId(group) === slotId && memberCount > 1 && input.force !== true) {
+        throw new TaskPoolError('lead_must_transfer_first', '该成员是本组有效 lead 且组内还有其他成员；请先指定新 lead 再移出')
+      }
+      const left = this.leaveMember(group, slotId, at)
+      const leadChange = this.clearLeadIfMember(group, slotId, at)
+      this.database.prepare('UPDATE team_groups SET updated_at = ? WHERE id = ?').run(at, group.id)
+      this.bumpRevision()
+      this.database.exec('COMMIT')
+      return { group: this.requireGroup(group.id), joined: [], left: [left], leadChange }
+    } catch (error) {
+      if (this.database.isTransaction) this.database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  setGroupLead(input: { groupId: string; slotId: string | null; at?: number }): TeamGroupMutation {
+    const slotId = input.slotId?.trim() || undefined
+    const at = input.at ?? Date.now()
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      const group = this.requireActiveGroup(input.groupId)
+      if (slotId) this.requireGroupMember(group.id, slotId)
+      this.database.prepare(`
+        UPDATE team_groups SET lead_slot_id = ?, acting_lead_slot_id = NULL, updated_at = ? WHERE id = ?
+      `).run(slotId ?? null, at, group.id)
+      this.appendGroupEvent({
+        groupId: group.id,
+        type: 'lead_changed',
+        slotId,
+        actor: 'operator',
+        detail: `${group.leadSlotId ?? '无'} → ${slotId ?? '无'}`,
+        at
+      })
+      this.bumpRevision()
+      this.database.exec('COMMIT')
+      return {
+        group: this.requireGroup(group.id),
+        joined: [],
+        left: [],
+        leadChange: { previousSlotId: group.leadSlotId, nextSlotId: slotId }
+      }
+    } catch (error) {
+      if (this.database.isTransaction) this.database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  setGroupActingLead(input: { groupId: string; slotId: string | null; at?: number }): TeamGroupMutation {
+    const slotId = input.slotId?.trim() || undefined
+    const at = input.at ?? Date.now()
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      const group = this.requireActiveGroup(input.groupId)
+      if (slotId) this.requireGroupMember(group.id, slotId)
+      this.database.prepare(
+        'UPDATE team_groups SET acting_lead_slot_id = ?, updated_at = ? WHERE id = ?'
+      ).run(slotId ?? null, at, group.id)
+      this.appendGroupEvent({
+        groupId: group.id,
+        type: 'acting_lead_changed',
+        slotId,
+        actor: 'operator',
+        detail: `${group.actingLeadSlotId ?? '无'} → ${slotId ?? '无'}`,
+        at
+      })
+      this.bumpRevision()
+      this.database.exec('COMMIT')
+      return {
+        group: this.requireGroup(group.id),
+        joined: [],
+        left: [],
+        leadChange: { previousSlotId: effectiveGroupLeadSlotId(group), nextSlotId: slotId ?? group.leadSlotId }
+      }
+    } catch (error) {
+      if (this.database.isTransaction) this.database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  updateGroupGoal(input: { groupId: string; goal: string; at?: number }): TeamGroupMutation {
+    const goal = normalizedGroupGoal(input.goal)
+    const at = input.at ?? Date.now()
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      const group = this.requireActiveGroup(input.groupId)
+      this.database.prepare('UPDATE team_groups SET goal = ?, updated_at = ? WHERE id = ?').run(goal, at, group.id)
+      this.appendGroupEvent({
+        groupId: group.id, type: 'goal_updated', actor: 'operator', detail: goal.slice(0, 200) || undefined, at
+      })
+      this.bumpRevision()
+      this.database.exec('COMMIT')
+      return { group: this.requireGroup(group.id), joined: [], left: [] }
+    } catch (error) {
+      if (this.database.isTransaction) this.database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  dissolveGroup(input: { groupId: string; at?: number }): TeamGroupMutation {
+    const at = input.at ?? Date.now()
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      const group = this.requireActiveGroup(input.groupId)
+      const memberIds = (this.database.prepare(
+        'SELECT id FROM agent_slots WHERE group_id = ? ORDER BY slot_order ASC, id ASC'
+      ).all(group.id) as SqliteRow[]).map((row) => String(row.id))
+      const left = memberIds.map((slotId) => this.leaveMember(group, slotId, at))
+      this.database.prepare(`
+        UPDATE team_groups SET status = 'dissolved', acting_lead_slot_id = NULL, dissolved_at = ?, updated_at = ?
+        WHERE id = ?
+      `).run(at, at, group.id)
+      this.appendGroupEvent({ groupId: group.id, type: 'dissolved', actor: 'operator', detail: `${left.length} 名成员恢复独立`, at })
+      this.bumpRevision()
+      this.database.exec('COMMIT')
+      return { group: this.requireGroup(group.id), joined: [], left }
+    } catch (error) {
+      if (this.database.isTransaction) this.database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  listGroupEvents(groupId: string, limit = 50): TeamGroupEvent[] {
+    const normalizedLimit = Math.min(500, Math.max(1, Math.floor(limit)))
+    return (this.database.prepare(`
+      SELECT * FROM team_group_events WHERE group_id = ? ORDER BY seq DESC LIMIT ?
+    `).all(groupId.trim(), normalizedLimit) as SqliteRow[]).reverse().map(groupEventFromRow)
+  }
+
+  /** 入组：插组角色行、席位指向新角色并记住 home 角色、is_solo 翻 0；逐人写 member_joined。 */
+  private joinMembers(
+    groupId: string,
+    runId: string,
+    members: TeamGroupMemberConfiguration[],
+    at: number
+  ): GroupMembershipChange[] {
+    const slotIds = [...new Set(members.map((member) => member.slotId.trim()))]
+    if (slotIds.length !== members.length) throw new TaskPoolError('group_member_duplicate', '同一席位在成员列表里重复')
+    const placeholders = slotIds.map(() => '?').join(', ')
+    const slotRows = new Map((this.database.prepare(`
+      SELECT id, run_id, channel_id, group_id FROM agent_slots WHERE id IN (${placeholders})
+    `).all(...slotIds) as SqliteRow[]).map((row) => [String(row.id), row] as const))
+    for (const slotId of slotIds) {
+      const row = slotRows.get(slotId)
+      if (!row || String(row.run_id) !== runId) {
+        throw new TaskPoolError('group_member_not_in_run', `席位 ${slotId} 不属于当前会话池`)
+      }
+      if (optionalString(row.group_id)) {
+        throw new TaskPoolError('group_member_already_grouped', `席位 ${slotId} 已在其他协作组内（一个席位同一时刻只属于一个组）`)
+      }
+    }
+    const existingGroupRoles = (this.database.prepare(
+      'SELECT role_key, template_key, role_order FROM team_roles WHERE group_id = ?'
+    ).all(groupId) as SqliteRow[]).map((row) => ({
+      key: String(row.role_key),
+      templateKey: String(row.template_key),
+      order: numberOf(row.role_order)
+    }))
+    const roles = buildGroupRoles({ group: { id: groupId, runId }, members, existingGroupRoles })
+    const insertRole = this.database.prepare(`
+      INSERT INTO team_roles (
+        id, run_id, role_key, template_key, name, mission, instructions,
+        capabilities_json, skills_json, accent, role_order, group_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+    const joinSlot = this.database.prepare(`
+      UPDATE agent_slots
+      SET group_id = ?, role_id = ?, home_role_id = COALESCE(home_role_id, role_id), is_solo = 0,
+          group_joined_at = ?, updated_at = ?
+      WHERE id = ? AND run_id = ? AND group_id IS NULL
+    `)
+    return roles.map((role, index): GroupMembershipChange => {
+      const slotId = slotIds[index]!
+      insertRole.run(
+        role.id, role.runId, role.key, role.templateKey, role.name, role.mission, role.instructions,
+        JSON.stringify(role.capabilities), JSON.stringify(role.skills), role.accent, role.order, groupId
+      )
+      const updated = joinSlot.run(groupId, role.id, at, at, slotId, runId)
+      if (numberOf(updated.changes) !== 1) {
+        throw new TaskPoolError('group_member_already_grouped', `席位 ${slotId} 的成员关系在本次事务内已变化`)
+      }
+      const channelId = optionalString(slotRows.get(slotId)!.channel_id)
+      this.appendGroupEvent({
+        groupId, type: 'member_joined', slotId, channelId, actor: 'operator', detail: role.name, at
+      })
+      return { slotId, channelId, roleName: role.name, roleTemplateKey: role.templateKey }
+    })
+  }
+
+  /** 出组：席位恢复 home 角色与 is_solo=1，删除其组角色行；写 member_left。 */
+  private leaveMember(group: TeamGroup, slotId: string, at: number): GroupMembershipChange {
+    const row = this.database.prepare(`
+      SELECT s.channel_id, s.role_id, s.home_role_id, s.group_id, r.name AS role_name, r.template_key
+      FROM agent_slots s
+      JOIN team_roles r ON r.id = s.role_id
+      WHERE s.id = ? AND s.run_id = ?
+    `).get(slotId, group.runId) as SqliteRow | undefined
+    if (!row || optionalString(row.group_id) !== group.id) {
+      throw new TaskPoolError('group_member_not_found', `席位 ${slotId} 不在协作组「${group.name}」内`)
+    }
+    const homeRoleId = optionalString(row.home_role_id)
+    if (!homeRoleId) throw new TaskPoolError('group_member_home_role_missing', `席位 ${slotId} 缺少入组前的角色，无法恢复独立身份`)
+    const groupRoleId = String(row.role_id)
+    this.database.prepare(`
+      UPDATE agent_slots
+      SET group_id = NULL, role_id = ?, home_role_id = NULL, is_solo = 1, group_joined_at = NULL, updated_at = ?
+      WHERE id = ? AND run_id = ?
+    `).run(homeRoleId, at, slotId, group.runId)
+    // 席位已改指 home 角色，组角色行此刻无人引用（FK RESTRICT 才允许删除）。
+    this.database.prepare('DELETE FROM team_roles WHERE id = ? AND group_id = ?').run(groupRoleId, group.id)
+    const channelId = optionalString(row.channel_id)
+    this.appendGroupEvent({
+      groupId: group.id, type: 'member_left', slotId, channelId, actor: 'operator', detail: String(row.role_name), at
+    })
+    return { slotId, channelId, roleName: String(row.role_name), roleTemplateKey: String(row.template_key) }
+  }
+
+  /** 被移出的席位若是 lead / 临时主控，组的 lead 字段随之清空（带审计）。 */
+  private clearLeadIfMember(group: TeamGroup, slotId: string, at: number): TeamGroupMutation['leadChange'] {
+    let leadChange: TeamGroupMutation['leadChange']
+    if (group.actingLeadSlotId === slotId) {
+      this.database.prepare('UPDATE team_groups SET acting_lead_slot_id = NULL WHERE id = ?').run(group.id)
+      this.appendGroupEvent({
+        groupId: group.id, type: 'acting_lead_changed', actor: 'operator', detail: `${slotId} → 无（成员移出）`, at
+      })
+      leadChange = { previousSlotId: slotId, nextSlotId: group.leadSlotId }
+    }
+    if (group.leadSlotId === slotId) {
+      this.database.prepare('UPDATE team_groups SET lead_slot_id = NULL WHERE id = ?').run(group.id)
+      this.appendGroupEvent({
+        groupId: group.id, type: 'lead_changed', actor: 'operator', detail: `${slotId} → 无（成员移出）`, at
+      })
+      leadChange = { previousSlotId: slotId, nextSlotId: undefined }
+    }
+    return leadChange
+  }
+
+  private requirePoolRun(runId: string): { id: string; workspaceId: string } {
+    const row = this.database.prepare(
+      'SELECT id, workspace_id, template_id, status FROM team_runs WHERE id = ?'
+    ).get(runId) as SqliteRow | undefined
+    if (!row) throw new TaskPoolError('run_not_found', 'TeamRun 不存在')
+    if (!isSessionPoolRun({ templateId: String(row.template_id) })) {
+      throw new TaskPoolError('group_requires_pool_run', '协作组只能在会话池（独立批次）内创建；一次性团队 run 不支持分组')
+    }
+    if (String(row.status) !== 'running') {
+      throw new TaskPoolError('group_run_inactive', '会话池已结束，不能再变更协作组')
+    }
+    return { id: String(row.id), workspaceId: String(row.workspace_id) }
+  }
+
+  private requireGroup(groupId: string): TeamGroup {
+    const row = this.database.prepare('SELECT * FROM team_groups WHERE id = ?').get(groupId.trim()) as SqliteRow | undefined
+    if (!row) throw new TaskPoolError('group_not_found', '协作组不存在')
+    return groupFromRow(row)
+  }
+
+  private requireActiveGroup(groupId: string): TeamGroup {
+    const group = this.requireGroup(groupId)
+    if (group.status !== 'active') throw new TaskPoolError('group_dissolved', `协作组「${group.name}」已解散`)
+    return group
+  }
+
+  private requireGroupMember(groupId: string, slotId: string): void {
+    const row = this.database.prepare('SELECT 1 FROM agent_slots WHERE id = ? AND group_id = ?').get(slotId, groupId)
+    if (!row) throw new TaskPoolError('group_member_not_found', `席位 ${slotId} 不是本组成员`)
+  }
+
+  private appendGroupEvent(input: {
+    groupId: string
+    type: TeamGroupEventType
+    slotId?: string
+    channelId?: string
+    actor: string
+    detail?: string
+    at: number
+  }): void {
+    this.database.prepare(`
+      INSERT INTO team_group_events (group_id, event_type, slot_id, channel_id, actor_key, detail, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      input.groupId,
+      input.type,
+      input.slotId ?? null,
+      input.channelId ?? null,
+      input.actor,
+      input.detail?.slice(0, 2_000) ?? null,
+      input.at
+    )
   }
 
   close(): void {
@@ -1522,6 +1999,30 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
         acting_lead_slot_id TEXT
       );
 
+      CREATE TABLE IF NOT EXISTS team_groups (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL REFERENCES team_runs(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        goal TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL,
+        lead_slot_id TEXT,
+        acting_lead_slot_id TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        dissolved_at INTEGER
+      );
+
+      CREATE TABLE IF NOT EXISTS team_group_events (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        group_id TEXT NOT NULL REFERENCES team_groups(id) ON DELETE CASCADE,
+        event_type TEXT NOT NULL,
+        slot_id TEXT,
+        channel_id TEXT,
+        actor_key TEXT NOT NULL,
+        detail TEXT,
+        created_at INTEGER NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS team_roles (
         id TEXT PRIMARY KEY,
         run_id TEXT NOT NULL REFERENCES team_runs(id) ON DELETE CASCADE,
@@ -1534,6 +2035,7 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
         skills_json TEXT NOT NULL,
         accent TEXT NOT NULL,
         role_order INTEGER NOT NULL,
+        group_id TEXT REFERENCES team_groups(id) ON DELETE CASCADE,
         UNIQUE (run_id, role_key)
       );
 
@@ -1547,7 +2049,10 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
         is_solo INTEGER NOT NULL DEFAULT 0,
         slot_order INTEGER NOT NULL,
         created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
+        updated_at INTEGER NOT NULL,
+        group_id TEXT REFERENCES team_groups(id) ON DELETE SET NULL,
+        home_role_id TEXT,
+        group_joined_at INTEGER
       );
 
       CREATE TABLE IF NOT EXISTS agent_slot_model_selections (
@@ -1604,6 +2109,8 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
       CREATE INDEX IF NOT EXISTS idx_team_failovers_run ON team_failovers(run_id, detected_at DESC);
       CREATE UNIQUE INDEX IF NOT EXISTS uq_team_failovers_waiting_slot
       ON team_failovers(run_id, slot_id) WHERE status = 'waiting_for_agent';
+      CREATE INDEX IF NOT EXISTS idx_team_groups_run ON team_groups(run_id, status, created_at);
+      CREATE INDEX IF NOT EXISTS idx_team_group_events_group ON team_group_events(group_id, seq);
 
       INSERT OR IGNORE INTO team_control_meta (
         id, schema_version, revision, active_workspace_id, updated_at
@@ -1735,6 +2242,34 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
         throw error
       }
     }
+    if (databaseVersion === 7) {
+      // v8：会话池 + 协作组。全部 additive：新表由上方 CREATE IF NOT EXISTS 建好，这里只补旧表的列，
+      // 并把既有 solo 席位的角色记为 home 角色（出组时恢复用）。桌面主进程与 Cursor 托管的 MCP
+      // 进程各自打开同一库并各自迁移，列存在性守卫让先后到达的两次迁移都幂等。
+      this.database.exec('BEGIN IMMEDIATE')
+      try {
+        if (!tableHasColumn(this.database, 'agent_slots', 'group_id')) {
+          this.database.exec('ALTER TABLE agent_slots ADD COLUMN group_id TEXT REFERENCES team_groups(id) ON DELETE SET NULL')
+        }
+        if (!tableHasColumn(this.database, 'agent_slots', 'home_role_id')) {
+          this.database.exec('ALTER TABLE agent_slots ADD COLUMN home_role_id TEXT')
+        }
+        if (!tableHasColumn(this.database, 'agent_slots', 'group_joined_at')) {
+          this.database.exec('ALTER TABLE agent_slots ADD COLUMN group_joined_at INTEGER')
+        }
+        if (!tableHasColumn(this.database, 'team_roles', 'group_id')) {
+          this.database.exec('ALTER TABLE team_roles ADD COLUMN group_id TEXT REFERENCES team_groups(id) ON DELETE CASCADE')
+        }
+        this.database.prepare(
+          'UPDATE team_control_meta SET schema_version = ?, revision = revision + 1, updated_at = ? WHERE id = 1'
+        ).run(8, Date.now())
+        this.database.exec('COMMIT')
+        databaseVersion = 8
+      } catch (error) {
+        if (this.database.isTransaction) this.database.exec('ROLLBACK')
+        throw error
+      }
+    }
     if (databaseVersion !== TEAM_SCHEMA_VERSION) {
       throw new Error(`团队控制数据库版本不兼容：${databaseVersion}，当前支持 ${TEAM_SCHEMA_VERSION}`)
     }
@@ -1752,6 +2287,7 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
     this.database.exec(`
       CREATE UNIQUE INDEX IF NOT EXISTS uq_runtime_bindings_run_composer
       ON runtime_bindings(run_id, composer_id) WHERE composer_id IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_agent_slots_group ON agent_slots(group_id) WHERE group_id IS NOT NULL;
     `)
     const repaired = this.database.prepare(`
       UPDATE team_runs SET status = 'draft', updated_at = ?

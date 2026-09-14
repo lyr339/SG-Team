@@ -76,17 +76,25 @@ export class SqliteTeamMemoryRepository implements TeamMemoryRepository {
     return numberOf(row.revision)
   }
 
-  load(workspaceId: string, runId: string): TeamMemorySnapshot {
+  load(workspaceId: string, runId: string, groupId?: string): TeamMemorySnapshot {
     const normalizedWorkspaceId = workspaceId.trim()
     const normalizedRunId = runId.trim()
+    const normalizedGroupId = groupId?.trim() || undefined
     const meta = this.database.prepare(
       'SELECT revision, seq, updated_at FROM team_memory_meta WHERE id = 1'
     ).get() as SqliteRow
-    const rows = this.database.prepare(`
-      SELECT * FROM team_memory_items
-      WHERE workspace_id = ? AND (scope = 'project' OR run_id = ?)
-      ORDER BY updated_at DESC, id ASC
-    `).all(normalizedWorkspaceId, normalizedRunId) as SqliteRow[]
+    // 项目级记忆跨组共享；run 级记忆在给出组作用域时只取该组（任务书 §4.4）。
+    const rows = (normalizedGroupId
+      ? this.database.prepare(`
+          SELECT * FROM team_memory_items
+          WHERE workspace_id = ? AND (scope = 'project' OR (run_id = ? AND group_id = ?))
+          ORDER BY updated_at DESC, id ASC
+        `).all(normalizedWorkspaceId, normalizedRunId, normalizedGroupId)
+      : this.database.prepare(`
+          SELECT * FROM team_memory_items
+          WHERE workspace_id = ? AND (scope = 'project' OR run_id = ?)
+          ORDER BY updated_at DESC, id ASC
+        `).all(normalizedWorkspaceId, normalizedRunId)) as SqliteRow[]
     const items: Record<string, TeamMemoryItem> = {}
     const itemOrder: string[] = []
     for (const row of rows) {
@@ -118,6 +126,7 @@ export class SqliteTeamMemoryRepository implements TeamMemoryRepository {
       seq: numberOf(meta.seq),
       workspaceId: normalizedWorkspaceId,
       runId: normalizedRunId,
+      groupId: normalizedGroupId,
       items,
       itemOrder,
       events,
@@ -132,7 +141,7 @@ export class SqliteTeamMemoryRepository implements TeamMemoryRepository {
     const statuses = new Set(requestedStatuses
       .filter((status) => MEMORY_STATUSES.has(status)))
     const limit = Math.min(50, Math.max(1, Math.floor(input.limit ?? 20)))
-    const snapshot = this.load(input.workspaceId, input.runId)
+    const snapshot = this.load(input.workspaceId, input.runId, input.groupId)
     return snapshot.itemOrder
       .map((id) => snapshot.items[id])
       .filter((item): item is TeamMemoryItem => Boolean(item))
@@ -152,8 +161,14 @@ export class SqliteTeamMemoryRepository implements TeamMemoryRepository {
     if (!MEMORY_SCOPES.has(input.scope)) throw new Error('记忆范围无效')
     if (!MEMORY_KINDS.has(input.kind)) throw new Error('记忆类型无效')
     this.assertRun(workspaceId, runId)
-    this.assertActor(runId, input.proposedBy)
+    const proposerGroupId = this.assertActor(runId, input.proposedBy)
     const sources = this.normalizedSources(input.sources, runId)
+    // 组快照：项目级记忆跨组共享不带组；run 级记忆显式指定组时提出者必须在该组，否则取提出者当前的组。
+    const explicitGroupId = input.groupId?.trim() || undefined
+    if (explicitGroupId && input.proposedBy.type === 'agent' && proposerGroupId !== explicitGroupId) {
+      throw new TaskPoolError('actor_not_in_group', '记忆提出者不在指定的协作组内')
+    }
+    const groupId = input.scope === 'project' ? undefined : explicitGroupId ?? proposerGroupId
 
     const duplicate = this.database.prepare(`
       SELECT * FROM team_memory_items
@@ -171,6 +186,9 @@ export class SqliteTeamMemoryRepository implements TeamMemoryRepository {
       if (previous.status !== 'accepted' || previous.supersededById) {
         throw new Error('只能修订当前已采纳且未被取代的记忆')
       }
+      if ((previous.groupId ?? '') !== (groupId ?? '')) {
+        throw new TaskPoolError('memory_group_mismatch', '只能修订本协作组的记忆')
+      }
       supersedesId = previous.id
       version = previous.version + 1
     }
@@ -183,8 +201,8 @@ export class SqliteTeamMemoryRepository implements TeamMemoryRepository {
         INSERT INTO team_memory_items (
           id, workspace_id, run_id, scope, kind, title, content, status,
           version, proposed_by_key, reviewed_by_key, review_note, accepted_at,
-          supersedes_id, superseded_by_id, client_proposal_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'proposed', ?, ?, NULL, '', NULL, ?, NULL, ?, ?, ?)
+          supersedes_id, superseded_by_id, client_proposal_id, created_at, updated_at, group_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'proposed', ?, ?, NULL, '', NULL, ?, NULL, ?, ?, ?, ?)
       `).run(
         id,
         workspaceId,
@@ -198,7 +216,8 @@ export class SqliteTeamMemoryRepository implements TeamMemoryRepository {
         supersedesId ?? null,
         clientProposalId,
         now,
-        now
+        now,
+        groupId ?? null
       )
       const insertSource = this.database.prepare(`
         INSERT INTO team_memory_sources (memory_id, position, source_type, source_ref, label)
@@ -227,7 +246,11 @@ export class SqliteTeamMemoryRepository implements TeamMemoryRepository {
   review(input: ReviewTeamMemoryInput): TeamMemoryItem {
     const item = this.requireItem(input.memoryId)
     if (item.status !== 'proposed') throw new TaskPoolError('memory_not_proposed', '只有待确认记忆可以审核')
-    this.assertActor(item.runId, input.reviewer)
+    const reviewerGroupId = this.assertActor(item.runId, input.reviewer)
+    // 组内记忆只能由本组成员审核（操作员不受限）。
+    if (input.reviewer.type === 'agent' && item.groupId && reviewerGroupId !== item.groupId) {
+      throw new TaskPoolError('memory_group_mismatch', '只能审核本协作组的记忆提案')
+    }
     const now = Date.now()
     const note = input.note?.trim().slice(0, 4_000) ?? ''
     this.database.exec('BEGIN IMMEDIATE')
@@ -308,7 +331,8 @@ export class SqliteTeamMemoryRepository implements TeamMemoryRepository {
       supersededById: optionalString(row.superseded_by_id),
       sources,
       createdAt: numberOf(row.created_at),
-      updatedAt: numberOf(row.updated_at)
+      updatedAt: numberOf(row.updated_at),
+      groupId: optionalString(row.group_id)
     }
   }
 
@@ -359,12 +383,14 @@ export class SqliteTeamMemoryRepository implements TeamMemoryRepository {
     if (!row) throw new Error('TeamRun 与工作区不匹配')
   }
 
-  private assertActor(runId: string, actor: TeamMessageActor): void {
-    if (actor.type === 'operator') return
+  /** 校验 actor 属于 run，并返回其席位当前所在的组（operator / 未入组为 undefined）。 */
+  private assertActor(runId: string, actor: TeamMessageActor): string | undefined {
+    if (actor.type === 'operator') return undefined
     const row = this.database.prepare(
-      'SELECT id FROM agent_slots WHERE id = ? AND run_id = ?'
-    ).get(actor.slotId, runId)
+      'SELECT id, group_id FROM agent_slots WHERE id = ? AND run_id = ?'
+    ).get(actor.slotId, runId) as SqliteRow | undefined
     if (!row) throw new Error('记忆 Actor 不属于当前 TeamRun')
+    return optionalString(row.group_id)
   }
 
   private appendEvent(input: {
@@ -431,6 +457,7 @@ export class SqliteTeamMemoryRepository implements TeamMemoryRepository {
         client_proposal_id TEXT NOT NULL,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
+        group_id TEXT,
         UNIQUE (workspace_id, proposed_by_key, client_proposal_id)
       );
 
@@ -473,5 +500,19 @@ export class SqliteTeamMemoryRepository implements TeamMemoryRepository {
     if (version !== SCHEMA_VERSION) {
       throw new Error(`团队记忆数据库版本不兼容：${version}，当前支持 ${SCHEMA_VERSION}`)
     }
+    // 会话池 + 协作组：run 级记忆按组作用域。列 additive、以存在性守卫而非版本号（任务书 §4.6）。
+    const columns = (this.database.prepare('PRAGMA table_info(team_memory_items)').all() as SqliteRow[])
+      .map((row) => String(row.name))
+    if (!columns.includes('group_id')) {
+      try {
+        this.database.exec('ALTER TABLE team_memory_items ADD COLUMN group_id TEXT')
+      } catch (error) {
+        if (!/duplicate column/i.test(String(error))) throw error
+      }
+    }
+    this.database.exec(`
+      CREATE INDEX IF NOT EXISTS idx_team_memory_items_run_group
+      ON team_memory_items(run_id, group_id, status);
+    `)
   }
 }

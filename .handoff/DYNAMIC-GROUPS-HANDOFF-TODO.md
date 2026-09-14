@@ -1,14 +1,15 @@
 # 交接任务书：会话池 + 动态分组（先独立、后建组、可拆组）· 阶段 1 数据模型与迁移
 
-> **状态（2026-09-13 14:05）：方案已定、阶段 0 实机实验已通过；阶段 1 待动工。**
-> 每完成一步在第 13 节追加一行；中断后接手者只读第 0、13 节即可定位。
+> **状态（2026-09-14）：阶段 1 进行中**——切片 ①②③ 已落地并全绿（详见 §13）；④ 成员关系通知、⑤ 服务 API / IPC / 最小 UI、⑥ 集成测试与文档待做。
+> 每完成一步在第 13 节追加一行；中断后接手者只读第 0、13、14 节即可定位。
 > 四个阶段的索引、依赖与决策点见 `DYNAMIC-GROUPS-ROADMAP.md`；阶段 2 / 3 / 4 各有独立任务书
 > （`…-PHASE2-RUNTIME-TODO.md` / `…-PHASE3-UI-TODO.md` / `…-PHASE4-MCP-TODO.md`）。
 >
 > 项目：拾光 / SG Team（`shiguang-team`） · 工作区：仓库根目录（macOS / Windows 均可）
 >
-> 基线：`a5492a4`（工作树另有 ~185 文件未提交改动，属其他 Agent 正在推进的部分——
-> **接手前 `git status` 确认归属并保护，不要覆盖、不要 stash；本任务应在一次提交收口后于独立分支进行**）
+> 基线：`2b498f9`（v0.2.1）。本任务在独立 worktree `../SG-Team-groups`、分支 `feat/dynamic-groups-phase1` 上进行，
+> `node_modules` 软链到主仓（已写入 `.git/info/exclude`）；主工作树的未提交文件属其他 Agent——**不要碰**。
+> 文中 `a5492a4` / 「185 文件未提交」为 09-13 撰写时的旧基线，已过时。
 >
 > 来源：CH-2 独立席位 2026-09-13 13:21–14:05 的只读审查 + 阶段 0 实机实验（第 2 节）。业务源码零变更；
 > 实验只改了运行库 `~/Library/Application Support/sg-team/task-pool.sqlite3` 的 4 行并已全部回滚。
@@ -443,3 +444,39 @@ interface TeamControlSnapshot { …; groups: TeamGroupView[] }   // 只含 activ
 | 时间 | 阶段 | 完成内容 | 验证 |
 |---|---|---|---|
 | 09-13 14:05 | 文档 | 建立本任务书；阶段 0 实机实验（CH-3 入组 / 出组）通过并回滚；确认阻塞点 `agent_capability_mismatch` 与失效接管风险 | 只读 + 4 行运行库改动已回滚；无代码变更 |
+| 09-14 14:15–14:38 | 切片② | （CH-1）worktree + 分支；domain 组类型 / `isSessionPoolRun` / `buildGroupRoles` / `projectGroups`；schema v7→v8 幂等迁移；仓储组 CRUD（create / add / remove / setLead / setActingLead / updateGoal / dissolve / listGroupEvents）；身份解析返回 `groupId`、solo 抛 `not_in_group`；`effectiveCapabilities` 组感知；签到写 `member_checked_in`；删能力子集校验；`upsertWorkspaceTeam` 排除组角色 + 拒绝重写有组成员的池 | `tests/team-groups-repository.test.ts` 9 例 |
+| 09-14 14:38 | 切片① | （CH-1）`TeamFailoverService.reconcile()` 对池 run 早返回（不收尾、不接替、不 run 级 lead 转移）——落树时会话中断，未验证 | — |
+| 09-14 14:45–15:00 | 切片① | （CH-3 接手）failover 池 run 测试三例锁定 I5（含全员离线、`attention` 翻转、用户显式 `endActiveRun` 仍收尾任务）；`TeamHandoffService.options/manual` 对池 run 抛 `handoff_pool_run`（通道 = 席位，禁止角色交接）；`buildGroupRoles` 改抛带码 `TaskPoolError`；仓储组块注明「只有 create/add 要求池 running」 | `tests/team-failover.test.ts` +3；临时移除守卫验证测试确能抓回归 |
+| 09-14 15:00–15:10 | 切片③a | 任务池：`TeamTask.groupId` + `sameTaskGroup`；`plan(runId, inputs, groupId)` 依赖只能指向同组；`leaseNext/leaseTask/leaseReview` 按组过滤（`task_group_mismatch`）；`releaseAgentWork`（出组：attempt cancelled、任务回 queued、清空对该席位的定向、验收回 queued，事件 `lease/review.released_by_membership`）；`TaskPoolService.closeGroup/releaseAgentWork`、`CreateTaskInput.groupId`；`TaskAgentService` 全部视图 `inScope`；`tasks.group_id` 列存在性守卫 + 索引 | `tests/task-pool-group-scope.test.ts` 5 例 |
+| 09-14 15:10–15:25 | 切片③b/c | 协作库：`team_messages/threads.group_id`；`loadRun(runId, groupId?)`、`listRunMembers(runId, groupId?)`；`resolveAuthorizedAgent` 返回 `groupId`、`isEffectiveLead` 以组 lead / acting 为准（`leadStatusOf` 与 team-control 同口径）；`createMessage` 组快照按「显式 → 接收方组 → 发送方组」推得，跨组互发 `recipient_not_in_group`，串线程 `thread_group_mismatch`；agent service 全部读写按 `agent.groupId`。记忆库：`team_memory_items.group_id`；`load/search(…, groupId)` run 级按组、项目级跨组；`propose` 组快照、修订同组；`review` 组内成员限定 | `tests/team-group-scope.test.ts` 5 例 |
+| 09-14 15:25–15:31 | 切片③d | 编排域 `collaboratingMembers / groupScopedMembers / groupScopedLead`（池内无组对象没有执行者）；`TaskDispatcher` 分派 / 验收派单按任务组；`TeamOrchestrator` 催办 / 预警按任务组 lead；`selectMemoryReviewMember` run 级按组、项目级池内任一质量角色、lead 与模板解耦；`TeamCollaborationSweeper` 池内按活动组逐组清扫（lead 心跳周期键按作用域）；continuity 检查点 `members[].groupId` + 可选 `groups[]` | `tests/team-orchestration-groups.test.ts` 4 例；全量 180 文件 / 1789 用例、typecheck、knip 全绿 |
+
+***
+
+## 14. 接手修正与实现决策（09-14，CH-1 设计 + CH-3 核对；续接者以此为准）
+
+### 14.1 对任务书的修正
+
+1. 基线与工作树：见文首。
+2. 阶段 4 §0.2 / §0.5 按 keepalive 60s 估算——09-13 已改为 5 分钟（`CHANNEL_KEEPALIVE_TIMEOUT_MS`），4C 收益要重算。
+3. 运行库里有 11 个 09-03 遗留 `running` 独立 run（两个工作区，从未 complete）。无害（`activeRun` 取最新），但阶段 2B 的 v9 归档迁移应加「非最新的 running 独立 run → completed」。
+4. 席位自动轮换 v1 只覆盖 `slot.solo`：入组后席位不轮换，Composer 无界增长。阶段 2C「重建后自动补入组通知」是解决前提，应把「组成员轮换」列为 2C 子项。
+5. `resolveChannelSessionOwner().solo` 在入组后翻为 false（围栏 JOIN 不改，只是派生值变化）；已核对 `evaluateSessionFence` 与 `channel-communication-tools.ts` 都不读该字段，无逻辑依赖。
+6. §9 最小 UI 挂在 `RunIndependentPanel`，阶段 3 整体替换——范围压到「能跑通 §11 验收脚本」为止。另：`run-view.ts` 独立模式只渲染 `solo === true` 的席位，**入组席位会从运行页消失**，切片⑤ 必须同时改这里。
+7. `TeamHandoffService.manual` 原只拦 solo，入组席位会成为合法交接源并 `rebindSlotFromMember`——池模型下等于互换两条会话的身份。已在切片① 对池 run 整体拒绝（`handoff_pool_run`）。
+8. `team-agent-launch-prompts.ts` 对非 solo 席位给团队启动提示：入组席位重建 Composer 会拿到团队提示（阶段 2C 处理）。
+
+### 14.2 有意偏离任务书的实现决策（沿用，不要改回）
+
+- **lead 权限与角色模板解耦**：有效 lead = `acting_lead_slot_id ?? lead_slot_id`；授权时叠加 `LEAD_ROLE_CAPABILITIES`（coordination / planning），持 lead 模板但非有效 lead 者被摘除。任何模板的成员都能被指定为组 lead；换 lead 不换角色行。与 D2 一致；后果：无 lead 组里没有人能 `plan`（任务板对无 lead 组不可用，只共享消息与记忆）。
+- **`home_role_id` 只在入组期间有值**（`COALESCE(home_role_id, role_id)`），不做启动回填；出组清空。
+- **每成员一行专属组角色**：id `team-role:<groupId>:<slotId>`，`role_key` = `g<组 id 尾 8 位>:<template>[-n]`，同模板按组内既有最大实例号续号（按数量编号会在中间成员出组后撞 `UNIQUE(run_id, role_key)`）。
+- **组事件不进内存 state**，按需 `listGroupEvents(groupId, limit)`；`TeamGroupView` 暂无 counters（`project()` 拿不到任务池 / 协作库，阶段 3 渲染侧聚合）。
+- **`TeamControlSnapshot.groups: TeamGroupView[]`**（`Omit<TeamControlState,'groups'>`）：active 全部 + 24h 内解散的（`DISSOLVED_GROUP_VISIBLE_MS`）；`attention` = 有成员确认离线。
+- **池状态守卫只加在扩大成员关系的路径**（`createGroup / addGroupMembers` 要求池 `running`）；已结束的池仍允许移出 / 换 lead / 改目标 / 解散，让用户能收拾残局。
+- **消息的组 = 写入时快照**：显式 `groupId` → 双方都必须在该组；省略 → 接收方的组 → 发送方的组。这样操作员 / 编排器 / 失效接管发给入组成员的既有 `createMessage` 调用不改一行就自动落进正确的组。两个 Agent 分属不同组不能互发；线程随首条消息定组。
+- **记忆**：`scope='project'` 不带组、跨组共享（池内任一质量角色可审）；`scope='run'` 按提出者的组，修订与审核都限本组。
+- **任务 key 仍以 run 为唯一域**（`UNIQUE(run_id, task_key)` 不重建表）：跨组同名 key 以 `duplicate_task_key` 拒绝；依赖只能指向同组任务。
+- **池内不带组的对象没有执行者**（`groupScopedMembers(team, undefined)` 在池 run 返回空）：操作员在池里建的 run 级任务不会被派给任何组成员（阶段 3 UI 建任务必须选组）。
+- **`registerSeat / addSeats / removeSeat` 推后**：§11 验收脚本不需要；独立批次创建仍走 `configureIndependentWorkspace`。
+- **`recordAgentCheckIn` 的 totals 未按 §5.1 改**：池 run 已是 `running`，状态推进本就是 no-op。

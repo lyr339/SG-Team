@@ -159,41 +159,22 @@ export function revokeWorkspaceAgentRegistrations(
   `).run(revokedAt, workspaceId.trim())
 }
 
+/**
+ * 授权 = 注册 generation 未吊销 ∧ 注册的 run 与身份一致。
+ *
+ * 能力不再对照注册时的 `capabilities_json` 快照：身份的能力每次调用都从当前角色行实时解析
+ *（`resolveChannelAgentIdentity`），而会话池里席位可以运行中入组换角色——阶段 0 实机实验
+ * 证明快照校验是唯一阻塞点（`agent_capability_mismatch`）。列本身保留（旧构建共库只读它）。
+ */
 export function assertAgentRegistrationAuthorized(
   database: DatabaseSync,
-  identity: AgentAuthorizationIdentity
+  identity: Pick<AgentAuthorizationIdentity, 'agentSessionId' | 'runId'>
 ): void {
-  const hasTeamControl = ['runtime_bindings', 'agent_slots', 'team_roles', 'team_runs']
-    .every((table) => tableExists(database, table))
-  const row = database.prepare(hasTeamControl ? `
-    SELECT ar.run_id, ar.capabilities_json, b.slot_id, r.template_key,
-      tr.acting_lead_slot_id, lead.capabilities_json AS lead_capabilities_json
-    FROM agent_registrations ar
-    LEFT JOIN runtime_bindings b
-      ON b.agent_session_id = ar.agent_session_id AND b.run_id = ar.run_id
-    LEFT JOIN agent_slots s ON s.id = b.slot_id AND s.run_id = b.run_id
-    LEFT JOIN team_roles r ON r.id = s.role_id AND r.run_id = b.run_id
-    LEFT JOIN team_runs tr ON tr.id = ar.run_id
-    LEFT JOIN team_roles lead ON lead.run_id = ar.run_id AND lead.template_key = 'lead'
-    WHERE ar.agent_session_id = ? AND ar.revoked_at IS NULL
-  ` : `
-    SELECT run_id, capabilities_json
-    FROM agent_registrations
+  const row = database.prepare(`
+    SELECT run_id FROM agent_registrations
     WHERE agent_session_id = ? AND revoked_at IS NULL
   `).get(identity.agentSessionId) as SqliteRow | undefined
   if (!row || String(row.run_id) !== identity.runId) {
     throw new TaskPoolError('agent_not_authorized', '当前 Agent generation 未注册或已被撤销')
-  }
-  const allowed = new Set(stringArrayOf(row.capabilities_json))
-  const leadCapabilities = new Set(stringArrayOf(row.lead_capabilities_json))
-  const actingLeadSlotId = optionalString(row.acting_lead_slot_id)
-  const slotId = optionalString(row.slot_id)
-  if (actingLeadSlotId && slotId === actingLeadSlotId) {
-    for (const capability of leadCapabilities) allowed.add(capability)
-  } else if (actingLeadSlotId && row.template_key === 'lead') {
-    for (const capability of leadCapabilities) allowed.delete(capability)
-  }
-  if (identity.capabilities.some((capability) => !allowed.has(capability))) {
-    throw new TaskPoolError('agent_capability_mismatch', '当前 Agent 请求了未注册的能力')
   }
 }

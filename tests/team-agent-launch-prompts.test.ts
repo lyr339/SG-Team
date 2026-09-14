@@ -17,7 +17,7 @@ function snapshotWith(binding?: RuntimeBinding): TeamControlSnapshot {
   })
   bundle.run.goal = '完成真实 lead/builder/reviewer 协作闭环'
   return {
-    schemaVersion: 7,
+    schemaVersion: 8,
     revision: 1,
     activeWorkspaceId: bundle.workspace.id,
     workspaces: [bundle.workspace],
@@ -31,6 +31,7 @@ function snapshotWith(binding?: RuntimeBinding): TeamControlSnapshot {
     runtimeChannels: [],
     standbyChannels: [],
     failovers: [],
+    groups: [],
     preflight: {
       bridgeConnected: true,
       workspaceBound: true,
@@ -172,10 +173,10 @@ describe('team agent launch prompts', () => {
     }
     let ensured = 0
     const snapshot: TeamControlSnapshot = {
-      schemaVersion: 7, revision: 1, activeWorkspaceId: bundle.workspace.id,
+      schemaVersion: 8, revision: 1, activeWorkspaceId: bundle.workspace.id,
       workspaces: [bundle.workspace], runs: [bundle.run], roles: bundle.roles, slots: bundle.slots,
       bindings: [binding], updatedAt: 100, activeRun: bundle.run, members: [], runtimeChannels: [],
-      standbyChannels: [], failovers: [],
+      standbyChannels: [], failovers: [], groups: [],
       preflight: { bridgeConnected: true, workspaceBound: true, goalDefined: false, mcpInstalled: true, agentsWaiting: false, canLaunch: false, blockers: [] }
     }
     const prompts = createTeamAgentLaunchPromptPort({

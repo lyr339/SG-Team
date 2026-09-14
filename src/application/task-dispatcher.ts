@@ -1,6 +1,6 @@
 import type { TaskPoolSnapshot, TaskReview, TeamTask } from '../domain/task-pool'
 import type { TeamControlSnapshot, TeamMemberView } from '../domain/team-control'
-import { selectTaskReviewMember } from '../domain/team-orchestration'
+import { groupScopedMembers, selectTaskReviewMember } from '../domain/team-orchestration'
 import type { TeamCollaborationRepository } from './team-collaboration-repository'
 import { orchestratorMessageId, type OrchestrationSource } from './orchestration-source'
 
@@ -19,9 +19,8 @@ function activeAgentSessions(pool: TaskPoolSnapshot): Set<string> {
 
 export function executionMember(task: TeamTask, team: TeamControlSnapshot, pool: TaskPoolSnapshot): TeamMemberView | undefined {
   const busySessions = activeAgentSessions(pool)
-  const eligible = team.members
-    .filter((member) => member.slot.solo !== true)
-    .filter((member) => Boolean(member.binding))
+  // 候选限定任务所属组（任务书 §5.5）：跨组不分派；legacy 团队 run 仍是全体非 solo 成员。
+  const eligible = groupScopedMembers(team, task.groupId)
     .filter((member) => !task.targetSlotId || member.slot.id === task.targetSlotId)
     .filter((member) => task.requiredCapabilities.every((capability) => member.role.capabilities.includes(capability)))
     .filter((member) => !member.binding || !busySessions.has(member.binding.agentSessionId))

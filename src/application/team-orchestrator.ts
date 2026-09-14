@@ -1,5 +1,6 @@
 import type { TaskPoolSnapshot } from '../domain/task-pool'
-import type { TeamControlSnapshot, TeamMemberView } from '../domain/team-control'
+import type { TeamControlSnapshot } from '../domain/team-control'
+import { groupScopedLead, groupScopedMembers } from '../domain/team-orchestration'
 import type { TeamCollaborationRepository } from './team-collaboration-repository'
 import type { MemoryReviewCoordinator } from './memory-review-coordinator'
 import { orchestratorMessageId, type OrchestrationSource } from './orchestration-source'
@@ -7,14 +8,6 @@ import type { TaskDispatcher } from './task-dispatcher'
 
 /** 任务无更新催办宽限：超过该时长未推进 updatedAt 触发催办/预警。 */
 const STALE_TASK_REMINDER_MS = 5 * 60_000
-
-function leadMember(team: TeamControlSnapshot): TeamMemberView | undefined {
-  const actingLeadSlotId = team.activeRun?.actingLeadSlotId
-  if (actingLeadSlotId) {
-    return team.members.find((member) => member.slot.id === actingLeadSlotId && member.binding)
-  }
-  return team.members.find((member) => member.role.templateKey === 'lead' && member.binding)
-}
 
 export class TeamOrchestrator {
   private unsubscribers: Array<() => void> = []
@@ -70,7 +63,6 @@ export class TeamOrchestrator {
       if (!run || run.status !== 'running') return
       const pool = this.tasks.getSnapshot()
       if (pool.runId && pool.runId !== run.id) return
-      const lead = leadMember(team)
       for (const taskId of pool.taskOrder) {
         const task = pool.tasks[taskId]
         if (!task || task.runId !== run.id) continue
@@ -78,8 +70,10 @@ export class TeamOrchestrator {
         const age = now - task.updatedAt
         if (age < STALE_TASK_REMINDER_MS) continue
         const windowIndex = Math.floor(age / STALE_TASK_REMINDER_MS)
-        const assignee = team.members.find((member) => (
-          member.slot.solo !== true && member.binding?.agentSessionId === task.assigneeSessionId
+        // 催办与预警都在任务所属组内：负责人限定本组成员，预警发给本组有效 lead（无 lead 组只催办负责人）。
+        const lead = groupScopedLead(team, task.groupId)
+        const assignee = groupScopedMembers(team, task.groupId).find((member) => (
+          member.binding?.agentSessionId === task.assigneeSessionId
         ))
         if (assignee?.binding) {
           this.collaboration.createMessage({

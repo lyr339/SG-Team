@@ -1,0 +1,394 @@
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
+import { describe, expect, it } from 'vitest'
+import { createConfiguredTeamBundle, type WorkspaceTeamBundle } from '../src/domain/team-control'
+import { SqliteTeamControlRepository } from '../src/infrastructure/team-control/sqlite-team-control-repository'
+
+/**
+ * 会话池 + 协作组的仓储契约：入组 / 出组只改 agent_slots.group_id / role_id / is_solo 与组角色行，
+ * 绝不触碰 runtime_bindings（令牌 / Composer / generation）；每次成员变化写一行审计事件。
+ */
+
+function databasePath(prefix: string): string {
+  return join(mkdtempSync(join(tmpdir(), `sg-team-groups-${prefix}-`)), 'control.sqlite3')
+}
+
+/** 会话池：N 个 solo 席位的独立批次 run，并完成 MCP 注册（签发令牌）。 */
+function installedPool(repository: SqliteTeamControlRepository, workspaceId: string, channelIds: string[]): WorkspaceTeamBundle {
+  const pool = createConfiguredTeamBundle({
+    workspaceId, workspaceName: workspaceId, workspacePath: `/workspace/${workspaceId}`, now: 100,
+    mode: 'independent', runKey: `run-${workspaceId}00`,
+    members: channelIds.map((channelId) => ({
+      channelId, roleTemplateKey: 'solo', avatarId: 'researcher', skills: [], solo: true
+    }))
+  })
+  repository.upsertWorkspaceTeam(pool)
+  repository.recordInstallation({
+    workspaceId, runId: pool.run.id, generation: 'gen-pool',
+    agents: pool.slots.map((slot) => ({
+      agentSessionId: `${workspaceId}:ch-${slot.channelId}:gen-pool`, workspaceId,
+      channelId: slot.channelId!, generation: 'gen-pool', runId: pool.run.id, capabilities: []
+    }))
+  })
+  return pool
+}
+
+function slotOf(pool: WorkspaceTeamBundle, channelId: string) {
+  return pool.slots.find((slot) => slot.channelId === channelId)!
+}
+
+function code(operation: () => unknown): string | undefined {
+  try {
+    operation()
+    return undefined
+  } catch (error) {
+    return (error as { code?: string }).code
+  }
+}
+
+describe('SqliteTeamControlRepository 协作组', () => {
+  it('createGroup flips members to group roles and leaves every runtime binding untouched (I1 / I2 / I6)', () => {
+    const repository = new SqliteTeamControlRepository(databasePath('create'))
+    try {
+      const pool = installedPool(repository, 'pool', ['1', '2', '3'])
+      const before = repository.loadTeamControl()
+      const bindingsBefore = before.bindings.filter((binding) => binding.runId === pool.run.id)
+      const [a, b] = [slotOf(pool, '1'), slotOf(pool, '2')]
+
+      const mutation = repository.createGroup({
+        runId: pool.run.id, name: '验收组', goal: '把接口重构收尾', at: 500,
+        members: [{ slotId: a.id, roleTemplateKey: 'lead' }, { slotId: b.id, roleTemplateKey: 'specialist' }],
+        leadSlotId: a.id
+      })
+      expect(mutation.group).toMatchObject({
+        runId: pool.run.id, name: '验收组', goal: '把接口重构收尾', status: 'active', leadSlotId: a.id, createdAt: 500
+      })
+      expect(mutation.joined.map((change) => [change.slotId, change.channelId, change.roleName, change.roleTemplateKey])).toEqual([
+        [a.id, '1', '主控协调', 'lead'],
+        [b.id, '2', '专项实现 1', 'specialist']
+      ])
+      expect(mutation.leadChange).toEqual({ nextSlotId: a.id })
+
+      const state = repository.loadTeamControl()
+      expect(state.revision).toBeGreaterThan(before.revision)
+      expect(state.groups).toHaveLength(1)
+      const grouped = state.slots.filter((slot) => slot.groupId === mutation.group.id)
+      expect(grouped.map((slot) => slot.channelId).sort()).toEqual(['1', '2'])
+      for (const slot of grouped) {
+        expect(slot.solo).toBe(false)
+        expect(slot.homeRoleId).toBe(pool.slots.find((candidate) => candidate.id === slot.id)!.roleId)
+        expect(slot.groupJoinedAt).toBe(500)
+        const role = state.roles.find((candidate) => candidate.id === slot.roleId)!
+        expect(role.groupId).toBe(mutation.group.id)
+        expect(role.runId).toBe(pool.run.id)
+      }
+      // 第三席仍是独立席位，且 solo 角色行原样保留（出组时要恢复）。
+      const solo = state.slots.find((slot) => slot.channelId === '3')!
+      expect(solo).toMatchObject({ solo: true, groupId: undefined, homeRoleId: undefined })
+      expect(state.roles.filter((role) => role.runId === pool.run.id && role.templateKey === 'solo')).toHaveLength(3)
+      // I2：令牌 / Composer 键 / generation / launch 状态一字不变；run 状态仍 running。
+      expect(state.bindings.filter((binding) => binding.runId === pool.run.id)).toEqual(bindingsBefore)
+      expect(state.runs.find((run) => run.id === pool.run.id)?.status).toBe('running')
+      // I6：审计行齐全。
+      expect(repository.listGroupEvents(mutation.group.id).map((event) => [event.type, event.slotId, event.channelId])).toEqual([
+        ['created', undefined, undefined],
+        ['member_joined', a.id, '1'],
+        ['member_joined', b.id, '2'],
+        ['lead_changed', a.id, undefined]
+      ])
+    } finally {
+      repository.close()
+    }
+  })
+
+  it('resolves grouped identities with groupId and lead capabilities; ungrouped seats get not_in_group', () => {
+    const repository = new SqliteTeamControlRepository(databasePath('identity'))
+    try {
+      const pool = installedPool(repository, 'ident', ['1', '2', '3'])
+      const [a, b] = [slotOf(pool, '1'), slotOf(pool, '2')]
+      // lead 权限与模板解耦：一个 specialist 也能当组 lead，并因此获得 coordination / planning。
+      const { group } = repository.createGroup({
+        runId: pool.run.id, name: 'G', members: [
+          { slotId: a.id, roleTemplateKey: 'specialist' }, { slotId: b.id, roleTemplateKey: 'reviewer' }
+        ], leadSlotId: a.id
+      })
+      const lead = repository.resolveChannelAgentIdentity('1')
+      expect(lead).toMatchObject({ runId: pool.run.id, slotId: a.id, groupId: group.id })
+      expect([...lead.capabilities].sort()).toEqual(['code', 'coordination', 'implementation', 'planning'])
+      const reviewer = repository.resolveChannelAgentIdentity('2')
+      expect(reviewer.groupId).toBe(group.id)
+      expect([...reviewer.capabilities].sort()).toEqual(['qa', 'testing'])
+      expect(repository.resolveAgentRuntimeIdentity('ident:ch-2:gen-pool', pool.run.id)).toEqual(reviewer)
+
+      expect(code(() => repository.resolveChannelAgentIdentity('3'))).toBe('not_in_group')
+      expect(code(() => repository.resolveAgentRuntimeIdentity('ident:ch-3:gen-pool', pool.run.id))).toBe('not_in_group')
+      // 围栏查询不感知分组：令牌与绑定照旧，只有派生的 solo 标记随成员关系翻转。
+      expect(repository.resolveChannelSessionOwner('1')).toMatchObject({ runId: pool.run.id, bound: true, solo: false })
+      expect(repository.resolveChannelSessionOwner('3')).toMatchObject({ runId: pool.run.id, bound: true, solo: true })
+
+      // 临时主控优先于组 lead：reviewer 接管后拿到主控能力，原 lead 若持 lead 模板则被摘除。
+      repository.setGroupActingLead({ groupId: group.id, slotId: b.id })
+      expect([...repository.resolveChannelAgentIdentity('2').capabilities].sort()).toEqual(['coordination', 'planning', 'qa', 'testing'])
+      expect([...repository.resolveChannelAgentIdentity('1').capabilities].sort()).toEqual(['code', 'implementation'])
+      repository.setGroupActingLead({ groupId: group.id, slotId: null })
+      expect(repository.resolveChannelAgentIdentity('1').capabilities).toContain('planning')
+    } finally {
+      repository.close()
+    }
+  })
+
+  it('numbers same-template roles by the highest existing instance so re-adding after a removal never collides', () => {
+    const repository = new SqliteTeamControlRepository(databasePath('numbering'))
+    try {
+      const pool = installedPool(repository, 'num', ['1', '2', '3', '4'])
+      const { group } = repository.createGroup({
+        runId: pool.run.id, name: 'G', members: [
+          { slotId: slotOf(pool, '1').id, roleTemplateKey: 'specialist' },
+          { slotId: slotOf(pool, '2').id, roleTemplateKey: 'specialist' },
+          { slotId: slotOf(pool, '3').id, roleTemplateKey: 'builder' }
+        ]
+      })
+      const names = () => repository.loadTeamControl().roles
+        .filter((role) => role.groupId === group.id)
+        .map((role) => [role.key, role.name])
+        .sort()
+      const short = `g${group.id.slice(-8)}`
+      expect(names()).toEqual([
+        [`${short}:builder`, '架构实现'],
+        [`${short}:specialist-1`, '专项实现 1'],
+        [`${short}:specialist-2`, '专项实现 2']
+      ])
+      repository.removeGroupMember({ groupId: group.id, slotId: slotOf(pool, '1').id })
+      const added = repository.addGroupMembers({
+        groupId: group.id, members: [
+          { slotId: slotOf(pool, '4').id, roleTemplateKey: 'specialist' },
+          { slotId: slotOf(pool, '1').id, roleTemplateKey: 'builder' }
+        ]
+      })
+      expect(added.joined.map((change) => change.roleName)).toEqual(['专项实现 3', '架构实现 2'])
+      expect(names()).toEqual([
+        [`${short}:builder`, '架构实现'],
+        [`${short}:builder-2`, '架构实现 2'],
+        [`${short}:specialist-2`, '专项实现 2'],
+        [`${short}:specialist-3`, '专项实现 3']
+      ])
+    } finally {
+      repository.close()
+    }
+  })
+
+  it('removing a member restores its solo identity and deletes its group role; the effective lead must hand over first', () => {
+    const repository = new SqliteTeamControlRepository(databasePath('remove'))
+    try {
+      const pool = installedPool(repository, 'rm', ['1', '2'])
+      const [a, b] = [slotOf(pool, '1'), slotOf(pool, '2')]
+      const { group } = repository.createGroup({
+        runId: pool.run.id, name: 'G', members: [
+          { slotId: a.id, roleTemplateKey: 'lead' }, { slotId: b.id, roleTemplateKey: 'builder' }
+        ], leadSlotId: a.id
+      })
+      expect(code(() => repository.removeGroupMember({ groupId: group.id, slotId: a.id }))).toBe('lead_must_transfer_first')
+
+      const tokenBefore = repository.resolveChannelSessionOwner('2')!.sessionToken
+      const groupRoleId = repository.loadTeamControl().slots.find((slot) => slot.id === b.id)!.roleId
+      const mutation = repository.removeGroupMember({ groupId: group.id, slotId: b.id, at: 900 })
+      expect(mutation.left).toEqual([{ slotId: b.id, channelId: '2', roleName: '架构实现', roleTemplateKey: 'builder' }])
+      expect(mutation.leadChange).toBeUndefined()
+      const state = repository.loadTeamControl()
+      const restored = state.slots.find((slot) => slot.id === b.id)!
+      expect(restored).toMatchObject({ solo: true, roleId: b.roleId, groupId: undefined, homeRoleId: undefined, groupJoinedAt: undefined })
+      expect(state.roles.some((role) => role.id === groupRoleId)).toBe(false)
+      expect(repository.resolveChannelSessionOwner('2')!.sessionToken).toBe(tokenBefore)
+      expect(code(() => repository.resolveChannelAgentIdentity('2'))).toBe('not_in_group')
+      expect(repository.listGroupEvents(group.id).at(-1)).toMatchObject({ type: 'member_left', slotId: b.id, channelId: '2', at: 900 })
+
+      // 现在 lead 是唯一成员：可以移出；lead 字段随之清空并留审计。
+      const last = repository.removeGroupMember({ groupId: group.id, slotId: a.id })
+      expect(last.group.leadSlotId).toBeUndefined()
+      expect(last.leadChange).toEqual({ previousSlotId: a.id, nextSlotId: undefined })
+      expect(repository.loadTeamControl().slots.filter((slot) => slot.runId === pool.run.id).every((slot) => slot.solo)).toBe(true)
+      // force：有效 lead 在其他成员仍在时也能被移出（解散 / 用户明确要求）。
+      const again = repository.createGroup({
+        runId: pool.run.id, name: 'G2', members: [
+          { slotId: a.id, roleTemplateKey: 'lead' }, { slotId: b.id, roleTemplateKey: 'builder' }
+        ], leadSlotId: a.id
+      })
+      expect(repository.removeGroupMember({ groupId: again.group.id, slotId: a.id, force: true }).group.leadSlotId).toBeUndefined()
+    } finally {
+      repository.close()
+    }
+  })
+
+  it('setGroupLead accepts any member or none, clears the acting lead and is audited', () => {
+    const repository = new SqliteTeamControlRepository(databasePath('lead'))
+    try {
+      const pool = installedPool(repository, 'lead', ['1', '2', '3'])
+      const [a, b] = [slotOf(pool, '1'), slotOf(pool, '2')]
+      const { group } = repository.createGroup({
+        runId: pool.run.id, name: 'G', members: [
+          { slotId: a.id, roleTemplateKey: 'lead' }, { slotId: b.id, roleTemplateKey: 'builder' }
+        ], leadSlotId: a.id
+      })
+      repository.setGroupActingLead({ groupId: group.id, slotId: b.id })
+      const handed = repository.setGroupLead({ groupId: group.id, slotId: b.id })
+      expect(handed.group).toMatchObject({ leadSlotId: b.id, actingLeadSlotId: undefined })
+      expect(handed.leadChange).toEqual({ previousSlotId: a.id, nextSlotId: b.id })
+      const none = repository.setGroupLead({ groupId: group.id, slotId: null })
+      expect(none.group.leadSlotId).toBeUndefined()
+      expect(none.leadChange).toEqual({ previousSlotId: b.id, nextSlotId: undefined })
+      expect(code(() => repository.setGroupLead({ groupId: group.id, slotId: slotOf(pool, '3').id }))).toBe('group_member_not_found')
+      expect(repository.listGroupEvents(group.id).filter((event) => event.type === 'lead_changed')).toHaveLength(3)
+    } finally {
+      repository.close()
+    }
+  })
+
+  it('dissolveGroup restores every member, drops the group roles and keeps the group row as history', () => {
+    const repository = new SqliteTeamControlRepository(databasePath('dissolve'))
+    try {
+      const pool = installedPool(repository, 'dis', ['1', '2', '3'])
+      const { group } = repository.createGroup({
+        runId: pool.run.id, name: 'G', goal: '目标', members: pool.slots.map((slot) => ({ slotId: slot.id, roleTemplateKey: 'specialist' })),
+        leadSlotId: slotOf(pool, '1').id
+      })
+      repository.setGroupActingLead({ groupId: group.id, slotId: slotOf(pool, '2').id })
+      const bindingsBefore = repository.loadTeamControl().bindings
+      const mutation = repository.dissolveGroup({ groupId: group.id, at: 1_000 })
+      expect(mutation.left.map((change) => change.channelId)).toEqual(['1', '2', '3'])
+      expect(mutation.group).toMatchObject({ status: 'dissolved', dissolvedAt: 1_000, actingLeadSlotId: undefined, leadSlotId: slotOf(pool, '1').id })
+      const state = repository.loadTeamControl()
+      expect(state.slots.filter((slot) => slot.runId === pool.run.id).every((slot) => slot.solo && !slot.groupId && !slot.homeRoleId)).toBe(true)
+      expect(state.roles.filter((role) => role.groupId === group.id)).toHaveLength(0)
+      expect(state.bindings).toEqual(bindingsBefore)
+      expect(state.groups.find((candidate) => candidate.id === group.id)?.status).toBe('dissolved')
+      expect(repository.listGroupEvents(group.id).at(-1)?.type).toBe('dissolved')
+      expect(code(() => repository.addGroupMembers({ groupId: group.id, members: [{ slotId: slotOf(pool, '1').id, roleTemplateKey: 'builder' }] })))
+        .toBe('group_dissolved')
+      expect(code(() => repository.updateGroupGoal({ groupId: group.id, goal: 'x' }))).toBe('group_dissolved')
+      // 席位可以立刻加入新组。
+      expect(repository.createGroup({
+        runId: pool.run.id, name: 'G2', members: [{ slotId: slotOf(pool, '1').id, roleTemplateKey: 'builder' }]
+      }).joined).toHaveLength(1)
+    } finally {
+      repository.close()
+    }
+  })
+
+  it('rejects groups outside a running session pool, double membership, non-member leads and solo group roles', () => {
+    const repository = new SqliteTeamControlRepository(databasePath('validation'))
+    try {
+      const team = createConfiguredTeamBundle({
+        workspaceId: 'team', workspaceName: 'team', workspacePath: '/workspace/team', now: 100,
+        members: [
+          { channelId: '1', roleTemplateKey: 'lead', avatarId: 'lead', skills: [] },
+          { channelId: '2', roleTemplateKey: 'builder', avatarId: 'architect', skills: [] }
+        ]
+      })
+      repository.upsertWorkspaceTeam(team)
+      expect(code(() => repository.createGroup({
+        runId: team.run.id, name: 'G', members: [{ slotId: team.slots[1]!.id, roleTemplateKey: 'builder' }]
+      }))).toBe('group_requires_pool_run')
+
+      const pool = installedPool(repository, 'valid', ['1', '2', '3'])
+      const [a, b, c] = [slotOf(pool, '1'), slotOf(pool, '2'), slotOf(pool, '3')]
+      expect(code(() => repository.createGroup({ runId: pool.run.id, name: '  ', members: [{ slotId: a.id, roleTemplateKey: 'builder' }] })))
+        .toBe('group_name_required')
+      expect(code(() => repository.createGroup({ runId: pool.run.id, name: 'G', members: [] }))).toBe('group_members_required')
+      expect(code(() => repository.createGroup({
+        runId: pool.run.id, name: 'G', members: [{ slotId: a.id, roleTemplateKey: 'builder' }], leadSlotId: b.id
+      }))).toBe('group_lead_not_member')
+      expect(code(() => repository.createGroup({ runId: pool.run.id, name: 'G', members: [{ slotId: a.id, roleTemplateKey: 'solo' }] })))
+        .toBe('group_role_solo_forbidden')
+      expect(code(() => repository.createGroup({
+        runId: pool.run.id, name: 'G', members: [{ slotId: team.slots[1]!.id, roleTemplateKey: 'builder' }]
+      }))).toBe('group_member_not_in_run')
+      // 失败的建组不留下半成品：无组行、无事件、席位仍 solo。
+      expect(repository.loadTeamControl().groups).toHaveLength(0)
+
+      const { group } = repository.createGroup({ runId: pool.run.id, name: 'G', members: [{ slotId: a.id, roleTemplateKey: 'builder' }] })
+      expect(code(() => repository.createGroup({ runId: pool.run.id, name: 'H', members: [{ slotId: a.id, roleTemplateKey: 'builder' }] })))
+        .toBe('group_member_already_grouped')
+      expect(code(() => repository.addGroupMembers({ groupId: group.id, members: [{ slotId: b.id, roleTemplateKey: 'builder' }, { slotId: b.id, roleTemplateKey: 'reviewer' }] })))
+        .toBe('group_member_duplicate')
+      expect(code(() => repository.removeGroupMember({ groupId: group.id, slotId: c.id }))).toBe('group_member_not_found')
+      expect(code(() => repository.removeGroupMember({ groupId: 'team-group:nope', slotId: c.id }))).toBe('group_not_found')
+      // 池结束后不能再变更组。
+      repository.completeRun(pool.run.id, 2_000, '用户已结束')
+      expect(code(() => repository.addGroupMembers({ groupId: group.id, members: [{ slotId: b.id, roleTemplateKey: 'builder' }] })))
+        .toBe('group_run_inactive')
+      // 整体重写拓扑会把成员角色抹回 solo：有组成员的池拒绝这条路径。
+      expect(() => repository.upsertWorkspaceTeam(pool)).toThrowError(/已有协作组成员/)
+    } finally {
+      repository.close()
+    }
+  })
+
+  it('records member_checked_in for grouped seats when the agent checks in', () => {
+    const repository = new SqliteTeamControlRepository(databasePath('checkin'))
+    try {
+      const pool = installedPool(repository, 'chk', ['1', '2'])
+      const a = slotOf(pool, '1')
+      const { group } = repository.createGroup({ runId: pool.run.id, name: 'G', members: [{ slotId: a.id, roleTemplateKey: 'builder' }] })
+      const identity = repository.resolveChannelAgentIdentity('1')
+      const receipt = repository.recordAgentCheckIn(identity, 'join-ok')
+      expect(receipt).toMatchObject({ runId: pool.run.id, slotId: a.id, roleName: '架构实现' })
+      expect(repository.listGroupEvents(group.id).at(-1)).toMatchObject({
+        type: 'member_checked_in', slotId: a.id, channelId: '1', actor: `agent:${a.id}`, detail: 'join-ok'
+      })
+      expect(repository.loadTeamControl().bindings.find((binding) => binding.slotId === a.id)?.launchStatus).toBe('acknowledged')
+      expect(repository.loadTeamControl().runs.find((run) => run.id === pool.run.id)?.status).toBe('running')
+    } finally {
+      repository.close()
+    }
+  })
+
+  it('migrates a v7 database to v8 idempotently, including a second connection that opens the same file', () => {
+    const path = databasePath('migrate')
+    const seeded = new SqliteTeamControlRepository(path)
+    const pool = installedPool(seeded, 'mig', ['1', '2'])
+    seeded.close()
+    // 回到 v7 形态：没有组表，席位 / 角色没有组列。
+    const old = new DatabaseSync(path)
+    old.exec('DROP INDEX IF EXISTS idx_agent_slots_group')
+    old.exec('ALTER TABLE agent_slots DROP COLUMN group_id')
+    old.exec('ALTER TABLE agent_slots DROP COLUMN home_role_id')
+    old.exec('ALTER TABLE agent_slots DROP COLUMN group_joined_at')
+    old.exec('ALTER TABLE team_roles DROP COLUMN group_id')
+    old.exec('DROP TABLE team_group_events')
+    old.exec('DROP TABLE team_groups')
+    old.exec('UPDATE team_control_meta SET schema_version = 7 WHERE id = 1')
+    old.close()
+
+    const migrated = new SqliteTeamControlRepository(path)
+    // 主进程与 MCP 进程各自打开同一库：第二个连接看到的已是 v8，不得报错也不得重复迁移。
+    const second = new SqliteTeamControlRepository(path)
+    try {
+      for (const repository of [migrated, second]) {
+        const state = repository.loadTeamControl()
+        expect(state.schemaVersion).toBe(8)
+        expect(state.groups).toEqual([])
+        expect(state.slots.filter((slot) => slot.runId === pool.run.id).every((slot) => slot.solo && slot.groupId === undefined)).toBe(true)
+      }
+      const database = new DatabaseSync(path, { readOnly: true })
+      try {
+        const slotColumns = (database.prepare('PRAGMA table_info(agent_slots)').all() as Array<{ name: string }>).map((column) => column.name)
+        expect(slotColumns).toEqual(expect.arrayContaining(['group_id', 'home_role_id', 'group_joined_at']))
+        expect((database.prepare('PRAGMA table_info(team_roles)').all() as Array<{ name: string }>).map((column) => column.name)).toContain('group_id')
+        expect(database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('team_groups', 'team_group_events')").all()).toHaveLength(2)
+      } finally {
+        database.close()
+      }
+      // 迁移后的库可以直接建组，第二个连接实时看到。
+      const { group } = migrated.createGroup({
+        runId: pool.run.id, name: '迁移后建组', members: [{ slotId: slotOf(pool, '1').id, roleTemplateKey: 'builder' }]
+      })
+      expect(second.loadTeamControl().groups.map((candidate) => candidate.id)).toEqual([group.id])
+      expect(second.resolveChannelAgentIdentity('1').groupId).toBe(group.id)
+    } finally {
+      second.close()
+      migrated.close()
+    }
+  })
+})

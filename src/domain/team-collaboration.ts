@@ -47,6 +47,11 @@ export interface TeamMessage {
   clientMessageId: string
   createdAt: number
   receipt: TeamMessageReceipt
+  /**
+   * 所属协作组（会话池）：写入时的快照——显式传入，或由接收方 / 发送方席位当时的组推得；不回填。
+   * 空 = legacy 团队 run 的 run 级消息。Agent 视角只见同组消息；操作员视角按 run 看全部。
+   */
+  groupId?: string
 }
 
 export interface TeamMessageThread {
@@ -55,6 +60,8 @@ export interface TeamMessageThread {
   subject: string
   createdAt: number
   updatedAt: number
+  /** 线程随首条消息定组；同一线程内的消息都属同组。 */
+  groupId?: string
 }
 
 export interface TeamCollaborationEvent {
@@ -73,6 +80,8 @@ export interface TeamCollaborationSnapshot {
   revision: number
   seq: number
   runId?: string
+  /** 快照作用域：给出时 threads / messages 只含该组；空 = 整个 run（操作员视角 / legacy）。 */
+  groupId?: string
   threads: TeamMessageThread[]
   messages: Record<string, TeamMessage>
   messageOrder: string[]
@@ -90,6 +99,11 @@ export interface CreateTeamMessageInput {
   subject?: string
   threadId?: string
   replyToMessageId?: string
+  /**
+   * 目标协作组。省略时由仓储按「接收方席位的组 → 发送方席位的组」推得（写入时快照），
+   * 让操作员 / 编排器发给入组成员的消息自动落进该组；显式给出时双方席位都必须在该组内。
+   */
+  groupId?: string
 }
 
 export interface AuthorizedTeamAgent {
@@ -105,8 +119,10 @@ export interface AuthorizedTeamAgent {
   skills: AssignedAgentSkill[]
   /** 是否为临时主控：主控离线时由系统或手动指定，优先级高于角色模板。 */
   isActingLead?: boolean
-  /** 当前唯一有效主控；acting lead 存在时原始 lead 为 false。 */
+  /** 当前唯一有效主控；acting lead 存在时原始 lead 为 false。组内以组的 lead / acting lead 为准。 */
   isEffectiveLead?: boolean
+  /** 所在协作组（会话池）；legacy 团队 run 的成员没有。 */
+  groupId?: string
 }
 
 /** 通道活性状态。 */
@@ -133,6 +149,7 @@ export interface TeamMemberDirectoryEntry {
   capabilities: string[]
   skills: AssignedAgentSkill[]
   isEffectiveLead?: boolean
+  groupId?: string
 }
 
 export interface TeamAgentRuntimeIdentity {
@@ -140,6 +157,8 @@ export interface TeamAgentRuntimeIdentity {
   runId: string
   slotId: string
   capabilities: string[]
+  /** 所在协作组；每次工具调用前由 refreshIdentity 实时解析，入组 / 出组即时生效。 */
+  groupId?: string
 }
 
 export function emptyTeamCollaborationSnapshot(runId?: string): TeamCollaborationSnapshot {

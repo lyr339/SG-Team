@@ -12,6 +12,7 @@ import {
   buildTeamLaunchHint,
   createConfiguredTeamBundle,
   createDefaultTeamBundle,
+  projectGroups,
   type TeamControlSnapshot,
   type TeamControlState,
   type TeamMemberConfiguration,
@@ -748,6 +749,8 @@ export class TeamControlService {
       }]
     })
 
+    const groups = activeRun ? projectGroups(state.groups, activeRun, members, Date.now()) : []
+
     const bridgeConnected = bridgeSnapshot.connection.state === 'connected'
     const workspaceBound = Boolean(state.activeWorkspaceId && activeRun)
     const goalDefined = Boolean(activeRun?.goal.trim())
@@ -785,6 +788,7 @@ export class TeamControlService {
       runtimeChannels,
       standbyChannels,
       failovers,
+      groups,
       preflight: {
         bridgeConnected,
         workspaceBound,

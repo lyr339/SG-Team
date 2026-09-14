@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { TeamControlRepository } from './team-control-repository'
-import type { TeamControlSnapshot, TeamMemberView, TeamRuntimeChannelView } from '../domain/team-control'
+import { isSessionPoolRun, type TeamControlSnapshot, type TeamMemberView, type TeamRuntimeChannelView } from '../domain/team-control'
 import type { TeamCollaborationRepository } from './team-collaboration-repository'
 import type { TeamContinuityService } from './team-continuity-service'
 import type { TaskPoolService } from './task-pool-service'
@@ -31,6 +31,12 @@ export class TeamHandoffService {
     const run = team.activeRun
     if (!run || !['running', 'attention'].includes(run.status)) {
       throw new TaskPoolError('handoff_run_inactive', '只有运行中的团队可以手动交接')
+    }
+    // 会话池里「通道 = 席位」：角色交接会把席位绑定挪到另一条通道（rebindSlotFromMember /
+    // rebindSlotToStandby），在池内等于把两条会话的身份互换。入组席位离线只表现为组 attention，
+    // 处置手段是移出 / 加入协作组或会话上下文交接（SessionHandoffService），不是角色交接。
+    if (isSessionPoolRun(run)) {
+      throw new TaskPoolError('handoff_pool_run', '会话池内的席位与 Cursor 会话一一对应，不做角色交接；请移出 / 加入协作组，或使用会话上下文交接')
     }
     const source = team.members.find((member) => member.slot.id === sourceSlotId.trim())
     if (!source?.binding) throw new TaskPoolError('handoff_source_missing', '待交接角色没有有效运行绑定')

@@ -91,7 +91,7 @@ describe('TeamCollaborationAgentService', () => {
       expect(context.members.map((member) => member.slotId)).not.toContain(soloSlot.id)
       expect(() => lead.planTasks([{
         key: 'forbidden-solo-target', title: '错误派给独立席', targetSlotId: soloSlot.id
-      }])).toThrowError(/指定 AgentSlot 不属于当前 TeamRun/)
+      }])).toThrowError(/指定 AgentSlot 不属于当前团队 \/ 协作组/)
     } finally {
       collaboration.close()
       tasks.close()
