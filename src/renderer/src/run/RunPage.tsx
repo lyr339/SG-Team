@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AgentLaunchPlan, AgentLaunchRequest } from '../../../domain/agent-launch'
 import type { SessionWarmupRun } from '../../../domain/session-warmup'
 import type { CdpAutoHealEvent } from '../../../domain/cursor-cdp'
@@ -108,6 +108,7 @@ export function RunPage({
 }: RunPageProps): React.JSX.Element {
   const view = useMemo(() => buildRunView(team, detectedWorkspace), [team, detectedWorkspace])
   const [busy, setBusy] = useState('')
+  const actionInFlight = useRef(false)
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
   const [sheet, setSheet] = useState<PendingSheet | null>(null)
@@ -148,6 +149,9 @@ export function RunPage({
   }, [view.pendingSeats.length, view.phase])
 
   const run = async <Result,>(name: string, action: () => Promise<Result>): Promise<Result | undefined> => {
+    // React 的 disabled 要到下一次提交才生效；同一拍重复点击也只执行一次。
+    if (actionInFlight.current || agentLaunchPlan?.state === 'running') return undefined
+    actionInFlight.current = true
     setBusy(name)
     setError('')
     setNotice('')
@@ -157,12 +161,14 @@ export function RunPage({
       setError(reason instanceof Error ? reason.message : String(reason))
       return undefined
     } finally {
+      actionInFlight.current = false
       setBusy('')
     }
   }
 
   /** 破坏性动作统一入口：仍有 live 席位才展开确认面，否则直接执行。 */
   const guard = (action: ReplaceRunAction, perform: () => void): void => {
+    if (actionInFlight.current || agentLaunchPlan?.state === 'running') return
     const consequence = replaceRunConsequence(view, action)
     if (!consequence.needsConfirm) {
       perform()
@@ -325,6 +331,7 @@ export function RunPage({
 
   // ---------- 模式切换 / 结束 ----------
   const switchMode = (to: WorkspaceRunMode): void => {
+    if (actionInFlight.current || agentLaunchPlan?.state === 'running') return
     if (compose && to === view.mode) {
       setCompose(null)
       return
@@ -336,9 +343,11 @@ export function RunPage({
     guard({ kind: 'switch', to: 'team' }, () => { void run('workspace', onChooseWorkspace) })
   }
   const endRun = (): void => {
+    if (view.phase === 'prelaunch' || view.phase === 'none' || view.phase === 'completed') return
     guard({ kind: 'end' }, () => {
       void run('end-run', async () => {
         await onEndActiveRun()
+        setCompose(null)
         setNotice(view.mode === 'independent'
           ? '独立批次已结束；旧会话会在下一次轮询自行退出。'
           : '团队运行已结束；旧会话会在下一次轮询自行退出。')
@@ -387,7 +396,7 @@ export function RunPage({
   const relevantPlan = agentLaunchPlan && (composingIndependent || !view.run || agentLaunchPlan.startedAt >= view.run.createdAt)
     ? agentLaunchPlan
     : undefined
-  const isBusy = Boolean(busy)
+  const isBusy = Boolean(busy) || agentLaunchPlan?.state === 'running'
   const feedback = error || notice
   const feedbackStrip = feedback ? (
     <p className={`run-feedback${error ? ' is-error' : ''}`} role="status" aria-live="polite">
@@ -490,6 +499,8 @@ export function RunPage({
               {view.mode === 'independent' ? '正在配置新的独立批次' : '正在配置独立批次'}
               {view.phase === 'completed'
                 ? '：在下方选好数量与模型后创建。'
+                : view.phase === 'prelaunch'
+                  ? '：创建后替换当前未启动的配置，无需先结束运行。'
                 : `：创建后当前${view.mode === 'independent' ? '独立批次' : '团队运行'}结束，旧会话在下一次轮询自行退出。`}
             </span>
             <button type="button" disabled={isBusy} onClick={() => setCompose(null)}>放弃</button>

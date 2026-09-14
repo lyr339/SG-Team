@@ -100,6 +100,45 @@ describe('RunPage（一个工程一个活跃运行：团队 / 独立两种模式
   })
 
   describe('结束运行（软守卫）', () => {
+    it.each(['draft', 'ready'] as const)('未启动 %s 直接配置独立批次，不调用结束接口且仍可放弃', async (phase) => {
+      const handlers = await render(teamRun('offline', phase))
+      expect(buttonNamed('结束运行').disabled).toBe(true)
+      await click(modeButton('独立'))
+      if (sheet()) await click(buttonNamed('确认切换'))
+      expect(container.textContent).toContain('创建后替换当前未启动的配置，无需先结束运行')
+      await click(buttonNamed('结束运行'))
+      expect(handlers.onEndActiveRun).not.toHaveBeenCalled()
+      await click(buttonNamed('放弃'))
+      expect(modeButton('团队').getAttribute('aria-checked')).toBe('true')
+      await click(modeButton('独立'))
+      if (sheet()) await click(buttonNamed('确认切换'))
+      await click(buttonNamed('创建 3 个独立会话'))
+      expect(handlers.onCreateIndependentSessions).toHaveBeenCalledTimes(1)
+      expect(handlers.onEndActiveRun).not.toHaveBeenCalled()
+    })
+
+    it('同一拍重复结束只发一次 IPC，失败后释放互斥并允许重试', async () => {
+      let reject!: (reason: Error) => void
+      const onEndActiveRun = vi.fn(() => new Promise<void>((_, fail) => { reject = fail }))
+      await render(independentTeam(['offline']), { onEndActiveRun })
+      const end = buttonNamed('结束批次')
+      await act(async () => { end.click(); end.click() })
+      expect(onEndActiveRun).toHaveBeenCalledTimes(1)
+      expect(modeButton('团队').disabled).toBe(true)
+      await act(async () => { reject(new Error('临时失败')) })
+      expect(buttonNamed('结束批次').disabled).toBe(false)
+      await click(buttonNamed('结束批次'))
+      expect(onEndActiveRun).toHaveBeenCalledTimes(2)
+      await act(async () => { reject(new Error('临时失败')) })
+    })
+
+    it('批量创建在途时阻止模式切换和结束，不依赖本页 busy 状态', async () => {
+      const handlers = await render(independentTeam(['offline']), { agentLaunchPlan: { ...donePlan, state: 'running' } })
+      expect(buttonNamed('结束批次').disabled).toBe(true)
+      expect(modeButton('团队').disabled).toBe(true)
+      await click(buttonNamed('结束批次'))
+      expect(handlers.onEndActiveRun).not.toHaveBeenCalled()
+    })
     it('confirms before ending a batch with live sessions, then reports the fence consequence', async () => {
       const { onEndActiveRun } = await render(independentTeam(['waiting', 'waiting']))
       await click(buttonNamed('结束批次'))

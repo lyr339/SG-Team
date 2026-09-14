@@ -93,6 +93,24 @@ function editCardProbe(expanded, arrowVisible) {
   })()`
 }
 const scenes = [
+  ...['light', 'dark'].map((colorMode) => ({
+    name: `run-prelaunch-switch-${colorMode}`, run: true, width: 1180, height: 1000,
+    query: 'runStatus=ready', colorScheme: colorMode, storage: baseStorage({ colorMode }),
+    actions: [
+      { click: '.run-header .run-mode-switch button[aria-checked="false"]' },
+      { eval: `document.querySelector('.run-slot.is-open .run-sheet__confirm')?.click()` },
+      { wait: 300 },
+      { probe: `(() => {
+        const end = document.querySelector('.run-header__actions .is-danger')
+        if (!end?.disabled) throw new Error('未启动运行仍开放结束入口')
+        const banner = document.querySelector('.run-slot.is-open .run-banner')
+        if (!banner?.textContent.includes('无需先结束运行')) throw new Error('模式配置提示仍错误')
+        const create = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '创建 3 个独立会话')
+        if (!create || create.disabled) throw new Error('独立批次创建被阻塞')
+        return { endDisabled:end.disabled, createEnabled:!create.disabled }
+      })()` }
+    ]
+  })),
   ...TABS.flatMap((tab) => [
     { name: `${tab}-light`, width: 1440, height: 900, colorScheme: 'light', storage: baseStorage({ tab }) },
     { name: `${tab}-dark`, width: 1440, height: 900, colorScheme: 'dark', storage: baseStorage({ tab, colorMode: 'dark' }) }

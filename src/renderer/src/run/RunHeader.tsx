@@ -33,6 +33,7 @@ export function RunHeader({ view, busy, busyAction, composingMode, onSwitchMode,
   const run = view.run
   const mode = view.mode ?? 'team'
   const ended = view.phase === 'completed'
+  const notStarted = view.phase === 'prelaunch'
   const ending = busyAction === 'end-run'
   const workspaceName = view.workspace?.name ?? '未绑定工程'
   const runName = run ? compactRunName(run.name, workspaceName) : ''
@@ -65,7 +66,8 @@ export function RunHeader({ view, busy, busyAction, composingMode, onSwitchMode,
           <button
             type="button"
             className="run-header__ghost is-danger"
-            disabled={busy || ended || !run}
+            disabled={busy || ended || notStarted || !run}
+            title={notStarted ? '当前运行尚未启动；可直接切换模式并创建新批次，无需先结束。' : undefined}
             aria-busy={ending}
             onClick={onEnd}
           >

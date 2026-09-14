@@ -995,6 +995,24 @@ describe('独立模式 → 团队切换（会话围栏软守卫）', () => {
     }
   })
 
+  it('replaces an unstarted team with an independent batch directly, without first ending it', () => {
+    const data = fixture()
+    try {
+      const previous = data.service.getSnapshot().activeRun!
+      expect(previous.status).toBe('ready')
+      const next = data.service.configureIndependentWorkspace({
+        workspaceId: 'alpha', workspaceName: 'alpha', workspacePath: '/workspace/alpha',
+        members: [{ channelId: '1', roleTemplateKey: 'solo', avatarId: 'researcher', skills: [], solo: true }]
+      })
+      expect(workspaceRunMode(next.activeRun)).toBe('independent')
+      expect(next.activeRun?.id).not.toBe(previous.id)
+      expect(data.bridge.conversationScopes.at(-1)?.runId).toBe(next.activeRun?.id)
+    } finally {
+      data.service.dispose()
+      data.repository.close()
+    }
+  })
+
   it('keeps the only hard block: no mode switch, batch replacement or end while a launch is being delivered', async () => {
     const data = fixture(true)
     try {

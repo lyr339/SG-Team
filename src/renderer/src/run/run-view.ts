@@ -236,7 +236,9 @@ export function replaceRunConsequence(view: RunView, action: ReplaceRunAction): 
       const target = action.to === 'team' ? '团队模式' : '独立模式'
       return {
         title: `切换到${target}`,
-        body: `${liveClause}切换会结束当前${modeLabel}${live > 0 ? `，${FENCE_NOTE}` : '。'}${action.to === 'team' ? '随后进入组队流程。' : '随后配置独立批次。'}`,
+        body: view.phase === 'prelaunch'
+          ? `当前${modeLabel}尚未启动，创建新配置后替换，无需先结束运行。${live > 0 ? `${liveClause}${FENCE_NOTE}` : ''}`
+          : `${liveClause}切换会结束当前${modeLabel}${live > 0 ? `，${FENCE_NOTE}` : '。'}${action.to === 'team' ? '随后进入组队流程。' : '随后配置独立批次。'}`,
         confirmLabel: '确认切换',
         needsConfirm: live > 0
       }
