@@ -9,7 +9,7 @@ import { SqliteTeamMemoryRepository } from '../infrastructure/team-memory/sqlite
 import { TeamMemoryAgentService } from '../application/team-memory-agent-service'
 import { SqliteChannelMessageRepository } from '../infrastructure/channel-messages/sqlite-channel-message-repository'
 import { ChannelMessageService } from '../application/channel-message-service'
-import { buildTeamRoleBriefing } from '../domain/team-control'
+import { buildTeamRoleBriefing, effectiveGroupLeadSlotId } from '../domain/team-control'
 import { TaskPoolError } from '../domain/task-pool'
 import { isPresenceOnline, resolveKeepaliveTimeoutMs } from '../domain/channel-message'
 import { createUnifiedChannelServer } from './unified-channel-server'
@@ -103,8 +103,31 @@ async function serveUnified(databasePath: string): Promise<void> {
       : undefined
     const binding = state.bindings.find((candidate) => candidate.runId === identity.runId && candidate.slotId === identity.slotId)
     if (!run || !slot || !role || !binding) return undefined
+    // 入组席位：目标、lead 与权限都以组行为准（lead 与角色模板解耦）；legacy 团队 run 沿用 run 级 lead。
+    const group = slot.groupId ? state.groups.find((candidate) => candidate.id === slot.groupId) : undefined
+    if (group) {
+      const members = state.slots.filter((candidate) => candidate.groupId === group.id)
+      const effectiveLeadSlotId = effectiveGroupLeadSlotId(group)
+      const leadSlot = members.find((candidate) => candidate.id === effectiveLeadSlotId)
+      const leadRole = leadSlot ? state.roles.find((candidate) => candidate.id === leadSlot.roleId) : undefined
+      const leadBinding = leadSlot ? state.bindings.find((candidate) => candidate.runId === run.id && candidate.slotId === leadSlot.id) : undefined
+      return buildTeamRoleBriefing({
+        run,
+        role,
+        slot,
+        binding,
+        effectiveLead: slot.id === effectiveLeadSlotId,
+        originalLeadDemoted: role.templateKey === 'lead' && effectiveLeadSlotId !== undefined && slot.id !== effectiveLeadSlotId,
+        group: {
+          name: group.name,
+          goal: group.goal,
+          leadLabel: leadSlot ? `${leadRole?.name ?? '主控'} · CH-${leadBinding?.channelId ?? leadSlot.channelId ?? '?'}` : undefined,
+          memberCount: members.length
+        }
+      })
+    }
     const originalLeadRole = state.roles.find((candidate) => (
-      candidate.runId === run.id && candidate.templateKey === 'lead'
+      candidate.runId === run.id && candidate.templateKey === 'lead' && !candidate.groupId
     ))
     const originalLeadSlot = originalLeadRole
       ? state.slots.find((candidate) => candidate.runId === run.id && candidate.roleId === originalLeadRole.id)

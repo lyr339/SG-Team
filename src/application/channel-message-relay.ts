@@ -10,6 +10,7 @@ import {
   isExplicitlyStoppedPhase,
   isInternalCollaborationNotificationText,
   isPresenceOnline,
+  resolveOutboundKind,
   type ChannelInboundReply,
   type ChannelOutboundMessage,
   type ChannelPresence
@@ -206,12 +207,15 @@ export class ChannelMessageRelay {
     const attachments = this.prepareAttachments(messageId, input.attachments)
     // 纯附件消息合法（对齐前端输入框「文本或附件至少其一」）
     if (!text && !attachments?.length) throw new Error('消息不能为空')
-    const silent = input.silent === true || isInternalCollaborationNotificationText(text)
+    // 投递类型：显式 kind 优先，否则按正文标题推断；internal / membership 都是 silent
+    //（只进出站队列、不进时间线、不开回复守门），区别只在 check_messages 投递时的协议后缀。
+    const kind = resolveOutboundKind(text, input.kind, input.silent === true)
+    const silent = kind !== 'user'
     this.repository.dedupePendingOutbound(channelId, this.now())
     const runId = input.scopeRunId?.trim() || this.scopeRunId
     const holdSessionToken = input.holdSessionToken?.trim() || undefined
     const message = this.repository.enqueueOutbound(
-      channelId, text, this.now(), attachments, silent, runId, { holdSessionToken }
+      channelId, text, this.now(), attachments, silent, runId, { holdSessionToken, kind }
     )
     const commandId = randomUUID()
     const entry: ConversationEntry = {

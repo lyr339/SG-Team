@@ -2,11 +2,12 @@ import type { McpServer } from '@modelcontextprotocol/server'
 import { readFileSync } from 'node:fs'
 import * as z from 'zod/v4'
 import { isTransientStorageError, type ChannelMessageService } from '../application/channel-message-service'
-import { CHANNEL_ATTACHMENT_MAX_FILE_BYTES } from '../domain/channel-message'
+import { CHANNEL_ATTACHMENT_MAX_FILE_BYTES, resolveOutboundKind } from '../domain/channel-message'
 import {
   buildAttachmentManifest,
   buildDeliverySuffix,
   buildKeepaliveText,
+  buildMembershipNoticeSuffix,
   buildMergedNote,
   buildSilentDeliverySuffix,
   buildStorageUnavailableMessage,
@@ -266,9 +267,13 @@ export function registerChannelCommunicationTools(
       case 'retired':
         return { content: [{ type: 'text' as const, text: buildSessionRetiredText({ channelId, reason: result.reason }) }] }
       case 'delivered': {
-        const suffix = result.message.silent
-          ? buildSilentDeliverySuffix({ channelId, tick: result.turnCount })
-          : buildDeliverySuffix({ channelId, tick: result.turnCount })
+        // 后缀按投递类型分流：成员关系通知没有 messageId，不能套内部协作后缀的 team_message read 指引。
+        const kind = resolveOutboundKind(result.message.text, result.message.kind, result.message.silent)
+        const suffix = kind === 'membership'
+          ? buildMembershipNoticeSuffix({ channelId, tick: result.turnCount })
+          : kind === 'internal'
+            ? buildSilentDeliverySuffix({ channelId, tick: result.turnCount })
+            : buildDeliverySuffix({ channelId, tick: result.turnCount })
         const imageBlocks = inlineImageContentBlocks(result.message.attachments)
         const fileText = inlineFileText(result.message.attachments)
         return {

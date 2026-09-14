@@ -21,6 +21,12 @@ export interface ChannelOutboundMessage {
   /** 内部投递消息只用于 Agent 调度/对账，不进入用户可见会话时间线。 */
   silent?: boolean
   /**
+   * 投递类型：`user` 真实用户消息（开回复守门）；`internal` 团队内部协作通知（team_message 回执后缀）；
+   * `membership` 拾光服务端的成员关系通知（入组 / 出组 / 解散 / lead 变更——无 messageId、不要求
+   * record_reply，独立后缀）。后两者都是 silent。缺省按正文前缀推断（旧行 / 旧构建）。
+   */
+  kind?: ChannelOutboundKind
+  /**
    * 「等待新会话」保持位：入队时该席位现任会话的令牌。携带同一令牌（或不带令牌）的
    * check_messages 取不到这条消息；只有该通道之后的新会话（新令牌）才会收到。
    * 用于会话交接：把上下文文档路径留给重建/重启后的自己。
@@ -46,6 +52,27 @@ export const INTERNAL_COLLABORATION_NOTIFICATION_PREFIX = '【拾光内部协作
 
 export function isInternalCollaborationNotificationText(text: string): boolean {
   return text.trimStart().startsWith(INTERNAL_COLLABORATION_NOTIFICATION_PREFIX)
+}
+
+/**
+ * 成员关系通知标题（会话池 · 协作组）。阶段 0 实机发现：内部协作后缀写死「按 messageId 调用
+ * team_message read」，而成员关系通知没有 messageId，且模型会把中途改变身份的通知当作注入审视——
+ * 所以它必须是独立的通知类型、独立的后缀，并由服务器 instructions 预告其形态。
+ */
+export const MEMBERSHIP_NOTICE_PREFIX = '【拾光成员关系通知】'
+
+export function isMembershipNoticeText(text: string): boolean {
+  return text.trimStart().startsWith(MEMBERSHIP_NOTICE_PREFIX)
+}
+
+export type ChannelOutboundKind = 'user' | 'internal' | 'membership'
+
+/** 出站消息类型：显式给出优先；否则按正文标题前缀推断（兼容旧行与只写 silent 的调用方）。 */
+export function resolveOutboundKind(text: string, explicit?: ChannelOutboundKind, silent?: boolean): ChannelOutboundKind {
+  if (explicit) return explicit
+  if (isMembershipNoticeText(text)) return 'membership'
+  if (silent || isInternalCollaborationNotificationText(text)) return 'internal'
+  return 'user'
 }
 
 /** 附件上限：数量 8 个；单文件 base64 解码后 ≤2 MB；单条消息合计 ≤8 MB。 */

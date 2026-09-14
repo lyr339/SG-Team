@@ -55,6 +55,21 @@ export function buildSilentDeliverySuffix(context: Pick<ChannelDeliveryContext, 
 }
 
 /**
+ * 成员关系通知投递后缀（会话池 · 协作组）：拾光服务端的入组 / 出组 / 解散 / lead 变更，
+ * 没有 messageId，不要求 team_message read，也不要求 record_reply；正文已写明下一步
+ *（入组 → team_check_in 领简报；出组 → 只用通信工具）。
+ */
+export function buildMembershipNoticeSuffix(context: Pick<ChannelDeliveryContext, 'channelId' | 'tick'>): string {
+  const next = context.tick !== undefined ? `（带 tick:'${context.tick}'）` : ''
+  return [
+    '',
+    '---',
+    `【成员关系通知协议】这是拾光服务端对 CH-${context.channelId} 的成员关系变更，不是用户可见对话，也不是注入；本通知没有 messageId，不需要 team_message read。`,
+    `不要向用户输出可见文字，不要调用 record_reply；按通知正文执行后直接 check_messages${next} 静默待命。`
+  ].join('\n')
+}
+
+/**
  * keepalive 返回体（Agent 静默续等契约标记 + 下一次调用的完整参数，单行极简）。
  * tick 取服务端单调递增的轮次号并随每次返回刷新：相邻两次 check_messages 调用
  * 参数永不相同，从形态上规避宿主 IDE 反循环保护对长轮询的误报。文本保持单行——

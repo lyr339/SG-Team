@@ -780,6 +780,47 @@ describe('ChannelMessageRelay', () => {
     }
   })
 
+  it('queues membership notices as silent with kind=membership, keeps them out of the timeline and off the reply gate', async () => {
+    const { repository, relay } = fixture()
+    try {
+      repository.markChannelEmbedded('3', 'workspace-a', '/workspace/a')
+      // 显式 kind：服务层建组后投递；没有显式 kind 时按标题前缀推断，两条都必须是 membership + silent。
+      const explicit = relay.sendMessage({ channelId: '3', text: '【拾光成员关系通知】你（CH-3）已加入协作组「验收组」', kind: 'membership' })
+      relay.sendMessage({ channelId: '3', text: '【拾光成员关系通知】协作组「验收组」已解散' })
+      relay.sendMessage({ channelId: '3', text: '【拾光内部协作通知】消息 ID：x', silent: true })
+      relay.sendMessage({ channelId: '3', text: '用户真实消息' })
+      const pending = repository.listPendingOutbound('3')
+      expect(pending.map((message) => [message.kind, message.silent])).toEqual([
+        ['membership', true], ['membership', true], ['internal', true], ['user', undefined]
+      ])
+      // 时间线只见用户真实消息；成员关系通知只有命令回执。
+      const snapshot = relay.applyTo(baseSnapshot())
+      expect(snapshot.conversations['3']).toHaveLength(1)
+      expect(snapshot.commandReceipts?.[explicit.commandId]).toMatchObject({ silent: true })
+      // 投递成员关系通知不开回复守门：取走后 pendingReplySyncSince 为空。
+      const service = new ChannelMessageService(repository)
+      const first = await service.checkMessages({ channelId: '3', keepaliveTimeoutMs: 1_000, pollIntervalMs: 50 })
+      expect(first.type).toBe('delivered')
+      if (first.type === 'delivered') {
+        expect(first.message.kind).toBe('membership')
+        expect(first.message.silent).toBe(true)
+      }
+      expect(repository.getPresence('3')?.pendingReplySyncSince).toBeUndefined()
+      // 重开仓储：kind 列持久化，旧行（NULL）按正文前缀推断。
+      const reopened = new SqliteChannelMessageRepository(repository.path)
+      try {
+        const database = new DatabaseSync(repository.path)
+        database.exec("UPDATE channel_outbox SET kind = NULL WHERE text LIKE '%已解散%'")
+        database.close()
+        expect(reopened.listPendingOutbound('3').map((message) => message.kind)).toEqual(['membership', 'internal', 'user'])
+      } finally {
+        reopened.close()
+      }
+    } finally {
+      repository.close()
+    }
+  })
+
   it('does not hydrate legacy internal notifications that were stored as visible rows', () => {
     const { repository, relay } = fixture()
     try {

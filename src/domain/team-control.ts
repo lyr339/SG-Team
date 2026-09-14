@@ -7,7 +7,7 @@ import type { AssignedAgentSkill } from './agent-skill'
 import type { CursorModelSelection } from './cursor-model'
 import type { TeamFailoverRecord } from './team-failover'
 import { TEAM_REPLY_STYLE_INSTRUCTION } from './team-reply-style'
-import { hasConfirmedRuntimeStop, SG_TEAM_MCP_SERVER_ID } from './channel-message'
+import { hasConfirmedRuntimeStop, MEMBERSHIP_NOTICE_PREFIX, SG_TEAM_MCP_SERVER_ID } from './channel-message'
 import { TaskPoolError } from './task-pool'
 
 export type TeamRunStatus =
@@ -770,6 +770,15 @@ export function buildSoloLaunchHint(input: { channelId: string; sessionToken?: s
  * 只写角色相关的内容（身份、目标、职责、工作流、协作规范）；通信协议（record_reply /
  * check_messages / 静默规则 / 终止条件）由服务器说明唯一陈述，这里不复述。
  */
+/** team_check_in 简报里的协作组参数：组目标替代 run 目标；lead 一句话；无 lead 组不输出 lead 专用工作流。 */
+export interface TeamRoleBriefingGroup {
+  name: string
+  goal: string
+  /** 有效 lead 的角色名 + 通道（`主控协调 · CH-1`）；无 lead 组为空。 */
+  leadLabel?: string
+  memberCount: number
+}
+
 export function buildTeamRoleBriefing(input: {
   run: TeamRun
   role: TeamRole
@@ -777,8 +786,9 @@ export function buildTeamRoleBriefing(input: {
   binding: RuntimeBinding
   effectiveLead?: boolean
   originalLeadDemoted?: boolean
+  group?: TeamRoleBriefingGroup
 }): string {
-  const { run, role, slot, binding } = input
+  const { run, role, slot, binding, group } = input
   const effectiveLead = input.effectiveLead ?? role.templateKey === 'lead'
   const channelId = binding.channelId
   const server = SG_TEAM_MCP_SERVER_ID
@@ -804,17 +814,20 @@ export function buildTeamRoleBriefing(input: {
   const skills = role.skills.length
     ? `已分配 Agent Skills：${role.skills.map((skill) => `/${skill.name}`).join('、')}。只在任务相关时按 Cursor Skills 机制调用，不要把技能名称当作已完成工作。`
     : '当前席位没有单独指定 Agent Skill；仍可按 Cursor 自动发现机制使用工作区内相关技能。'
+  const scopeLabel = group ? `协作组「${group.name}」` : '本 TeamRun'
   return [
-    `你是拾光外置协作中枢中的「${role.name}」Agent。`,
+    group
+      ? `你是拾光外置协作中枢中协作组「${group.name}」的「${role.name}」Agent（组内 ${group.memberCount} 名成员；lead：${group.leadLabel ?? '无——本组只共享目标、消息与记忆，没有任务板调度'}）。`
+      : `你是拾光外置协作中枢中的「${role.name}」Agent。`,
     effectiveLead && role.templateKey !== 'lead'
-      ? '当前权限：你已接管为本 TeamRun 的唯一有效主控；保留原专业职责，同时承担全局规划、调度、消息协调与收尾责任。'
+      ? `当前权限：你已接管为${scopeLabel}的唯一有效主控；保留原专业职责，同时承担全局规划、调度、消息协调与收尾责任。`
       : input.originalLeadDemoted
         ? '当前权限：主控权限已转移给临时主控；你保留原席位上下文，但不得再调用主控专用工具，直至权限复位。'
         : '',
     `稳定身份：${slot.id}；本次可替换运行时：CH-${channelId}；TeamRun：${run.id}。`,
     `本次 Cursor 会话绑定标记：${telemetryMarker}`,
     ...(sessionNote ? [sessionNote] : []),
-    `团队目标：${run.goal}`,
+    group ? `组目标：${group.goal || '（未填写，以用户随后指令为准）'}` : `团队目标：${run.goal}`,
     `核心职责：${role.mission}`,
     `工作边界：${role.instructions}`,
     TEAM_REPLY_STYLE_INSTRUCTION,
@@ -829,7 +842,58 @@ export function buildTeamRoleBriefing(input: {
     "6. 会影响团队后续工作的决策、约束、风险或经验，用 team_memory({action:'propose', kind, title, content, sources}) 记录并附消息/任务/文件来源；主控与质量角色用 team_memory review 处理待确认提案，不要求用户整理记忆。",
     effectiveLead
       ? '7. 只有任务板已由用户明确启动/分配后，才主动调度、催办（team_message send 询问成员）或处理真实上报；空任务板表示等待用户下一条指令。向用户说明现状只用于状态真的变化、出现阻塞或用户询问，禁止重复发送同一进展。'
-      : '7. 额度耗尽、工具缺失或无法推进时，立即向主控 team_message send 上报阻塞原因与已尝试步骤，禁止沉默卡死。',
+      : group && !group.leadLabel
+        ? '7. 本组没有 lead：任务由用户直接指派，成员间用 team_message 协调；额度耗尽、工具缺失或无法推进时用 record_reply 向用户说明一次。'
+        : '7. 额度耗尽、工具缺失或无法推进时，立即向主控 team_message send 上报阻塞原因与已尝试步骤，禁止沉默卡死。',
+    ...(group
+      ? [`成员关系：拾光操作员随时可能把你移出本组或解散本组，届时 check_messages 会投递${MEMBERSHIP_NOTICE_PREFIX}；出组后回到只用 check_messages / record_reply，不再调用 team_*。`]
+      : []),
     '额度耗尽、授权失败、工具缺失或不可恢复错误：明确报告一次并停止自动重试。'
   ].join('\n')
+}
+
+export type MembershipNoticeKind = 'joined' | 'left' | 'dissolved' | 'lead_changed'
+
+/**
+ * 成员关系通知正文（任务书 §6.2）。四种模板都以 MEMBERSHIP_NOTICE_PREFIX 开头（relay 据此判定
+ * silent + membership 投递类型），不含 messageId，不要求 record_reply；入组通知内联简报摘要
+ *（组名、目标、角色、lead、首个动作），出组 / 解散 / lead 变更各一段。
+ */
+export function buildMembershipNotice(input: {
+  kind: MembershipNoticeKind
+  channelId: string
+  group: Pick<TeamGroup, 'name' | 'goal'>
+  roleName?: string
+  /** 有效 lead 的标签（`主控协调 · CH-1`）；无 lead 组为空。 */
+  leadLabel?: string
+  /** lead_changed：本席位是否成为 / 不再是有效 lead。 */
+  becameLead?: boolean
+}): string {
+  const ch = `{channel_id:'${input.channelId}'}`
+  const lead = input.leadLabel ?? '无'
+  switch (input.kind) {
+    case 'joined':
+      return [
+        `${MEMBERSHIP_NOTICE_PREFIX}你（CH-${input.channelId}）已加入协作组「${input.group.name}」，角色「${input.roleName ?? '成员'}」；lead：${lead}。`,
+        `组目标：${input.group.goal || '（未填写，以用户随后指令为准）'}`,
+        `立即调用 team_check_in(${ch}) 领取完整简报与上下文，之后按简报与服务器说明工作；简报之外不要自行开始任务。`
+      ].join('\n')
+    case 'left':
+      return [
+        `${MEMBERSHIP_NOTICE_PREFIX}你（CH-${input.channelId}）已被移出协作组「${input.group.name}」，恢复为独立席位。`,
+        '组内任务租约与验收已由拾光释放；组内消息不再可见。从现在起只用 check_messages / record_reply 与用户沟通，不要再调用任何 team_* 工具，直到收到新的入组通知。'
+      ].join('\n')
+    case 'dissolved':
+      return [
+        `${MEMBERSHIP_NOTICE_PREFIX}协作组「${input.group.name}」已解散，你（CH-${input.channelId}）恢复为独立席位。`,
+        '组内未完成任务已取消，消息与记忆保留只读。从现在起只用 check_messages / record_reply 与用户沟通，不要再调用任何 team_* 工具，直到收到新的入组通知。'
+      ].join('\n')
+    case 'lead_changed':
+      return [
+        `${MEMBERSHIP_NOTICE_PREFIX}协作组「${input.group.name}」的 lead 已变更：现在的 lead 是 ${lead}。`,
+        input.becameLead
+          ? `你（CH-${input.channelId}）已成为本组唯一有效主控：调用 team_check_in(${ch}) 刷新权限与简报，再用 team_tasks(${ch.replace('}', ", view:'board'}")}) 核对任务板。`
+          : `你（CH-${input.channelId}）不再持有主控权限：调用 team_check_in(${ch}) 刷新简报后按成员工作流继续；进行中的任务不受影响。`
+      ].join('\n')
+  }
 }

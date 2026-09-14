@@ -11,11 +11,21 @@ import {
   PRESENCE_REVIVED_PHASE,
   isExplicitlyStoppedPhase,
   isOutboundDeliverableTo,
+  resolveOutboundKind,
   type ChannelInboundReply,
+  type ChannelOutboundKind,
   type ChannelOutboundMessage,
   type ChannelPresence
 } from '../../domain/channel-message'
 import type { MessageAttachment, ProcessBlock } from '../../domain/conversation-entry'
+
+const OUTBOUND_KINDS = new Set<ChannelOutboundKind>(['user', 'internal', 'membership'])
+
+function outboundKindOf(value: unknown): ChannelOutboundKind | undefined {
+  return typeof value === 'string' && OUTBOUND_KINDS.has(value as ChannelOutboundKind)
+    ? value as ChannelOutboundKind
+    : undefined
+}
 
 /** 出站行的投递状态投影（不含正文与附件），供主进程的高频状态同步使用。 */
 export type ChannelOutboundDeliveryState = Pick<ChannelOutboundMessage, 'id' | 'deliveredAt' | 'retiredAt' | 'withdrawnAt'>
@@ -71,6 +81,7 @@ function outboundOf(row: SqliteRow): ChannelOutboundMessage {
     createdAt: numberOf(row.created_at),
     deliveredAt: row.delivered_at === null ? undefined : numberOf(row.delivered_at),
     silent: numberOf(row.silent) === 1 ? true : undefined,
+    kind: resolveOutboundKind(String(row.text), outboundKindOf(row.kind), numberOf(row.silent) === 1),
     holdSessionToken: optionalString(row.hold_session_token),
     withdrawnAt: row.withdrawn_at === null || row.withdrawn_at === undefined ? undefined : numberOf(row.withdrawn_at),
     retiredAt: row.retired_at === null || row.retired_at === undefined ? undefined : numberOf(row.retired_at)
@@ -190,13 +201,14 @@ export class SqliteChannelMessageRepository {
     attachments?: MessageAttachment[],
     silent = false,
     runId?: string,
-    options: { holdSessionToken?: string } = {}
+    options: { holdSessionToken?: string; kind?: ChannelOutboundKind } = {}
   ): ChannelOutboundMessage {
     const normalizedChannel = String(channelId).trim()
     if (!/^\d+$/.test(normalizedChannel)) throw new Error(`通道号无效：${channelId}`)
     const normalizedText = String(text ?? '').trim()
     const normalizedRunId = runId?.trim() || undefined
     const holdSessionToken = options.holdSessionToken?.trim() || undefined
+    const kind = resolveOutboundKind(normalizedText, options.kind, silent)
     const activeRunId = this.currentScopeRunId()
     if (normalizedRunId && activeRunId && normalizedRunId !== activeRunId) {
       throw new Error(`消息属于已结束的 TeamRun，拒绝写入当前队列`)
@@ -239,10 +251,11 @@ export class SqliteChannelMessageRepository {
         attachments: attachments?.length ? attachments : undefined,
         createdAt: now,
         silent: silent ? true : undefined,
+        kind,
         holdSessionToken
       }
       this.database.prepare(
-        'INSERT INTO channel_outbox (id, run_id, channel_id, seq, text, attachments_json, created_at, silent, hold_session_token) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        'INSERT INTO channel_outbox (id, run_id, channel_id, seq, text, attachments_json, created_at, silent, hold_session_token, kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
       ).run(
         message.id,
         message.runId ?? null,
@@ -252,7 +265,8 @@ export class SqliteChannelMessageRepository {
         message.attachments ? JSON.stringify(message.attachments) : null,
         message.createdAt,
         message.silent ? 1 : 0,
-        holdSessionToken ?? null
+        holdSessionToken ?? null,
+        kind
       )
       this.database.exec('COMMIT')
       return message
@@ -1001,6 +1015,8 @@ export class SqliteChannelMessageRepository {
   private migrateOutboundHoldColumns(): void {
     this.migrateColumn('channel_outbox', 'hold_session_token', 'TEXT')
     this.migrateColumn('channel_outbox', 'withdrawn_at', 'INTEGER')
+    // 会话池 · 协作组：投递类型（user / internal / membership）；旧行为 NULL，读出时按正文前缀推断。
+    this.migrateColumn('channel_outbox', 'kind', 'TEXT')
   }
 
   /** 老库增量迁移：channel_replies 补 visible 列，用于隐藏后台 record_reply。 */

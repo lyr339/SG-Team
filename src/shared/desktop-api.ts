@@ -149,6 +149,12 @@ export interface SendMessageInput {
    */
   silent?: boolean
   /**
+   * 投递类型（主进程内部）：`internal` 等价 silent；`membership` 是拾光服务端的成员关系通知
+   *（入组 / 出组 / 解散 / lead 变更），同为 silent，但投递时用成员关系后缀而非内部协作后缀。
+   * 渲染层普通发送不填写。
+   */
+  kind?: 'user' | 'internal' | 'membership'
+  /**
    * 「等待新会话」：消息留给该席位重建/重启后的新会话，当前会话取不到。
    * 渲染层只填这个布尔；主进程按席位现任会话令牌换算为 holdSessionToken。
    */

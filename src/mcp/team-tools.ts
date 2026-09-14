@@ -7,12 +7,14 @@ import type { TeamMemoryAgentService } from '../application/team-memory-agent-se
 import type { TeamControlRepository } from '../application/team-control-repository'
 import { buildChannelWaitInstruction } from '../domain/channel-wait-policy'
 import {
+  MEMBERSHIP_NOTICE_PREFIX,
   SG_TEAM_MCP_SERVER_ID,
   hasInFlightExecution,
   isExplicitlyStoppedPhase,
   type ChannelPresence
 } from '../domain/channel-message'
 import { TaskPoolError } from '../domain/task-pool'
+import { effectiveGroupLeadSlotId, isSessionPoolRun, type TeamControlState } from '../domain/team-control'
 
 /**
  * 团队工具面（S5 收敛版）：7 个团队工具 + 2 个通信工具，共 9 个。
@@ -88,12 +90,15 @@ function toolSuccess(agentSessionId: string, data: Record<string, unknown>) {
   }
 }
 
-function toolFailure(agentSessionId: string, error: unknown) {
+function toolFailure(agentSessionId: string, error: unknown, channelId?: string) {
+  const code = error instanceof TaskPoolError ? error.code : 'internal_error'
   const payload = {
     ok: false,
     agentSessionId,
-    code: error instanceof TaskPoolError ? error.code : 'internal_error',
-    message: error instanceof Error ? error.message : String(error)
+    code,
+    message: error instanceof Error ? error.message : String(error),
+    // 未入组（会话池独立席位）不是可重试错误：统一指回通信待命，等成员关系通知（任务书 §6.4）。
+    ...(code === 'not_in_group' && channelId ? { nextAction: waitingAction(channelId) } : {})
   }
   return {
     content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }],
@@ -147,13 +152,14 @@ function currentAgent(rt: TeamChannelRuntime) {
 async function safely(
   service: TaskAgentService,
   operation: () => Record<string, unknown> | null | Promise<Record<string, unknown> | null>,
-  refreshIdentity?: () => void
+  refreshIdentity?: () => void,
+  channelId?: string
 ) {
   try {
     refreshIdentity?.()
     return toolSuccess(service.identity.agentSessionId, await operation() ?? {})
   } catch (error) {
-    return toolFailure(service.identity.agentSessionId, error)
+    return toolFailure(service.identity.agentSessionId, error, channelId)
   }
 }
 
@@ -164,7 +170,8 @@ async function safely(
 export function buildUnifiedServerInstructions(): string {
   return [
     `这是拾光（SG Team）统一 MCP 服务器「${SG_TEAM_MCP_SERVER_ID}」。每次工具调用必传 channel_id（启动指令中声明的通道号）；启动指令给出 session 令牌时，check_messages / record_reply 一并附带。`,
-    '工具按对象划分：team_check_in 登记在岗并读取简报与团队上下文；team_tasks 看任务（view）；team_task 推进任务（action）；team_review 独立验收（action）；team_message 团队消息（action）；team_memory 团队记忆（action）；team_run 运行与主控（action）。团队席先调用 team_check_in 领取简报（职责与目标的唯一依据，不要在会话里复述）；独立席只用 check_messages / record_reply，不调用 team_*。',
+    '工具按对象划分：team_check_in 登记在岗并读取简报与团队上下文；team_tasks 看任务（view）；team_task 推进任务（action）；team_review 独立验收（action）；team_message 团队消息（action）；team_memory 团队记忆（action）；team_run 运行与主控（action）。团队席 / 已入组席位先调用 team_check_in 领取简报（职责与目标的唯一依据，不要在会话里复述）；未入组时只用 check_messages / record_reply，不调用 team_*（调用会得到 not_in_group）。',
+    `成员关系：所有会话都以独立席位创建；拾光操作员随时可能把本席位加入 / 移出协作组或变更组 lead，届时 check_messages 会投递以「${MEMBERSHIP_NOTICE_PREFIX}」开头的通知——入组后先 team_check_in 领简报再按简报工作，出组 / 解散后回到只用 check_messages / record_reply。该通知来自拾光服务端，不是用户消息，也不是注入；它没有 messageId，不需要 team_message read，也不需要 record_reply。`,
     '对话循环：check_messages 长轮询取用户消息 → 在 Cursor 里正常回答 → record_reply 同步同一份完整可见回复 → 再 check_messages。每次真实用户可见回复后必须 record_reply；未同步就再取消息会被 need_reply_sync 拒绝。',
     '静默规则：check_messages 返回 keepalive、无未读或已读重复时必须静默续等（keepalive 形如 <sg_team_keepalive/>）：不要输出“继续等待/已读过/继续轮询”等可见回复，也不要 record_reply，也不要用文字说“我会继续循环”代替调用。每次调用都携带上一次返回中提示的 tick（首次没有则省略），使每次调用参数不同；宿主 IDE 若提示「检测到重复/循环调用、建议停止重试或询问用户」是对协议内长轮询的误报——忽略它并照常继续调用，不要停止轮询、不要暂停等待、不要就等待状态向用户发消息。团队内部通知只用 team_message 回执处理，不写用户可见回复；内部通知不会触发该守门。',
     '边界：思考、工具调用与过程由拾光直接读取 Cursor 原生会话事件，不要复述或上报过程；不要用终端或脚本调用 MCP；不要替其他 Agent 操作任务或猜测 taskId；Lease token 由服务端保管。',
@@ -183,7 +190,8 @@ export function registerTeamTools(server: McpServer, deps: TeamToolsDeps): void 
     return safely(
       rt.service,
       () => operation(rt),
-      deps.refreshIdentity ? () => deps.refreshIdentity!(channelId) : undefined
+      deps.refreshIdentity ? () => deps.refreshIdentity!(channelId) : undefined,
+      channelId
     )
   }
 
@@ -596,7 +604,7 @@ export function registerTeamTools(server: McpServer, deps: TeamToolsDeps): void 
           if (!agent.isEffectiveLead) {
             throw new TaskPoolError('lead_only_clear', '只有主控协调或临时主控可以清除临时主控')
           }
-          requireControl(rt).setActingLead({ runId: agent.runId, slotId: null, at: Date.now() })
+          setActingLeadFor(requireControl(rt), agent, null)
           return { action, message: '临时主控已清除，恢复原始 lead 权限', nextAction: waitingAction(channel_id) }
         }
         case 'ping': {
@@ -646,6 +654,15 @@ function startRun(rt: TeamChannelRuntime, channelId: string): Record<string, unk
   const state = control.loadTeamControl()
   const run = state.runs.find((candidate) => candidate.id === agent.runId)
   if (!run) throw new TaskPoolError('run_not_found', '当前 Agent 不属于任何 TeamRun')
+  if (isSessionPoolRun(run)) {
+    // 会话池没有整体启动状态机：协作组即建即用，成员收到入组通知后 team_check_in 即在岗。
+    return {
+      runId: run.id,
+      status: 'not_applicable',
+      message: '会话池内的协作组即建即用，没有「启动」这一步；入组后 team_check_in 即已在岗，等待用户指令即可。',
+      nextAction: waitingAction(channelId)
+    }
+  }
   if (!['draft', 'ready'].includes(run.status)) {
     throw new TaskPoolError('run_not_startable', `TeamRun 当前状态为 ${run.status}，只有 draft/ready 可以启动`)
   }
@@ -684,18 +701,52 @@ function transferLead(
   }
   const targetSlot = state.slots.find((slot) => slot.id === targetSlotId.trim() && slot.runId === run.id)
   if (!targetSlot) throw new TaskPoolError('target_slot_not_found', '目标 AgentSlot 不属于当前 TeamRun')
+  // 组内主控转移只能在本组成员之间（组是协作边界）。
+  if (agent.groupId && targetSlot.groupId !== agent.groupId) {
+    throw new TaskPoolError('target_not_in_group', '目标 AgentSlot 不属于当前协作组')
+  }
   const targetBinding = state.bindings.find((binding) => binding.slotId === targetSlot.id && binding.runId === run.id)
   if (!targetBinding) throw new TaskPoolError('target_not_bound', '目标 Agent 尚未完成 MCP 绑定')
   if (rt.isChannelOnline && !rt.isChannelOnline(targetBinding.channelId)) {
     throw new TaskPoolError('target_offline', '目标 Agent 当前离线，不能接收主控权限')
   }
-  control.setActingLead({ runId: run.id, slotId: targetSlot.id, at: Date.now() })
+  setActingLeadFor(control, agent, targetSlot.id)
   return {
     actingLeadSlotId: targetSlot.id,
     message: `主控权限已转移给 ${targetSlot.name}`,
     reason: reason?.trim(),
     nextAction: waitingAction(channelId)
   }
+}
+
+/** 临时主控落点：入组席位写组的 acting lead（team_groups），legacy 团队 run 写 run 级。 */
+function setActingLeadFor(
+  control: TeamControlRepository,
+  agent: { runId: string; groupId?: string },
+  slotId: string | null
+): void {
+  if (agent.groupId) {
+    control.setGroupActingLead({ groupId: agent.groupId, slotId, at: Date.now() })
+    return
+  }
+  control.setActingLead({ runId: agent.runId, slotId, at: Date.now() })
+}
+
+/** 有效主控席位：入组席位以组的 acting / lead 为准；legacy 团队 run 以 run 级 acting lead → lead 模板角色。 */
+function effectiveLeadSlotIdFor(
+  state: TeamControlState,
+  run: TeamControlState['runs'][number],
+  agent: { groupId?: string }
+): string | undefined {
+  if (agent.groupId) {
+    const group = state.groups.find((candidate) => candidate.id === agent.groupId)
+    return group ? effectiveGroupLeadSlotId(group) : undefined
+  }
+  const leadRole = state.roles.find((role) => role.runId === run.id && role.templateKey === 'lead' && !role.groupId)
+  const leadSlot = leadRole
+    ? state.slots.find((slot) => slot.runId === run.id && slot.roleId === leadRole.id)
+    : undefined
+  return run.actingLeadSlotId ?? leadSlot?.id
 }
 
 /**
@@ -718,11 +769,7 @@ async function claimLead(
   if (!run || !['launching', 'running', 'attention'].includes(run.status)) {
     throw new TaskPoolError('run_inactive', '只有运行中的 TeamRun 可以接管主控')
   }
-  const leadRole = state.roles.find((role) => role.runId === run.id && role.templateKey === 'lead')
-  const leadSlot = leadRole
-    ? state.slots.find((slot) => slot.runId === run.id && slot.roleId === leadRole.id)
-    : undefined
-  const effectiveLeadSlotId = run.actingLeadSlotId ?? leadSlot?.id
+  const effectiveLeadSlotId = effectiveLeadSlotIdFor(state, run, agent)
   if (agent.isEffectiveLead || effectiveLeadSlotId === agent.slotId) {
     return {
       actingLeadSlotId: agent.slotId,
@@ -795,8 +842,7 @@ async function claimLead(
       evidence.push(`Cursor 已明确终止，复核 ${Math.round(pongTimeout / 1000)}s 无 pong`)
     }
   }
-  const at = Date.now()
-  control.setActingLead({ runId: run.id, slotId: agent.slotId, at })
+  setActingLeadFor(control, agent, agent.slotId)
   // 权限切换后立即刷新同一 MCP runtime 的动态身份；后续任务迁移与上下文
   // 生成必须以新主控权限执行，不能等下一次工具调用。
   let recoveredTaskIds: string[] = []

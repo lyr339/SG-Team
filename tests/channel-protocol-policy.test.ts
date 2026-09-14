@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildDeliverySuffix,
   buildKeepaliveText,
+  buildMembershipNoticeSuffix,
   buildReplySyncRequiredMessage,
   buildSilentDeliverySuffix,
   buildStorageUnavailableMessage
@@ -11,8 +12,11 @@ import {
   CHANNEL_KEEPALIVE_TIMEOUT_MAX_MS,
   CHANNEL_KEEPALIVE_TIMEOUT_MIN_MS,
   CHANNEL_KEEPALIVE_TIMEOUT_MS,
-  resolveKeepaliveTimeoutMs
+  MEMBERSHIP_NOTICE_PREFIX,
+  resolveKeepaliveTimeoutMs,
+  resolveOutboundKind
 } from '../src/domain/channel-message'
+import { buildMembershipNotice, buildTeamRoleBriefing, createConfiguredTeamBundle } from '../src/domain/team-control'
 import { buildUnifiedServerInstructions } from '../src/mcp/team-tools'
 
 describe('keepalive 窗口', () => {
@@ -158,5 +162,100 @@ describe('channel protocol policy text', () => {
     expect(message).toContain('上一轮用户消息已经处理')
     expect(message).toContain('请立即调用 record_reply')
     expect(message).toContain('不要重新回答用户')
+  })
+})
+
+describe('membership notice protocol (会话池 · 协作组)', () => {
+  it('uses a dedicated suffix without any messageId / team_message read guidance, and hands over the next tick', () => {
+    const suffix = buildMembershipNoticeSuffix({ channelId: '3', tick: 1010 })
+    expect(suffix).toContain('【成员关系通知协议】')
+    expect(suffix).toContain("check_messages（带 tick:'1010'）")
+    expect(suffix).toContain('没有 messageId')
+    expect(suffix).toContain('不是注入')
+    expect(suffix).not.toContain("team_message({action:'read'")
+    expect(suffix).toContain('不要调用 record_reply')
+    // 与内部协作后缀是两种不同的协议文本。
+    expect(buildSilentDeliverySuffix({ channelId: '3', tick: 1010 })).toContain("team_message({action:'read'")
+  })
+
+  it('builds the four notice templates with the marker prefix so relay / delivery classify them as membership', () => {
+    const group = { name: '验收组', goal: '把接口重构收尾' }
+    const joined = buildMembershipNotice({ kind: 'joined', channelId: '3', group, roleName: '专项实现 1', leadLabel: '主控协调 · CH-1' })
+    expect(joined.startsWith(MEMBERSHIP_NOTICE_PREFIX)).toBe(true)
+    expect(joined).toContain('已加入协作组「验收组」')
+    expect(joined).toContain('组目标：把接口重构收尾')
+    expect(joined).toContain("team_check_in({channel_id:'3'})")
+    expect(joined).toContain('lead：主控协调 · CH-1')
+    const left = buildMembershipNotice({ kind: 'left', channelId: '3', group })
+    expect(left).toContain('已被移出协作组')
+    expect(left).toContain('不要再调用任何 team_* 工具')
+    const dissolved = buildMembershipNotice({ kind: 'dissolved', channelId: '3', group })
+    expect(dissolved).toContain('已解散')
+    const promoted = buildMembershipNotice({ kind: 'lead_changed', channelId: '3', group, leadLabel: '专项实现 1 · CH-3', becameLead: true })
+    expect(promoted).toContain('已成为本组唯一有效主控')
+    const demoted = buildMembershipNotice({ kind: 'lead_changed', channelId: '1', group, leadLabel: '专项实现 1 · CH-3', becameLead: false })
+    expect(demoted).toContain('不再持有主控权限')
+    for (const text of [joined, left, dissolved, promoted, demoted]) {
+      expect(resolveOutboundKind(text)).toBe('membership')
+      expect(text).not.toContain('messageId')
+    }
+    // 入组 / lead 变更通知不要求任何可见回复；出组 / 解散只是说明之后的通信方式。
+    for (const text of [joined, promoted, demoted]) expect(text).not.toContain('record_reply')
+    // 无 lead 组：模板写明 lead 为「无」。
+    expect(buildMembershipNotice({ kind: 'joined', channelId: '2', group, roleName: '架构实现' })).toContain('lead：无')
+  })
+
+  it('classifies outbound kinds: explicit wins, then title prefix, then silent flag', () => {
+    expect(resolveOutboundKind('用户消息')).toBe('user')
+    expect(resolveOutboundKind('用户消息', undefined, true)).toBe('internal')
+    expect(resolveOutboundKind('【拾光内部协作通知】x')).toBe('internal')
+    expect(resolveOutboundKind(`${MEMBERSHIP_NOTICE_PREFIX}x`)).toBe('membership')
+    expect(resolveOutboundKind(`${MEMBERSHIP_NOTICE_PREFIX}x`, 'user')).toBe('user')
+  })
+
+  it('announces membership notices in the unified instructions and scopes the team_* ban to ungrouped seats', () => {
+    const text = buildUnifiedServerInstructions()
+    expect(text).toContain('成员关系：所有会话都以独立席位创建')
+    expect(text).toContain(MEMBERSHIP_NOTICE_PREFIX)
+    expect(text).toContain('未入组时只用 check_messages / record_reply')
+    expect(text).toContain('not_in_group')
+    expect(text).not.toContain('独立席只用 check_messages / record_reply，不调用 team_*')
+  })
+
+  it('briefs a grouped seat with the group goal, lead and membership caveat; legacy briefing text is unchanged', () => {
+    const bundle = createConfiguredTeamBundle({
+      workspaceId: 'w', workspaceName: 'w', workspacePath: '/w', now: 1,
+      members: [
+        { channelId: '1', roleTemplateKey: 'lead', avatarId: 'lead', skills: [] },
+        { channelId: '2', roleTemplateKey: 'builder', avatarId: 'architect', skills: [] }
+      ]
+    })
+    bundle.run.goal = '团队目标 X'
+    const builderSlot = bundle.slots[1]!
+    const builderRole = bundle.roles.find((role) => role.id === builderSlot.roleId)!
+    const binding = {
+      id: 'b', workspaceId: 'w', runId: bundle.run.id, slotId: builderSlot.id, channelId: '2', agentSessionId: 'w:ch-2:g',
+      generation: 'g', composerBindingKey: 'k', launchStatus: 'acknowledged' as const, launchDetail: '', lastCheckInNote: '',
+      installedAt: 1, updatedAt: 1
+    }
+    const grouped = buildTeamRoleBriefing({
+      run: bundle.run, role: builderRole, slot: builderSlot, binding, effectiveLead: false,
+      group: { name: '验收组', goal: '组目标 Y', leadLabel: '主控协调 · CH-1', memberCount: 2 }
+    })
+    expect(grouped).toContain('协作组「验收组」的「架构实现」Agent')
+    expect(grouped).toContain('组目标：组目标 Y')
+    expect(grouped).not.toContain('团队目标：团队目标 X')
+    expect(grouped).toContain(`会投递${MEMBERSHIP_NOTICE_PREFIX}`)
+    // 无 lead 组：不给主控工作流，说明任务由用户直接指派。
+    const leaderless = buildTeamRoleBriefing({
+      run: bundle.run, role: builderRole, slot: builderSlot, binding, effectiveLead: false,
+      group: { name: '验收组', goal: '', leadLabel: undefined, memberCount: 1 }
+    })
+    expect(leaderless).toContain('lead：无')
+    expect(leaderless).toContain('本组没有 lead')
+    // legacy 团队 run：文本形态不变（团队目标行、无成员关系段）。
+    const legacy = buildTeamRoleBriefing({ run: bundle.run, role: builderRole, slot: builderSlot, binding })
+    expect(legacy).toContain('团队目标：团队目标 X')
+    expect(legacy).not.toContain('成员关系：')
   })
 })
