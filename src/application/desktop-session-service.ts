@@ -63,7 +63,7 @@ function processBlocksFingerprint(blocks: ProcessBlock[]): string {
               title: block.title, summary: block.summary, hint: block.hint,
               output: block.output, error: block.error,
               input: block.input, todos: block.todos, question: block.question,
-              diff: block.diff
+              diff: block.diff, image: block.image
             })
           : processRevisionKey(block)
   ]))
@@ -1746,6 +1746,7 @@ export class DesktopSessionService implements DesktopSessionBridge {
         error: item.error,
         question: item.question,
         diff: item.diff,
+        image: item.image,
         status,
         startedAt,
         completedAt: status === 'done' || status === 'failed' ? now : undefined,

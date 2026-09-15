@@ -364,6 +364,24 @@ describe('CursorCdpSessionCreator.inspectComposerRuntime', () => {
     expect(tools[3]?.diff).toBeUndefined()
   })
 
+  it('passes the generated-image path through for image blocks only and drops blank values', () => {
+    const parsed = parseProcessStream({
+      turnId: 'turn', generatingBubbleCount: 0, snapshotComplete: true,
+      items: [
+        { kind: 'tool', id: 'cursor:img', toolName: 'generate_image', toolKind: 'image', toolCase: 'generateImageToolCall', status: 'done', image: { path: '/tmp/out/board.png' } },
+        { kind: 'tool', id: 'cursor:img-blank', toolName: 'generate_image', toolKind: 'image', status: 'done', image: { path: '   ' } },
+        { kind: 'tool', id: 'cursor:img-running', toolName: 'generate_image', toolKind: 'image', status: 'running' },
+        { kind: 'tool', id: 'cursor:read', toolName: 'read_file_v2', toolKind: 'read', status: 'done', image: { path: '/tmp/ignored.png' } }
+      ]
+    })
+    const tools = parsed?.items.filter((item) => item.kind === 'tool') ?? []
+    expect(tools.map((item) => item.toolKind)).toEqual(['image', 'image', 'image', 'read'])
+    expect(tools[0]?.image).toEqual({ path: '/tmp/out/board.png' })
+    expect(tools[1]?.image).toBeUndefined()
+    expect(tools[2]?.image).toBeUndefined()
+    expect(tools[3]?.image).toBeUndefined()
+  })
+
   it('passes the native toolCase through with a strict shape and drops malformed values', () => {
     const parsed = parseProcessStream({
       turnId: 'turn', generatingBubbleCount: 0, snapshotComplete: true,

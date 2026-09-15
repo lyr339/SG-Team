@@ -30,5 +30,8 @@ export function StepIcon({ kind }: { kind: ProcessStepKind }): React.JSX.Element
   if (kind === 'task') {
     return <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="6.5" r="2.7" fill="none" stroke="currentColor" strokeWidth="1.4"/><path d="M4.5 16.5a5.5 5.5 0 0 1 11 0M14 3.2l1.6 1.6M16.8 2.8v2.4h-2.4" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.4"/></svg>
   }
+  if (kind === 'image') {
+    return <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="3.5" width="15" height="13" rx="2" fill="none" stroke="currentColor" strokeWidth="1.4"/><circle cx="7.2" cy="7.6" r="1.5" fill="currentColor"/><path d="m2.8 14.2 4.1-4.1 2.9 2.9 2.6-2.6 4.8 4.8" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.4"/></svg>
+  }
   return <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.7 3.2 6.8 5.5l-2.4.9v2.5l2.4.9.9 2.3h2.6l.9-2.3 2.4-.9V6.4l-2.4-.9-.9-2.3zM8.2 16.8h7.4" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.35"/></svg>
 }

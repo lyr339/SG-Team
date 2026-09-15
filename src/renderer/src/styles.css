@@ -1837,6 +1837,7 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 .cursor-native-tool.is-todo, .process-turn-step.is-todo, .session-row__activity.is-todo { --tool-hue: light-dark(#237a4a, #75d39b); --tool-tint: light-dark(#eaf7ef, #173b2a); }
 .cursor-native-tool.is-task, .process-turn-step.is-task, .session-row__activity.is-task { --tool-hue: light-dark(#5867e8, #9aa5ff); --tool-tint: light-dark(#eceefc, #23284f); }
 .cursor-native-tool.is-question, .process-turn-step.is-question, .session-row__activity.is-question { --tool-hue: light-dark(#b8731d, #f0b76a); --tool-tint: light-dark(#fff3e0, #45311a); }
+.cursor-native-tool.is-image, .process-turn-step.is-image, .session-row__activity.is-image { --tool-hue: light-dark(#5b7a1e, #b3cf6c); --tool-tint: light-dark(#f0f5e2, #26311a); }
 /* 名册活动行的补充色：思考（紫）与回复（主色）在过程流色板之外补两个条目。 */
 .session-row__activity.is-thinking { --tool-hue: light-dark(#7449cc, #b795ff); --tool-tint: light-dark(#f1ecfd, #2b2354); }
 /* 「回复中」用运行蓝而不是信号橙：侧栏里的橙色只表示「你在这」（选中），不表示状态。 */
@@ -1876,6 +1877,16 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 .cursor-native-tool > .process-turn-step__details dl { grid-template-columns: 44px minmax(0, 1fr); }
 .cursor-native-tool > .process-turn-step__details pre,
 .cursor-native-tool > .process-turn-step__details dd > code { max-height: 260px; background: var(--surface-pure); }
+
+/* 图片生成卡（Cursor "Generated image" 同款）：头部之下常驻产出缩略图，左沿与标签列对齐
+   （12px 内边距 + 24px 图标 + 8px 间距）；限高让一次生成多张时时间线不变成图墙，点击看大图。 */
+.cursor-native-image { padding: 0 12px 10px 44px; }
+.cursor-native-image .message-image { display: block; }
+/* 选择器比正文图片规则（.message-image .attachment-thumb img，文件末尾）多一级：过程卡限高更紧。 */
+.cursor-native-image .message-image .attachment-thumb { width: fit-content; max-width: 100%; border-radius: 8px; }
+.cursor-native-image .message-image .attachment-thumb img { width: auto; height: auto; max-width: min(100%, 520px); max-height: 300px; object-fit: contain; }
+.cursor-native-tool.is-nested .cursor-native-image { padding: 0 6px 8px 27px; }
+.process-turn-step .cursor-native-image { padding: 4px 0 6px; }
 
 /* Shell 独立卡（Cursor ui-shell-tool-call 同款）：头部下方常驻 `$ 命令` 着色行与输出面板。
    预览态 5 行定高、column-reverse 贴底显示最新输出、顶部 16px 渐隐（运行中天然跟随尾部）；

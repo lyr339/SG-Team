@@ -22,6 +22,37 @@ describe('ProcessTurnViewModel', () => {
     expect(model.steps[5]?.todos).toEqual([{ content: '验收', status: 'in_progress' }])
   })
 
+  it('projects image-generation blocks: verb by state, file name as the object, thumbnail source, no JSON output detail', () => {
+    const model = buildProcessTurnView({
+      id: 'image-turn',
+      blocks: [
+        {
+          kind: 'tool', id: 'img-done', toolName: 'generate_image', toolKind: 'image', toolCase: 'generateImageToolCall',
+          summary: 'board-v1.png', status: 'done',
+          input: { description: 'design board', filePath: 'board-v1.png' },
+          image: { path: '/tmp/assets/board-v1.png' }
+        },
+        { kind: 'tool', id: 'img-running', toolName: 'generate_image', toolKind: 'image', toolCase: 'generateImageToolCall', summary: 'board-v2.png', status: 'running' },
+        // hook v35 之前落库的旧块：other 类、无 summary、路径埋在 output 的 JSON 文本里。
+        {
+          kind: 'tool', id: 'img-legacy', toolName: 'generate_image', toolKind: 'other', toolCase: 'generateImageToolCall', status: 'done',
+          output: '{\n  "filePath": "/tmp/assets/board-v0.png",\n  "imageData": "[binary/image payload omitted]"\n}'
+        }
+      ]
+    })
+    expect(model.steps.map((step) => [step.kind, step.action, step.target])).toEqual([
+      ['image', '已生成图片', 'board-v1.png'],
+      ['image', '生成图片中', 'board-v2.png'],
+      ['image', '已生成图片', 'board-v0.png']
+    ])
+    expect(model.steps[0]?.image).toEqual({ path: '/tmp/assets/board-v1.png' })
+    expect(model.steps[0]?.details.map((detail) => detail.label)).toEqual(['输入'])
+    expect(model.steps[1]?.image).toBeUndefined()
+    // 旧块：路径救出后 output 文本不再作为「输出」明细重复出现。
+    expect(model.steps[2]?.image).toEqual({ path: '/tmp/assets/board-v0.png' })
+    expect(model.steps[2]?.details).toEqual([])
+  })
+
   it('marks CDP sampling boundaries as estimated timing', () => {
     const model = buildProcessTurnView({
       id: 'cursor-live',

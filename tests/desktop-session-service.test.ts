@@ -1129,6 +1129,43 @@ describe('desktop Cursor session enrichment', () => {
     }
   })
 
+  it('carries the generated image path from the observer frame into the live block and republishes when it arrives', () => {
+    const service = new DesktopSessionService(
+      new FakeBridge(),
+      new FakeTeam(teamSnapshot('composer-alpha-123')),
+      { readWorkspace: () => telemetry() },
+      undefined,
+      { inspectComposerRuntime: async () => ({}) }
+    )
+    const frame = (observedAt: number, done: boolean): void => service.notifyNativeProcessSnapshot({
+      composerId: 'composer-alpha-123', observedAt, isGenerating: true,
+      process: {
+        turnId: 'user-image',
+        items: [{
+          kind: 'tool', id: 'cursor:img-1', toolName: 'generate_image', toolKind: 'image', toolCase: 'generateImageToolCall',
+          summary: 'board-v1.png', status: done ? 'done' : 'running',
+          ...(done ? { image: { path: '/tmp/assets/board-v1.png' } } : {})
+        }],
+        generatingBubbleCount: done ? 0 : 1,
+        snapshotComplete: true
+      }
+    })
+    try {
+      service.refreshTelemetry()
+      frame(2_000, false)
+      const running = service.getSnapshot().liveProcess?.['1']?.blocks[0]
+      expect(running).toMatchObject({ kind: 'tool', toolKind: 'image', status: 'running' })
+      expect(running?.kind === 'tool' ? running.image : 'wrong kind').toBeUndefined()
+
+      frame(2_400, true)
+      const finished = service.getSnapshot().liveProcess?.['1']?.blocks[0]
+      expect(finished).toMatchObject({ kind: 'tool', toolKind: 'image', status: 'done', image: { path: '/tmp/assets/board-v1.png' } })
+      expect(service.getSnapshot().liveProcess?.['1']?.updatedAt).toBe(2_400)
+    } finally {
+      service.dispose()
+    }
+  })
+
   it('keeps the live turn alive across tool execution: observer frames with isGenerating=true but zero streaming bubbles never end the turn (名册活动条闪烁根因回归)', () => {
     const service = new DesktopSessionService(
       new FakeBridge(),

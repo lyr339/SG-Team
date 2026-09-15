@@ -139,6 +139,8 @@ export function inferToolCase(kind: ProcessTurnStep['kind'], lowerToolName: stri
       return 'taskToolCall'
     case 'question':
       return 'askQuestionToolCall'
+    case 'image':
+      return 'generateImageToolCall'
     case 'mcp':
       return 'mcpToolCall'
     default:

@@ -493,6 +493,40 @@ if (previewParameters.get('plan') === 'long') {
     }
   }
 }
+// 图片生成卡走查：?image=1 —— Agent 用 Cursor 图片生成工具出图：一张已完成（缩略图内联在头部之下）、
+// 一张进行中（只有头部动词与状态）。浏览器预览没有 sg-image 协议，夹具以 data: URL 代替本地路径
+//（渲染层同一解析入口 resolveMessageImageSource）；真实块的 image.path 是生成文件的绝对路径。
+if (previewParameters.get('image') === '1') {
+  const boardSvg = (letters: string, tile: string): string => {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="400"><rect width="640" height="400" rx="28" fill="#f2f2f2"/><rect x="200" y="40" width="240" height="240" rx="54" fill="${tile}"/><text x="320" y="212" font-family="-apple-system, Helvetica, sans-serif" font-size="150" font-weight="700" text-anchor="middle" fill="#ff6b35">${letters}</text><text x="320" y="352" font-family="-apple-system, Helvetica, sans-serif" font-size="22" text-anchor="middle" fill="#777">preview fixture</text></svg>`
+    return `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`
+  }
+  const live = state.desktop.liveProcess?.['2']
+  if (live) {
+    state.desktop.liveProcess = {
+      ...state.desktop.liveProcess,
+      '2': {
+        ...live,
+        blocks: [
+          ...live.blocks,
+          {
+            kind: 'tool', id: 'live-image-done', toolName: 'generate_image', toolKind: 'image', toolCase: 'generateImageToolCall',
+            summary: 'shiguang-sg-v1-charcoal-orange.png', status: 'done',
+            startedAt: previewNow - 64_000, completedAt: previewNow - 40_000, timingEstimated: true,
+            input: { description: 'Design board for a macOS app icon: charcoal squircle, lowercase "sg" in a warm orange gradient.', filePath: 'shiguang-sg-v1-charcoal-orange.png' },
+            image: { path: boardSvg('sg', '#141416') }
+          },
+          {
+            kind: 'tool', id: 'live-image-running', toolName: 'generate_image', toolKind: 'image', toolCase: 'generateImageToolCall',
+            summary: 'shiguang-sg-v2-cream-orange.png', status: 'running',
+            startedAt: previewNow - 18_000, timingEstimated: true,
+            input: { description: 'Same board on a warm cream tile.', filePath: 'shiguang-sg-v2-cream-orange.png' }
+          }
+        ]
+      }
+    }
+  }
+}
 // 名册常驻状态行走查：?railactivity=1（搭配 sessions=many）—— 复刻 Cursor 会话列表副标题的全部形态同台：
 // 工具动词 + 对象（Cursor 侧事实 / 过程块回退两条路）、正文首行片段、To-Dos 进度、待命席位的 Thinking、
 // Awaiting approval、离线 Completed，以及 Cursor 一个都没扫到时的兜底 Planning next moves（第 9 席，仅本场景）。

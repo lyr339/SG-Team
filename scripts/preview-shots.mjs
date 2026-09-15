@@ -402,6 +402,32 @@ const scenes = [
     storage: railStorage({ colorMode }), clip: '.chat-row--process:has(.cursor-native-group)',
     actions: [{ eval: `document.querySelector('.chat-row--process:has(.cursor-native-group)').scrollIntoView({ block: 'start' })` }, { wait: 200 }]
   })),
+  // 图片生成卡（?image=1）：已完成的一张缩略图内联在头部之下（限高、与标签列对齐），
+  // 进行中的一张只有「生成图片中」头部；两张卡裁在一起，深浅色各一张。
+  ...['light', 'dark'].map((colorMode) => ({
+    name: `session-process-image-${colorMode}`, width: 1100, height: 900, colorScheme: colorMode, query: 'image=1',
+    storage: railStorage({ colorMode }), clip: '.chat-row--process:has(.cursor-native-tool.is-image)',
+    actions: [
+      { eval: `document.querySelector('.cursor-native-tool.is-image').scrollIntoView({ block: 'center' })` },
+      { wait: 200 },
+      {
+        label: '图片卡几何约束',
+        probe: `(() => {
+          const done = document.querySelector('.cursor-native-tool.is-image.is-done')
+          const running = document.querySelector('.cursor-native-tool.is-image.is-running')
+          const img = done && done.querySelector('.cursor-native-image img')
+          const label = done && done.querySelector('.cursor-native-tool__label')
+          if (!done || !running || !img || !label) return 'missing image cards: done=' + !!done + ' running=' + !!running + ' img=' + !!img
+          if (running.querySelector('.cursor-native-image')) return 'running card must not render an image body'
+          const imgBox = img.getBoundingClientRect(), labelBox = label.getBoundingClientRect()
+          if (!img.complete || img.naturalWidth === 0) return 'image did not load'
+          if (imgBox.height > 300) return 'image taller than the 300px cap: ' + imgBox.height
+          if (Math.abs(imgBox.left - labelBox.left) > 1) return 'image not aligned with the label column: ' + imgBox.left + ' vs ' + labelBox.left
+          return 'ok'
+        })()`
+      }
+    ]
+  })),
   // 长绝对路径与长输出行：卡片、时间线和工作区不得被 monospace min-content 撑宽。
   ...['light', 'dark'].map((colorMode) => ({
     name: `session-process-shell-overflow-${colorMode}`, width: 900, height: 760, colorScheme: colorMode,

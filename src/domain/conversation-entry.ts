@@ -17,7 +17,17 @@ export interface ProcessBlockTiming {
 }
 
 export type ProcessToolKind =
-  | 'command' | 'read' | 'search' | 'edit' | 'write' | 'browser' | 'mcp' | 'todo' | 'task' | 'question' | 'other'
+  | 'command' | 'read' | 'search' | 'edit' | 'write' | 'browser' | 'mcp' | 'todo' | 'task' | 'question' | 'image' | 'other'
+
+/**
+ * 图片生成工具（Cursor `generateImageToolCall`）的结果：只带生成文件的绝对路径，渲染层经
+ * sg-image 协议按需读盘。base64 载荷（`imageData`，1–2 MB）有意不进过程块——Cursor 自己
+ * 落盘时也把它清空、只靠 filePath 回显，文件才是持久的事实源；拾光若携带它，每帧快照、
+ * IPC 与 `process_blocks_json` 都会随图片线性膨胀。
+ */
+export interface ProcessImage {
+  path: string
+}
 
 /** Cursor 原生 ask_question 的一道题（选项完整保留，渲染层据此生成可点选卡片）。 */
 export interface ProcessQuestionItem {
@@ -92,6 +102,8 @@ export interface ProcessBlockTool extends ProcessBlockTiming {
   question?: ProcessQuestion
   /** 编辑工具（toolKind=edit）的结构化 diff；缺失时渲染层回退 output 里的 diffString 文本。 */
   diff?: ProcessDiff
+  /** 图片生成工具（toolKind=image）产出的本地图片；运行中 / 失败时缺失。 */
+  image?: ProcessImage
   /** 工具执行输出（如有） */
   output?: string
   /** 执行状态 */

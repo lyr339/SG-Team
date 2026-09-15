@@ -83,8 +83,12 @@ export const CURSOR_PROCESS_BINDING_NAME = 'sgTeamProcess'
  * v34（2026-09-13）：每帧携带 `bubbleCount`（整个 composer 的气泡数，读自已在遍历的
  * fullConversationHeadersOnly，零额外成本；小帧同样携带）。它是席位自动轮换的阈值事实：
  * 持续会话的回合永不结束，Cursor 每次写入的持久化与重分组成本随气泡数线性增长。
+ * v35（2026-09-15）：`generateImageToolCall` 进呈现表——kind=image、对象为请求文件名，结果的
+ * 本地路径进结构化 `image` 字段（此前落到 other 类：卡片只剩 `generate_image` 原始名，
+ * 路径埋在 `{filePath, imageData:"[omitted]"}` 的 JSON 文本里，图片在拾光会话里看不到）。
+ * base64 与 Cursor 落盘行为一致地不携带；文件是持久事实源。
  */
-export const CURSOR_STREAM_HOOK_VERSION = 34
+export const CURSOR_STREAM_HOOK_VERSION = 35
 const RETRY_BASE_MS = 5_000
 const RETRY_MAX_MS = 60_000
 const ATTACH_TIMEOUT_MS = 8_000
@@ -119,6 +123,7 @@ export const CURSOR_STREAM_HOOK_EXPRESSION = `(() => {
     if (n.includes('todo')) return 'todo'
     if (n.includes('browser') || n.includes('computer') || n.includes('screenshot') || n.includes('navigate') || n.includes('click') || n.includes('fetch')) return 'browser'
     if (n.startsWith('mcp-') || n.startsWith('get_mcp_tools') || n.includes('_mcp_') || n.includes('mcptool')) return 'mcp'
+    if (n.includes('image')) return 'image'
     if (n.includes('read') || n.includes('lint') || n.includes('ls_tool') || n.includes('lstool')) return 'read'
     if (n.includes('glob') || n.includes('grep') || n.includes('search') || n.includes('find')) return 'search'
     if (n.includes('edit') || n.includes('apply') || n.includes('delete')) return 'edit'
@@ -435,7 +440,23 @@ export const CURSOR_STREAM_HOOK_EXPRESSION = `(() => {
     awaitToolCall: { kind: 'command', summary: a => a.taskId, hint: (a, p) => awaitHint(p) },
     askQuestionToolCall: { kind: 'question', title: a => a.title },
     switchModeToolCall: { kind: 'other', title: a => a.explanation, summary: a => [a.fromModeId, a.toModeId].filter(Boolean).join(' → ') },
-    getMcpToolsToolCall: { kind: 'mcp', summary: a => a.server || a.pattern }
+    getMcpToolsToolCall: { kind: 'mcp', summary: a => a.server || a.pattern },
+    // 图片生成（Cursor "Generating image / Generated image"）：对象是请求的文件名；整段提示词
+    // 留在输入明细而不当标题；结果就是图片本身（present 的 image 字段），不再转成文本输出。
+    generateImageToolCall: { kind: 'image', summary: a => baseName(a.filePath) }
+  }
+  // 图片生成结果 → 本地路径：现代形态 payload = {filePath, imageData}；落盘/旧形态 result 是
+  // '{"success":{"filePath":…}}' 字符串。只取路径——base64 与 Cursor 落盘一致地丢弃，
+  // 文件才是持久事实源（domain ProcessImage）。运行中 / 失败无路径即无 image。
+  function generatedImage(result, payload) {
+    let path = payload && typeof payload.filePath === 'string' ? payload.filePath : ''
+    if (!path && typeof result === 'string') {
+      const legacy = parseJsonMaybe(result)
+      const success = legacy && typeof legacy === 'object' ? legacy.success : undefined
+      path = success && typeof success.filePath === 'string' ? success.filePath : ''
+    }
+    path = path.trim()
+    return path ? { path: path.slice(0, 500) } : undefined
   }
   function present(td, tool) {
     const presenter = TOOL_PRESENTERS[tool.toolCase]
@@ -452,11 +473,15 @@ export const CURSOR_STREAM_HOOK_EXPRESSION = `(() => {
     if (kind === 'edit') {
       try { diff = diffFromEdit(td, payload, args) } catch (e) { diff = undefined }
     }
+    const image = kind === 'image' ? generatedImage(tool.result, payload) : undefined
     // 有结构化 diff 时不再把 diffString 原文当 output 重复携带（体积翻倍且渲染层不再用它），
     // 只留结果消息；无结构化 diff 的旧形态保持 diffString 文本回退。
-    const shownOutput = kind === 'edit' && diff
-      ? String(payload?.message || '').trim().slice(0, 2000)
-      : output ? clipText(output, 12000) : outputText(tool.result)
+    // 图片结果同理：路径已在 image 字段，{filePath, imageData:"[omitted]"} 的 JSON 文本没有信息量。
+    const shownOutput = kind === 'image'
+      ? ''
+      : kind === 'edit' && diff
+        ? String(payload?.message || '').trim().slice(0, 2000)
+        : output ? clipText(output, 12000) : outputText(tool.result)
     let hint = text(presenter?.hint, args, payload, td).slice(0, 160)
     if (kind === 'edit' && !hint && diff) {
       const added = diff.lines.filter(line => line.type === 'added').length
@@ -470,7 +495,8 @@ export const CURSOR_STREAM_HOOK_EXPRESSION = `(() => {
       hint,
       output: shownOutput,
       question: kind === 'question' ? questionPayload(td, args, tool.result) : undefined,
-      diff
+      diff,
+      image
     }
   }
   // Composer 是否阻塞在需要用户决策的工具上（ToolFormer capability 的待决策表）。
@@ -942,6 +968,7 @@ export const CURSOR_STREAM_HOOK_EXPRESSION = `(() => {
           error: business.errorText,
           question: shown.question,
           diff: shown.diff,
+          image: shown.image,
           startedAt
         })
       }

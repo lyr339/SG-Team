@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ConversationEntry } from '../src/domain/conversation-entry'
 import type { WorkspaceReviewSummary } from '../src/domain/workspace-review'
-import { projectArtifacts, replyImageArtifacts } from '../src/renderer/src/inspector/artifacts-view'
+import { processImageArtifacts, projectArtifacts, replyImageArtifacts } from '../src/renderer/src/inspector/artifacts-view'
 
 const entries: ConversationEntry[] = [
   {
@@ -42,6 +42,32 @@ describe('artifacts projection', () => {
     ])
     expect(view.images[2]!.attachment).toMatchObject({ path: '/Users/me/demo/docs/diagram.png', previewUrl: 'sg-image://local/%2FUsers%2Fme%2Fdemo%2Fdocs%2Fdiagram.png' })
     expect(view.files).toEqual([expect.objectContaining({ kind: 'file', relativePath: 'src/new-module.ts', name: 'new-module.ts' })])
+  })
+
+  it('lists images made by the image-generation tool (new blocks and pre-v35 legacy blocks), skipping ones the reply already references', () => {
+    const entry: ConversationEntry = {
+      id: 'r2', channelId: '2', role: 'assistant', timestamp: 10, status: 'complete', source: 'cursor',
+      text: '两版方向：![v1](/tmp/assets/board-v1.png)',
+      processBlocks: [
+        { kind: 'tool', id: 'img-1', toolName: 'generate_image', toolKind: 'image', toolCase: 'generateImageToolCall', summary: 'board-v1.png', status: 'done', completedAt: 8, image: { path: '/tmp/assets/board-v1.png' } },
+        { kind: 'tool', id: 'img-2', toolName: 'generate_image', toolKind: 'image', toolCase: 'generateImageToolCall', summary: 'board-v2.png', status: 'done', completedAt: 9, image: { path: '/tmp/assets/board-v2.png' } },
+        { kind: 'tool', id: 'img-running', toolName: 'generate_image', toolKind: 'image', toolCase: 'generateImageToolCall', summary: 'board-v3.png', status: 'running' }
+      ],
+      continuationBlocks: [
+        { kind: 'tool', id: 'img-legacy', toolName: 'generate_image', toolKind: 'other', toolCase: 'generateImageToolCall', status: 'done', output: '{"filePath":"/tmp/assets/board-v0.png","imageData":"[binary/image payload omitted]"}' }
+      ]
+    }
+    expect(processImageArtifacts(entry).map((item) => [item.source, item.name, item.attachment.path, item.at])).toEqual([
+      ['process', 'board-v1.png', '/tmp/assets/board-v1.png', 8],
+      ['process', 'board-v2.png', '/tmp/assets/board-v2.png', 9],
+      ['process', 'board-v0.png', '/tmp/assets/board-v0.png', 10]
+    ])
+    // 正文已引用的 v1 只出现一次（带说明文字的引用优先）；产物按会话倒序。
+    expect(projectArtifacts([entry], undefined).images.map((item) => [item.source, item.name])).toEqual([
+      ['process', 'board-v0.png'],
+      ['process', 'board-v2.png'],
+      ['reply', 'v1']
+    ])
   })
 
   it('returns an empty view without a review summary or images', () => {

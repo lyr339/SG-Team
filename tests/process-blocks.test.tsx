@@ -71,6 +71,28 @@ describe('ProcessBlocks', () => {
     expect(html).toContain('aria-expanded="false"')
   })
 
+  it('inlines the generated image under the head of a finished image step and keeps the running one image-free', () => {
+    const html = renderToStaticMarkup(<ProcessBlocks blocks={[
+      {
+        kind: 'tool', id: 'img-done', toolName: 'generate_image', toolKind: 'image', toolCase: 'generateImageToolCall',
+        summary: 'board-v1.png', status: 'done', input: { description: 'design board', filePath: 'board-v1.png' },
+        image: { path: '/tmp/assets/board-v1.png' }
+      },
+      { kind: 'tool', id: 'img-running', toolName: 'generate_image', toolKind: 'image', toolCase: 'generateImageToolCall', summary: 'board-v2.png', status: 'running' }
+    ]} />)
+    // 两张卡都独立成卡（Cursor 也不把图片生成归入探索组），动词随状态：已生成图片 / 生成图片中。
+    expect(html).toContain('cursor-native-tool is-image is-done')
+    expect(html).toContain('<strong>已生成图片</strong>')
+    expect(html).toContain('cursor-native-tool is-image is-running')
+    expect(html).toContain('<strong>生成图片中</strong>')
+    expect(html).not.toContain('generate_image')
+    // 完成卡：缩略图经 sg-image 协议内联在头部之下，不需要展开；进行中的卡没有图片正文。
+    expect(html).toContain('src="sg-image://local/%2Ftmp%2Fassets%2Fboard-v1.png"')
+    expect(html.match(/cursor-native-image/g)).toHaveLength(1)
+    // 输入明细仍可展开（提示词在里面），但输出里没有 {filePath, imageData} 的 JSON 文本。
+    expect(html).not.toContain('imageData')
+  })
+
   it('renders a shell as a standalone card with the $ command line and an inline output preview', () => {
     const running = renderToStaticMarkup(<ProcessBlocks blocks={[{
       kind: 'tool', id: 'sh-run', toolName: 'run_terminal_command_v2', toolKind: 'command', toolCase: 'shellToolCall',

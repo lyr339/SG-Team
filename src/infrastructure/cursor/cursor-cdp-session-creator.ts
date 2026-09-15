@@ -3,7 +3,7 @@ import { realpathSync } from 'node:fs'
 import WebSocket from 'ws'
 import { sanitizeModelDisplayText } from '../../domain/model-output-sanitizer'
 import { CHANNEL_USER_DELIVERY_MARKER } from '../../domain/channel-delivery-policy'
-import type { ProcessDiff, ProcessDiffLine, ProcessQuestion, ProcessToolKind } from '../../domain/conversation-entry'
+import type { ProcessDiff, ProcessDiffLine, ProcessImage, ProcessQuestion, ProcessToolKind } from '../../domain/conversation-entry'
 import type { CursorModelSelection } from '../../domain/cursor-model'
 import type { CursorWorkspaceDetection } from '../../domain/cursor-workspace'
 import { workspaceIdentityOf } from './workspace-identity'
@@ -99,6 +99,8 @@ export interface CursorStreamToolBlock {
   question?: ProcessQuestion
   /** 编辑工具的结构化 diff（toolKind=edit）。 */
   diff?: ProcessDiff
+  /** 图片生成工具产出的本地图片（toolKind=image）。 */
+  image?: ProcessImage
   /** Cursor bubble 原生创建时间；虚拟回合分段优先使用。 */
   startedAt?: number
 }
@@ -780,8 +782,15 @@ function windowScopeMatches(info: CursorCdpWindowInfo | undefined, scopes: strin
 }
 
 const STREAM_TOOL_KINDS: ReadonlySet<string> = new Set<ProcessToolKind>([
-  'command', 'read', 'search', 'edit', 'write', 'browser', 'mcp', 'todo', 'task', 'question', 'other'
+  'command', 'read', 'search', 'edit', 'write', 'browser', 'mcp', 'todo', 'task', 'question', 'image', 'other'
 ])
+
+/** 图片生成结果载荷：只认非空路径字符串（渲染层再按图片扩展名白名单决定能否加载）。 */
+export function parseStreamImage(value: unknown): ProcessImage | undefined {
+  if (!isRecord(value)) return undefined
+  const path = boundedText(value.path, 500)
+  return path ? { path } : undefined
+}
 
 const QUESTION_MAX_QUESTIONS = 20
 const QUESTION_MAX_OPTIONS = 30
@@ -954,6 +963,7 @@ export function parseProcessStream(value: unknown): CursorProcessStream | undefi
       const input = isRecord(item.input) ? item.input : undefined
       const question = toolKind === 'question' ? parseStreamQuestion(item.question) : undefined
       const diff = toolKind === 'edit' ? parseStreamDiff(item.diff) : undefined
+      const image = toolKind === 'image' ? parseStreamImage(item.image) : undefined
       const title = boundedText(item.title, 300)
       const hint = boundedText(item.hint, 160)
       const toolCase = typeof item.toolCase === 'string' && /^[a-zA-Z]{1,60}$/.test(item.toolCase)
@@ -974,6 +984,7 @@ export function parseProcessStream(value: unknown): CursorProcessStream | undefi
         error: typeof item.error === 'string' && item.error ? item.error.slice(0, 8_200) : undefined,
         ...(question ? { question } : {}),
         ...(diff ? { diff } : {}),
+        ...(image ? { image } : {}),
         startedAt: typeof item.startedAt === 'number' && Number.isFinite(item.startedAt) && item.startedAt > 0
           ? Math.floor(item.startedAt)
           : undefined

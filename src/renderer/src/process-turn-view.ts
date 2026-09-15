@@ -1,4 +1,4 @@
-import type { ProcessBlock, ProcessDiff, ProcessQuestion, ProcessToolKind } from '../../domain/conversation-entry'
+import type { ProcessBlock, ProcessBlockTool, ProcessDiff, ProcessImage, ProcessQuestion, ProcessToolKind } from '../../domain/conversation-entry'
 import { normalizeEscapedNewlines, normalizeProcessBlockText } from '../../domain/conversation-entry'
 
 export type ProcessStepKind = 'thinking' | 'message' | ProcessToolKind
@@ -42,6 +42,8 @@ export interface ProcessTurnStep {
   shell?: ProcessShellStep
   /** 编辑步骤的结构化 diff：展开后按行着色渲染；缺失时明细里回退 diffString 文本。 */
   diff?: ProcessDiff
+  /** 图片生成步骤（kind=image）的产出：卡片正文直接内联缩略图，点击看大图。 */
+  image?: ProcessImage
 }
 
 export interface ProcessShellStep {
@@ -86,6 +88,7 @@ const TOOL_VERBS: Record<ProcessToolKind, StepVerbs> = {
   todo: { running: '更新待办', done: '已更新待办', failed: '更新待办失败' },
   task: { running: '子任务进行中', done: '子任务完成', failed: '子任务失败' },
   question: { running: '等待回答', done: '已回答', failed: '提问失败' },
+  image: { running: '生成图片中', done: '已生成图片', failed: '生成图片失败' },
   other: { running: '执行中', done: '已执行', failed: '执行失败' }
 }
 
@@ -119,7 +122,7 @@ export function normalizeShellDescription(description: string): string {
 /** 有意图说明时，对象仍要在展开明细里可见；标签按对象类型取词。 */
 const TARGET_LABEL: Record<ProcessToolKind, string> = {
   read: '文件', search: '模式', edit: '文件', write: '文件', command: '命令',
-  browser: '地址', mcp: '工具', todo: '清单', task: '模型', question: '提问', other: '对象'
+  browser: '地址', mcp: '工具', todo: '清单', task: '模型', question: '提问', image: '图片', other: '对象'
 }
 
 function kindOf(toolKind?: string): ProcessToolKind {
@@ -169,6 +172,30 @@ function legacyDiffFromOutput(value?: string): ProcessDiff | undefined {
   if (!lines.some((line) => line.type === 'added' || line.type === 'removed')) return undefined
   // output 已是持久化的有限快照；视图解析不再截断，否则展开后也读不到原有内容。
   return { lines }
+}
+
+/** Cursor 图片生成工具的原生 case 名（hook v35 起 toolKind=image；更早落库的块只有这个 case）。 */
+const GENERATE_IMAGE_CASE = 'generateImageToolCall'
+
+function fileNameOf(path: string): string {
+  return path.split(/[/\\]/).filter(Boolean).at(-1) ?? path
+}
+
+/**
+ * v35 之前落库的图片生成块：toolKind 是 other，结果路径埋在 output 的 JSON 文本里
+ *（`{"filePath": "…", "imageData": "[binary/image payload omitted]"}`）。视图层把路径救出来，
+ * 旧会话同样内联缩略图；新块直接带 image 字段，不走这里。
+ */
+function legacyImageFromOutput(block: ProcessBlockTool): ProcessImage | undefined {
+  if (block.toolCase !== GENERATE_IMAGE_CASE || block.image || !block.output) return undefined
+  try {
+    const parsed: unknown = JSON.parse(block.output)
+    const filePath = parsed && typeof parsed === 'object' ? (parsed as { filePath?: unknown }).filePath : undefined
+    const path = typeof filePath === 'string' ? filePath.trim() : ''
+    return path ? { path } : undefined
+  } catch {
+    return undefined
+  }
 }
 
 /** `mcp-<server>-<tool>` → 工具名与服务器名（服务器名可含连字符，按最后一个连字符切分）。 */
@@ -247,11 +274,14 @@ function blockStep(raw: ProcessBlock, id: string): ProcessTurnStep {
       }
     }
   }
-  const kind = kindOf(block.toolKind)
+  // v35 之前落库的图片生成块归在 other 类：按原生 case 认回 image，并从 output 里救出路径。
+  const legacyImage = legacyImageFromOutput(block)
+  const kind = block.toolCase === GENERATE_IMAGE_CASE ? 'image' : kindOf(block.toolKind)
+  const image = block.image ?? legacyImage
   const isShell = kind === 'command' && block.toolCase !== 'awaitToolCall'
   const rawTitle = clean(block.title)
   const title = rawTitle && isShell ? normalizeShellDescription(rawTitle) : rawTitle
-  const target = clean(block.summary)
+  const target = clean(block.summary) ?? (image ? fileNameOf(image.path) : undefined)
   const mcp = kind === 'mcp' ? describeMcpToolName(block.toolName) : undefined
   // 动词：MCP 用真实工具名（team_task / browser_navigate），计划更新单列，其余先按原生 case
   // 细分（ls / glob / fetch / await …），再回退类别 + 状态取词。
@@ -271,7 +301,8 @@ function blockStep(raw: ProcessBlock, id: string): ProcessTurnStep {
   const diff = block.diff?.lines.length
     ? block.diff
     : kind === 'edit' ? legacyDiffFromOutput(clean(block.output)) : undefined
-  if (block.output && !diff) details.push({ label: '输出', value: block.output, kind: 'code' })
+  // 旧图片块的 output 只是 `{filePath, imageData:"[omitted]"}` 的 JSON 文本，路径救出后它没有信息量。
+  if (block.output && !diff && !legacyImage) details.push({ label: '输出', value: block.output, kind: 'code' })
   if (block.error) details.push({ label: '错误', value: block.error, kind: 'code' })
   // Shell 独立卡的数据：命令 / 输出 / 退出码（hook 把非零退出码放在 hint 的 `exit N`）。
   // await（等待后台命令）虽同为 command 类，但不是可执行的命令行，不走 shell 卡。
@@ -304,7 +335,8 @@ function blockStep(raw: ProcessBlock, id: string): ProcessTurnStep {
     todos: block.todos,
     question: block.question,
     ...(shell ? { shell } : {}),
-    ...(diff ? { diff } : {})
+    ...(diff ? { diff } : {}),
+    ...(image ? { image } : {})
   }
 }
 

@@ -10,6 +10,7 @@ import { useWorkspaceFileActions, type WorkspaceFileActions } from './use-worksp
 
 const SOURCE_LABELS: Record<ArtifactItem['source'], string> = {
   reply: 'Agent 回复',
+  process: 'Agent 生成',
   user: '你发送的',
   worktree: '工作区新增'
 }

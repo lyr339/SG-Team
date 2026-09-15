@@ -1,12 +1,19 @@
-import type { ConversationEntry, MessageAttachment } from '../../../domain/conversation-entry'
+import { conversationEntryProcessBlocks, type ConversationEntry, type MessageAttachment } from '../../../domain/conversation-entry'
 import type { WorkspaceReviewSummary } from '../../../domain/workspace-review'
-import { imageMimeForPath, isLocalImagePath, localImageUrl, resolveMessageImageSource } from '../../../shared/local-image'
+import {
+  imageMimeForPath,
+  isLocalImagePath,
+  localImageUrl,
+  resolveMessageImageSource,
+  type MessageImageSource
+} from '../../../shared/local-image'
+import { buildProcessTurnView } from '../process-turn-view'
 
 /**
- * 产物视图：会话里「拿得出手」的东西——Agent 正文引用的截图、用户发来的图片、
- * 本次新增到工作区的文件。全部投影成 MessageAttachment，复用现有查看器与右键动作。
+ * 产物视图：会话里「拿得出手」的东西——Agent 正文引用的截图、Agent 用图片生成工具做出的图、
+ * 用户发来的图片、本次新增到工作区的文件。全部投影成 MessageAttachment，复用现有查看器与右键动作。
  */
-export type ArtifactSource = 'reply' | 'user' | 'worktree'
+export type ArtifactSource = 'reply' | 'process' | 'user' | 'worktree'
 
 export interface ArtifactItem {
   id: string
@@ -31,6 +38,20 @@ function fileNameOf(path: string): string {
   return path.split(/[/\\]/).filter(Boolean).at(-1) ?? path
 }
 
+type LoadableImageSource = Exclude<MessageImageSource, { kind: 'remote' }>
+
+/** 会话页可加载的图片来源（本地路径 / data: URL）→ 查看器附件；`id` 与正文 MessageImage 同规则。 */
+function imageAttachment(id: string, source: LoadableImageSource, name: string): MessageAttachment {
+  return {
+    id,
+    name,
+    mimeType: source.mimeType,
+    size: 0,
+    previewUrl: source.src,
+    ...(source.kind === 'local' ? { path: source.path } : {})
+  }
+}
+
 /** 回复正文里的图片引用（本地路径 / data: URL；远程链接不在会话页加载，跳过）。 */
 export function replyImageArtifacts(entry: ConversationEntry): ArtifactItem[] {
   if (entry.role !== 'assistant' || !entry.text) return []
@@ -42,21 +63,44 @@ export function replyImageArtifacts(entry: ConversationEntry): ArtifactItem[] {
     const source = resolveMessageImageSource(target)
     if (!source || source.kind === 'remote' || seen.has(target)) continue
     seen.add(target)
+    const name = alt || (source.kind === 'local' ? fileNameOf(source.path) : 'image')
     items.push({
       id: `artifact:reply:${entry.id}:${target}`,
       kind: 'image',
       source: 'reply',
-      name: alt || (source.kind === 'local' ? fileNameOf(source.path) : 'image'),
+      name,
       at: entry.timestamp,
       entryId: entry.id,
-      attachment: {
-        id: `message-image:${target}`,
-        name: alt || (source.kind === 'local' ? fileNameOf(source.path) : 'image'),
-        mimeType: source.mimeType,
-        size: 0,
-        previewUrl: source.src,
-        ...(source.kind === 'local' ? { path: source.path } : {})
-      }
+      attachment: imageAttachment(`message-image:${target}`, source, name)
+    })
+  }
+  return items
+}
+
+/**
+ * 过程流里图片生成工具做出的图（产出回复的过程 + 回复后的续作）。经过程视图模型取 `image`，
+ * 与过程卡同一套规则——v35 之前落库、路径埋在 output 里的旧块也被认出来。
+ */
+export function processImageArtifacts(entry: ConversationEntry): ArtifactItem[] {
+  if (entry.role !== 'assistant') return []
+  const blocks = conversationEntryProcessBlocks(entry)
+  if (!blocks.length) return []
+  const items: ArtifactItem[] = []
+  const seen = new Set<string>()
+  for (const step of buildProcessTurnView({ id: entry.id, blocks }).steps) {
+    if (!step.image || seen.has(step.image.path)) continue
+    const source = resolveMessageImageSource(step.image.path)
+    if (!source || source.kind === 'remote') continue
+    seen.add(step.image.path)
+    const name = step.target || (source.kind === 'local' ? fileNameOf(source.path) : 'image')
+    items.push({
+      id: `artifact:process:${entry.id}:${step.blockId}`,
+      kind: 'image',
+      source: 'process',
+      name,
+      at: step.completedAt ?? step.startedAt ?? entry.timestamp,
+      entryId: entry.id,
+      attachment: imageAttachment(`message-image:${step.image.path}`, source, name)
     })
   }
   return items
@@ -113,7 +157,11 @@ export function projectArtifacts(
   const conversationImages: ArtifactItem[] = []
   for (const entry of entries) {
     if (entry.silent) continue
-    conversationImages.push(...replyImageArtifacts(entry), ...userImageArtifacts(entry))
+    // 同一条回复里既生成又在正文引用的图只出现一次：正文引用（带说明文字）优先。
+    const referenced = replyImageArtifacts(entry)
+    const referencedPaths = new Set(referenced.map((item) => item.attachment.path).filter(Boolean))
+    const generated = processImageArtifacts(entry).filter((item) => !referencedPaths.has(item.attachment.path))
+    conversationImages.push(...referenced, ...generated, ...userImageArtifacts(entry))
   }
   conversationImages.reverse()
   const worktree = worktreeArtifacts(summary, workspacePath)

@@ -2077,6 +2077,71 @@ describe('hook v26：工具呈现与 ask_question 结构化载荷', () => {
     expect(items[1]).toMatchObject({ toolKind: 'command', toolCase: 'awaitToolCall', summary: '145470', status: 'running' })
   })
 
+  it('presents generateImageToolCall as an image step: file name as the object, local path in `image`, no base64 in the frame (hook v35)', async () => {
+    const imageData = 'A'.repeat(6_000)
+    const frame = await frameFor({
+      isGenerating: true,
+      fullConversationHeadersOnly: [
+        { type: 1, bubbleId: 'user-1' },
+        { type: 2, bubbleId: 'img-done' },
+        { type: 2, bubbleId: 'img-running' },
+        { type: 2, bubbleId: 'img-legacy' },
+        { type: 2, bubbleId: 'img-failed' }
+      ],
+      conversationMap: {
+        // 现代形态（3.6.31 内存实测）：result 带 filePath + base64 imageData。
+        'img-done': { toolFormerData: {
+          toolCallId: 'toolu_img1', status: 'completed', name: 'generate_image', tool: 53,
+          toolCall: { tool: { case: 'generateImageToolCall', value: {
+            args: { description: 'Design board for the 拾光 app icon', filePath: 'shiguang-sg-v1.png' },
+            result: { result: { case: 'success', value: { filePath: '/Users/lyr/.cursor/projects/x/assets/shiguang-sg-v1.png', imageData } } }
+          } } }
+        } },
+        'img-running': { toolFormerData: {
+          toolCallId: 'toolu_img2', status: 'loading', name: 'generate_image', tool: 53,
+          toolCall: { tool: { case: 'generateImageToolCall', value: { args: { description: 'second board', filePath: 'shiguang-sg-v2.png' } } } }
+        } },
+        // 落盘 / 重启水合形态：没有 toolCall 判别联合，result 是 '{"success":{"filePath":…}}' 字符串，
+        // Cursor 落盘时已把 imageData 清空。
+        'img-legacy': { toolFormerData: {
+          toolCallId: 'toolu_img3', status: 'completed', name: 'generate_image', tool: 53,
+          params: { description: 'third board', filePath: 'shiguang-sg-v3.png' },
+          result: '{"success":{"filePath":"/Users/lyr/.cursor/projects/x/assets/shiguang-sg-v3.png"}}'
+        } },
+        'img-failed': { toolFormerData: {
+          toolCallId: 'toolu_img4', status: 'error', name: 'generate_image', tool: 53,
+          toolCall: { tool: { case: 'generateImageToolCall', value: {
+            args: { description: 'fourth board', filePath: 'shiguang-sg-v4.png' },
+            result: { result: { case: 'error', value: { error: 'image generation api unavailable' } } }
+          } } }
+        } }
+      },
+      generatingBubbleIds: ['img-running'],
+      capabilities: []
+    } as never)
+    const items = (frame.process as { items: Array<Record<string, any>> }).items
+    expect(items.map((item) => [item.toolKind, item.status])).toEqual([
+      ['image', 'done'], ['image', 'running'], ['image', 'done'], ['image', 'failed']
+    ])
+    expect(items[0]).toMatchObject({
+      toolCase: 'generateImageToolCall',
+      summary: 'shiguang-sg-v1.png',
+      image: { path: '/Users/lyr/.cursor/projects/x/assets/shiguang-sg-v1.png' },
+      output: ''
+    })
+    expect(items[0]!.input).toMatchObject({ filePath: 'shiguang-sg-v1.png' })
+    expect(items[1]!.image).toBeUndefined()
+    // 旧形态没有 case 名：按 generate_image 名称归 image 类，路径从双层 JSON 里取。
+    expect(items[2]).toMatchObject({ image: { path: '/Users/lyr/.cursor/projects/x/assets/shiguang-sg-v3.png' }, output: '' })
+    expect(items[2]!.toolCase).toBeUndefined()
+    expect(items[3]!.image).toBeUndefined()
+    expect(items[3]!.error).toContain('image generation api unavailable')
+    // base64 与「已省略」JSON 文本都不进帧：图片以文件为事实源。
+    const serialized = JSON.stringify(frame)
+    expect(serialized).not.toContain('AAAAAAAA')
+    expect(serialized).not.toContain('binary/image payload omitted')
+  })
+
   it('keeps a pending ask_question running with its full options and flags the composer as awaiting the user', async () => {
     const frame = await frameFor(composerData({ questionStatus: 'pending', blocking: true }))
     const question = (frame.process as { items: Array<Record<string, any>> }).items[3]!

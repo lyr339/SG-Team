@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ProcessBlock } from '../../domain/conversation-entry'
+import { MessageImage } from './AttachmentImageViewer'
 import { stepDomId, subscribeReveal } from './inspector/reveal-bus'
 import { MessageContent } from './MessageContent'
 import { groupProcessSteps, parseFileChangeStats, type ProcessGroupVariant, type ProcessTurnGroup } from './process-step-groups'
@@ -259,6 +260,20 @@ function DiffView({ step, mode = step.status === 'running' ? 'live' : 'full' }: 
       {!preview && diff.truncatedLineCount ? (
         <div className="cursor-native-diff__truncated" role="note">另有 {diff.truncatedLineCount} 行未内联</div>
       ) : null}
+    </div>
+  )
+}
+
+/**
+ * 图片生成卡正文（Cursor "Generated image" 同款）：产出图直接内联在头部之下，不藏在展开明细里；
+ * 缩略图复用附件查看器（点击看大图、右键复制 / 另存 / 在 Finder 中显示）。文件名已是头部对象，
+ * 不再作图注重复。运行中没有产物：头部「生成图片中」即状态，不放占位骨架。
+ */
+function ImageBody({ step }: { step: ProcessTurnStep }): React.JSX.Element | null {
+  if (!step.image) return null
+  return (
+    <div className="cursor-native-image">
+      <MessageImage alt="" target={step.image.path} />
     </div>
   )
 }
@@ -548,6 +563,7 @@ export function ProcessTurnCard({
               {hasDetails ? chevron(stepOpen) : null}
             </span>
           </button>
+          <ImageBody step={step} />
           {pendingQuestion && step.question ? <QuestionCard question={step.question} actions={questionActions} /> : null}
           {hasDetails && (stepOpen || Boolean(step.diff)) ? (
             <StepDetails step={step} questionActions={questionActions} preview={Boolean(step.diff && !stepOpen)} />
@@ -667,6 +683,7 @@ export function ProcessTurnCard({
                       <span className="process-turn-step__status">{step.stateText}</span>
                       {hasDetails ? <svg viewBox="0 0 16 16" aria-hidden="true"><path d={stepOpen ? 'm4 10 4-4 4 4' : 'm4 6 4 4 4-4'} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.4"/></svg> : null}
                     </button>
+                    <ImageBody step={step} />
                     {pendingQuestion && step.question ? <QuestionCard question={step.question} actions={questionActions} /> : null}
                     {stepOpen && hasDetails ? <StepDetails step={step} questionActions={questionActions} /> : null}
                   </div>
