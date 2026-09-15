@@ -1,5 +1,5 @@
 <!-- 拾光 SG 字母标 · macOS 菜单栏模板图（纯黑 + alpha，系统按明暗上色）：字母剪影贴满画布，光刃变成斜向缺口
-     字形取自 Futura Bold（macOS 自带）的 S / G 轮廓并同色描边加粗 32px；光刃 28° 斜贯整块底板、两端收尖，落在 S/G 交界上。
+     字形取自 Futura Bold（macOS 自带）的 S / G 轮廓并同色描边加粗 32px；光刃为 3 倍宽斜向缺口。
      本文件由 docs/design/sg-monogram/generate.cjs 生成（参数见该文件），不要手改；栅格产物用 npm run icons 重新生成。 -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
   <defs>
