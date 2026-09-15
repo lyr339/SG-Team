@@ -31,6 +31,51 @@ export function independentTeam(shapes: SeatShape[], status: TeamRunStatus = 'ru
   return snapshot
 }
 
+/**
+ * 会话池快照：`independentTeam` 之上把若干席位编进协作组（每组 = 成员通道 + 每人模板 + 可空 lead），
+ * 并可附一个刚解散的组。返回 groupId 便于测试按 id 定位。
+ */
+export function pooledTeam(
+  shapes: SeatShape[],
+  groups: Array<{ name: string; goal?: string; members: Array<{ channelId: string; roleTemplateKey: string; roleName: string }>; leadChannelId?: string; attention?: boolean }>,
+  options: { dissolved?: { name: string; goal?: string }; status?: TeamRunStatus } = {}
+): TeamControlSnapshot & { groupIds: string[] } {
+  const snapshot = independentTeam(shapes, options.status)
+  const now = Date.now()
+  const groupIds: string[] = []
+  snapshot.groups = groups.map((group, index) => {
+    const groupId = `team-group:wedge-demo:g${index + 1}`
+    groupIds.push(groupId)
+    const members = group.members.map((config, order) => {
+      const member = snapshot.members.find((candidate) => candidate.slot.channelId === config.channelId)!
+      const role = { ...member.role, id: `team-role:${groupId}:${member.slot.id}`, key: `g${index + 1}:${config.roleTemplateKey}`, templateKey: config.roleTemplateKey, name: config.roleName, groupId, order }
+      const grouped: TeamMemberView = { ...member, role, slot: { ...member.slot, solo: false, groupId, roleId: role.id, homeRoleId: member.slot.roleId, groupJoinedAt: now - 60_000 } }
+      snapshot.members = snapshot.members.map((candidate) => candidate.slot.id === grouped.slot.id ? grouped : candidate)
+      return grouped
+    })
+    const leadSlotId = group.leadChannelId ? members.find((member) => member.slot.channelId === group.leadChannelId)?.slot.id : undefined
+    return {
+      group: { id: groupId, runId: snapshot.activeRun!.id, name: group.name, goal: group.goal ?? '', status: 'active', leadSlotId, createdAt: now - 120_000, updatedAt: now - 60_000 },
+      members,
+      effectiveLeadSlotId: leadSlotId,
+      attention: group.attention ?? false
+    }
+  })
+  if (options.dissolved) {
+    const groupId = `team-group:wedge-demo:dissolved`
+    groupIds.push(groupId)
+    snapshot.groups.push({
+      group: { id: groupId, runId: snapshot.activeRun!.id, name: options.dissolved.name, goal: options.dissolved.goal ?? '', status: 'dissolved', createdAt: now - 300_000, updatedAt: now - 30_000, dissolvedAt: now - 30_000 },
+      members: [],
+      effectiveLeadSlotId: undefined,
+      attention: false
+    })
+  }
+  snapshot.slots = snapshot.members.map((member) => member.slot)
+  snapshot.roles = [...snapshot.roles, ...snapshot.members.filter((member) => member.slot.groupId).map((member) => member.role)]
+  return Object.assign(snapshot, { groupIds })
+}
+
 /** 团队快照：所有席位按同一形态；独立席位保留在快照里（页面必须自己过滤掉）。 */
 export function teamRun(shape: SeatShape, status: TeamRunStatus = 'running'): TeamControlSnapshot {
   const snapshot = structuredClone(teamControlSnapshot)

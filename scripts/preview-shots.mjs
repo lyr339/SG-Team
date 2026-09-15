@@ -211,7 +211,10 @@ const scenes = [
     // 独立：全部待命 / 混合形态（待命 + 执行中 + 离线 + 待确认）/ 已结束。
     { name: `run-independent-live-${suffix}`, run: true, query: 'independent=live', colorScheme: colorMode, storage: baseStorage({ colorMode }) },
     { name: `run-independent-mixed-${suffix}`, run: true, query: 'independent=mixed', colorScheme: colorMode, storage: baseStorage({ colorMode }) },
-    { name: `run-independent-ended-${suffix}`, run: true, query: 'independent=ended', colorScheme: colorMode, storage: baseStorage({ colorMode }) }
+    { name: `run-independent-ended-${suffix}`, run: true, query: 'independent=ended', colorScheme: colorMode, storage: baseStorage({ colorMode }) },
+    // 会话池 · 协作组（阶段 1 最小 UI）：两个 active 组（一个 attention）+ 一个刚解散的组 + 一个独立席位；以及打开建组抽屉。
+    { name: `run-independent-groups-${suffix}`, run: true, query: 'independent=groups', colorScheme: colorMode, storage: baseStorage({ colorMode }) },
+    { name: `run-independent-groups-drawer-${suffix}`, run: true, query: 'independent=groups', colorScheme: colorMode, storage: baseStorage({ colorMode }), actions: [{ click: '.run-groups > .run-section-head .run-link' }, { wait: 300 }] }
   ]),
   // 切换模式的确认面（团队 → 独立，仍有在线席位）。
   { name: 'run-switch-sheet', run: true, colorScheme: 'light', storage: baseStorage(), actions: [{ click: '.run-mode-switch button[aria-checked="false"]' }, { wait: 300 }] },

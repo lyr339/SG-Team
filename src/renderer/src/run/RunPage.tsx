@@ -11,6 +11,7 @@ import { cursorModelSelectionFromOption, normalizeCursorModelSelection } from '.
 import { TeamIcon } from '../UiIcons'
 import { ReplaceRunSheet } from './ReplaceRunSheet'
 import { RunHeader } from './RunHeader'
+import type { RunGroupActions } from './RunGroupsPanel'
 import { RunIndependentPanel } from './RunIndependentPanel'
 import { RunModeSwitch } from './RunModeSwitch'
 import { RunSeats, type RunSeatRow } from './RunSeats'
@@ -57,6 +58,8 @@ export interface RunPageProps {
   onEnableCursorCdp?: () => Promise<{ ok: boolean; message: string; suggestAutoHeal?: boolean }>
   onToggleCdpAutoHeal?: (enabled: boolean) => Promise<void>
   onCancelCdpAutoHealCountdown?: () => Promise<void>
+  /** 会话池 · 协作组操作（独立模式）；不提供时运行页不显示协作组区。 */
+  groupActions?: RunGroupActions
 }
 
 interface PendingSheet {
@@ -104,7 +107,8 @@ export function RunPage({
   onPersistModelSelection,
   onEnableCursorCdp,
   onToggleCdpAutoHeal,
-  onCancelCdpAutoHealCountdown
+  onCancelCdpAutoHealCountdown,
+  groupActions
 }: RunPageProps): React.JSX.Element {
   const view = useMemo(() => buildRunView(team, detectedWorkspace), [team, detectedWorkspace])
   const [busy, setBusy] = useState('')
@@ -201,7 +205,8 @@ export function RunPage({
     : view.seats.map((seat) => ({
         channelId: seat.channelId,
         name: seat.name,
-        roleName: seat.solo ? undefined : seat.roleName,
+        // 团队席位显示角色；池内入组席位显示「组 · 角色」；独立席位不显示。
+        roleName: seat.solo ? undefined : seat.groupName ? `${seat.groupName} · ${seat.roleName}` : seat.roleName,
         state: seat.state,
         lastSeenAt: seat.lastSeenAt,
         pending: view.phase !== 'completed' && seat.pending
@@ -542,6 +547,7 @@ export function RunPage({
             onCountChange={setCount}
             onChooseWorkspace={chooseIndependentWorkspace}
             onNewBatch={newBatch}
+            groupActions={groupActions}
           />
         ) : (
           <RunTeamPanel

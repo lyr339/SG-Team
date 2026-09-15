@@ -1,4 +1,5 @@
 import { formatFullClock, formatRelativeClock } from '../format'
+import { RunGroupsPanel, type RunGroupActions } from './RunGroupsPanel'
 import type { RunView } from './run-view'
 
 export const INDEPENDENT_MIN_SESSIONS = 1
@@ -15,6 +16,8 @@ interface RunIndependentPanelProps {
   onCountChange: (count: number) => void
   onChooseWorkspace: () => void
   onNewBatch: () => void
+  /** 会话池的协作组操作；不提供时不显示协作组区（预览 / 旧调用方）。 */
+  groupActions?: RunGroupActions
 }
 
 /**
@@ -29,7 +32,8 @@ export function RunIndependentPanel({
   busy,
   onCountChange,
   onChooseWorkspace,
-  onNewBatch
+  onNewBatch,
+  groupActions
 }: RunIndependentPanelProps): React.JSX.Element {
   const waiting = view.seats.filter((seat) => seat.state === 'waiting').length
   const working = view.seats.filter((seat) => seat.state === 'working').length
@@ -99,6 +103,8 @@ export function RunIndependentPanel({
           Cursor 当前打开的不是本批次的工程「{view.workspace?.name}」；补齐会话仍指向本批次工程，新工程请新建批次。
         </p>
       ) : null}
+
+      <RunGroupsPanel view={view} busy={busy} ended={ended} actions={groupActions} />
 
       <footer className="run-panel__actions">
         <button type="button" className="secondary-button" disabled={busy} onClick={onNewBatch}>

@@ -185,13 +185,16 @@ if (previewRunStatus && initialTeam.activeRun) {
     blockers: ['Agent MCP 尚未接入全部本轮通道', '并非所有 Agent 通道都已在线待命']
   }
 }
-// 运行页独立批次走查：?independent=live|mixed|ended（席位形态：全部待命 / 待命+执行中+离线+待确认 / 已结束）。
-const independentScene = (['live', 'mixed', 'ended'] as const).find((scene) => scene === previewParameters.get('independent'))
+// 运行页独立批次走查：?independent=live|mixed|ended|groups
+//（席位形态：全部待命 / 待命+执行中+离线+待确认 / 已结束 / 会话池里两个协作组 + 一个刚解散的组）。
+const independentScene = (['live', 'mixed', 'ended', 'groups'] as const).find((scene) => scene === previewParameters.get('independent'))
 if (independentScene && initialTeam.activeRun) {
   const solo = initialTeam.members.find((member) => member.slot.solo === true)!
   const shapes = independentScene === 'live'
     ? ['waiting', 'waiting', 'waiting'] as const
-    : ['waiting', 'working', 'offline', 'unconfirmed'] as const
+    : independentScene === 'groups'
+      ? ['waiting', 'working', 'waiting', 'offline', 'waiting'] as const
+      : ['waiting', 'working', 'offline', 'unconfirmed'] as const
   const status = independentScene === 'ended' ? 'completed' as const : 'running' as const
   const run = { ...initialTeam.activeRun, name: 'wedge-demo · 独立批次 #3', templateId: 'independent-session-v1', status }
   initialTeam.activeRun = run
@@ -209,9 +212,48 @@ if (independentScene && initialTeam.activeRun) {
           ? { ...base, status: 'waiting' as const, online: true, waiting: true, connectionPhase: 'waiting' }
           : shape === 'working'
             ? { ...base, status: 'running' as const, online: false, waiting: false, connectionPhase: 'processing' }
-            : { ...base, status: 'offline' as const, online: false, waiting: false, connectionPhase: 'offline' }
+            : { ...base, status: 'offline' as const, online: false, waiting: false, connectionPhase: 'cursor_stopped', runtimeEvidence: 'stopped' as const }
     }
   })
+  if (independentScene === 'groups') {
+    // CH-1（lead）+ CH-2（builder）成组「接口重构」；CH-3（lead）+ CH-4（reviewer，已确认离线 → attention）成组「验收」；CH-5 独立。
+    const groupRole = (member: typeof solo, groupId: string, templateKey: string, name: string, order: number) => ({
+      ...member.role, id: `team-role:${groupId}:${member.slot.id}`, key: `g${groupId.slice(-8)}:${templateKey}`, templateKey, name, groupId, order
+    })
+    const grouped = (channelId: string, groupId: string, templateKey: string, name: string, order: number) => {
+      const member = initialTeam.members.find((candidate) => candidate.slot.channelId === channelId)!
+      const role = groupRole(member, groupId, templateKey, name, order)
+      return { ...member, role, slot: { ...member.slot, solo: false, groupId, roleId: role.id, homeRoleId: member.slot.roleId, groupJoinedAt: previewNow - 25 * 60_000 } }
+    }
+    const refactorId = 'team-group:wedge-demo:preview-refactor'
+    const acceptanceId = 'team-group:wedge-demo:preview-acceptance'
+    const dissolvedId = 'team-group:wedge-demo:preview-dissolved'
+    const members = [
+      grouped('1', refactorId, 'lead', '主控协调', 0),
+      grouped('2', refactorId, 'builder', '架构实现', 1),
+      grouped('3', acceptanceId, 'lead', '主控协调', 0),
+      grouped('4', acceptanceId, 'reviewer', '质量验证', 1),
+      initialTeam.members[4]!
+    ]
+    initialTeam.members = members
+    initialTeam.roles = [...initialTeam.roles, ...members.slice(0, 4).map((member) => member.role)]
+    initialTeam.slots = members.map((member) => member.slot)
+    const groupBase = { runId: run.id, createdAt: previewNow - 30 * 60_000, updatedAt: previewNow - 4 * 60_000 }
+    initialTeam.groups = [
+      {
+        group: { ...groupBase, id: refactorId, name: '接口重构', goal: '把 TaskAgentService 的查询路径收成一个入口，补齐组作用域测试。', status: 'active', leadSlotId: members[0]!.slot.id },
+        members: members.slice(0, 2), effectiveLeadSlotId: members[0]!.slot.id, attention: false
+      },
+      {
+        group: { ...groupBase, id: acceptanceId, name: '验收', goal: '', status: 'active', leadSlotId: members[2]!.slot.id },
+        members: members.slice(2, 4), effectiveLeadSlotId: members[2]!.slot.id, attention: true
+      },
+      {
+        group: { ...groupBase, id: dissolvedId, name: '文档整理', goal: '统一 ARCHITECTURE 与 TASK-MCP 的术语。', status: 'dissolved', dissolvedAt: previewNow - 50 * 60_000 },
+        members: [], effectiveLeadSlotId: undefined, attention: false
+      }
+    ]
+  }
 }
 if (manualHandoffMode && initialTeam.activeRun) {
   initialTeam.activeRun = { ...initialTeam.activeRun, status: 'attention' }

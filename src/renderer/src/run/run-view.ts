@@ -38,6 +38,40 @@ export interface RunSeat {
    * 也不算——它正在干活，重建会杀掉一个活着的会话。
    */
   pending: boolean
+  /** 会话池里已入组的席位：所属协作组名（独立席位与团队席位没有）。 */
+  groupName?: string
+}
+
+/** 协作组卡片里的成员：席位 + 组内角色 + 运行态 + 是否有效 lead。 */
+export interface RunGroupMember {
+  slotId: string
+  channelId: string
+  roleName: string
+  roleTemplateKey: string
+  state: RunSeatState
+  isLead: boolean
+}
+
+/** 协作组卡片：active 组可操作；24h 内解散的组只读展示。 */
+export interface RunGroup {
+  id: string
+  name: string
+  goal: string
+  status: 'active' | 'dissolved'
+  /** 有成员已确认离线：由用户决定移出或交接，系统不自动处理。 */
+  attention: boolean
+  leadSlotId?: string
+  members: RunGroupMember[]
+  updatedAt: number
+  dissolvedAt?: number
+}
+
+/** 尚未入组的席位：建组 / 加人抽屉的候选。 */
+export interface RunUngroupedSeat {
+  slotId: string
+  channelId: string
+  name: string
+  state: RunSeatState
 }
 
 export const SEAT_STATE_LABEL: Record<RunSeatState, string> = {
@@ -58,7 +92,7 @@ export function seatStateOf(member: TeamMemberView): RunSeatState {
   return 'offline'
 }
 
-export function runSeatOf(member: TeamMemberView): RunSeat {
+export function runSeatOf(member: TeamMemberView, groupName?: string): RunSeat {
   const state = seatStateOf(member)
   return {
     channelId: member.binding?.channelId ?? member.slot.channelId ?? '?',
@@ -68,8 +102,35 @@ export function runSeatOf(member: TeamMemberView): RunSeat {
     state,
     lastSeenAt: member.runtime?.lastSeenAt,
     modelSelection: member.slot.modelSelection,
-    pending: state === 'offline' || state === 'unconfirmed'
+    pending: state === 'offline' || state === 'unconfirmed',
+    ...(groupName ? { groupName } : {})
   }
+}
+
+function channelIdOf(member: TeamMemberView): string {
+  return member.binding?.channelId ?? member.slot.channelId ?? '?'
+}
+
+/** 会话池的协作组视图：直接映射快照里的 `groups`（active 全部 + 24h 内解散的）。 */
+export function buildRunGroups(team: TeamControlSnapshot): RunGroup[] {
+  return team.groups.map((view): RunGroup => ({
+    id: view.group.id,
+    name: view.group.name,
+    goal: view.group.goal,
+    status: view.group.status,
+    attention: view.attention,
+    leadSlotId: view.effectiveLeadSlotId,
+    members: view.members.map((member): RunGroupMember => ({
+      slotId: member.slot.id,
+      channelId: channelIdOf(member),
+      roleName: member.role.name,
+      roleTemplateKey: member.role.templateKey,
+      state: seatStateOf(member),
+      isLead: member.slot.id === view.effectiveLeadSlotId
+    })),
+    updatedAt: view.group.updatedAt,
+    dissolvedAt: view.group.dissolvedAt
+  }))
 }
 
 /** 页面阶段：无运行 → 启动前 → 启动中 → 执行 → 暂停 → 已结束。 */
@@ -99,6 +160,10 @@ export interface RunView {
   state: RunStateChip
   /** Cursor 当前打开的工程与运行所属工程不一致。 */
   cursorWorkspaceChanged: boolean
+  /** 会话池的协作组（独立模式专属；团队模式为空）。 */
+  groups: RunGroup[]
+  /** 会话池里尚未入组的席位：建组 / 加人的候选。 */
+  ungroupedSeats: RunUngroupedSeat[]
 }
 
 const RUN_STATUS_LABEL: Record<TeamRunStatus, string> = {
@@ -170,12 +235,18 @@ export function buildRunView(team: TeamControlSnapshot, detected?: DetectedCurso
   const workspace = team.workspaces.find((candidate) => candidate.id === team.activeWorkspaceId)
   const mode = run ? workspaceRunMode(run) : undefined
   const phase = phaseOf(run)
+  // 会话池（独立模式）= 池内全部席位：独立的与已入组的都是池的成员，入组只是多了组内角色；
+  // 一次性团队 run 仍只显示团队席位（solo 席位是它的旁路）。
   const members = mode === 'independent'
-    ? team.members.filter((member) => member.slot.solo === true)
+    ? team.members
     : mode === 'team'
       ? team.members.filter((member) => member.slot.solo !== true)
       : []
-  const seats = members.map(runSeatOf)
+  const groups = mode === 'independent' ? buildRunGroups(team) : []
+  const groupNameBySlot = new Map(groups.flatMap((group) => (
+    group.status === 'active' ? group.members.map((member) => [member.slotId, group.name] as const) : []
+  )))
+  const seats = members.map((member) => runSeatOf(member, groupNameBySlot.get(member.slot.id)))
   const liveSeatCount = phase === 'completed'
     ? 0
     : seats.filter((seat) => seat.state !== 'offline').length
@@ -197,7 +268,37 @@ export function buildRunView(team: TeamControlSnapshot, detected?: DetectedCurso
     evidencePending: phase !== 'completed' && seats.some((seat) => seat.state === 'unconfirmed'),
     gates: mode === 'team' ? unresolvedDashboardGates(team) : [],
     state,
-    cursorWorkspaceChanged: Boolean(detected && workspace && detected.id !== workspace.id)
+    cursorWorkspaceChanged: Boolean(detected && workspace && detected.id !== workspace.id),
+    groups,
+    ungroupedSeats: mode === 'independent'
+      ? members
+        .filter((member) => member.slot.solo === true)
+        .map((member) => ({ slotId: member.slot.id, channelId: channelIdOf(member), name: member.slot.name, state: seatStateOf(member) }))
+      : []
+  }
+}
+
+/** 协作组的破坏性动作：与结束 / 切换 / 新建批次共用同一张确认面（`ReplaceRunSheet`），但后果说的是组，不是运行。 */
+export type GroupAction =
+  | { kind: 'remove'; group: RunGroup; member: RunGroupMember }
+  | { kind: 'dissolve'; group: RunGroup }
+
+export function groupActionConsequence(action: GroupAction): ReplaceRunConsequence {
+  switch (action.kind) {
+    case 'remove':
+      return {
+        title: `把 CH-${action.member.channelId} 移出「${action.group.name}」`,
+        body: '该席位恢复为独立会话：Cursor 会话、令牌与时间线不变；它持有的任务回到队列等组内其他成员领取，发给它、尚未回应的消息不再催办；出组通知在它下一次轮询时送达。',
+        confirmLabel: '确认移出',
+        needsConfirm: true
+      }
+    case 'dissolve':
+      return {
+        title: `解散「${action.group.name}」`,
+        body: `${action.group.members.length} 名成员恢复为独立会话；本组未完成的任务全部取消，消息与记忆保留只读，组卡片保留 24 小时后归入历史。`,
+        confirmLabel: '确认解散',
+        needsConfirm: true
+      }
   }
 }
 

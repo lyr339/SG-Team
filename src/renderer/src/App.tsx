@@ -1369,6 +1369,14 @@ export function App(): React.JSX.Element {
             acceptTeamControl(result)
             return result
           }}
+          groupActions={{
+            createGroup: async (input) => acceptTeamControl(await window.sgDesktop.createTeamGroup(input)),
+            addGroupMembers: async (input) => acceptTeamControl(await window.sgDesktop.addTeamGroupMembers(input)),
+            removeGroupMember: async (input) => acceptTeamControl(await window.sgDesktop.removeTeamGroupMember(input)),
+            setGroupLead: async (input) => acceptTeamControl(await window.sgDesktop.setTeamGroupLead(input)),
+            updateGroupGoal: async (input) => acceptTeamControl(await window.sgDesktop.updateTeamGroupGoal(input)),
+            dissolveGroup: async (input) => acceptTeamControl(await window.sgDesktop.dissolveTeamGroup(input))
+          }}
           onEnableCursorCdp={() => window.sgDesktop.enableCursorCdp()}
           cdpAutoHealEnabled={cdpAutoHealEnabled}
           cdpAutoHealEvent={cdpAutoHealEvent}

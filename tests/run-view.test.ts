@@ -3,12 +3,14 @@ import type { TeamControlSnapshot, TeamMemberRuntime, TeamMemberView, TeamRunSta
 import { emptyTeamControlSnapshot } from '../src/domain/team-control'
 import {
   buildRunView,
+  groupActionConsequence,
   replaceRunConsequence,
   seatStateOf,
   teamFlowSteps,
   teamPrimaryAction
 } from '../src/renderer/src/run/run-view'
 import { teamControlSnapshot } from '../src/renderer/src/preview/mock-data'
+import { pooledTeam } from './run-fixtures'
 
 type SeatShape = 'waiting' | 'working' | 'awaiting' | 'offline' | 'unconfirmed'
 
@@ -183,5 +185,70 @@ describe('run view · one consequence template for every destructive action', ()
     const ended = buildRunView(independentTeam(['waiting', 'waiting'], 'completed'))
     expect(replaceRunConsequence(ended, { kind: 'switch', to: 'team' }).needsConfirm).toBe(false)
     expect(replaceRunConsequence(ended, { kind: 'new-batch' }).needsConfirm).toBe(false)
+  })
+})
+
+describe('run view · 会话池的协作组', () => {
+  const pool = () => pooledTeam(
+    ['waiting', 'working', 'waiting', 'offline', 'waiting'],
+    [
+      { name: '接口重构', goal: '收口查询路径', members: [
+        { channelId: '1', roleTemplateKey: 'lead', roleName: '主控协调' },
+        { channelId: '2', roleTemplateKey: 'builder', roleName: '架构实现' }
+      ], leadChannelId: '1' },
+      { name: '验收', members: [
+        { channelId: '3', roleTemplateKey: 'lead', roleName: '主控协调' },
+        { channelId: '4', roleTemplateKey: 'reviewer', roleName: '质量验证' }
+      ], leadChannelId: '3', attention: true }
+    ],
+    { dissolved: { name: '文档整理' } }
+  )
+
+  it('keeps grouped seats on the run page (they are still pool members) and labels them with their group', () => {
+    const view = buildRunView(pool())
+    expect(view.mode).toBe('independent')
+    expect(view.seats.map((seat) => [seat.channelId, seat.solo, seat.groupName ?? null, seat.roleName])).toEqual([
+      ['1', false, '接口重构', '主控协调'],
+      ['2', false, '接口重构', '架构实现'],
+      ['3', false, '验收', '主控协调'],
+      ['4', false, '验收', '质量验证'],
+      ['5', true, null, expect.any(String)]
+    ])
+    // 批次概况与在线数把入组席位一并计入。
+    expect(view.liveSeatCount).toBe(4)
+    expect(view.state.label).toBe('待命 3 · 执行中 1')
+    // 团队模式不受影响：仍然只显示团队席位。
+    expect(buildRunView(teamRun('waiting', 'running')).groups).toEqual([])
+  })
+
+  it('projects the group cards, lead marks, attention and the ungrouped candidates', () => {
+    const snapshot = pool()
+    const view = buildRunView(snapshot)
+    expect(view.groups.map((group) => [group.name, group.status, group.attention, group.members.length])).toEqual([
+      ['接口重构', 'active', false, 2], ['验收', 'active', true, 2], ['文档整理', 'dissolved', false, 0]
+    ])
+    const refactor = view.groups[0]!
+    expect(refactor.goal).toBe('收口查询路径')
+    expect(refactor.members.map((member) => [member.channelId, member.roleName, member.state, member.isLead])).toEqual([
+      ['1', '主控协调', 'waiting', true], ['2', '架构实现', 'working', false]
+    ])
+    expect(refactor.leadSlotId).toBe(refactor.members[0]!.slotId)
+    expect(view.groups[1]!.members.map((member) => member.state)).toEqual(['waiting', 'offline'])
+    expect(view.ungroupedSeats.map((seat) => seat.channelId)).toEqual(['5'])
+    // 已解散的组不占用席位，也不出现在席位的组标签里。
+    expect(view.seats.find((seat) => seat.channelId === '5')?.groupName).toBeUndefined()
+  })
+
+  it('phrases the group consequences in terms of the group, not the run', () => {
+    const view = buildRunView(pool())
+    const group = view.groups[0]!
+    const remove = groupActionConsequence({ kind: 'remove', group, member: group.members[1]! })
+    expect(remove).toMatchObject({ title: '把 CH-2 移出「接口重构」', confirmLabel: '确认移出', needsConfirm: true })
+    expect(remove.body).toContain('Cursor 会话、令牌与时间线不变')
+    expect(remove.body).toContain('任务回到队列')
+    const dissolve = groupActionConsequence({ kind: 'dissolve', group })
+    expect(dissolve).toMatchObject({ title: '解散「接口重构」', confirmLabel: '确认解散', needsConfirm: true })
+    expect(dissolve.body).toContain('2 名成员恢复为独立会话')
+    expect(dissolve.body).toContain('保留 24 小时')
   })
 })
