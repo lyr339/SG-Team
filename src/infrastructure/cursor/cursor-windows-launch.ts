@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs'
 import { win32 } from 'node:path'
 import { CURSOR_CDP_PORT_ENV } from './cursor-cdp-session-creator'
-import { cursorInstallRoots } from './cursor-install-paths'
+import { cursorInstallRoots, cursorWorkbenchBundleCandidates } from './cursor-install-paths'
 
 // 这里只构造 Windows 路径：显式用 win32 语义，宿主是 macOS（测试）时结果也一致。
 const { join } = win32
@@ -75,6 +75,33 @@ export async function runningCursorWindowsExecutable(execFileFn: ExecFileFn): Pr
     }
   }
   return undefined
+}
+
+/** 补丁与运行中的安装保持一致；未运行时查安装器登记的位置，再回退常见目录。 */
+export async function resolveWindowsCursorWorkbench(
+  execFileFn: ExecFileFn,
+  exists: (path: string) => boolean = existsSync,
+  env: NodeJS.ProcessEnv = process.env
+): Promise<string | undefined> {
+  const bundleIn = (root: string) => join(root, 'resources', 'app', 'out', 'vs', 'workbench', 'workbench.desktop.main.js')
+  const runningPath = await runningCursorWindowsExecutable(execFileFn)
+  // 已找到活进程时，即使文件缺失也返回这份路径，让调用方报告读失败，绝不改另一份安装。
+  if (runningPath) return bundleIn(win32.dirname(runningPath))
+  const registryArgs = windowsPowerShellCommandArgs(
+    "Get-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match '^Cursor( \\(.*\\))?$' -and $_.InstallLocation } | Select-Object -ExpandProperty InstallLocation -Unique"
+  )
+  for (const powershell of windowsPowerShellCandidates(env)) {
+    try {
+      const { stdout } = await execFileFn(powershell, registryArgs)
+      const registered = stdout.split(/\r?\n/).map(path => path.trim()).filter(path => win32.isAbsolute(path))
+      const located = registered.map(bundleIn).find(exists)
+      if (located) return located
+      break
+    } catch (error) {
+      if ((error as { code?: string } | null)?.code !== 'ENOENT') break
+    }
+  }
+  return cursorWorkbenchBundleCandidates('win32', env).find(exists)
 }
 
 /**

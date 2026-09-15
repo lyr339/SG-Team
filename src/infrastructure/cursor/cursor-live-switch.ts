@@ -100,7 +100,7 @@ export class CursorLiveSwitcher {
     const accountId = input.accountId.trim()
     if (!accountId) throw new Error('Cursor 账号 ID 无效')
     // 先验补丁，缺失时不制造无意义的桌面会话兑换；提交时会再次复检。
-    if (!this.deps.installer.readInstalledConfig()) {
+    if (!(await this.deps.installer.readInstalledConfig())) {
       throw new Error('切号补丁未安装或配置不可读（请到维护页安装切号补丁）')
     }
     const sourceToken = this.deps.vault.credential(accountId)
@@ -143,7 +143,7 @@ export class CursorLiveSwitcher {
   private async commitPreparedUnlocked(prepared: CursorLiveSwitchPayload): Promise<CursorLiveSwitchResult> {
     const { accountId, sourceToken, payload } = prepared
     try {
-        const config = this.deps.installer.readInstalledConfig()
+        const config = await this.deps.installer.readInstalledConfig()
         if (!config) return { switched: false, reason: '切号补丁未安装或配置不可读（请到维护页安装切号补丁）' }
         // 预热后账号可能被重新导入；只提交与准备时完全相同的源凭据。
         try {

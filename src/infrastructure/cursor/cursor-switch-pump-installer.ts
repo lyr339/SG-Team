@@ -5,6 +5,7 @@ import { dirname, join, normalize } from 'node:path'
 import { promisify } from 'node:util'
 import type { CursorSwitchPumpOutcome, CursorSwitchPumpStatus } from '../../domain/cursor-switch-pump'
 import { cursorWorkbenchBundleCandidates, locateCursorWorkbenchBundle } from './cursor-install-paths'
+import { resolveWindowsCursorWorkbench } from './cursor-windows-launch'
 
 const execFileAsync = promisify(execFile)
 
@@ -377,8 +378,9 @@ export function appRootOfBundle(bundlePath: string): string {
 
 export interface SwitchPumpInstallerOptions {
   bundlePath?: string
+  locateBundle?: () => Promise<string | undefined>
   execFn?: (file: string, args: string[]) => Promise<void>
-  /** 平台注入点（测试替身）；决定写失败提示的口径。 */
+  /** 平台注入点（测试替身）：路径定位与写失败提示。 */
   platform?: NodeJS.Platform
 }
 
@@ -407,8 +409,17 @@ export function describeBundleWriteFailure(error: unknown, bundlePath: string, p
 export class CursorSwitchPumpInstaller {
   constructor(private readonly options: SwitchPumpInstallerOptions = {}) {}
 
-  private get bundlePath(): string {
-    const located = this.options.bundlePath ?? locateCursorWorkbenchBundle()
+  private async resolveBundlePath(): Promise<string> {
+    if (this.options.bundlePath) return this.options.bundlePath
+    let located: string | undefined
+    if (this.options.locateBundle) {
+      located = await this.options.locateBundle()
+    } else if ((this.options.platform ?? process.platform) === 'win32') {
+      located = await resolveWindowsCursorWorkbench((file, args) =>
+        execFileAsync(file, args, { timeout: 5000, maxBuffer: 1024 * 1024, windowsHide: true }))
+    } else {
+      located = locateCursorWorkbenchBundle()
+    }
     if (!located) {
       throw new Error(`未找到 Cursor 主程序 bundle（已查找：${cursorWorkbenchBundleCandidates().join('；') || '当前平台无默认安装位置'}）`)
     }
@@ -416,10 +427,10 @@ export class CursorSwitchPumpInstaller {
   }
 
   /** 只读检测（零副作用）：维护页状态卡与热切降级判定共用。 */
-  status(): SwitchPumpStatus {
+  async status(): Promise<SwitchPumpStatus> {
     let bundlePath: string
     try {
-      bundlePath = this.bundlePath
+      bundlePath = await this.resolveBundlePath()
     } catch (error) {
       return { kind: 'unavailable', message: error instanceof Error ? error.message : String(error) }
     }
@@ -466,9 +477,9 @@ export class CursorSwitchPumpInstaller {
   }
 
   /** 读取运行中 Cursor 正在轮询的补丁配置（热切绑端口的依据）；未安装返回 undefined。 */
-  readInstalledConfig(): { port: number; key: string; revision: number } | undefined {
+  async readInstalledConfig(): Promise<{ port: number; key: string; revision: number } | undefined> {
     try {
-      const analysis = analyzeSwitchPump(readFileSync(this.bundlePath, 'utf8'))
+      const analysis = analyzeSwitchPump(readFileSync(await this.resolveBundlePath(), 'utf8'))
       if (!analysis.installed || !analysis.config) return undefined
       if (analysis.managed && analysis.config.revision !== SWITCH_PUMP_REVISION) return undefined
       return analysis.config
@@ -482,7 +493,7 @@ export class CursorSwitchPumpInstaller {
    * 补丁住在鉴权构造器里，运行中的 Cursor 读不到新字节——装完必须重启 Cursor 才生效。
    */
   async ensure(config: SwitchPumpConfig): Promise<SwitchPumpInstallOutcome> {
-    const bundlePath = this.bundlePath
+    const bundlePath = await this.resolveBundlePath()
     let source: string
     try {
       source = readFileSync(bundlePath, 'utf8')
@@ -562,7 +573,7 @@ export class CursorSwitchPumpInstaller {
 
   /** 卸载补丁（维护页「移除」能力；同样需重启 Cursor 生效）。 */
   async remove(): Promise<SwitchPumpInstallOutcome> {
-    const bundlePath = this.bundlePath
+    const bundlePath = await this.resolveBundlePath()
     let source: string
     try {
       source = readFileSync(bundlePath, 'utf8')

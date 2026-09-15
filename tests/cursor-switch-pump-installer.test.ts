@@ -42,6 +42,23 @@ function appFixture() {
 }
 
 describe('CursorSwitchPumpInstaller', () => {
+  it('uses the same async locator for status, install, config and removal, and rechecks after changing installs', async () => {
+    const first = appFixture()
+    const second = appFixture()
+    let current = first.bundlePath
+    const installer = new CursorSwitchPumpInstaller({ locateBundle: async () => current, execFn: async () => {} })
+    expect(await installer.status()).toMatchObject({ bundlePath: first.bundlePath, kind: 'not-installed' })
+    expect(await installer.ensure(config)).toMatchObject({ ok: true })
+    expect(await installer.readInstalledConfig()).toEqual(config)
+    current = second.bundlePath
+    expect(await installer.status()).toMatchObject({ bundlePath: second.bundlePath, kind: 'not-installed' })
+    expect(await installer.readInstalledConfig()).toBeUndefined()
+    expect(await installer.ensure(config)).toMatchObject({ ok: true })
+    expect(await installer.remove()).toMatchObject({ ok: true })
+    expect(readFileSync(second.bundlePath, 'utf8')).toBe(source)
+    expect(analyzeSwitchPump(readFileSync(first.bundlePath, 'utf8')).installed).toBe(true)
+  })
+
   it('requires one ordered authentication constructor and all nearby behavior markers', () => {
     expect(analyzeSwitchPump(source)).toMatchObject({ supported: true, installed: false, injectionIndex: expect.any(Number) })
     expect(analyzeSwitchPump(source.replace('this.overrideAccessToken = undefined;', 'this.overrideAccessToken = undefined; this.overrideAccessToken = null;')))
@@ -84,9 +101,9 @@ describe('CursorSwitchPumpInstaller', () => {
     const fixture = appFixture()
     const execFn = vi.fn(async () => {})
     const installer = new CursorSwitchPumpInstaller({ bundlePath: fixture.bundlePath, execFn })
-    expect(installer.status()).toMatchObject({ kind: 'not-installed' })
+    expect(await installer.status()).toMatchObject({ kind: 'not-installed' })
     expect(await installer.ensure(config)).toMatchObject({ ok: true, changed: true })
-    expect(installer.status()).toMatchObject({ kind: 'installed', managed: true, config })
+    expect(await installer.status()).toMatchObject({ kind: 'installed', managed: true, config })
     expect(readFileSync(`${fixture.bundlePath}.sg-runtime-switch-backup`, 'utf8')).toBe(source)
     expect(JSON.parse(readFileSync(join(fixture.appRoot, 'product.json'), 'utf8')).checksums['vs/workbench/workbench.desktop.main.js']).not.toBe('old')
     if (process.platform === 'darwin') {
@@ -94,7 +111,7 @@ describe('CursorSwitchPumpInstaller', () => {
     }
     expect(await installer.ensure(config)).toMatchObject({ ok: true, changed: false })
     expect(await installer.remove()).toMatchObject({ ok: true, changed: true })
-    expect(installer.status()).toMatchObject({ kind: 'not-installed' })
+    expect(await installer.status()).toMatchObject({ kind: 'not-installed' })
   })
 
   it('windows: turns EPERM/EBUSY bundle write failures into actionable guidance and keeps the raw error', () => {
@@ -119,7 +136,7 @@ describe('CursorSwitchPumpInstaller', () => {
     const external = installSwitchPump(source, config).source.replace(SWITCH_PUMP_OWNER, '')
     writeFileSync(fixture.bundlePath, external)
     const installer = new CursorSwitchPumpInstaller({ bundlePath: fixture.bundlePath, execFn: vi.fn(async () => {}) })
-    expect(installer.status()).toMatchObject({ kind: 'installed', managed: false })
+    expect(await installer.status()).toMatchObject({ kind: 'installed', managed: false })
     expect(await installer.ensure({ ...config, port: 51_825, key: 'different' })).toMatchObject({ ok: true, changed: false, message: expect.stringContaining('直接复用') })
     expect(await installer.remove()).toMatchObject({ ok: false, changed: false })
     expect(readFileSync(fixture.bundlePath, 'utf8')).toBe(external)
@@ -138,27 +155,27 @@ describe('CursorSwitchPumpInstaller', () => {
     expect(analyzeSwitchPump(readback)).toMatchObject({ installed: true, managed: false, config })
   })
 
-  it('does not report a marked but incomplete pump as installed', () => {
+  it('does not report a marked but incomplete pump as installed', async () => {
     const fixture = appFixture()
     const broken = installSwitchPump(source, config).source.replace('/v1/switch-done', '/v1/broken')
     writeFileSync(fixture.bundlePath, broken)
-    expect(new CursorSwitchPumpInstaller({ bundlePath: fixture.bundlePath }).status()).toMatchObject({
+    expect(await new CursorSwitchPumpInstaller({ bundlePath: fixture.bundlePath }).status()).toMatchObject({
       kind: 'unsupported', message: expect.stringContaining('运行体校验未通过')
     })
   })
 
-  it('requires the current revision for an owned pump but keeps compatible external revisions usable', () => {
+  it('requires the current revision for an owned pump but keeps compatible external revisions usable', async () => {
     const fixture = appFixture()
     const oldOwned = installSwitchPump(source, { ...config, revision: 0 }).source
     writeFileSync(fixture.bundlePath, oldOwned)
     const installer = new CursorSwitchPumpInstaller({ bundlePath: fixture.bundlePath })
-    expect(installer.status()).toMatchObject({
+    expect(await installer.status()).toMatchObject({
       kind: 'not-installed', managed: true, message: expect.stringContaining('需要更新')
     })
-    expect(installer.readInstalledConfig()).toBeUndefined()
+    expect(await installer.readInstalledConfig()).toBeUndefined()
 
     writeFileSync(fixture.bundlePath, oldOwned.replace(SWITCH_PUMP_OWNER, ''))
-    expect(installer.status()).toMatchObject({ kind: 'installed', managed: false })
-    expect(installer.readInstalledConfig()).toMatchObject({ revision: 0 })
+    expect(await installer.status()).toMatchObject({ kind: 'installed', managed: false })
+    expect(await installer.readInstalledConfig()).toMatchObject({ revision: 0 })
   })
 })

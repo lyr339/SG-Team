@@ -37,7 +37,7 @@ function harness(options: {
     },
     exchanger: { resolve: exchange },
     bridge: { serveOnce: serve },
-    installer: { readInstalledConfig: () => options.config ?? { port: 51_824, key: 'key', revision: 2 } },
+    installer: { readInstalledConfig: async () => options.config ?? { port: 51_824, key: 'key', revision: 2 } },
     mutex: new CursorSwitchMutex(),
     suppressRuntimeWatch: suppress,
     stateDatabasePath: '/state.vscdb'
@@ -63,7 +63,7 @@ describe('CursorLiveSwitcher', () => {
     const service = new CursorLiveSwitcher({
       vault: { credential: () => 'web', list: () => [], activateAfterLiveSwitch: h.activate },
       exchanger: { resolve: h.exchange }, bridge: { serveOnce: h.serve },
-      installer: { readInstalledConfig: () => undefined }, mutex: new CursorSwitchMutex()
+      installer: { readInstalledConfig: async () => undefined }, mutex: new CursorSwitchMutex()
     })
     expect(await service.switchLive({ accountId: 'next' })).toMatchObject({ switched: false, reason: expect.stringContaining('未安装') })
     expect(h.exchange).not.toHaveBeenCalled()
@@ -97,7 +97,7 @@ describe('CursorLiveSwitcher', () => {
       vault: { credential: () => 'web', list: () => [], activateAfterLiveSwitch: () => {} },
       exchanger: { resolve: () => new Promise((resolve) => { finishExchange = resolve }) },
       bridge: { serveOnce: () => new Promise((resolve) => { finishAck = resolve }) },
-      installer: { readInstalledConfig: () => ({ port: 51_824, key: 'key', revision: 2 }) },
+      installer: { readInstalledConfig: async () => ({ port: 51_824, key: 'key', revision: 2 }) },
       mutex
     })
     const preparing = service.prepare({ accountId: 'next' })
@@ -122,7 +122,7 @@ describe('CursorLiveSwitcher', () => {
       vault: { credential: () => 'web', list: () => [], activateAfterLiveSwitch: () => {} },
       exchanger: { resolve: () => new Promise((resolve) => { finishExchange = resolve }) },
       bridge: { serveOnce: async () => ({ success: true, reason: '' }) },
-      installer: { readInstalledConfig: () => ({ port: 51_824, key: 'key', revision: 2 }) },
+      installer: { readInstalledConfig: async () => ({ port: 51_824, key: 'key', revision: 2 }) },
       mutex
     })
     const switching = service.switchLive({ accountId: 'next' })
@@ -166,7 +166,7 @@ describe('CursorLiveSwitcher', () => {
         })
       },
       bridge: { serveOnce: serve },
-      installer: { readInstalledConfig: () => ({ port: 51_824, key: 'key', revision: 2 }) },
+      installer: { readInstalledConfig: async () => ({ port: 51_824, key: 'key', revision: 2 }) },
       mutex: new CursorSwitchMutex()
     })
     const prepared = await service.prepare({ accountId: 'next' })

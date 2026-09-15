@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'vitest'
+import { execFile, spawn } from 'node:child_process'
+import { copyFileSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { promisify } from 'node:util'
 import {
   cursorWindowsExecutableCandidates,
   cursorWindowsStartCommand,
   describeWindowsCdpStartFailure,
   resolveCursorWindowsExecutable,
+  resolveWindowsCursorWorkbench,
   runningCursorWindowsExecutable,
   windowsCursorCommandLines,
   windowsPowerShellCommandArgs
@@ -17,6 +23,55 @@ const env = {
 }
 
 describe('Windows Cursor executable resolution', () => {
+  const bundleIn = (root: string) => `${root}\\resources\\app\\out\\vs\\workbench\\workbench.desktop.main.js`
+
+  it.skipIf(process.platform !== 'win32')('resolves an actual process in a custom Unicode folder through Windows PowerShell', async (context) => {
+    const exec = (file: string, args: string[]) => promisify(execFile)(file, args, { timeout: 5000, windowsHide: true })
+    if (await runningCursorWindowsExecutable(exec)) context.skip()
+    const root = mkdtempSync(join(tmpdir(), 'sg 路径验证 '))
+    const executable = join(root, 'Cursor.exe')
+    copyFileSync(process.execPath, executable)
+    const child = spawn(executable, ['-e', 'console.log("ready");setInterval(()=>{},1000)'], { windowsHide: true })
+    try {
+      await new Promise<void>((resolve, reject) => {
+        child.once('error', reject)
+        child.stdout!.once('data', () => resolve())
+        child.once('exit', () => reject(new Error('fixture exited before ready')))
+      })
+      // 无 bundle 时仍指向运行中的自定义安装，不误选机器上的其他副本。
+      expect(await resolveWindowsCursorWorkbench(exec)).toBe(bundleIn(root))
+    } finally {
+      if (child.pid && child.exitCode === null) {
+        await new Promise<void>(resolve => { child.once('exit', () => resolve()); child.kill() })
+      }
+      rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+    }
+  }, 30000)
+
+  it('targets the running D-drive install even if a C-drive copy exists or the running bundle is missing', async () => {
+    let calls = 0
+    const exec = async () => { calls++; return { stdout: 'D:\\软件 空间\\Cursor\\Cursor.exe\r\n' } }
+    const expected = bundleIn('D:\\软件 空间\\Cursor')
+    expect(await resolveWindowsCursorWorkbench(exec, () => true, env)).toBe(expected)
+    expect(await resolveWindowsCursorWorkbench(exec, () => false, env)).toBe(expected)
+    expect(calls).toBe(2)
+  })
+
+  it('reads registered custom installs when closed, ignoring stale entries', async () => {
+    const expected = bundleIn('E:\\开发工具\\Cursor')
+    const exec = async (_file: string, args: string[]) => ({
+      stdout: args.join(' ').includes('Get-Process') ? '' : 'D:\\removed\\Cursor\r\nE:\\开发工具\\Cursor\r\n'
+    })
+    expect(await resolveWindowsCursorWorkbench(exec, path => path === expected, env)).toBe(expected)
+  })
+
+  it('falls back to existing default installs when discovery fails, or returns no path', async () => {
+    const exec = async () => { throw new Error('PowerShell failed') }
+    const expected = bundleIn('C:\\Program Files\\Cursor')
+    expect(await resolveWindowsCursorWorkbench(exec, path => path === expected, env)).toBe(expected)
+    expect(await resolveWindowsCursorWorkbench(exec, () => false, env)).toBeUndefined()
+  })
+
   it('lists per-user and all-users install locations once each', () => {
     expect(cursorWindowsExecutableCandidates(env)).toEqual([
       'C:\\Users\\demo\\AppData\\Local\\Programs\\Cursor\\Cursor.exe',
