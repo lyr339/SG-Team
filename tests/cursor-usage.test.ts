@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  cursorUsageDetail,
   estimateUsageFromReference,
+  hasCacheWriteBucket,
   projectUsage,
   reduceUsage,
   estimateTurnCostUsd,
@@ -8,6 +10,8 @@ import {
   formatTokenCount,
   priceForModel,
   totalUsageTokens,
+  upgradeUsageEstimate,
+  usageHasCacheWriteBucket,
   type CursorSessionUsage,
   type CursorUsageEvent
 } from '../src/domain/cursor-usage'
@@ -59,7 +63,17 @@ describe('priceForModel', () => {
     // 无 fast 后缀的 grok 落泛化条目，而不是错拼进带版本的 fast 变体
     expect(priceForModel('grok-4.6').label).toBe('Grok')
     expect(priceForModel('kimi-k3').label).toBe('Kimi K3')
-    expect(priceForModel('deepseek-v4-flash').label).toBe('DeepSeek V4 Flash')
+    // DeepSeek 2026-09-14 起 v4-pro 请求也按 V4.1 Flash 计费，泛化条目即 Flash 价
+    expect(priceForModel('deepseek-v4-flash').label).toBe('DeepSeek V4.1 Flash')
+    expect(priceForModel('deepseek-v4-pro').inputPerM).toBe(0.15)
+  })
+
+  it('Cursor 价表新增条目命中专档而非泛化档：GPT-6 Astra、Composer 1、Muse Spark 1.3', () => {
+    expect(priceForModel('gpt-6-astra')).toMatchObject({ label: 'GPT-6 Astra', inputPerM: 10, outputPerM: 50, cacheReadPerM: 1, cacheWritePerM: 12.5 })
+    expect(priceForModel('gpt-6').label).toBe('GPT-6')
+    expect(priceForModel('composer-1')).toMatchObject({ label: 'Composer 1', inputPerM: 1.25, outputPerM: 10, cacheReadPerM: 0.125 })
+    expect(priceForModel('composer-2.5').inputPerM).toBe(0.5)
+    expect(priceForModel('muse-spark-1-3')).toMatchObject({ label: 'Muse Spark 1.3', inputPerM: 1.25, outputPerM: 4.25, cacheReadPerM: 0.15 })
   })
 
   it('缓存写价按 provider 口径：Anthropic 与 GPT-5.6 系写 1.25×，其余写价 = 输入价（非 0）', () => {
@@ -73,6 +87,16 @@ describe('priceForModel', () => {
     expect(legacy.cacheWritePerM).toBeGreaterThan(0)
     const gemini = priceForModel('gemini-3-pro')
     expect(gemini.cacheWritePerM).toBe(gemini.inputPerM)
+  })
+
+  it('「有无缓存写入桶」由写价是否高于输入价推导（官方口径 2026-09-15）', () => {
+    for (const model of ['claude-fable-5-1', 'claude-sonnet-4-5', 'claude-haiku-4-5', 'gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-6-astra', 'auto']) {
+      expect(hasCacheWriteBucket(priceForModel(model)), model).toBe(true)
+    }
+    for (const model of ['gpt-5.5', 'gpt-5.4', 'gpt-5', 'o3', 'gemini-3-8-flash', 'gemini-3-pro', 'grok-4.6', 'cursor-grok-4.6-fast',
+      'composer-2.5-fast', 'composer-1', 'kimi-k3', 'kimi-k2.7-code', 'glm-5.2', 'muse-spark-1-3', 'deepseek-v4-1-flash', 'qwen3-max']) {
+      expect(hasCacheWriteBucket(priceForModel(model)), model).toBe(false)
+    }
   })
 })
 
@@ -107,32 +131,104 @@ describe('token 口径（缓存读/写 ⊂ 输入，2026-09-01 实证定稿）',
   })
 })
 
-describe('Kimi 缓存写入归普通输入', () => {
-  it('新估算 Cache Write 为零，输入总量/命中缓存/输出和同价费用保持一致', () => {
-    const kimiPrice = priceForModel('kimi-k3')
-    const before = estimateUsageFromReference(57_500_000, 'other', { ...kimiPrice, label: 'other' })
-    const after = estimateUsageFromReference(57_500_000, 'kimi-k3', kimiPrice)
-    expect(before.cacheWriteTokens).toBeGreaterThan(0)
-    expect(after.cacheWriteTokens).toBe(0)
-    expect(after.inputTokens).toBe(before.inputTokens)
-    expect(after.outputTokens).toBe(before.outputTokens)
-    expect(after.cacheReadTokens).toBe(before.cacheReadTokens)
-    expect(after.estimatedCostUsd).toBeCloseTo(before.estimatedCostUsd, 10)
+describe('缓存写入桶按厂商口径拆分（2026-09-15 官方核对：只有 Anthropic 与 GPT-5.6+ 有写入桶）', () => {
+  const INPUT = 57_500_000
+  const NO_BUCKET = ['kimi-k3', 'gemini-3-8-flash', 'composer-2.5', 'gpt-5.5', 'glm-5.2', 'muse-spark-1-3', 'deepseek-v4-1-flash', 'qwen3-max']
+
+  it('无写入桶厂商：估算 Cache Write 为零，写入份额归回普通输入；命中缓存 / 输入总量 / 输出与同比例的有桶拆分一致，费用不变', () => {
+    // GPT-5.6 Sol 与这些模型同走 default 比例但有写入桶——作为「同比例、有桶」的对照形态。
+    const shaped = estimateUsageFromReference(INPUT, 'gpt-5.6-sol', priceForModel('gpt-5.6-sol'))
+    expect(shaped.estimateProfile).toBe('default')
+    expect(shaped.cacheWriteTokens).toBeGreaterThan(0)
+    for (const model of NO_BUCKET) {
+      const price = priceForModel(model)
+      const usage = estimateUsageFromReference(INPUT, model, price)
+      expect(usage.estimateProfile, model).toBe('default')
+      expect(usage.cacheWriteTokens, model).toBe(0)
+      expect(usage.inputTokens, model).toBe(INPUT)
+      expect(usage.cacheReadTokens, model).toBe(shaped.cacheReadTokens)
+      expect(usage.outputTokens, model).toBe(shaped.outputTokens)
+      // fresh = input − read − write：原写入份额并入普通输入
+      expect(usage.inputTokens - usage.cacheReadTokens, model).toBe(shaped.inputTokens - shaped.cacheReadTokens)
+      // 这些厂商写价 = 输入价：同一形态按写入桶计价与归并后计价费用相同
+      expect(usage.estimatedCostUsd, model).toBeCloseTo(estimateTurnCostUsd({ ...shaped, occurredAt: 0 }, price), 10)
+    }
   })
 
-  it('旧冻结混合账本仅归一 Kimi，原数据不变且重复读取幂等', () => {
+  it('有写入桶厂商保留写入份额：Claude 走 claudeCode 比例，GPT-5.6 / GPT-6 与未知模型（Sonnet 档）走 default 比例', () => {
+    const cases = [['claude-fable-5-1', 'claudeCode'], ['claude-sonnet-4-5', 'claudeCode'], ['gpt-5.6-sol', 'default'], ['gpt-6-astra', 'default'], ['auto', 'default']] as const
+    for (const [model, profile] of cases) {
+      const usage = estimateUsageFromReference(INPUT, model, priceForModel(model))
+      expect(usage.estimateProfile, model).toBe(profile)
+      expect(usage.cacheWriteTokens, model).toBeGreaterThan(0)
+      expect(usage.inputTokens - usage.cacheReadTokens - usage.cacheWriteTokens, model).toBeGreaterThanOrEqual(0)
+    }
+  })
+
+  it('已落盘的混合账本：无桶厂商的估算写入归零并回普通输入，精确回合与有桶厂商不动；原对象不变、重复投影幂等', () => {
     const turn = { inputTokens: 1000, outputTokens: 10, cacheReadTokens: 800, cacheWriteTokens: 100,
       estimatedCostUsd: .001, price: priceForModel('kimi-k3'), exact: false, at: 10 }
-    const ledger = { frozenAt: 20, turns: { kimi: turn, claude: { ...turn, price: priceForModel('claude-sonnet') } } }
+    const ledger = { frozenAt: 20, turns: {
+      kimi: turn,
+      gemini: { ...turn, price: priceForModel('gemini-3-pro') },
+      // Cursor 精确结算若带写入，以 Cursor 为准
+      geminiExact: { ...turn, price: priceForModel('gemini-3-pro'), exact: true },
+      claude: { ...turn, price: priceForModel('claude-sonnet') }
+    } }
     const result = projectUsage('mixed', ledger)
     expect(result.ledger!.turns.kimi!.cacheWriteTokens).toBe(0)
+    expect(result.ledger!.turns.gemini!.cacheWriteTokens).toBe(0)
+    expect(result.ledger!.turns.geminiExact!.cacheWriteTokens).toBe(100)
     expect(result.ledger!.turns.claude!.cacheWriteTokens).toBe(100)
-    expect(result.cacheWriteTokens).toBe(100)
-    expect(result.inputTokens).toBe(2000)
-    expect(result.estimatedCostUsd).toBe(.002)
+    expect(result.cacheWriteTokens).toBe(200)
+    expect(result.inputTokens).toBe(4000)
+    expect(result.cacheReadTokens).toBe(3200)
+    expect(result.estimatedCostUsd).toBeCloseTo(.004, 10)
     expect(result.ledger!.frozenAt).toBe(20)
+    expect(result.pricedModel).toBe('Mixed models')
     expect(turn.cacheWriteTokens).toBe(100)
     expect(projectUsage('mixed', result.ledger!)).toEqual(result)
+  })
+
+  it('upgradeUsageEstimate 归一旧 default 比例回合的写入份额（不重估、费用不变）；无需归一时原样返回，二次加载幂等', () => {
+    const counts = { inputTokens: 3_000_000, outputTokens: 60_000, cacheReadTokens: 2_760_000, cacheWriteTokens: 222_000 }
+    const persist = (price: ReturnType<typeof priceForModel>, estimateProfile: string): CursorSessionUsage => {
+      const turn = { ...counts, estimatedCostUsd: estimateTurnCostUsd({ ...counts, occurredAt: 0 }, price), price, exact: false, estimateProfile, at: 5 }
+      return { composerId: 'c', turns: 1, ...counts, estimatedCostUsd: turn.estimatedCostUsd, pricedModel: price.label, lastTurnAt: 5, quality: 'estimated', ledger: { turns: { g1: turn } } }
+    }
+    const gemini = persist(priceForModel('gemini-3-8-flash'), 'default')
+    const upgraded = upgradeUsageEstimate(gemini)
+    expect(upgraded).not.toBe(gemini)
+    expect(upgraded.cacheWriteTokens).toBe(0)
+    expect(upgraded.ledger!.turns.g1).toMatchObject({ cacheWriteTokens: 0, estimateProfile: 'default', inputTokens: 3_000_000, cacheReadTokens: 2_760_000, outputTokens: 60_000 })
+    expect(upgraded.estimatedCostUsd).toBeCloseTo(gemini.estimatedCostUsd, 10)
+    expect(upgradeUsageEstimate(upgraded)).toBe(upgraded)
+    // Claude 同形态回合有写入桶，不归一、原样返回
+    const claude = persist(priceForModel('claude-sonnet-4-5'), 'claudeCode')
+    expect(upgradeUsageEstimate(claude)).toBe(claude)
+  })
+
+  it('usageHasCacheWriteBucket / cursorUsageDetail：无桶厂商不呈现 Cache Write；有桶、混合模型或 Cursor 精确结算带写入时呈现', () => {
+    const base = { inputTokens: 1000, outputTokens: 10, cacheReadTokens: 800, cacheWriteTokens: 0, estimatedCostUsd: .001, exact: false, at: 1 }
+    const kimi = projectUsage('k', { turns: { g1: { ...base, price: priceForModel('kimi-k3') } } })
+    expect(usageHasCacheWriteBucket(kimi)).toBe(false)
+    expect(cursorUsageDetail(kimi)).toBe('Tokens 1K · Cost $0.001 · Input 200 · Output 10 · Cache Read 800')
+    const claude = projectUsage('c', { turns: { g1: { ...base, cacheWriteTokens: 50, price: priceForModel('claude-sonnet-4-5') } } })
+    expect(usageHasCacheWriteBucket(claude)).toBe(true)
+    expect(cursorUsageDetail(claude)).toBe('Tokens 1K · Cost $0.001 · Input 150 · Output 10 · Cache Write 50 · Cache Read 800')
+    // 有桶厂商写入恰为 0 仍保留该行（0 是观测值，不是「不适用」）
+    expect(usageHasCacheWriteBucket(projectUsage('c0', { turns: { g1: { ...base, price: priceForModel('claude-sonnet-4-5') } } }))).toBe(true)
+    // 混合模型：任一厂商有桶即呈现
+    expect(usageHasCacheWriteBucket(projectUsage('m', { turns: {
+      k: { ...base, price: priceForModel('kimi-k3') }, c: { ...base, price: priceForModel('claude-sonnet-4-5') } } }))).toBe(true)
+    // 精确结算带写入：以 Cursor 为准
+    expect(usageHasCacheWriteBucket(projectUsage('x', { turns: { g1: { ...base, cacheWriteTokens: 5, exact: true, price: priceForModel('kimi-k3') } } }))).toBe(true)
+    // 无账本的旧快照按 pricedModel 判断
+    const legacy = { composerId: 'l', turns: 1, inputTokens: 1000, outputTokens: 10, cacheReadTokens: 800, cacheWriteTokens: 0, estimatedCostUsd: .001, lastTurnAt: 1, quality: 'legacy' as const }
+    expect(usageHasCacheWriteBucket({ ...legacy, pricedModel: 'Kimi K3' })).toBe(false)
+    expect(usageHasCacheWriteBucket({ ...legacy, pricedModel: 'Gemini 3.8 Flash' })).toBe(false)
+    expect(usageHasCacheWriteBucket({ ...legacy, pricedModel: 'Claude Fable 5.1' })).toBe(true)
+    expect(usageHasCacheWriteBucket({ ...legacy, pricedModel: '默认（Sonnet 档）' })).toBe(true)
   })
 })
 

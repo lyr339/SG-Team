@@ -47,6 +47,23 @@ it('参考比例的数字在运行、中断及重开面板后完整呈现；标�
   tracker.dispose()
 })
 
+it('无缓存写入桶的厂商（Kimi K3）不渲染 Cache Write 行；三段之和仍为总 token，aria 明细同步省略', async () => {
+  const tracker = new CursorUsageTracker()
+  tracker.recordRequestSample({ composerId: 'c', generationId: 'g', modelId: 'kimi-k3', used: 278120, occurredAt: 1 })
+  const usage = tracker.getSnapshot().c!
+  expect(usage.cacheWriteTokens).toBe(0)
+  await act(async () => root.render(<SessionUsageStat usage={usage} />))
+  await act(async () => host.querySelector<HTMLButtonElement>('.session-usage')!.click())
+  const dialog = document.querySelector<HTMLElement>('.usage-popover')!
+  const rows = Array.from(dialog.querySelectorAll('li'))
+  expect(rows.map((row) => row.querySelector('span')!.textContent)).toEqual(['Input', 'Output', 'Cache Read'])
+  expect(rows.reduce((sum, row) => sum + Number(row.querySelector('b')!.title.replaceAll(',', '')), 0)).toBe(totalUsageTokens(usage))
+  expect(dialog.querySelectorAll('.usage-breakdown-bar i.is-cachewrite')).toHaveLength(0)
+  expect(host.querySelector('.session-usage')!.getAttribute('aria-label')).not.toContain('Cache Write')
+  expect(dialog.textContent).not.toMatch(/[\u4e00-\u9fff]/)
+  tracker.dispose()
+})
+
 it('空状态及精确零输出仍为正常 UI；不渲染中文或结算说明', async () => {
   await act(async () => root.render(<SessionUsageStat />))
   await act(async () => host.querySelector<HTMLButtonElement>('.session-usage')!.click())

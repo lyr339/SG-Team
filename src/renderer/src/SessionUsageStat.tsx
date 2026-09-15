@@ -12,7 +12,8 @@ import {
   formatCostUsd,
   formatTokenCount,
   totalUsageTokens,
-  cursorUsageDetail
+  cursorUsageDetail,
+  usageHasCacheWriteBucket
 } from '../../domain/cursor-usage'
 
 interface SessionUsageStatProps {
@@ -22,13 +23,16 @@ interface SessionUsageStatProps {
 /**
  * 用量构成段（互斥分解）：缓存读/写是输入的子集（Cursor 归一口径），
  * 分段条按 Input / Cache Read / Cache Write / Output 四块互斥呈现，总和即总 token。
+ * 厂商没有缓存写入桶（Kimi / Gemini / Composer / GPT-5.5 及更早…）时不出 Cache Write 行。
  */
 function usageSegments(usage: CursorSessionUsage): Array<{ key: string; label: string; tone: string; tokens: number }> {
   const freshInput = Math.max(0, usage.inputTokens - usage.cacheReadTokens - usage.cacheWriteTokens)
   return [
     { key: 'input', label: 'Input', tone: 'is-input', tokens: freshInput },
     { key: 'output', label: 'Output', tone: 'is-output', tokens: usage.outputTokens },
-    { key: 'cachewrite', label: 'Cache Write', tone: 'is-cachewrite', tokens: usage.cacheWriteTokens },
+    ...(usageHasCacheWriteBucket(usage)
+      ? [{ key: 'cachewrite', label: 'Cache Write', tone: 'is-cachewrite', tokens: usage.cacheWriteTokens }]
+      : []),
     { key: 'cacheread', label: 'Cache Read', tone: 'is-cacheread', tokens: usage.cacheReadTokens }
   ]
 }

@@ -62,10 +62,12 @@ export type CursorUsageSnapshot = Record<string, CursorSessionUsage>
 
 /**
  * 百万 token 单价（USD）。
- * cacheWritePerM 是「写入缓存那部分输入的单价」：Anthropic 与 GPT-5.6 系按输入 1.25×
- * 收写入溢价；其余厂商（OpenAI 5.5 及更早 / Gemini / Grok / Composer / Kimi / GLM）
- * 不收写入费——新进上下文按普通输入价计，因此 cacheWritePerM = inputPerM，而不是 0
- * （0 会把新进 token 算成免费）。
+ * cacheWritePerM 是「写入缓存那部分输入的单价」：Anthropic 全系与 OpenAI GPT-5.6 及之后
+ * 按输入 1.25× 收写入溢价，用量里有独立的缓存写入桶；其余厂商（OpenAI 5.5 及更早 /
+ * Gemini 隐式缓存 / Grok / Composer / Kimi / GLM / DeepSeek / Muse Spark / Qwen 隐式缓存）
+ * 的输入只有「未命中 / 命中」两态，官方口径里根本没有写入桶——新进上下文按普通输入价计，
+ * 因此 cacheWritePerM = inputPerM，而不是 0（0 会把新进 token 算成免费）。
+ * 「有没有写入桶」不另设字段，由 hasCacheWriteBucket 从这一约定推导，已落盘的旧牌价对象无需迁移。
  */
 export interface ModelTokenPrice {
   label: string
@@ -80,9 +82,17 @@ function price(label: string, inputPerM: number, outputPerM: number, cacheReadPe
 }
 
 /**
- * 模型牌价表（USD / 1M tokens，牌价快照 2026-09-04；核对时以 cursor.com/docs/models-and-pricing 为准）。
+ * 该牌价所属厂商是否存在独立的「缓存写入」桶（写入溢价 > 输入价 ⇔ 有桶）。
+ * 无桶厂商的估算不得拆出写入份额，展示层也不应渲染 Cache Write 行。
+ */
+export function hasCacheWriteBucket(price: Pick<ModelTokenPrice, 'inputPerM' | 'cacheWritePerM'>): boolean {
+  return price.cacheWritePerM > price.inputPerM
+}
+
+/**
+ * 模型牌价表（USD / 1M tokens，牌价快照 2026-09-15；核对时以 cursor.com/docs/models-and-pricing 为准）。
  * 来源：Cursor「Models & Pricing」页（Cursor 按模型 API 价扣用量，与「等价 API 成本」口径一致）；
- * Cursor 目录外的 DeepSeek / Qwen 取官方 API 标价（DeepSeek 为非高峰价）。
+ * Cursor 目录外的 GPT-6 / DeepSeek / Qwen 取官方 API 标价（DeepSeek 为非高峰价）。
  * 长上下文（>200K）加价、Fast 未列变体、区域加价不建模。
  *
  * 匹配规则：modelId 与键都归一为小写、非字母数字折成 `-`，键必须从词首（^ 或 `-` 之后）
@@ -103,7 +113,9 @@ const MODEL_PRICES: Array<{ match: string; price: ModelTokenPrice }> = [
   { match: 'haiku-3-5', price: price('Claude Haiku 3.5', 0.8, 4, 0.08, 1) },
   { match: 'haiku', price: price('Claude Haiku', 1, 5, 0.1, 1.25) },
   { match: 'claude', price: price('Claude', 3, 15, 0.3, 3.75) },
-  // OpenAI（读 0.1×；5.6 系写 1.25×，其余无写入费）
+  // OpenAI（读 0.1×；GPT-6 与 5.6 系写 1.25×，5.5 及更早无写入费）
+  { match: 'gpt-6-astra', price: price('GPT-6 Astra', 10, 50, 1, 12.5) },
+  { match: 'gpt-6', price: price('GPT-6', 10, 50, 1, 12.5) },
   { match: 'gpt-5-6-sol', price: price('GPT-5.6 Sol', 4, 20, 0.4, 5) },
   { match: 'gpt-5-6-terra', price: price('GPT-5.6 Terra', 2, 12, 0.2, 2.5) },
   { match: 'gpt-5-6-luna', price: price('GPT-5.6 Luna', 0.2, 1.2, 0.02, 0.25) },
@@ -140,14 +152,16 @@ const MODEL_PRICES: Array<{ match: string; price: ModelTokenPrice }> = [
   { match: 'grok-4-5-fast', price: price('Grok 4.5 Fast', 4, 18, 1) },
   { match: 'grok', price: price('Grok', 2, 6, 0.5) },
   { match: 'composer-2-5-fast', price: price('Composer 2.5 Fast', 3, 15, 0.5) },
+  { match: 'composer-1', price: price('Composer 1', 1.25, 10, 0.125) },
   { match: 'composer', price: price('Composer', 0.5, 2.5, 0.2) },
-  // Moonshot / Z.ai（读 0.1× / 0.19×，无写入费）
+  // Moonshot / Z.ai / Meta（读 0.1× / 0.19× / 0.12×，无写入费）
   { match: 'kimi-k2-7', price: price('Kimi K2.7 Code', 0.95, 4, 0.19) },
   { match: 'kimi', price: price('Kimi K3', 3, 15, 0.3) },
   { match: 'glm', price: price('GLM 5.2', 1.4, 4.4, 0.26) },
-  // Cursor 目录外（官方 API 价）：DeepSeek 非高峰价、缓存命中 ≈ 0.033×；Qwen3-Max 基础档隐式缓存 0.2×
-  { match: 'deepseek-v4-flash', price: price('DeepSeek V4 Flash', 0.22, 0.66, 0.007) },
-  { match: 'deepseek', price: price('DeepSeek V4 Pro', 0.66, 1.98, 0.022) },
+  { match: 'muse-spark', price: price('Muse Spark 1.3', 1.25, 4.25, 0.15) },
+  // Cursor 目录外（官方 API 价）：DeepSeek 自 2026-09-10 起 V4.1 Flash 非高峰价、缓存命中 0.02×，
+  // 09-14 起 deepseek-v4-pro 请求也按 V4.1 Flash 计费；Qwen3-Max 基础档隐式缓存 0.2×
+  { match: 'deepseek', price: price('DeepSeek V4.1 Flash', 0.15, 0.6, 0.003) },
   { match: 'qwen', price: price('Qwen3 Max', 0.359, 1.434, 0.072) }
 ]
 
@@ -257,10 +271,16 @@ function referenceUsage(inputTokens: number, profile: keyof typeof USAGE_PROFILE
   const cacheWriteTokens = Math.round(inputTokens * weights.write / totalInput)
   const cacheReadTokens = Math.max(0, inputTokens - fresh - cacheWriteTokens)
   const outputTokens = Math.round(inputTokens * weights.output / totalInput)
-  // Kimi 无独立缓存写入桶：原写入估算归普通输入，缓存命中和输入总量保持不变。
-  const counts = { inputTokens, outputTokens, cacheWriteTokens: /^kimi\b/i.test(price.label) ? 0 : cacheWriteTokens, cacheReadTokens }
+  // 参考图是 Claude 形态（含写入份额）。无写入桶的厂商把这一份额归回普通输入：
+  // fresh 由 input − read − write 反推，缓存命中与输入总量不变；其写价 = 输入价，费用也不变。
+  const counts = { inputTokens, outputTokens, cacheWriteTokens: hasCacheWriteBucket(price) ? cacheWriteTokens : 0, cacheReadTokens }
   return { ...counts, estimateProfile: profile,
     estimatedCostUsd: estimateTurnCostUsd({ ...counts, occurredAt: 0 }, price) }
+}
+
+/** 无写入桶厂商的估算回合却带写入份额 = 本规则之前落盘的旧账（含 Kimi 特判未覆盖的其他厂商）；精确回合以 Cursor 结算为准，不动。 */
+function hasFabricatedCacheWrite(turn: UsageTurn): boolean {
+  return !turn.exact && turn.cacheWriteTokens !== 0 && !hasCacheWriteBucket(turn.price)
 }
 
 /** 给此前缺少输出的估算补上参考拆分；精确回合和已使用该方案的回合保持原值。 */
@@ -274,14 +294,17 @@ export function upgradeUsageEstimate(usage: CursorSessionUsage): CursorSessionUs
     changed = true
     return [id, { ...turn, ...referenceUsage(turn.inputTokens, claudeUpgrade ? 'claudeCode' : usageProfile(turn.price.label), turn.price) }]
   }))
+  // 旧账里无写入桶厂商的估算写入份额也在这里归一（projectUsage 内完成），首次加载后即幂等。
+  if (Object.values(turns).some(hasFabricatedCacheWrite)) changed = true
   return changed ? projectUsage(usage.composerId, { ...usage.ledger, turns }) : usage
 }
 
 export function projectUsage(composerId: string, ledger: CursorUsageLedger): CursorSessionUsage {
-  // 同时兼容已有账本（含冻结/混合模型），仅归一 Kimi 回合；其写价本就等于普通输入价。
-  if (Object.values(ledger.turns).some((turn) => /^kimi\b/i.test(turn.price.label) && turn.cacheWriteTokens !== 0)) {
+  // 兼容已有账本（含冻结/混合模型）：无写入桶厂商的估算回合写入归零并回普通输入；
+  // 其写价本就等于输入价，费用不变。精确回合不动。
+  if (Object.values(ledger.turns).some(hasFabricatedCacheWrite)) {
     ledger = { ...ledger, turns: Object.fromEntries(Object.entries(ledger.turns).map(([id, turn]) => [
-      id, /^kimi\b/i.test(turn.price.label) && turn.cacheWriteTokens !== 0 ? { ...turn, cacheWriteTokens: 0 } : turn
+      id, hasFabricatedCacheWrite(turn) ? { ...turn, cacheWriteTokens: 0 } : turn
     ])) }
   }
   const turns = Object.values(ledger.turns)
@@ -367,7 +390,19 @@ export function formatCostUsd(costUsd: number): string {
   return `$${costUsd.toFixed(2)}`
 }
 
+/**
+ * 会话用量是否应呈现「Cache Write」桶：账本里任一回合的厂商有写入桶，或数据本身带写入
+ * （精确结算以 Cursor 为准）；无账本的旧账按 pricedModel 判断。无桶时展示层不渲染该行，
+ * 而不是显示一个会被读成「写了 0 个」的 0。
+ */
+export function usageHasCacheWriteBucket(usage: CursorSessionUsage): boolean {
+  if (usage.cacheWriteTokens > 0) return true
+  if (usage.ledger) return Object.values(usage.ledger.turns).some((turn) => hasCacheWriteBucket(turn.price))
+  return hasCacheWriteBucket(priceForModel(usage.pricedModel))
+}
+
 export function cursorUsageDetail(usage: CursorSessionUsage): string {
   const fresh = Math.max(0, usage.inputTokens - usage.cacheReadTokens - usage.cacheWriteTokens)
-  return `Tokens ${formatTokenCount(totalUsageTokens(usage))} · Cost ${formatCostUsd(usage.estimatedCostUsd)} · Input ${formatTokenCount(fresh)} · Output ${formatTokenCount(usage.outputTokens)} · Cache Write ${formatTokenCount(usage.cacheWriteTokens)} · Cache Read ${formatTokenCount(usage.cacheReadTokens)}`
+  const cacheWrite = usageHasCacheWriteBucket(usage) ? ` · Cache Write ${formatTokenCount(usage.cacheWriteTokens)}` : ''
+  return `Tokens ${formatTokenCount(totalUsageTokens(usage))} · Cost ${formatCostUsd(usage.estimatedCostUsd)} · Input ${formatTokenCount(fresh)} · Output ${formatTokenCount(usage.outputTokens)}${cacheWrite} · Cache Read ${formatTokenCount(usage.cacheReadTokens)}`
 }
