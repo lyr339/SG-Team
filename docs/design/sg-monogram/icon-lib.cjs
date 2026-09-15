@@ -8,23 +8,27 @@ const TILE_DARK = '#141416'
 
 const DEFAULTS = {
   font: 'Futura-Bold',
-  capHeight: 400,          // 字母大写高度（px，1024 画布）
-  overlap: 0.12,           // G 压在 S 上的比例（相对 S 宽）
-  embolden: 22,            // 字形加粗（同色描边宽，px）：Futura Bold → 视觉上接近 Extra Bold
-  seam: 16,                // G 压住 S 处的暗色分隔缝宽（px），让两字仍可分辨
-  beamWidth: 32,           // 光束宽（px）
-  beamAngle: 20,           // 光束倾角（度，顺时针，顶端靠右）
-  beamOffset: 0,           // 光束中心相对两字接缝的水平偏移（px）
-  glow: 20,                // 字母外发光模糊半径（0 = 无光晕，小尺寸版用）
-  glowOpacity: 0.45,
+  capHeight: 430,          // 字母大写高度（px，1024 画布）：两字箱体约占底板宽 90%，向 V12 的"字撑满底板"靠
+  overlap: 0.14,           // G 压在 S 上的比例（相对 S 宽）：两字紧咬，光刃正好落在交界上
+  embolden: 32,            // 字形加粗（同色描边宽，px）：Futura Bold → 视觉上接近 Heavy，V12 的字就是这个分量
+  seam: 14,                // G 压住 S 处的暗色分隔缝宽（px），光刃盖不到的上下两端仍能分出两字
+  beamWidth: 27,           // 光刃刃身宽（px）：等宽，不是中间鼓的透镜——V12 的光是一根细直的针（实测亮核 ≈ 26px）
+  beamLength: 920,         // 光刃全长（px）：28° 下竖向跨度 ≈ 812，两端尖点离底板上下沿各 ≈ 34px——贯穿整块底板才读作"一道光"
+  beamTaper: 200,          // 两端各用这么长收成尖（px）；刃身其余部分等宽
+  beamAngle: 28,           // 光刃倾角（度，顺时针，顶端靠右）：按 V12 参考实测 ≈ 27.9°
+  beamOffset: 0,           // 光刃中心相对两字交界的水平偏移（px）
+  beamGlow: 16,            // 光刃周围的金色光晕模糊半径（0 = 无）
+  glow: 24,                // 字母外发光模糊半径（0 = 无光晕，小尺寸版用）
+  glowOpacity: 0.5,
   tile: true,              // 是否画底板（单色版不画）
-  mono: null,              // 单色模式：'#000' / '#fff'（无渐变、无光晕，光束变成缺口）
+  mono: null,              // 单色模式：'#000' / '#fff'（无渐变、无光晕，光刃变成等宽的斜向缺口）
   monoBeamFactor: 1,       // 单色版缺口相对 beamWidth 的倍数（托盘 18px 需要更宽才看得见）
   fit: 0.94,               // 单色版字母外框占画布的比例
   scale: 1,                // 整体缩放（Windows 全出血版 1.135）
   tileShadow: true,        // 底板投影（mac 主图有，Windows / 小尺寸无）
-  letterFill: ['#ff5a1a', '#ff6f2e', '#ff9a3c'],
-  beamColor: '#fff1c9',
+  letterFill: ['#f24b0e', '#ff6f2e', '#ffa348'],
+  beamColor: '#fff1c9',    // 光刃两端的暖白
+  beamGlowColor: '#ffc46b',
   letterOffsets: [0, 0.55, 1]
 }
 
@@ -58,9 +62,20 @@ function glyph(letter, fill, o, extra = '') {
   return `<path d="${letter.d}" transform="${letter.transform}" fill="${fill}"${stroke}${extra.replace(' data-seam', '')}/>`
 }
 
+/** 单色版的缺口：等宽竖条（旋转后成斜向切口）。 */
 function beamRect(o, beamX, widthFactor = 1, extra = '') {
   const w = o.beamWidth * widthFactor
   return `<rect x="${(beamX - w / 2).toFixed(1)}" y="-200" width="${w.toFixed(1)}" height="1424"${extra}/>`
+}
+
+/**
+ * 彩色版的光刃：等宽的细长刃身、两端在 beamTaper 长度内收成尖（六边形），画在字母之上、只裁到底板：
+ * 越过字母的部分落在炭黑底上，光刃才有"长度"。竖直构造，随后整体 rotate(beamAngle)。
+ */
+function bladePath(o, beamX, widthFactor = 1) {
+  const half = o.beamLength / 2, w = o.beamWidth * widthFactor / 2, taper = Math.min(o.beamTaper, half)
+  const x = (v) => (beamX + v).toFixed(1), y = (v) => (512 + v).toFixed(1)
+  return `M${x(0)} ${y(-half)}L${x(w)} ${y(-half + taper)}L${x(w)} ${y(half - taper)}L${x(0)} ${y(half)}L${x(-w)} ${y(half - taper)}L${x(-w)} ${y(-half + taper)}Z`
 }
 
 /** 完整图标 SVG（1024×1024）。 */
@@ -90,12 +105,11 @@ function iconSvg(overrides = {}) {
     <linearGradient id="${id}-tile" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#21212a"/><stop offset="1" stop-color="#101013"/></linearGradient>
     <radialGradient id="${id}-vignette" cx="0.5" cy="0.5" r="0.72"><stop offset="0.5" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity="0.4"/></radialGradient>
     <linearGradient id="${id}-letters" x1="0" y1="${l.box.bottom.toFixed(1)}" x2="0" y2="${l.box.top.toFixed(1)}" gradientUnits="userSpaceOnUse">${stops}</linearGradient>
-    <linearGradient id="${id}-beam" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="${o.beamColor}" stop-opacity="0.75"/><stop offset="0.5" stop-color="#fffdf7"/><stop offset="1" stop-color="${o.beamColor}" stop-opacity="0.75"/></linearGradient>
-    <mask id="${id}-letters-mask">${glyph(S, '#fff', o)}${glyph(G, '#fff', o)}</mask>
+    <linearGradient id="${id}-beam" x1="0" y1="${(512 - o.beamLength / 2).toFixed(1)}" x2="0" y2="${(512 + o.beamLength / 2).toFixed(1)}" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="${o.beamColor}" stop-opacity="0"/><stop offset="0.18" stop-color="${o.beamColor}" stop-opacity="0.9"/><stop offset="0.5" stop-color="#fffdf7"/><stop offset="0.82" stop-color="${o.beamColor}" stop-opacity="0.9"/><stop offset="1" stop-color="${o.beamColor}" stop-opacity="0"/></linearGradient>
     <mask id="${id}-s-mask">${glyph(S, '#fff', o)}</mask>
     <clipPath id="${id}-tile-clip"><path d="${TILE_PATH}"/></clipPath>
     <filter id="${id}-glow" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="${o.glow}"/></filter>
-    <filter id="${id}-beam-glow" x="-100%" y="-20%" width="300%" height="140%"><feGaussianBlur stdDeviation="16"/></filter>
+    ${o.beamGlow > 0 ? `<filter id="${id}-beam-glow" x="-200%" y="-20%" width="500%" height="140%"><feGaussianBlur stdDeviation="${o.beamGlow}"/></filter>` : ''}
     ${o.tileShadow ? `<filter id="${id}-tile-shadow" x="-15%" y="-15%" width="130%" height="135%"><feDropShadow dx="0" dy="13" stdDeviation="18" flood-color="#0b0608" flood-opacity="0.22"/></filter>` : ''}
   </defs>
   <g transform="translate(512 512) scale(${o.scale.toFixed(4)}) translate(-512 -512)">
@@ -105,11 +119,9 @@ function iconSvg(overrides = {}) {
     ${glyph(S, `url(#${id}-letters)`, o)}
     <g mask="url(#${id}-s-mask)">${glyph(G, TILE_DARK, o, ' data-seam opacity="0.9"')}</g>
     ${glyph(G, `url(#${id}-letters)`, o)}
-    <g mask="url(#${id}-letters-mask)">
-      <g transform="${rotate}">
-        ${o.glow > 0 ? beamRect(o, beamX, 3.2, ` fill="${o.beamColor}" opacity="0.6" filter="url(#${id}-beam-glow)"`) : ''}
-        ${beamRect(o, beamX, 1, ` fill="url(#${id}-beam)"`)}
-      </g>
+    <g transform="${rotate}">
+      ${o.beamGlow > 0 ? `<path d="${bladePath(o, beamX, 3)}" fill="${o.beamGlowColor}" opacity="0.55" filter="url(#${id}-beam-glow)"/>` : ''}
+      <path d="${bladePath(o, beamX)}" fill="url(#${id}-beam)"/>
     </g>
   </g>
   ${o.tile ? `<path d="${TILE_PATH}" fill="none" stroke="#fff" stroke-opacity="0.05" stroke-width="2"/>` : ''}
