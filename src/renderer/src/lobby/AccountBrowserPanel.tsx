@@ -177,23 +177,25 @@ export function AccountBrowserPanel({
             <i className="account-browser__divider" aria-hidden="true" />
             <div className="account-browser__window-cell" title="新账号从此窗口导入并自动绑定；已绑定账号的自动化改用各自绑定窗口（账号列表可改绑），未绑定账号回退到此默认窗口。按当前网络选择挂代理或直连，窗口需预先登录 cursor.com">
               <span><b>默认窗口</b><small>{selectedProfile ? `已选择 ${selectedProfile.name}` : '新账号导入与未绑定账号使用'}</small></span>
-              <MenuSelect
-                value={settings.bitProfileId ?? ''}
-                placeholder="选择窗口…"
-                disabled={disabled}
-                ariaLabel="选择指纹浏览器执行窗口"
-                options={(profiles ?? []).map((profile) => ({
-                  value: profile.id,
-                  label: `${profile.seq !== undefined ? `#${profile.seq} ` : ''}${profile.name}`
-                }))}
-                onChange={(value) => onSettingsChange({ ...settings, bitProfileId: value || undefined })}
-              />
+              <div className="account-browser__window-controls">
+                <MenuSelect
+                  value={settings.bitProfileId ?? ''}
+                  placeholder="选择窗口…"
+                  disabled={disabled}
+                  ariaLabel="选择指纹浏览器执行窗口"
+                  options={(profiles ?? []).map((profile) => ({
+                    value: profile.id,
+                    label: `${profile.seq !== undefined ? `#${profile.seq} ` : ''}${profile.name}`
+                  }))}
+                  onChange={(value) => onSettingsChange({ ...settings, bitProfileId: value || undefined })}
+                />
+                {onRefreshProfiles ? (
+                  <button type="button" className="account-browser__refresh" disabled={disabled} title="重新获取窗口列表" aria-label="刷新指纹浏览器窗口" onClick={onRefreshProfiles}>
+                    <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M15.7 7A6.2 6.2 0 1 0 16 12.2M15.7 3.8V7h-3.2" /></svg>
+                  </button>
+                ) : null}
+              </div>
             </div>
-            {onRefreshProfiles ? (
-              <button type="button" className="account-browser__refresh" disabled={disabled} title="重新获取窗口列表" aria-label="刷新指纹浏览器窗口" onClick={onRefreshProfiles}>
-                <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M15.7 7A6.2 6.2 0 1 0 16 12.2M15.7 3.8V7h-3.2" /></svg>
-              </button>
-            ) : null}
           </div>
           {profilesMessage ? <p className="account-browser__error" role="alert">{profilesMessage}</p> : null}
           {onCleanupEnvironment ? (

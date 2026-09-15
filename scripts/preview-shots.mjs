@@ -301,6 +301,35 @@ const scenes = [
       width: 1440, height: 900, colorScheme, storage: baseStorage({ colorMode: colorScheme }), clip: null
     }))
   ),
+  ...['light', 'dark'].flatMap(colorMode => [1180, 1440, 380].map(width => ({
+    name: `settings-roxy-key-${width}-${colorMode}`, hash: 'account:import',
+    width: Math.max(1180, width), height: 900, colorScheme: colorMode,
+    storage: baseStorage({ colorMode }), clip: '.account-browser__connection-row',
+    actions: [
+      ...(width === 380 ? [{ eval: `document.querySelector('.account-browser').style.width = '380px'` }] : []),
+      ...[false, true].flatMap(editing => [
+        ...(editing ? [{ click: '.account-browser__key-saved button' }] : []),
+        { label: editing ? '编辑 Key 排版' : '已保存 Key 排版', probe: `(() => {
+          const cell = document.querySelector('.account-browser__key-cell')
+          const label = cell.firstElementChild.getBoundingClientRect()
+          const controls = cell.querySelector('.account-browser__key-input')
+          const box = controls.getBoundingClientRect()
+          if (label.width < 64) throw new Error('Key 说明列被控件挤塌')
+          if (label.right > box.left + 1 && label.left < box.right - 1 && label.bottom > box.top + 1 && label.top < box.bottom - 1) throw new Error('Key 说明与控件重叠')
+          for (const parent of [cell, controls, cell.parentElement]) {
+            if (parent.scrollWidth > parent.clientWidth + 1) throw new Error(parent.className + ' 横向溢出')
+          }
+          const input = controls.querySelector('input')
+          if (input && input.getBoundingClientRect().width < 100) throw new Error('Key 输入区过窄')
+          const select = document.querySelector('.account-browser__window-cell .menu-select__button').getBoundingClientRect()
+          const refresh = document.querySelector('.account-browser__refresh').getBoundingClientRect()
+          if (Math.abs(select.top + select.height / 2 - refresh.top - refresh.height / 2) > 1) throw new Error('刷新按钮未与下拉框垂直居中对齐')
+          if (refresh.left < select.right || refresh.right > cell.parentElement.getBoundingClientRect().right) throw new Error('刷新按钮与下拉框重叠或溢出')
+          return { cellWidth: cell.clientWidth, controlsWidth: controls.clientWidth, inputWidth: input?.clientWidth }
+        })()` }
+      ])
+    ]
+  }))),
   // 统计页：账本铺满 30 天的富数据场景（深浅色 + 7 天范围 + 席位筛选后的联动）。
   ...['light', 'dark'].map((colorMode) => ({
     name: `settings-stats-${colorMode}`, hash: 'account:stats', query: 'stats=1',

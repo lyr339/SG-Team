@@ -446,25 +446,26 @@
 .account-browser__modes > button small { color: var(--muted); font-size: var(--fs-10); }
 .account-browser__modes > button > i { width: 7px; height: 7px; justify-self: end; background: var(--color-border-secondary); border: 2px solid var(--surface-pure); border-radius: 50%; box-shadow: 0 0 0 1px var(--color-border-tertiary); }
 .account-browser__modes > button.is-active > i { background: var(--accent); box-shadow: 0 0 0 1px var(--accent-border); }
-.account-browser__config { display: grid; gap: 7px; padding: 0 8px 8px; }
-.account-browser__connection-row { min-width: 0; display: grid; grid-template-columns: minmax(220px, .8fr) 1px minmax(330px, 1.45fr) 32px; align-items: center; gap: 10px; padding: 8px 9px; background: var(--color-background-secondary); border: 1px solid var(--color-border-tertiary); border-radius: 10px; }
-.account-browser__key-cell { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+.account-browser__config { container: account-browser-config / inline-size; display: grid; gap: 7px; padding: 0 8px 8px; }
+.account-browser__connection-row { min-width: 0; display: grid; grid-template-columns: minmax(220px, .8fr) 1px minmax(330px, 1.45fr); align-items: center; gap: 10px; padding: 8px 9px; background: var(--color-background-secondary); border: 1px solid var(--color-border-tertiary); border-radius: 10px; }
+.account-browser__key-cell { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); align-items: center; gap: 8px; }
 .account-browser__key-cell > span:first-child, .account-browser__window-cell > span:first-child { min-width: 0; display: grid; gap: 2px; }
 .account-browser__key-cell b, .account-browser__window-cell b { color: var(--text-soft); font-size: var(--fs-10); }
 .account-browser__key-cell small, .account-browser__window-cell small { overflow: hidden; color: var(--muted); font-size: var(--fs-10); text-overflow: ellipsis; white-space: nowrap; }
 .account-browser__key-cell code { max-width: 150px; overflow: hidden; padding: 5px 8px; color: var(--color-text-success); background: var(--color-background-success); border: 1px solid color-mix(in srgb, var(--color-border-success) 60%, transparent); border-radius: 7px; font: 600 var(--fs-10)/1 var(--mono); text-overflow: ellipsis; white-space: nowrap; }
-.account-browser__key-input { min-width: 180px; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-auto-flow: column; grid-auto-columns: auto; align-items: center; gap: 5px; }
+.account-browser__key-input { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-auto-flow: column; grid-auto-columns: auto; align-items: center; gap: 5px; }
 .account-browser__key-saved { min-width: 0; }
-.account-browser__key-input input { min-width: 0; min-height: 30px; padding: 0 8px; color: var(--text); background: var(--surface-pure); border: 1px solid var(--color-border-tertiary); border-radius: 7px; outline: none; font: var(--fs-10)/1 var(--mono); }
+.account-browser__key-input input { width: 100%; min-width: 0; min-height: 34px; padding: 0 8px; color: var(--text); background: var(--surface-pure); border: 1px solid var(--color-border-tertiary); border-radius: 7px; outline: none; font: var(--fs-10)/1 var(--mono); }
 .account-browser__key-input input:focus { border-color: var(--accent-border-strong); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 8%, transparent); }
-.account-browser__key-input button { min-height: 30px; padding: 0 9px; color: white; background: var(--accent); border: 1px solid var(--accent); border-radius: 7px; font-size: var(--fs-10); font-weight: 650; }
+.account-browser__key-input button { white-space: nowrap; min-height: 34px; padding: 0 9px; color: white; background: var(--accent); border: 1px solid var(--accent); border-radius: 7px; font-size: var(--fs-10); font-weight: 650; }
 .account-browser__key-input button.is-secondary { color: var(--text-soft); background: var(--surface-pure); border-color: var(--color-border-tertiary); }
 .account-browser__key-input button.is-secondary:hover:not(:disabled) { color: var(--text); border-color: var(--accent-border-strong); }
 .account-browser__divider { width: 1px; height: 34px; background: var(--color-border-tertiary); }
-.account-browser__window-cell { min-width: 0; display: grid; grid-template-columns: minmax(96px, .32fr) minmax(0, 1fr); align-items: center; gap: 8px; }
-.account-browser__window-cell .menu-select { min-width: 0; }
+.account-browser__window-cell { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); align-items: center; gap: 8px; }
+.account-browser__window-controls { min-width: 0; display: flex; align-items: center; gap: 8px; }
+.account-browser__window-controls .menu-select { flex: 1; min-width: 0; }
 .account-browser__window-cell .menu-select__button { min-height: 34px; background: var(--surface-pure); border-radius: 8px; }
-.account-browser__refresh { width: 32px; height: 32px; display: grid; place-items: center; padding: 0; color: var(--muted); background: var(--surface-pure); border: 1px solid var(--color-border-tertiary); border-radius: 8px; line-height: 0; }
+.account-browser__refresh { flex: 0 0 34px; width: 34px; height: 34px; display: grid; place-items: center; padding: 0; color: var(--muted); background: var(--surface-pure); border: 1px solid var(--color-border-tertiary); border-radius: 8px; line-height: 0; }
 .account-browser__refresh svg { display: block; }
 .account-browser__refresh:hover:not(:disabled) { color: var(--accent-deep); border-color: var(--accent-border); }
 .account-browser__refresh:disabled { opacity: .5; }
@@ -658,12 +659,12 @@
 @media (max-width: 700px) {
   .lobby-account__list { grid-template-columns: minmax(0, 1fr); }
   .account-browser__modes { grid-template-columns: minmax(0, 1fr); }
-  .account-browser__connection-row { grid-template-columns: minmax(0, 1fr) 32px; }
-  .account-browser__key-cell, .account-browser__divider { grid-column: 1 / -1; }
+}
+
+/* 按连接区实际宽度换行，而不是按整个窗口宽度。 */
+@container account-browser-config (max-width: 640px) {
+  .account-browser__connection-row { grid-template-columns: minmax(0, 1fr); }
   .account-browser__divider { width: 100%; height: 1px; }
-  .account-browser__window-cell { grid-template-columns: minmax(0, 1fr); }
-  .account-browser__key-cell { grid-template-columns: minmax(0, 1fr); }
-  .account-browser__key-input { min-width: 0; }
 }
 
 @media (max-width: 760px) {
