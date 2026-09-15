@@ -6,7 +6,7 @@ import type {
   TeamSetupDraft
 } from '../../shared/desktop-api'
 import { emptyTaskPoolSnapshot, newestTaskPoolSnapshot } from '../../domain/task-pool'
-import type { CursorUsageSnapshot } from '../../domain/cursor-usage'
+import { usageBelongsToRun, type CursorUsageSnapshot } from '../../domain/cursor-usage'
 import { emptyTeamControlSnapshot, type TeamRunStatus, type WorkspaceRunMode } from '../../domain/team-control'
 import { emptyTeamCollaborationSnapshot } from '../../domain/team-collaboration'
 import { DesktopShell, type AppModule } from './DesktopShell'
@@ -784,9 +784,12 @@ export function App(): React.JSX.Element {
       sessions: snapshot.sessions.map((session) => {
         // 用量关联回退：binding.composerId 缺失（绑定滞后/被 run 收尾清空）时，
         // 以通道最新转录定位的 composer 查表——遥测层已全局水合该映射。
+        // 快照含历史 run 的账（统计页用）；徽章只认当前 run，否则新会话建立前会顶着旧 run 的数字。
         const usageComposerId = session.composerId ?? session.telemetryChannelComposerId
         const usage = usageComposerId ? cursorUsage[usageComposerId] : undefined
-        const withUsage = usage && usage.turns > 0 ? { ...session, usage } : session
+        const withUsage = usage && usage.turns > 0 && usageBelongsToRun(usage, teamControl.activeRun?.id)
+          ? { ...session, usage }
+          : session
         const member = memberByChannel.get(session.channelId)
         if (!member) return withUsage
         const task = taskPool.taskOrder
@@ -805,7 +808,7 @@ export function App(): React.JSX.Element {
         }
       })
     }
-  }, [cursorUsage, snapshot, taskPool, teamControl.activeRun?.actingLeadSlotId, teamControl.members])
+  }, [cursorUsage, snapshot, taskPool, teamControl.activeRun?.id, teamControl.activeRun?.actingLeadSlotId, teamControl.members])
   // 统计页席位来源：引用随 sessions 走——推流高频渲染下不触发统计视图模型重算。
   const statsSeats = useMemo(() => visibleSnapshot.sessions.map((session) => ({
     channelId: session.channelId,

@@ -11,7 +11,9 @@ import {
   priceForModel,
   totalUsageTokens,
   upgradeUsageEstimate,
+  usageBelongsToRun,
   usageHasCacheWriteBucket,
+  USAGE_HISTORY_RETENTION_MS,
   type CursorSessionUsage,
   type CursorUsageEvent
 } from '../src/domain/cursor-usage'
@@ -245,5 +247,22 @@ describe('展示格式化', () => {
     expect(formatCostUsd(0.004)).toBe('$0.004')
     expect(formatCostUsd(0.0421)).toBe('$0.042')
     expect(formatCostUsd(1.5)).toBe('$1.50')
+  })
+
+  it('run 归属：投影与归约都随行保留 runId；徽章只认当前 run，无标签的旧账不限定', () => {
+    const turn = { inputTokens: 10, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0, estimatedCostUsd: 0.001, price: priceForModel('gpt-5'), exact: true, at: 5 }
+    const tagged = projectUsage('c', { turns: { g1: turn } }, 'run-a')
+    expect(tagged.runId).toBe('run-a')
+    expect(projectUsage('c', { turns: { g1: turn } })).not.toHaveProperty('runId')
+    // 同 composer 的下一回合：归约后 runId 不丢。
+    const reduced = reduceUsage(tagged, { kind: 'checkpoint', value: { ...event({ composerId: 'c', inputTokens: 20, outputTokens: 2, cacheReadTokens: 0 }), generationId: 'g2' } })
+    expect(reduced).toMatchObject({ runId: 'run-a', turns: 2 })
+    expect(upgradeUsageEstimate(tagged).runId).toBe('run-a')
+    expect(usageBelongsToRun({ runId: 'run-a' }, 'run-a')).toBe(true)
+    expect(usageBelongsToRun({ runId: 'run-a' }, 'run-b')).toBe(false)
+    expect(usageBelongsToRun({ runId: 'run-a' }, undefined)).toBe(false)
+    expect(usageBelongsToRun({}, 'run-b')).toBe(true)
+    // 保留窗口至少覆盖统计页「30 天」范围（本地午夜起算 ≤ 30×24h）。
+    expect(USAGE_HISTORY_RETENTION_MS).toBeGreaterThanOrEqual(30 * 86_400_000)
   })
 })

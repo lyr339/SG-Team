@@ -1,4 +1,4 @@
-import { reduceUsage, upgradeUsageEstimate, type CursorUsageSample, type UsageObservation, type CursorSessionUsage, type CursorUsageEvent, type CursorUsageSnapshot } from '../domain/cursor-usage'
+import { USAGE_HISTORY_RETENTION_MS, reduceUsage, upgradeUsageEstimate, type CursorUsageSample, type UsageObservation, type CursorSessionUsage, type CursorUsageEvent, type CursorUsageSnapshot } from '../domain/cursor-usage'
 import type { TeamRunStatus } from '../domain/team-control'
 
 export interface CursorUsageRunState {
@@ -12,7 +12,7 @@ export function cursorUsageRunDecision(
 ): { reset: boolean; collecting: boolean } {
   const runChanged = previous.runId !== next.runId
   return {
-    // 新批次有新 runId；同 run 的 attention/launching 抖动不清账。
+    // 新批次有新 runId → 切换账本归属（旧 run 冻结归档，不清空）；同 run 的 attention/launching 抖动不动账。
     reset: runChanged,
     collecting: next.status === 'launching' || next.status === 'running' || next.status === 'attention'
   }
@@ -29,7 +29,10 @@ export function cursorUsageRunDecision(
  * 模型归属：优先使用事件模型，缺失时查会话快照；每个原生回合固化一份牌价。
  * 快照深拷贝，隔离内部逐回合账本。
  *
- * 快照按 run 持久化；显式结束时冻结，在线状态变化不影响计数。
+ * run 作用域：每笔账带 runId。新 run 开始（reset）时旧 run 的账本冻结归档而不是清空——
+ * 统计页要跨 run 累计（今天 / 7 天 / 30 天、历史会话组），会话卡徽章则由渲染层按
+ * runId 过滤，只显示当前 run。历史 run 的账按 USAGE_HISTORY_RETENTION_MS 裁旧，
+ * 当前 run 不受此限。显式结束时冻结，在线状态变化不影响计数。
  */
 export interface CursorUsageTrackerOptions {
   /** composerId → 当前模型 id（费用估算用；缺省走默认价格档）。 */
@@ -38,12 +41,14 @@ export interface CursorUsageTrackerOptions {
   notifyDelayMs?: number
   /** 测试时钟。 */
   now?: () => number
-  /** 启动时恢复的 composer 累积快照。 */
+  /** 启动时恢复的 composer 累积快照（含历史 run）。 */
   initialSnapshot?: CursorUsageSnapshot
   /** 每次计数变化后同步持久化；失败由 tracker 隔离。 */
   persistSnapshot?: (snapshot: CursorUsageSnapshot) => void
   /** 缺省 true；主进程按 TeamRun 状态切换。 */
   collecting?: boolean
+  /** 当前 TeamRun id：新入账 / 续记的 composer 打上此归属。无 run 上下文时省略。 */
+  runId?: string
 }
 
 const DEFAULT_NOTIFY_DELAY_MS = 800
@@ -58,6 +63,7 @@ export class CursorUsageTracker {
   private notifyTimer?: ReturnType<typeof setTimeout>
   private disposed = false
   private collecting: boolean
+  private runId: string | undefined
 
   constructor(options: CursorUsageTrackerOptions = {}) {
     this.resolveModelForComposer = options.resolveModelForComposer ?? (() => undefined)
@@ -65,9 +71,11 @@ export class CursorUsageTracker {
     this.now = options.now ?? (() => Date.now())
     this.persistSnapshot = options.persistSnapshot ?? (() => {})
     this.collecting = options.collecting ?? true
+    this.runId = options.runId
     for (const [composerId, usage] of Object.entries(options.initialSnapshot ?? {})) {
       this.sessions.set(composerId, structuredClone(usage.ledger ? upgradeUsageEstimate(usage) : { ...usage, quality: 'legacy' as const }))
     }
+    this.pruneHistory()
   }
 
   /** 同一 generation 的权威结算，优先替换该回合的临时估算。 */
@@ -85,13 +93,23 @@ export class CursorUsageTracker {
   private observe(observation: UsageObservation): void {
     if (this.disposed || !this.collecting) return
     const event = observation.value
-    const previous = this.sessions.get(event.composerId)
+    let previous = this.sessions.get(event.composerId)
+    // 同一 composer 跨 run 续用（上游只放行当前 run 绑定的 composer，属理论路径）：
+    // V2 旧账没有 generation 身份，只展示到下一 run，新 run 的精确账另起；
+    // V3 账本解冻续记、归属改到当前 run——账本连续，不双计也不丢旧账。
+    if (previous && previous.runId !== this.runId) {
+      if (!previous.ledger) previous = undefined
+      else if (previous.ledger.frozenAt !== undefined) {
+        const { frozenAt: _unfrozen, ...ledger } = previous.ledger
+        previous = { ...previous, ledger }
+      }
+    }
     const hasPrice = previous?.ledger && Object.hasOwn(previous.ledger.turns, event.generationId)
     const next = reduceUsage(previous, { ...observation, value: {
       ...event, modelId: event.modelId || (hasPrice ? undefined : this.resolveModelForComposer(event.composerId))
     } } as UsageObservation)
     if (!next || next === previous) return
-    this.sessions.set(event.composerId, next)
+    this.sessions.set(event.composerId, this.stamp(next))
     if (observation.kind === 'checkpoint' || observation.value.stopped) this.persist()
     this.scheduleNotify()
   }
@@ -99,24 +117,52 @@ export class CursorUsageTracker {
   setCollecting(collecting: boolean): void {
     if (this.disposed) return
     if (this.collecting && !collecting) {
-      for (const [id, usage] of this.sessions) {
-        if (usage.ledger) this.sessions.set(id, { ...usage, ledger: { ...usage.ledger, frozenAt: this.now() } })
-      }
+      this.freezeOpenLedgers()
       this.persist()
       this.scheduleNotify()
     }
     this.collecting = collecting
   }
 
-  /** 新 TeamRun 开始前清零；立即推送空快照，旧徽章同步消失。 */
-  reset(): void {
+  /**
+   * 新 TeamRun 开始：当前账本冻结归档（统计页继续可见）、归属切到新 run、裁掉保留窗口外的旧账。
+   * 不清空——会话卡的「旧徽章消失」由渲染层按 runId 过滤实现（usageBelongsToRun）。
+   */
+  reset(nextRunId?: string): void {
     if (this.disposed) return
-    this.sessions.clear()
+    this.freezeOpenLedgers()
+    this.runId = nextRunId
+    this.pruneHistory()
     this.persist()
     this.scheduleNotify()
   }
 
-  /** 当前全量快照（浅复制值对象，调用方可安全持有）。 */
+  /** 归属标签跟随当前 run；无 run 上下文时不带 runId。 */
+  private stamp(usage: CursorSessionUsage): CursorSessionUsage {
+    if (usage.runId === this.runId) return usage
+    const { runId: _previous, ...rest } = usage
+    return this.runId === undefined ? rest : { ...rest, runId: this.runId }
+  }
+
+  /** 未冻结的账本一律封口（含迟到结算）；已冻结的历史账不重写冻结时间。 */
+  private freezeOpenLedgers(): void {
+    const frozenAt = this.now()
+    for (const [id, usage] of this.sessions) {
+      if (usage.ledger && usage.ledger.frozenAt === undefined) {
+        this.sessions.set(id, { ...usage, ledger: { ...usage.ledger, frozenAt } })
+      }
+    }
+  }
+
+  /** 非当前 run 的账超出保留窗口即裁掉；当前 run 无论多久都保留。 */
+  private pruneHistory(): void {
+    const cutoff = this.now() - USAGE_HISTORY_RETENTION_MS
+    for (const [id, usage] of this.sessions) {
+      if (usage.runId !== this.runId && usage.lastTurnAt < cutoff) this.sessions.delete(id)
+    }
+  }
+
+  /** 当前全量快照（当前 run + 冻结的历史 run；深拷贝，调用方可安全持有）。 */
   getSnapshot(): CursorUsageSnapshot {
     const snapshot: CursorUsageSnapshot = {}
     for (const [composerId, usage] of this.sessions) snapshot[composerId] = structuredClone(usage)
@@ -136,9 +182,9 @@ export class CursorUsageTracker {
     this.listeners.clear()
   }
 
-  private persist(): void {
+  private persist(snapshot: CursorUsageSnapshot = this.getSnapshot()): void {
     try {
-      this.persistSnapshot(this.getSnapshot())
+      this.persistSnapshot(snapshot)
     } catch {
       // 用量文件损坏/磁盘只读不影响 Cursor 会话与实时事件主链。
     }
@@ -151,8 +197,9 @@ export class CursorUsageTracker {
       if (this.disposed) return
       // 持久化随通知同拍节流（生产 800ms）：请求级采样在 150ms inspect 循环上
       // 高频到达，同步落盘必须合并（织梦同款防抖语义，dispose/reset 兜底写盘）。
-      this.persist()
+      // 快照含历史 run，只深拷贝一次，落盘与推送共用（两者都只序列化、不改写）。
       const snapshot = this.getSnapshot()
+      this.persist(snapshot)
       for (const listener of this.listeners) {
         try {
           listener(snapshot)

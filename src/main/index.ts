@@ -415,9 +415,11 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
       const session = sessions.find((candidate) => candidate.composerId === composerId)
       return session?.executionProfile?.modelId ?? session?.modelName
     },
-    initialSnapshot: cursorUsageStore.load(usageRunId),
+    // 文件跨 run 保留全部账本（统计页 30 天窗口）；归属由每行 runId 表达，当前 run 由 tracker 打标。
+    initialSnapshot: cursorUsageStore.load(),
     persistSnapshot: (snapshot) => cursorUsageStore.save(usageRunId, snapshot),
-    collecting: initialUsageDecision.collecting
+    collecting: initialUsageDecision.collecting,
+    runId: usageRunId
   })
   cursorUsageTrackerRef = cursorUsageTracker
   cursorStreamObserver = new CursorStreamObserver({
@@ -664,9 +666,11 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
       { runId: usageRunId, status: usageRunStatus },
       { runId: nextRunId, status: nextRunStatus }
     )
-    if (usageDecision.reset) usageRunId = nextRunId
     if (usageDecision.reset) {
-      cursorUsageTracker.reset()
+      // 先切文件级 runId（persistSnapshot 闭包读它），再让 tracker 冻结归档旧 run、切归属——
+      // 不清账：统计页跨 run 累计，会话卡徽章由渲染层按 runId 过滤掉旧 run。
+      usageRunId = nextRunId
+      cursorUsageTracker.reset(nextRunId)
       cursorUsageTracker.setCollecting(true)
     }
     usageRunStatus = nextRunStatus

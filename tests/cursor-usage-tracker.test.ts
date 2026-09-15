@@ -62,20 +62,72 @@ describe('V3 native-turn accounting', () => {
     first.dispose(); second.dispose(); third.dispose()
   })
 
-  it('结束冻结含迟到结算，重启仍冻结；新 run reset 后重新计数', () => {
-    const first = new CursorUsageTracker({ now: () => 5000 })
+  it('结束冻结含迟到结算，重启仍冻结；新 run reset 后旧账归档保留、新 composer 另起新账', () => {
+    const first = new CursorUsageTracker({ now: () => 5000, runId: 'a' })
     first.recordRequestSample(sample(1000))
+    expect(first.getSnapshot().c?.runId).toBe('a')
     first.setCollecting(false)
     const frozen = first.getSnapshot()
     first.record(exact())
     expect(first.getSnapshot()).toEqual(frozen)
-    const second = new CursorUsageTracker({ initialSnapshot: frozen })
+    const second = new CursorUsageTracker({ initialSnapshot: frozen, now: () => 6000, runId: 'a' })
     second.record(exact())
     expect(second.getSnapshot()).toEqual(frozen)
-    second.reset(); second.setCollecting(true)
-    second.recordRequestSample(sample(500))
-    expect(second.getSnapshot().c?.inputTokens).toBe(500)
+    second.reset('b'); second.setCollecting(true)
+    // 旧 run 的账不清空：仍在快照里、归属 'a'、保持冻结（统计页据此跨 run 累计）。
+    expect(second.getSnapshot().c).toEqual(frozen.c)
+    second.recordRequestSample({ ...sample(500), composerId: 'd' })
+    expect(second.getSnapshot().d).toMatchObject({ inputTokens: 500, runId: 'b' })
+    expect(second.getSnapshot().c).toEqual(frozen.c)
     first.dispose(); second.dispose()
+  })
+
+  it('reset 冻结当前 run 的开放账本并切换归属；同 composer 跨 run 续用时解冻续记不双计', () => {
+    const persist = vi.fn()
+    const tracker = new CursorUsageTracker({ now: () => 7000, runId: 'a', persistSnapshot: persist })
+    tracker.recordRequestSample(sample(1000, 'g1', 10))
+    tracker.reset('b')
+    const archived = tracker.getSnapshot().c!
+    expect(archived).toMatchObject({ runId: 'a', inputTokens: 1000 })
+    expect(archived.ledger?.frozenAt).toBe(7000)
+    // reset 立即落盘：归档不依赖后续事件。
+    expect(persist).toHaveBeenLastCalledWith({ c: archived })
+    // 上游理论上不会再放行旧 composer；若真续用，账本连续（1000 → 1500）并改归新 run，不清零重数。
+    tracker.recordRequestSample(sample(500, 'g1', 20))
+    expect(tracker.getSnapshot().c).toMatchObject({ runId: 'b', inputTokens: 1500, turns: 1 })
+    expect(tracker.getSnapshot().c?.ledger?.frozenAt).toBeUndefined()
+    // 已冻结的历史账在下一次结束时不重写冻结时间。
+    const later = new CursorUsageTracker({ initialSnapshot: { c: archived }, now: () => 9000, runId: 'b' })
+    later.setCollecting(false)
+    expect(later.getSnapshot().c?.ledger?.frozenAt).toBe(7000)
+    tracker.dispose(); later.dispose()
+  })
+
+  it('历史 run 的账超出保留窗口即裁掉（reset 与启动加载都裁），当前 run 不受窗口限制', () => {
+    const day = 86_400_000
+    const now = 100 * day
+    const tracker = new CursorUsageTracker({ now: () => now, runId: 'a' })
+    tracker.recordRequestSample(sample(100, 'g1', now - 60 * day))
+    tracker.recordRequestSample({ ...sample(100, 'g1', now - 60 * day), composerId: 'old-b' })
+    tracker.recordRequestSample({ ...sample(100, 'g1', now - 2 * day), composerId: 'recent-b' })
+    // 当前 run 内即便 60 天前的账也不裁。
+    expect(Object.keys(tracker.getSnapshot()).sort()).toEqual(['c', 'old-b', 'recent-b'])
+    tracker.reset('b')
+    // 切到新 run 后，'a' 的账成为历史：60 天前的裁掉，2 天前的保留。
+    expect(Object.keys(tracker.getSnapshot()).sort()).toEqual(['recent-b'])
+    expect(tracker.getSnapshot()['recent-b']).toMatchObject({ runId: 'a' })
+    // 启动加载同样按当前 run 与窗口裁旧。
+    const restored = new CursorUsageTracker({
+      initialSnapshot: {
+        stale: { composerId: 'stale', runId: 'z', turns: 1, inputTokens: 1, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, estimatedCostUsd: 0, pricedModel: 'GPT', lastTurnAt: now - 40 * day },
+        mine: { composerId: 'mine', runId: 'b', turns: 1, inputTokens: 1, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, estimatedCostUsd: 0, pricedModel: 'GPT', lastTurnAt: now - 40 * day },
+        fresh: { composerId: 'fresh', runId: 'z', turns: 1, inputTokens: 1, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, estimatedCostUsd: 0, pricedModel: 'GPT', lastTurnAt: now - 30 * day }
+      },
+      now: () => now,
+      runId: 'b'
+    })
+    expect(Object.keys(restored.getSnapshot()).sort()).toEqual(['fresh', 'mine'])
+    tracker.dispose(); restored.dispose()
   })
 
   it('价格固定在回合起点，不以晚到事件或新模型重算以前回合', () => {
@@ -89,12 +141,13 @@ describe('V3 native-turn accounting', () => {
   })
 
   it('V2 旧账只保留展示到下一 run，不与未知归属的新结算相加', () => {
-    const tracker = new CursorUsageTracker({ initialSnapshot: { c: { composerId: 'c', turns: 222, inputTokens: 1000, outputTokens: 0, cacheReadTokens: 900, cacheWriteTokens: 100, estimatedCostUsd: 1, pricedModel: 'old', lastTurnAt: 1 } } })
+    const tracker = new CursorUsageTracker({ now: () => 100_000, initialSnapshot: { c: { composerId: 'c', turns: 222, inputTokens: 1000, outputTokens: 0, cacheReadTokens: 900, cacheWriteTokens: 100, estimatedCostUsd: 1, pricedModel: 'old', lastTurnAt: 1 } } })
     tracker.record(exact())
     tracker.recordRequestSample(sample(2000))
     expect(tracker.getSnapshot().c).toMatchObject({ quality: 'legacy', inputTokens: 1000 })
-    tracker.reset(); tracker.record(exact())
-    expect(tracker.getSnapshot().c?.quality).toBe('exact')
+    // 新 run 里同 composer 的精确账另起（V2 无 generation 身份，无法与 V3 账本合并）。
+    tracker.reset('next'); tracker.record(exact())
+    expect(tracker.getSnapshot().c).toMatchObject({ quality: 'exact', runId: 'next', turns: 1 })
     tracker.dispose()
   })
 
