@@ -10,6 +10,7 @@
     "dev": "electron-vite dev",
     "preview:ui": "vite --config vite.preview.config.ts",
     "preview:shots": "node scripts/preview-shots.mjs",
+    "icons": "node scripts/render-icons.mjs",
     "build": "npm run typecheck && electron-vite build && npm run build:mcp",
     "build:mcp": "vite build --config mcp.vite.config.ts",
     "smoke:mcp": "tsx scripts/verify-built-mcp.ts",
@@ -89,8 +90,14 @@
     },
     "win": {
       "target": "nsis",
-      "icon": "build/icon-shiguang-1024.png",
-      "executableName": "ShiGuang"
+      "icon": "build/icon-shiguang.ico",
+      "executableName": "ShiGuang",
+      "extraResources": [
+        {
+          "from": "build/icon-shiguang.ico",
+          "to": "tray.ico"
+        }
+      ]
     },
     "nsis": {
       "oneClick": false,

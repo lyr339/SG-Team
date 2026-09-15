@@ -229,17 +229,29 @@ function setMacDockIcon(): void {
   }
 }
 
-/** macOS 菜单栏使用独立单色模板图；Dock 彩色图缩到 18px 会失去结构与对比度。 */
-function createMacTray(): void {
-  if (process.platform !== 'darwin' || tray) return
-  const iconPath = app.isPackaged
-    ? join(process.resourcesPath, 'trayTemplate.png')
-    : join(__dirname, '../../build/trayTemplate.png')
-  if (!existsSync(iconPath)) return
+/**
+ * 菜单栏 / 任务栏通知区的小图标。macOS 用独立单色模板图（Dock 彩色图缩到 18px 会失去结构与对比度，
+ * 系统按明暗自动上色）；Windows 通知区是彩色的，直接用多尺寸 .ico（系统按 DPI 取 16 / 20 / 24 / 32 档，
+ * 与任务栏按钮、资源管理器同一份文件）。
+ */
+function trayIconPath(): string | undefined {
+  if (process.platform === 'darwin') {
+    return app.isPackaged ? join(process.resourcesPath, 'trayTemplate.png') : join(__dirname, '../../build/trayTemplate.png')
+  }
+  if (process.platform === 'win32') {
+    return app.isPackaged ? join(process.resourcesPath, 'tray.ico') : join(__dirname, '../../build/icon-shiguang.ico')
+  }
+  return undefined
+}
+
+function createTray(): void {
+  if (tray) return
+  const iconPath = trayIconPath()
+  if (!iconPath || !existsSync(iconPath)) return
   try {
     const icon = nativeImage.createFromPath(iconPath)
     if (icon.isEmpty()) return
-    icon.setTemplateImage(true)
+    if (process.platform === 'darwin') icon.setTemplateImage(true)
     tray = new Tray(icon)
     tray.setToolTip('拾光')
     const show = (): void => {
@@ -272,7 +284,7 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   // Explicitly set the running Dock tile as well as the bundle icon. macOS can
   // otherwise keep showing a cached icon from an older build with the same ID.
   setMacDockIcon()
-  createMacTray()
+  createTray()
   const databasePath = join(app.getPath('userData'), 'task-pool.sqlite3')
   const cursorAccountVault = new CursorAccountVault(
     join(app.getPath('userData'), 'cursor-accounts.json'),

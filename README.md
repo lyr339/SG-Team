@@ -77,4 +77,10 @@ node scripts/preview-shots.mjs --only run-team-active-light,run-independent-mixe
 If Vite binds to `localhost` only, point the shot script at it with
 `PREVIEW_BASE=http://localhost:5174`.
 
+App icons are generated, not drawn by hand: `build/*.svg` come from the design source
+in `docs/design/sg-monogram/` (`node docs/design/sg-monogram/generate.cjs`), and
+`npm run icons` rasterizes them into `build/icon-shiguang-1024.png`, `.icns` (macOS only),
+`.ico`, the menu-bar `trayTemplate*.png` and the in-app `brand-shiguang.png` (needs
+Chrome or Edge, same lookup as the shot script).
+
 Architecture and protocol decisions live in `docs/`.
