@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import type { CursorAccountMetadata } from '../domain/cursor-account'
+import { isCursorAccountCredentials, type CursorAccountCredentials } from '../domain/cursor-account'
+import type { CursorAccountCard } from '../domain/cursor-account-card'
 import { isCursorMachineIdentity, type CursorMachineIdentity } from '../infrastructure/cursor/cursor-machine-identity'
 
 export interface CursorAccountVaultCrypto {
@@ -23,6 +25,24 @@ interface StoredCursorAccount {
   pendingMachineAlign?: boolean
   /** 账号绑定的指纹浏览器窗口 id（导入时自动记录；自动化链锚定此窗口执行）。 */
   fingerprintProfileId?: string
+  /** JWT sub（auth0|user_xxx）：卡号导入的去重锚点，同一账号再粘贴即更新而非重复新建。 */
+  sub?: string
+  /** 卡号账号的邮箱（明文元数据；与 label 解耦，用户改备注后仍可查）。 */
+  email?: string
+  /** 加密的登录凭据 blob（CursorAccountCredentials JSON 整体加密）。 */
+  encryptedCredentials?: string
+}
+
+/** saveCard 的返回：账号列表 + 新建/更新结果（UI 反馈文案的依据）。 */
+export interface SaveCardResult {
+  accounts: CursorAccountMetadata[]
+  outcome: 'created' | 'updated'
+  accountId: string
+  label: string
+  /** （IPC 组合层回填）卡内 Token 已过期且经凭据自动登录刷新成功。 */
+  tokenRefreshed?: boolean
+  /** （IPC 组合层回填）卡内 Token 已过期且自动登录未成功的引导文案。 */
+  loginError?: string
 }
 
 interface CursorAccountVaultFile {
@@ -51,7 +71,9 @@ export class CursorAccountVault {
       createdAt: account.createdAt,
       updatedAt: account.updatedAt,
       pendingMachineAlign: account.pendingMachineAlign === true,
-      ...(account.fingerprintProfileId ? { fingerprintProfileId: account.fingerprintProfileId } : {})
+      ...(account.fingerprintProfileId ? { fingerprintProfileId: account.fingerprintProfileId } : {}),
+      ...(account.email ? { email: account.email } : {}),
+      ...(account.encryptedCredentials ? { hasCredentials: true } : {})
     }))
   }
 
@@ -77,6 +99,79 @@ export class CursorAccountVault {
     if (input.makeActive !== false || !vault.activeId) vault.activeId = account.id
     this.store(vault)
     return this.list()
+  }
+
+  /**
+   * 卡号导入：凭据（邮箱/Cursor 密码等）整体加密随账号保存。
+   * 去重锚点 = JWT sub：同一账号再次粘贴更新 Token 与凭据（保留备注/绑定窗口/选中态），
+   * 不重复建行；无 sub（非标准 Token）时退化为永远新建。
+   */
+  saveCard(input: { card: CursorAccountCard; sub?: string; makeActive?: boolean; fingerprintProfileId?: string }): SaveCardResult {
+    this.assertEncryption()
+    const { card } = input
+    const token = card.token.trim()
+    if (token.length < 8 || token.length > 8_192) throw new Error('Cursor Token 长度无效')
+    // 与 save() 同一备注护栏：邮箱即备注，超长邮箱（罕见但合法）不得产出非法记录
+    if (!card.email.trim() || card.email.trim().length > 80) throw new Error('卡号邮箱长度无效（备注上限 80 字符）')
+    const encryptedCredentials = this.crypto.encrypt(JSON.stringify({
+      email: card.email,
+      cursorPassword: card.cursorPassword,
+      ...(card.emailPassword ? { emailPassword: card.emailPassword } : {}),
+      ...(card.recoveryEmail ? { recoveryEmail: card.recoveryEmail } : {}),
+      ...(card.recoveryEmailPassword ? { recoveryEmailPassword: card.recoveryEmailPassword } : {})
+    } satisfies CursorAccountCredentials)).toString('base64')
+    const sub = input.sub?.trim() || undefined
+    const vault = this.load()
+    const at = this.now()
+    const fingerprintProfileId = input.fingerprintProfileId?.trim() || undefined
+
+    const existing = sub ? vault.accounts.find((account) => account.sub === sub) : undefined
+    if (existing) {
+      existing.encryptedToken = this.crypto.encrypt(token).toString('base64')
+      existing.tokenSuffix = token.slice(-4)
+      existing.encryptedCredentials = encryptedCredentials
+      existing.email = card.email
+      existing.updatedAt = at
+      if (fingerprintProfileId) existing.fingerprintProfileId = fingerprintProfileId
+      if (input.makeActive !== false) vault.activeId = existing.id
+      this.store(vault)
+      return { accounts: this.list(), outcome: 'updated', accountId: existing.id, label: existing.label }
+    }
+
+    const account: StoredCursorAccount = {
+      id: `cursor-account:${randomUUID()}`,
+      label: card.email,
+      encryptedToken: this.crypto.encrypt(token).toString('base64'),
+      tokenSuffix: token.slice(-4),
+      createdAt: at,
+      updatedAt: at,
+      email: card.email,
+      encryptedCredentials,
+      ...(sub ? { sub } : {}),
+      ...(fingerprintProfileId ? { fingerprintProfileId } : {})
+    }
+    vault.accounts.push(account)
+    if (input.makeActive !== false || !vault.activeId) vault.activeId = account.id
+    this.store(vault)
+    return { accounts: this.list(), outcome: 'created', accountId: account.id, label: account.label }
+  }
+
+  /**
+   * 读取账号的登录凭据（自动登录用）。未保存/解密失败/格式漂移均返回 undefined——
+   * 凭据是可选增强，缺失时调用方回退手动登录路径，不抛错阻断主流程。
+   */
+  credentials(accountId?: string): CursorAccountCredentials | undefined {
+    this.assertEncryption()
+    const vault = this.load()
+    const id = accountId?.trim() || vault.activeId
+    const account = vault.accounts.find((candidate) => candidate.id === id)
+    if (!account?.encryptedCredentials) return undefined
+    try {
+      const parsed: unknown = JSON.parse(this.crypto.decrypt(Buffer.from(account.encryptedCredentials, 'base64')))
+      return isCursorAccountCredentials(parsed) ? parsed : undefined
+    } catch {
+      return undefined
+    }
   }
 
   select(accountId: string): CursorAccountMetadata[] {
@@ -220,7 +315,14 @@ export class CursorAccountVault {
           typeof account.fingerprintProfileId === 'string' && account.fingerprintProfileId.trim()
             ? { ...account, fingerprintProfileId: account.fingerprintProfileId.trim() }
             : { ...account, fingerprintProfileId: undefined }
-        ))
+        )).map((account) => ({
+          ...account,
+          sub: typeof account.sub === 'string' && account.sub.trim() ? account.sub : undefined,
+          email: typeof account.email === 'string' && account.email.trim() ? account.email : undefined,
+          encryptedCredentials: typeof account.encryptedCredentials === 'string' && account.encryptedCredentials
+            ? account.encryptedCredentials
+            : undefined
+        }))
       }
     } catch {
       return structuredClone(EMPTY_VAULT)

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { AccountAutomationService } from '../src/application/account-automation-service'
 import { AccountAutomationSettingsStore } from '../src/application/account-automation-store'
 import type { AccountAutomationRun } from '../src/domain/account-automation'
+import { DEFAULT_CURSOR_CHECKOUT_PROFILE } from '../src/domain/cursor-checkout-profile'
 
 interface FakeAccount {
   id: string
@@ -42,7 +43,11 @@ interface HarnessOptions {
   browserToken?: string
   browserTokenError?: string
   readBrowserToken?: string
+  /** 按调用次序返回的浏览器 token 队列（早查/复检分叉场景）；队列空后回退 readBrowserToken。 */
+  readBrowserTokenQueue?: string[]
   readBrowserTokenError?: string
+  /** 倒计时后复检开关（仅 false 时注入落盘；缺省 = 开启）。 */
+  preflightRecheckEnabled?: boolean
   deleteResult?: DeleteResultSpec
   /** 逐次返回的删除结果队列（优先于 deleteResult）。 */
   deleteResults?: DeleteResultSpec[]
@@ -53,6 +58,8 @@ interface HarnessOptions {
   /** Cursor 运行态一致性核对（提供时注入 verifyCursorRuntime）。 */
   verifyCursorRuntime?: { ok: boolean; reason?: string }
   seamlessHandoverEnabled?: boolean
+  /** 切换前等待秒数（注入设置；缺省不落字段 = 立即热切）。 */
+  handoverDelaySec?: number
   nextAccountId?: string
   liveSwitch?: (accountId: string) => Promise<{ switched: boolean; reason?: string; warning?: string; retryable?: boolean }>
   prepareLiveSwitch?: (accountId: string) => Promise<{ commit(): Promise<{ switched: boolean; reason?: string; warning?: string; retryable?: boolean }> }>
@@ -65,7 +72,9 @@ function createHarness(options: HarnessOptions = {}) {
     enabled: options.enabled ?? true,
     delaySec: options.delaySec ?? 7,
     seamlessHandoverEnabled: options.seamlessHandoverEnabled ?? true,
-    ...(options.postProcessDelaySec !== undefined ? { postProcessDelaySec: options.postProcessDelaySec } : {})
+    ...(options.postProcessDelaySec !== undefined ? { postProcessDelaySec: options.postProcessDelaySec } : {}),
+    ...(options.handoverDelaySec !== undefined ? { handoverDelaySec: options.handoverDelaySec } : {}),
+    ...(options.preflightRecheckEnabled === false ? { preflightRecheckEnabled: false } : {})
   })
 
   const accounts = (options.accounts ?? [{ id: 'acc-1', label: 'A', active: true, token: 'old-token' }])
@@ -136,11 +145,12 @@ function createHarness(options: HarnessOptions = {}) {
       if (previousToken !== activeToken) throw new Error('previousToken 未正确传递')
       return options.browserToken ?? 'new-token-from-browser'
     },
-    ...(options.readBrowserToken !== undefined || options.readBrowserTokenError !== undefined
+    ...(options.readBrowserToken !== undefined || options.readBrowserTokenError !== undefined || options.readBrowserTokenQueue !== undefined
       ? {
           readBrowserToken: async () => {
             if (options.readBrowserTokenError) throw new Error(options.readBrowserTokenError)
-            return options.readBrowserToken ?? ''
+            const queued = options.readBrowserTokenQueue?.shift()
+            return queued ?? options.readBrowserToken ?? ''
           }
         }
       : {}),
@@ -784,7 +794,9 @@ describe('AccountAutomationService', () => {
       browserHost: 'fingerprint',
       bitProfileId: undefined,
       autoAcknowledgeModelDataPolicies: true,
-      seamlessHandoverEnabled: true
+      seamlessHandoverEnabled: true,
+      // 账单资料恒归一为完整结构（缺省给整套默认；编辑中途空串原样保留）
+      checkoutProfile: DEFAULT_CURSOR_CHECKOUT_PROFILE
     })
     const low = harness.store.save({ enabled: true, delaySec: 0 })
     expect(low.delaySec).toBe(0.5)
@@ -794,8 +806,157 @@ describe('AccountAutomationService', () => {
     expect(harness.store.save({ enabled: true, delaySec: 2.2 }).delaySec).toBe(2)
   })
 
-  it('退款后热切到接手账号，并把成功结果收进完成消息', async () => {
+  it('复检开关关闭时：倒计时后不再复读浏览器会话（会话改动不拦截，流程走完）', async () => {
     const harness = createHarness({
+      // 早查一致、复检时已变为他人会话：开关关闭时不再拦截
+      readBrowserTokenQueue: ['old-token', 'some-other-token'],
+      preflightRecheckEnabled: false
+    })
+    cleanup = harness.cleanup
+    harness.service.onAllSessionsTriggered('recheck-off')
+    const run = await waitForTerminal(harness.service)
+    expect(run.phase).toBe('done')
+    expect(harness.processCalls).toEqual(['old-token'])
+  })
+
+  it('复检开关默认开启：倒计时后会话变为不一致 → 消耗卡密前中止', async () => {
+    const harness = createHarness({
+      readBrowserTokenQueue: ['old-token', 'some-other-token']
+    })
+    cleanup = harness.cleanup
+    harness.service.onAllSessionsTriggered('recheck-on')
+    const run = await waitForTerminal(harness.service)
+    expect(run.phase).toBe('failed')
+    expect(run.message).toContain('凭据不一致')
+    expect(harness.processCalls).toHaveLength(0)
+  })
+
+  it('复检开关关闭不影响早查：倒计时前会话不一致仍中止', async () => {
+    const harness = createHarness({
+      readBrowserToken: 'some-other-token',
+      preflightRecheckEnabled: false
+    })
+    cleanup = harness.cleanup
+    harness.service.onAllSessionsTriggered('recheck-off-early')
+    const run = await waitForTerminal(harness.service)
+    expect(run.phase).toBe('failed')
+    expect(run.message).toContain('凭据不一致')
+    expect(harness.processCalls).toHaveLength(0)
+  })
+
+  it('preflightRecheckEnabled 归一化：缺省开启不落盘，显式关闭才落 false', () => {
+    const harness = createHarness()
+    cleanup = harness.cleanup
+    expect(harness.store.save({ enabled: true, delaySec: 5 }).preflightRecheckEnabled).toBeUndefined()
+    expect(harness.store.save({ enabled: true, delaySec: 5, preflightRecheckEnabled: true }).preflightRecheckEnabled).toBeUndefined()
+    expect(harness.store.save({ enabled: true, delaySec: 5, preflightRecheckEnabled: false }).preflightRecheckEnabled).toBe(false)
+  })
+
+  it('切换前等待：handoverDelaySec > 0 时退款后先倒计时再提交热切', async () => {    const harness = createHarness({
+      accounts: [
+        { id: 'acc-1', label: 'A', active: true, token: 'old-token' },
+        { id: 'acc-2', label: 'B', active: false, token: 'next-token' }
+      ],
+      nextAccountId: 'acc-2',
+      handoverDelaySec: 3,
+      prepareLiveSwitch: async () => ({ commit: async () => ({ switched: true }) })
+    })
+    cleanup = harness.cleanup
+    // handover 倒计时消息在子状态上（setRun 只更新 handover，主 message 不变），单独订阅收集
+    const handoverMessages: string[] = []
+    harness.service.subscribe((run) => { if (run.handover) handoverMessages.push(run.handover.message) })
+    harness.service.onAllSessionsTriggered('live-delayed')
+    const run = await waitForTerminal(harness.service)
+    expect(run.phase).toBe('done')
+    // 顺序不变（预热 → 奥仔 → commit），但 commit 前出现了切换前倒计时消息
+    expect(harness.liveSwitchOrder).toEqual(['prepare:acc-2', 'process', 'commit:acc-2'])
+    expect(handoverMessages.some((message) => /票据已就绪，3s 后切换/.test(message))).toBe(true)
+    expect(run.message).toContain('无感换号已完成')
+  })
+
+  it('切换前等待期间取消自动化：热切不再提交，收口如实呈现', async () => {
+    const harness = createHarness({
+      accounts: [
+        { id: 'acc-1', label: 'A', active: true, token: 'old-token' },
+        { id: 'acc-2', label: 'B', active: false, token: 'next-token' }
+      ],
+      nextAccountId: 'acc-2',
+      handoverDelaySec: 60,
+      postProcessDelaySec: 60,
+      liveSwitch: async () => ({ switched: true })
+    })
+    cleanup = harness.cleanup
+    harness.service.onAllSessionsTriggered('live-delay-cancel')
+    // 等热切进入等待（加固倒计时并行进行中，cancel 对该相位生效）
+    for (let i = 0; i < 1_000 && harness.service.getRun().phase !== 'hardening-countdown'; i += 1) {
+      await Promise.resolve()
+    }
+    expect(harness.service.getRun().phase).toBe('hardening-countdown')
+    harness.service.cancel()
+    const run = await waitForTerminal(harness.service)
+    expect(run.phase).toBe('cancelled')
+    // commit 从未发出；收口消息如实说明热切未发生
+    expect(harness.liveSwitchCalls).toHaveLength(0)
+    for (let i = 0; i < 10; i += 1) await Promise.resolve()
+    expect(harness.service.getRun().message).toContain('无感换号已随自动化取消')
+  })
+
+  it('切换前等待设置为 0 / 缺省时保持立即热切（旧行为回归）', async () => {
+    const harness = createHarness({
+      accounts: [
+        { id: 'acc-1', label: 'A', active: true, token: 'old-token' },
+        { id: 'acc-2', label: 'B', active: false, token: 'next-token' }
+      ],
+      nextAccountId: 'acc-2',
+      handoverDelaySec: 0,
+      liveSwitch: async () => ({ switched: true })
+    })
+    cleanup = harness.cleanup
+    const handoverMessages: string[] = []
+    harness.service.subscribe((run) => { if (run.handover) handoverMessages.push(run.handover.message) })
+    harness.service.onAllSessionsTriggered('live-immediate')
+    const run = await waitForTerminal(harness.service)
+    expect(run.phase).toBe('done')
+    expect(harness.liveSwitchCalls).toEqual(['acc-2'])
+    // 0 秒 = 立即热切：handover 不出现切换前倒计时文案
+    expect(handoverMessages.some((message) => /后切换/.test(message))).toBe(false)
+  })
+
+  it('切换前等待长于加固倒计时：删除先完成，done 等热切落地后收口', async () => {
+    const harness = createHarness({
+      accounts: [
+        { id: 'acc-1', label: 'A', active: true, token: 'old-token' },
+        { id: 'acc-2', label: 'B', active: false, token: 'next-token' }
+      ],
+      nextAccountId: 'acc-2',
+      handoverDelaySec: 4,
+      postProcessDelaySec: 1,
+      liveSwitch: async () => ({ switched: true })
+    })
+    cleanup = harness.cleanup
+    harness.service.onAllSessionsTriggered('live-long-delay')
+    const run = await waitForTerminal(harness.service)
+    // 语义自洽：删除确实先于热切（delete 调用已发生），但 run.done 等热切 settle 后才定型
+    expect(harness.deleteCalls.length).toBeGreaterThan(0)
+    expect(harness.liveSwitchCalls).toEqual(['acc-2'])
+    expect(run.phase).toBe('done')
+    expect(run.message).toContain('无感换号已完成')
+    // 热切耗时含等待期（startedAt 从票据预热起算）
+    expect(run.handover?.status).toBe('done')
+    expect((run.handover?.finishedAt ?? 0) - (run.handover?.startedAt ?? 0)).toBeGreaterThanOrEqual(4000)
+  })
+
+  it('handoverDelaySec 归一化：缺省/非法为 0 不落盘，0.5 步进，钳制 0–60', () => {
+    const harness = createHarness()
+    cleanup = harness.cleanup
+    expect(harness.store.save({ enabled: true, delaySec: 5 }).handoverDelaySec).toBeUndefined()
+    expect(harness.store.save({ enabled: true, delaySec: 5, handoverDelaySec: 2.3 }).handoverDelaySec).toBe(2.5)
+    expect(harness.store.save({ enabled: true, delaySec: 5, handoverDelaySec: 90 }).handoverDelaySec).toBe(60)
+    expect(harness.store.save({ enabled: true, delaySec: 5, handoverDelaySec: -4 }).handoverDelaySec).toBeUndefined()
+    expect(harness.store.save({ enabled: true, delaySec: 5, handoverDelaySec: 0 }).handoverDelaySec).toBeUndefined()
+  })
+
+  it('退款后热切到接手账号，并把成功结果收进完成消息', async () => {    const harness = createHarness({
       accounts: [
         { id: 'acc-1', label: 'A', active: true, token: 'old-token' },
         { id: 'acc-2', label: 'B', active: false, token: 'next-token' }

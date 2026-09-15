@@ -9,6 +9,12 @@ import {
   parseCursorModelDataPolicyConsentResult,
   type CursorModelDataPolicyConsentSuccess
 } from '../cursor-model-data-policy-consent'
+import {
+  CURSOR_CHECKOUT_COUNTRY,
+  cursorCheckoutProfileIssue,
+  type CursorCheckoutProfile,
+  type CursorProUpgradeResult
+} from '../../../domain/cursor-checkout-profile'
 
 /**
  * 指纹浏览器账号自动化通道：用「指纹浏览器 profile + CDP」替代外部浏览器（Edge/Chrome）三件套
@@ -56,6 +62,8 @@ export interface FingerprintAccountChannelOptions {
   /** 页面持续停留在认证/登录页超过该时长 → 判定未登录。 */
   authChainGraceMs?: number
   pollIntervalMs?: number
+  /** 凭据自动登录的总窗口（含用户手动完成人机验证的时间）。 */
+  loginTimeoutMs?: number
   /** 自动导入/预检是否执行政策确认；手动确认入口不受此开关限制。 */
   shouldAcknowledgeModelDataPolicies?: () => boolean
 }
@@ -77,6 +85,206 @@ const REFRESH_URL = 'https://cursor.com/dashboard'
 const READINESS_JS = 'JSON.stringify({h:location.hostname,p:location.pathname,s:document.readyState})'
 const POLL_RESULT_JS = "window.__sgDel||''"
 const CDP_CALL_TIMEOUT_MS = 20_000
+
+/**
+ * 登录流程探测（__sgLoginProbe）：位置 + 控件锚点 + 拒绝文案 + 人机验证。
+ * 锚点全部 locale 无关（input name / role=alert / Turnstile iframe），
+ * 不依赖页面语言与文案。
+ */
+const LOGIN_PROBE_JS = `JSON.stringify((() => {
+  const alert = (document.querySelector('[role=alert]')?.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 160)
+  return {
+    h: location.hostname,
+    p: location.pathname,
+    s: document.readyState,
+    email: !!document.querySelector('input[name=email]'),
+    password: !!document.querySelector('input[name=password]'),
+    code: !!document.querySelector('input[name=code], input[autocomplete=one-time-code], input[inputmode=one-time-code]'),
+    alert,
+    human: !!document.querySelector('iframe[src*="challenges.cloudflare"]')
+  })
+})()) /* __sgLoginProbe */`
+
+/** React 受控表单填值：原生 setter + input 事件（直接赋值不触发 React 状态更新）。 */
+const FILL_EMAIL_JS = (email: string): string => `(() => {
+  const input = document.querySelector('input[name=email]')
+  if (!input) return 'no-input'
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, ${JSON.stringify(email)})
+  input.dispatchEvent(new Event('input', { bubbles: true }))
+  const form = input.closest('form')
+  const submit = (form && form.querySelector('button[type=submit]')) || document.querySelector('button[type=submit]')
+  if (!submit) return 'no-submit'
+  submit.click()
+  return 'submitted'
+})() /* __sgFillEmail */`
+
+const FILL_PASSWORD_JS = (password: string): string => `(() => {
+  const input = document.querySelector('input[name=password]')
+  if (!input) return 'no-input'
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, ${JSON.stringify(password)})
+  input.dispatchEvent(new Event('input', { bubbles: true }))
+  const form = input.closest('form')
+  const submit = form && form.querySelector('button[type=submit]')
+  if (!submit) return 'no-submit'
+  submit.click()
+  return 'submitted'
+})() /* __sgFillPassword */`
+
+/** 人机验证通过后的补提交（只点不重填；按钮禁用时不动）。 */
+const RESUBMIT_PASSWORD_JS = `(() => {
+  const input = document.querySelector('input[name=password]')
+  if (!input) return 'no-input'
+  const form = input.closest('form')
+  const submit = form && form.querySelector('button[type=submit]')
+  if (!submit || submit.disabled) return 'no-submit'
+  submit.click()
+  return 'submitted'
+})() /* __sgResubmitPassword */`
+
+/** 页内同源读官网账号邮箱（归属核对；204/失败 → 空串）。 */
+const READ_ACCOUNT_EMAIL_JS = `fetch('/api/auth/me', { credentials: 'include' })
+  .then((r) => (r.ok ? r.json() : null))
+  .then((d) => (d && typeof d.email === 'string' ? d.email : ''))
+  .catch(() => '') /* __sgReadAccountEmail */`
+
+/* ---------- 升级 Pro 结账（Stripe checkout.stripe.com 月付 · USD · Alipay） ---------- */
+
+/** 直达结账入口（月付拍板；未登录会被 WorkOS 拦截回登录链——调用方已保障登录态）。 */
+const CHECKOUT_DEEP_LINK = 'https://cursor.com/api/auth/checkoutDeepControl?yearly=false'
+const CHECKOUT_LAND_TIMEOUT_MS = 45_000
+const CHECKOUT_ALIPAY_TIMEOUT_MS = 15_000
+const CHECKOUT_USD_TIMEOUT_MS = 10_000
+const CHECKOUT_RADIO_TIMEOUT_MS = 5_000
+
+/**
+ * 结账页探测（__sgCheckoutProbe）：位置 + 账单表单锚点 + 币种/支付方式状态 + 拒绝文案。
+ * 控件按可见文本定位（USD / Alipay·支付宝），locale 与 class 漂移都不致命；
+ * 选中态合并 disabled / aria-pressed / aria-checked / aria-selected / class 信号。
+ */
+const CHECKOUT_PROBE_JS = `JSON.stringify((() => {
+  const txt = (el) => (el && el.textContent ? el.textContent : '').replace(/\\s+/g, ' ').trim()
+  const active = (el) => !!el && (el.disabled === true
+    || el.getAttribute('aria-pressed') === 'true' || el.getAttribute('aria-checked') === 'true'
+    || el.getAttribute('aria-selected') === 'true'
+    || (typeof el.className === 'string' && /selected|active|checked/i.test(el.className)))
+  const usd = [...document.querySelectorAll('button, [role=button], [role=tab]')]
+    .find((el) => /^USD\\b/.test(txt(el).toUpperCase()))
+  const alipay = [...document.querySelectorAll('[role=radio], [role=tab], button, label')]
+    .find((el) => /alipay|支付宝/i.test(txt(el)))
+  return {
+    h: location.hostname,
+    p: location.pathname,
+    s: document.readyState,
+    form: !!document.querySelector('select[name=billingCountry]'),
+    usd: !!usd,
+    usdActive: active(usd),
+    alipay: !!alipay,
+    alipayChecked: active(alipay) || !!document.querySelector('input[name*=alipay i]:checked'),
+    alert: txt(document.querySelector('[role=alert]')).slice(0, 160)
+  }
+})()) /* __sgCheckoutProbe */`
+
+/**
+ * 结账页可点目标的视口中心坐标（__sgCheckoutTarget）：先 scrollIntoView 再量取，
+ * 供 Input.dispatchMouseEvent 产生可信点击（React/Stripe 对 el.click() 的合成事件可能无响应）。
+ * kind：usd 币种切换 / alipay 支付方式 / submit 提交按钮。
+ */
+const CHECKOUT_TARGET_CENTER_JS = (kind: 'usd' | 'alipay' | 'submit'): string => `JSON.stringify((() => {
+  const txt = (el) => (el && el.textContent ? el.textContent : '').replace(/\\s+/g, ' ').trim()
+  let el = null
+  if (${JSON.stringify(kind)} === 'usd') {
+    el = [...document.querySelectorAll('button, [role=button], [role=tab]')]
+      .find((candidate) => /^USD\\b/.test(txt(candidate).toUpperCase()))
+  } else if (${JSON.stringify(kind)} === 'alipay') {
+    el = [...document.querySelectorAll('[role=radio], [role=tab], button, label')]
+      .find((candidate) => /alipay|支付宝/i.test(txt(candidate)))
+  } else {
+    el = document.querySelector('button[type=submit]')
+  }
+  if (!el) return null
+  el.scrollIntoView({ block: 'center', inline: 'center' })
+  const rect = el.getBoundingClientRect()
+  if (!rect.width && !rect.height) return null
+  return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) }
+})()) /* __sgCheckoutTarget */`
+
+/** 账单文本字段填充（React 受控：原生 setter + input 事件；与登录链同款）。 */
+const FILL_CHECKOUT_FIELD_JS = (name: string, value: string): string => `(() => {
+  const input = document.querySelector('input[name=${JSON.stringify(name)}]')
+  if (!input) return 'no-input'
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, ${JSON.stringify(value)})
+  input.dispatchEvent(new Event('input', { bubbles: true }))
+  return 'filled'
+})() /* __sgCheckoutFill */`
+
+/** 账单 select 设置（按 option value 优先、显示文本兜底——省份项的 value 形态以实机为准）。 */
+const SET_CHECKOUT_SELECT_JS = (name: string, value: string): string => `(() => {
+  const select = document.querySelector('select[name=${JSON.stringify(name)}]')
+  if (!select) return 'no-select'
+  const wanted = ${JSON.stringify(value)}
+  const option = [...select.options].find((candidate) => candidate.value === wanted || candidate.textContent.trim() === wanted)
+  if (!option) return 'no-option'
+  Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(select, option.value)
+  select.dispatchEvent(new Event('change', { bubbles: true }))
+  return 'set'
+})() /* __sgCheckoutSelect */`
+
+/** 提交前复核：读取全部账单字段现值（province 同时取选中项文本）+ aria-invalid 计数 + 告警。 */
+const CHECKOUT_VERIFY_JS = `JSON.stringify((() => {
+  const val = (name) => {
+    const el = document.querySelector('[name="' + name + '"]')
+    return el ? String(el.value ?? '') : null
+  }
+  const province = document.querySelector('select[name=billingProvince]')
+  return {
+    name: val('billingName'),
+    country: val('billingCountry'),
+    province: val('billingProvince'),
+    provinceText: province && province.selectedOptions && province.selectedOptions[0]
+      ? province.selectedOptions[0].textContent.trim() : '',
+    locality: val('billingLocality'),
+    dependentLocality: val('billingDependentLocality'),
+    line1: val('billingLine1'),
+    line2: val('billingLine2'),
+    postal: val('billingPostalCode'),
+    invalid: document.querySelectorAll('[aria-invalid="true"]').length,
+    alert: ((document.querySelector('[role=alert]') || {}).textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 160)
+  }
+})()) /* __sgCheckoutVerify */`
+
+export interface ProUpgradeCheckoutInput {
+  /** 目标账号 id（token 的 user_xxx 前缀）：付款前的登录态归属守门，不一致即中止。 */
+  expectedAccountId: string
+  /** 卡号导入账号的保存凭据：窗口未登录/结账被重定向登录页时自动登录自愈一次。 */
+  credentials?: { email: string; password: string }
+  /** 账单资料（姓名 + 中国地址）；国家/币种/月付是链路既定拍板（见 cursor-checkout-profile.ts）。 */
+  profile: CursorCheckoutProfile
+  /** 测试/实机校准闸门：false 时填写并复核后停在提交前——绝不生成付款二维码。 */
+  allowSubmit?: boolean
+}
+
+interface CheckoutProbe {
+  h?: string
+  p?: string
+  s?: string
+  form?: boolean
+  usd?: boolean
+  usdActive?: boolean
+  alipay?: boolean
+  alipayChecked?: boolean
+  alert?: string
+}
+
+interface LoginProbe {
+  h?: string
+  p?: string
+  s?: string
+  email?: boolean
+  password?: boolean
+  code?: boolean
+  alert?: string
+  human?: boolean
+}
 
 class CdpConnection {
   private nextId = 1
@@ -187,6 +395,7 @@ export class FingerprintAccountChannel implements AccountAutomationBrowserHost {
   private readonly resultTimeoutMs: number
   private readonly authChainGraceMs: number
   private readonly pollIntervalMs: number
+  private readonly loginTimeoutMs: number
   private readonly shouldAcknowledgeModelDataPolicies: () => boolean
   private session: ChannelSession | undefined
   /** 轮换基准：readToken 时缓存的旧 token；deleteWhenReady 等它变化后才发起删除。 */
@@ -207,6 +416,7 @@ export class FingerprintAccountChannel implements AccountAutomationBrowserHost {
     this.resultTimeoutMs = options.resultTimeoutMs ?? 10_000
     this.authChainGraceMs = options.authChainGraceMs ?? 6_000
     this.pollIntervalMs = options.pollIntervalMs ?? 300
+    this.loginTimeoutMs = options.loginTimeoutMs ?? 120_000
     this.shouldAcknowledgeModelDataPolicies = options.shouldAcknowledgeModelDataPolicies ?? (() => true)
   }
 
@@ -333,6 +543,380 @@ export class FingerprintAccountChannel implements AccountAutomationBrowserHost {
     const session = await this.ensureSession(profileIdOverride)
     await session.cdp.send('Page.navigate', { url: CURSOR_ORIGIN }, session.sessionId)
     session.cursorPageOpened = true
+  }
+
+  /**
+   * 凭据自动登录（卡号导入账号的 Token 续期）：在指纹窗口内走官网「邮箱 → 密码」
+   * 登录链（WorkOS AuthKit，实机验证 2026-09-15：/password 页存在密码路径）。
+   *
+   * 流程：导航官网 → 已有会话则 /api/auth/me 核对邮箱（同人直接交付，他人会话拒绝
+   * 触碰）→ dashboard 触发认证跳转 → 填邮箱 → 填密码 → 等 cookie 落罐。
+   * Turnstile 人机验证（页面内嵌 challenges.cloudflare iframe）：指纹窗口真实可见，
+   * 挑战出现时周期补提交并等到 loginTimeoutMs——用户顺手点一下即继续；超时明确报错。
+   * 邮箱验证码账号（无密码路径）明确报错并保留窗口：手动完成后重试即走「已登录」交付。
+   *
+   * 成功后只交付 token（cookie 已在 profile 持久化）；关窗与否由调用方决定。
+   */
+  async loginWithCredentials(
+    input: { email: string; password: string },
+    profileIdOverride?: string
+  ): Promise<{ token: string; outcome: 'already_logged_in' | 'logged_in' }> {
+    const email = input.email.trim()
+    if (!email || !input.password) throw new Error('登录凭据不完整（缺邮箱或 Cursor 密码）')
+    const session = await this.ensureSession(profileIdOverride)
+
+    // ① 现有会话核对：同账号直接交付；他人账号拒绝触碰（宁可报错，不动他人会话）
+    await session.cdp.send('Page.navigate', { url: CURSOR_ORIGIN }, session.sessionId)
+    session.cursorPageOpened = true
+    await this.waitForCursorSite(session)
+    const existing = await this.readTokenFromSession(session).catch(() => undefined)
+    if (existing) {
+      const meEmail = await this.evalInSession(session, READ_ACCOUNT_EMAIL_JS, true).catch(() => '')
+      if (typeof meEmail !== 'string' || !meEmail) {
+        throw new Error('窗口登录态核对失败（官网资料接口不可达）；请重试，或在「导入来源」一键清理环境后登录')
+      }
+      if (meEmail.toLowerCase() !== email.toLowerCase()) {
+        throw new Error(`指纹窗口当前登录的是其他账号（${meEmail}）；请先一键清理该窗口环境，或为账号改绑其他窗口`)
+      }
+      this.lastKnownToken = existing
+      return { token: existing, outcome: 'already_logged_in' }
+    }
+
+    // ② 进入认证链：dashboard 触发 WorkOS 跳转，等邮箱/密码/验证码任一控件落地。
+    // 自愈：① 的 cookie 读取若瞬时失败而会话其实有效，dashboard 会直接落地登录态——
+    // 每轮先重读 cookie，token 落罐即直接交付，不把有效会话误判成认证页超时。
+    await session.cdp.send('Page.navigate', { url: REFRESH_URL }, session.sessionId)
+    const stepDeadline = this.now() + this.pageReadyTimeoutMs
+    let probe: LoginProbe = {}
+    for (;;) {
+      const token = await this.readTokenFromSession(session).catch(() => undefined)
+      if (token) {
+        this.lastKnownToken = token
+        session.cursorPageOpened = true
+        return { token, outcome: 'already_logged_in' }
+      }
+      probe = await this.probeLogin(session)
+      if (probe.email || probe.password || probe.code) break
+      if (probe.alert) throw new Error(`登录被官网拒绝：${probe.alert}`)
+      if (this.now() >= stepDeadline) throw new Error('认证页加载超时（未出现邮箱/密码输入框；请确认网络可达 cursor.com）')
+      await this.sleep(this.pollIntervalMs)
+    }
+    if (probe.code && !probe.password && !probe.email) this.throwOtpRequired()
+    if (probe.alert) throw new Error(`登录被官网拒绝：${probe.alert}`)
+
+    // ③ 邮箱步（密码页直出时跳过）
+    if (probe.email && !probe.password) {
+      const filled = await this.evalInSession(session, FILL_EMAIL_JS(email))
+      if (filled !== 'submitted') throw new Error('认证页邮箱输入框不可用（页面结构变更）')
+      probe = await this.pollLoginProbe(session, this.now() + this.pageReadyTimeoutMs, (state) => Boolean(state.password || state.code || state.alert))
+      if (probe.code && !probe.password) this.throwOtpRequired()
+      if (probe.alert) throw new Error(`登录被官网拒绝：${probe.alert}`)
+    }
+
+    // ④ 密码步
+    const filledPassword = await this.evalInSession(session, FILL_PASSWORD_JS(input.password))
+    if (filledPassword !== 'submitted') throw new Error('认证页密码输入框不可用（页面结构变更）')
+
+    // ⑤ 等登录完成：cookie 落罐即成功；Turnstile 挑战期间周期补提交（用户可在窗口手动完成）
+    const loginDeadline = this.now() + this.loginTimeoutMs
+    let lastResubmit = 0
+    for (;;) {
+      const token = await this.readTokenFromSession(session).catch(() => undefined)
+      if (token) {
+        this.lastKnownToken = token
+        // 登录回调落在 cursor.com：标记页面已就位，后续政策确认等操作免一次无谓导航。
+        session.cursorPageOpened = true
+        return { token, outcome: 'logged_in' }
+      }
+      probe = await this.probeLogin(session)
+      if (probe.code && !probe.password) this.throwOtpRequired()
+      if (probe.alert) throw new Error(`登录被官网拒绝：${probe.alert}`)
+      if (this.now() >= loginDeadline) {
+        throw new Error('自动登录超时：若窗口弹出人机验证，请手动完成后重试')
+      }
+      if (probe.password && this.now() - lastResubmit > 2_500) {
+        await this.evalInSession(session, RESUBMIT_PASSWORD_JS).catch(() => undefined)
+        lastResubmit = this.now()
+      }
+      await this.sleep(this.pollIntervalMs)
+    }
+  }
+
+  /** 邮箱验证码账号（无密码路径）的统一报错：窗口保留，手动完成后重试即可。 */
+  private throwOtpRequired(): never {
+    throw new Error('该账号登录需要邮箱验证码（暂不支持自动读取）；窗口已打开，请手动完成登录后重试')
+  }
+
+  /** 单次登录探测（脏帧按空态处理——导航中途的瞬时 evaluate 失败不致命）。 */
+  private async probeLogin(session: ChannelSession): Promise<LoginProbe> {
+    try {
+      const raw = await this.evalInSession(session, LOGIN_PROBE_JS)
+      return typeof raw === 'string' ? JSON.parse(raw) as LoginProbe : {}
+    } catch {
+      return {}
+    }
+  }
+
+  /** 轮询登录探测直到谓词命中；超时抛「认证页加载超时」。 */
+  private async pollLoginProbe(
+    session: ChannelSession,
+    deadline: number,
+    until: (state: LoginProbe) => boolean
+  ): Promise<LoginProbe> {
+    for (;;) {
+      const state = await this.probeLogin(session)
+      if (until(state)) return state
+      if (this.now() >= deadline) throw new Error('认证页加载超时（未出现邮箱/密码输入框；请确认网络可达 cursor.com）')
+      await this.sleep(this.pollIntervalMs)
+    }
+  }
+
+  /* ---------- 升级 Pro 结账 ---------- */
+
+  /** 单次结账页探测（脏帧按空态处理——导航中途的瞬时 evaluate 失败不致命）。 */
+  private async probeCheckout(session: ChannelSession): Promise<CheckoutProbe> {
+    try {
+      const raw = await this.evalInSession(session, CHECKOUT_PROBE_JS)
+      return typeof raw === 'string' ? JSON.parse(raw) as CheckoutProbe : {}
+    } catch {
+      return {}
+    }
+  }
+
+  /** 轮询结账探测直到谓词命中；超时抛 given 错误。 */
+  private async pollCheckoutProbe(
+    session: ChannelSession,
+    deadline: number,
+    until: (state: CheckoutProbe) => boolean,
+    timeoutMessage: string
+  ): Promise<CheckoutProbe> {
+    for (;;) {
+      const state = await this.probeCheckout(session)
+      if (until(state)) return state
+      if (this.now() >= deadline) throw new Error(timeoutMessage)
+      await this.sleep(this.pollIntervalMs)
+    }
+  }
+
+  /** 可信点击结账页目标（量中心坐标 → Input.dispatchMouseEvent 按下/抬起）。 */
+  private async clickCheckoutTarget(session: ChannelSession, kind: 'usd' | 'alipay' | 'submit'): Promise<boolean> {
+    const raw = await this.evalInSession(session, CHECKOUT_TARGET_CENTER_JS(kind)).catch(() => undefined)
+    if (typeof raw !== 'string' || !raw) return false
+    const center = JSON.parse(raw) as { x?: unknown; y?: unknown } | null
+    if (!center || typeof center.x !== 'number' || typeof center.y !== 'number') return false
+    for (const type of ['mousePressed', 'mouseReleased'] as const) {
+      await session.cdp.send('Input.dispatchMouseEvent', {
+        type, x: center.x, y: center.y, button: 'left', buttons: 1, clickCount: 1
+      }, session.sessionId)
+    }
+    return true
+  }
+
+  /**
+   * ② 直达 Stripe 结账并等落地；被 WorkOS 拦回登录链时用保存凭据自愈一次重试。
+   */
+  private async navigateToCheckout(session: ChannelSession, credentials?: { email: string; password: string }): Promise<void> {
+    await session.cdp.send('Page.navigate', { url: CHECKOUT_DEEP_LINK }, session.sessionId)
+    let deadline = this.now() + CHECKOUT_LAND_TIMEOUT_MS
+    let authChainSince: number | undefined
+    let retriedLogin = false
+    for (;;) {
+      const probe = await this.probeCheckout(session)
+      const host = probe.h ?? ''
+      const path = probe.p ?? ''
+      if (host === 'checkout.stripe.com' && probe.s !== 'loading') return
+      const onAuthChain = host.includes('authenticator.') || path.startsWith('/login')
+      if (onAuthChain) {
+        authChainSince = authChainSince ?? this.now()
+        if (this.now() - authChainSince > this.authChainGraceMs) {
+          if (credentials && !retriedLogin) {
+            // 会话失效自愈：凭据重登一次后重新直达（登录链会导航离开，结账 URL 重新变新鲜）。
+            // 登录本身可能耗满整个落地窗口——重导航后必须重置 deadline，否则零等待直接超时。
+            retriedLogin = true
+            const login = await this.loginWithCredentials(credentials, session.profileId)
+            this.lastKnownToken = login.token
+            await session.cdp.send('Page.navigate', { url: CHECKOUT_DEEP_LINK }, session.sessionId)
+            authChainSince = undefined
+            deadline = this.now() + CHECKOUT_LAND_TIMEOUT_MS
+            continue
+          }
+          throw new Error('结账导航被重定向到登录页（窗口会话失效）；请重新登录后重试')
+        }
+      } else {
+        authChainSince = undefined
+      }
+      if (this.now() >= deadline) {
+        throw new Error('结账导航未进入 Stripe 结账页（登录态可能失效或网络不可达）')
+      }
+      await this.sleep(this.pollIntervalMs)
+    }
+  }
+
+  /** ⑦ 按序填账单资料；任何字段锚点缺失即报「页面结构变更」，绝不静默漏填。 */
+  private async fillCheckoutProfile(session: ChannelSession, profile: CursorCheckoutProfile): Promise<void> {
+    const fill = async (name: string, value: string): Promise<void> => {
+      const filled = await this.evalInSession(session, FILL_CHECKOUT_FIELD_JS(name, value))
+      if (filled !== 'filled') throw new Error(`账单字段不可用（页面结构变更）：${name}`)
+    }
+    await fill('billingName', profile.name)
+    await fill('billingPostalCode', profile.postalCode)
+    // 省份是 select（中国地址特有）；选项未命中要报出具体省名，便于用户核对资料
+    const province = await this.evalInSession(session, SET_CHECKOUT_SELECT_JS('billingProvince', profile.province))
+    if (province === 'no-option') throw new Error(`省份选项未找到：${profile.province}（请核对「自动化」设置里的账单省份）`)
+    if (province !== 'set') throw new Error('账单字段不可用（页面结构变更）：billingProvince')
+    await fill('billingLocality', profile.city)
+    await fill('billingDependentLocality', profile.district)
+    await fill('billingLine1', profile.line1)
+    if (profile.line2 !== undefined) await fill('billingLine2', profile.line2)
+  }
+
+  /** ⑧ 提交前复核：页面现值与资料逐项比对（省份按 value 或选中项文本），不一致/有告警即中止。 */
+  private async verifyCheckoutProfile(session: ChannelSession, profile: CursorCheckoutProfile): Promise<void> {
+    const raw = await this.evalInSession(session, CHECKOUT_VERIFY_JS)
+    const values = typeof raw === 'string' ? JSON.parse(raw) as Record<string, unknown> : {}
+    const mismatches: string[] = []
+    const expect = (label: string, actual: unknown, wanted: string): void => {
+      if (actual !== wanted) mismatches.push(`${label}=「${String(actual ?? '缺失')}」（应为「${wanted}」）`)
+    }
+    expect('姓名', values.name, profile.name)
+    expect('国家', values.country, CURSOR_CHECKOUT_COUNTRY)
+    if (values.province !== profile.province && values.provinceText !== profile.province) {
+      mismatches.push(`省份=「${String(values.provinceText || values.province || '缺失')}」（应为「${profile.province}」）`)
+    }
+    expect('城市', values.locality, profile.city)
+    expect('区/县', values.dependentLocality, profile.district)
+    expect('地址行 1', values.line1, profile.line1)
+    expect('地址行 2', values.line2, profile.line2 ?? '')
+    expect('邮编', values.postal, profile.postalCode)
+    if (mismatches.length > 0) throw new Error(`账单资料复核不一致：${mismatches.join('；')}`)
+    if (typeof values.invalid === 'number' && values.invalid > 0) {
+      throw new Error(`结账页存在 ${values.invalid} 个校验未通过的字段${values.alert ? `：${String(values.alert)}` : ''}`)
+    }
+    if (typeof values.alert === 'string' && values.alert) throw new Error(`结账页校验告警：${values.alert}`)
+  }
+
+  /**
+   * 升级 Pro 扫码付款：在指纹窗口内直达 Stripe 月付结账（USD · Alipay），
+   * 自动填写账单资料并提交，用户在窗口里用支付宝扫码完成付款。
+   *
+   * 链条（每步失败即中止，窗口保留供人工接管）：
+   *   ① 登录态门：cookie 直通（无需导航）；归属 ≠ 目标账号即中止——绝不在错误账号上付款。
+   *      未登录时用保存凭据自动登录；无凭据明确报错引导。
+   *   ② 直达结账（checkoutDeepControl 月付）；被拦回登录链时凭据自愈重试一次。
+   *   ③ 等账单表单（select[name=billingCountry]）。
+   *   ④ 币种切 USD（结账页内切换器；页面无切换器时跳过）。
+   *   ⑤ 国家选 CN（Alipay 出现的前提）→ 等支付宝选项出现。
+   *   ⑥ 选中 Alipay。
+   *   ⑦ 按序填地址（name→postal→province→locality→dependentLocality→line1→line2）。
+   *   ⑧ 提交前复核（现值逐项比对 + aria-invalid + 告警）。
+   *   ⑨ 提交并等离开收银台（最长 loginTimeoutMs，风控验证留给用户手动完成）。
+   *
+   * allowSubmit=false（测试/实机校准闸门）：⑧ 通过后停在提交前，绝不生成付款二维码。
+   */
+  async startProUpgradeCheckout(input: ProUpgradeCheckoutInput, profileIdOverride?: string): Promise<CursorProUpgradeResult> {
+    const profileIssue = cursorCheckoutProfileIssue(input.profile)
+    if (profileIssue) throw new Error(`账单资料不完整（缺${profileIssue}）——请先在「自动化」设置里补全`)
+    const expected = input.expectedAccountId.trim()
+    if (!expected) throw new Error('缺少目标账号归属标识（expectedAccountId），已中止')
+    const session = await this.ensureSession(profileIdOverride)
+
+    // ① 登录态门（cookie 级，不导航）
+    const ownerOf = (token: string): string => token.split('::', 1)[0]?.trim() ?? ''
+    let token = await this.readTokenFromSession(session).catch(() => undefined)
+    if (token) {
+      const owner = ownerOf(token)
+      if (owner && owner !== expected) {
+        throw new Error('指纹窗口当前登录的是其他账号——为避免给错误账号付款已中止；请一键清理窗口环境或改绑窗口后重试')
+      }
+    } else if (input.credentials) {
+      const login = await this.loginWithCredentials(input.credentials, session.profileId)
+      token = login.token
+      const owner = ownerOf(token)
+      if (owner && owner !== expected) throw new Error('自动登录成功但会话归属与目标账号不一致，已中止')
+    } else {
+      throw new Error('指纹窗口未登录 cursor.com，且该账号无保存凭据——请先打开窗口登录，或使用卡号导入账号')
+    }
+    this.lastKnownToken = token
+
+    // ② 直达结账（月付拍板）
+    await this.navigateToCheckout(session, input.credentials)
+
+    // ③ 等账单表单
+    await this.pollCheckoutProbe(
+      session,
+      this.now() + this.pageReadyTimeoutMs,
+      (state) => state.form === true,
+      '结账表单加载超时（未出现账单地址表单；请确认网络可达 checkout.stripe.com）'
+    )
+
+    // ④ 币种 USD（页面提供切换器且未选中时才点；点击后等选中态生效）
+    const currencyProbe = await this.probeCheckout(session)
+    if (currencyProbe.usd && !currencyProbe.usdActive) {
+      if (!(await this.clickCheckoutTarget(session, 'usd'))) throw new Error('币种切换器不可点（页面结构变更）：USD')
+      await this.pollCheckoutProbe(
+        session,
+        this.now() + CHECKOUT_USD_TIMEOUT_MS,
+        (state) => state.usdActive === true,
+        '币种切换未生效（USD 未成为选中态）'
+      )
+    }
+
+    // ⑤ 国家 CN → 等 Alipay 出现
+    const country = await this.evalInSession(session, SET_CHECKOUT_SELECT_JS('billingCountry', CURSOR_CHECKOUT_COUNTRY))
+    if (country !== 'set') throw new Error('账单国家选择框不可用（页面结构变更）：billingCountry')
+    await this.pollCheckoutProbe(
+      session,
+      this.now() + CHECKOUT_ALIPAY_TIMEOUT_MS,
+      (state) => state.alipay === true,
+      '选择中国后未出现支付宝选项（结账页结构波动或支付方式不可用）'
+    )
+
+    // ⑥ 选中 Alipay
+    if (!(await this.clickCheckoutTarget(session, 'alipay'))) throw new Error('支付宝选项不可点（页面结构变更）')
+    await this.pollCheckoutProbe(
+      session,
+      this.now() + CHECKOUT_RADIO_TIMEOUT_MS,
+      (state) => state.alipayChecked === true,
+      '支付宝选项选中失败（页面结构变更）'
+    )
+
+    // ⑦⑧ 填单 + 复核
+    await this.fillCheckoutProfile(session, input.profile)
+    await this.verifyCheckoutProfile(session, input.profile)
+
+    if (input.allowSubmit === false) {
+      return { outcome: 'verified', detail: '账单资料已填写并复核通过；按测试闸门停在提交前（未生成付款二维码）' }
+    }
+
+    // ⑨ 提交 → 等离开收银台（进入扫码/风控页）
+    if (!(await this.clickCheckoutTarget(session, 'submit'))) throw new Error('提交按钮不可点（页面结构变更）')
+    const submitDeadline = this.now() + this.loginTimeoutMs
+    for (;;) {
+      const probe = await this.probeCheckout(session)
+      if (probe.h && probe.h !== 'checkout.stripe.com') {
+        return { outcome: 'awaiting_payment', detail: '结账页已提交，请在指纹浏览器窗口中用支付宝扫码完成付款' }
+      }
+      if (probe.p && !probe.p.startsWith('/c/pay')) {
+        return { outcome: 'awaiting_payment', detail: '结账页已提交，请在指纹浏览器窗口中用支付宝扫码完成付款' }
+      }
+      if (probe.alert) throw new Error(`提交被拒：${probe.alert}`)
+      if (this.now() >= submitDeadline) {
+        throw new Error('提交后未到达支付页（可能有风控验证待完成——请在窗口中手动完成）')
+      }
+      await this.sleep(this.pollIntervalMs)
+    }
+  }
+
+  /** 等页面落到 cursor.com 且非加载中（认证链中途态按未就绪继续等）。 */
+  private async waitForCursorSite(session: ChannelSession): Promise<void> {
+    const deadline = this.now() + this.pageReadyTimeoutMs
+    for (;;) {
+      const state = await this.probeLogin(session)
+      const host = state.h ?? ''
+      if ((host === 'cursor.com' || host.endsWith('.cursor.com')) && state.s !== 'loading') return
+      if (this.now() >= deadline) throw new Error('cursor.com 页面加载超时（请确认网络可达）')
+      await this.sleep(this.pollIntervalMs)
+    }
   }
 
   /** 等待新 target 真正进入 cursor.com；仅检查同源与加载状态，不依赖 React 页面结构。 */

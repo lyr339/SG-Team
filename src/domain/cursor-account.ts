@@ -13,6 +13,30 @@ export interface CursorAccountMetadata {
    * 自动化链的浏览器操作锚定活跃账号的绑定窗口，未绑定时回退「默认窗口」。
    */
   fingerprintProfileId?: string
+  /** 卡号导入账号的邮箱（明文展示用；非卡号来源的账号缺省）。 */
+  email?: string
+  /** 是否随账号保存了加密登录凭据（邮箱/Cursor 密码等，自动登录的准入条件）。 */
+  hasCredentials?: boolean
+}
+
+/**
+ * 卡号导入随账号保存的登录凭据（整体加密为一个 blob 入库，永不入明文存储/日志/回显）。
+ * 邮箱密码与辅邮密码供日后读取登录验证码；Cursor 密码供指纹浏览器自动登录。
+ */
+export interface CursorAccountCredentials {
+  email: string
+  cursorPassword: string
+  emailPassword?: string
+  recoveryEmail?: string
+  recoveryEmailPassword?: string
+}
+
+export function isCursorAccountCredentials(value: unknown): value is CursorAccountCredentials {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const record = value as Record<string, unknown>
+  const optionalStrings = ['emailPassword', 'recoveryEmail', 'recoveryEmailPassword']
+  return typeof record.email === 'string' && typeof record.cursorPassword === 'string'
+    && optionalStrings.every((key) => record[key] === undefined || typeof record[key] === 'string')
 }
 
 /**

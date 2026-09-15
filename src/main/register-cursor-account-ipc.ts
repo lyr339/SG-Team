@@ -5,6 +5,7 @@ import { verifyCursorRuntimeAccountMatch } from '../application/cursor-runtime-a
 import { resolveCursorMembership } from '../application/cursor-membership-resolver'
 import { fetchCursorAccountMemberships } from '../application/cursor-account-memberships'
 import { CursorTokenImporter } from '../infrastructure/cursor/cursor-token-importer'
+import { parseCursorAccountCard } from '../domain/cursor-account-card'
 import { CursorMembershipFetcher } from '../infrastructure/cursor/cursor-membership-profile'
 import { CursorAccountSwitcher } from '../infrastructure/cursor/cursor-account-switcher'
 import { CursorRuntimeAccountBridge, CURSOR_RUNTIME_SWITCH_KEY, CURSOR_RUNTIME_SWITCH_PORT } from '../infrastructure/cursor/cursor-runtime-account-bridge'
@@ -16,6 +17,7 @@ import type { CursorLiveSwitcher } from '../infrastructure/cursor/cursor-live-sw
 import type { CursorSwitchPumpInstaller } from '../infrastructure/cursor/cursor-switch-pump-installer'
 import type { CursorSwitchMutex } from '../infrastructure/cursor/cursor-switch-mutex'
 import { IPC } from '../shared/desktop-api'
+import type { CursorProUpgradeResult } from '../domain/cursor-checkout-profile'
 import { assertTrustedSender } from './ipc-security'
 
 function accountIdOf(value: unknown): string {
@@ -66,6 +68,20 @@ export interface CursorAccountIpcOptions {
     changed: boolean
     policies: Array<{ kind: 'already_acknowledged' | 'acknowledged'; modelId: string; consentVersion: string }>
   }>
+  /**
+   * 凭据自动登录（卡号导入账号）：在指纹窗口内走官网邮箱+密码登录链。
+   * profileId 缺省时按「活跃账号绑定 ?? 默认窗口」解析；失败抛带引导的错误。
+   */
+  loginWithCredentials?: (input: { email: string; password: string }, profileId?: string) => Promise<{
+    token: string
+    outcome: 'already_logged_in' | 'logged_in'
+  }>
+  /**
+   * 升级 Pro 扫码付款：直达 Stripe 月付结账（USD · 支付宝），填写复核后提交，
+   * 窗口保留供用户扫码。编排（vault 归属核对/凭据自愈 + 设置里的账单资料）
+   * 在装配层闭包完成；缺省时 IPC 报未装配。
+   */
+  startProUpgrade?: (accountId: string) => Promise<CursorProUpgradeResult>
   /** 无感换号核心（热切手动入口）；缺省时热切 IPC 报未装配。 */
   liveSwitcher?: Pick<CursorLiveSwitcher, 'switchLive'>
   /** 切号补丁安装器（维护页状态卡/一键安装）。 */
@@ -106,6 +122,51 @@ export function registerCursorAccountIpc(
       token: input.token,
       makeActive: typeof input.makeActive === 'boolean' ? input.makeActive : undefined
     })
+  })
+  ipcMain.handle(IPC.cursorAccountsSaveCard, async (event, value: unknown) => {
+    assertTrustedSender(event, getWindow)
+    if (!value || typeof value !== 'object') throw new Error('卡号参数无效')
+    const input = value as Record<string, unknown>
+    if (typeof input.card !== 'string' || !input.card.trim() || input.card.length > 16_384) throw new Error('卡号参数无效')
+    // 主进程权威解析（渲染层的粘贴预览只是预览）；字段错误原样上抛给表单亮出。
+    const card = parseCursorAccountCard(input.card)
+    let result = vault.saveCard({
+      card,
+      sub: card.sub,
+      makeActive: typeof input.makeActive === 'boolean' ? input.makeActive : undefined
+    })
+    // Token 已过期且装配了自动登录：用卡内凭据当场刷新（失败不阻断保存——
+    // 凭据已入库，结果带 loginError，账号卡片可稍后重试）。
+    if (card.expiresAt !== undefined && card.expiresAt <= Date.now() && options.loginWithCredentials) {
+      try {
+        const login = await options.loginWithCredentials({ email: card.email, password: card.cursorPassword }, undefined)
+        result = { ...result, accounts: vault.replaceToken(result.accountId, login.token), tokenRefreshed: true }
+      } catch (reason) {
+        const detail = reason instanceof Error ? reason.message : String(reason)
+        result = { ...result, loginError: detail.replace(/\s+/g, ' ').trim().slice(0, 200) }
+      }
+    }
+    return result
+  })
+  ipcMain.handle(IPC.cursorAccountsLogin, async (event, value: unknown) => {
+    assertTrustedSender(event, getWindow)
+    if (!options.loginWithCredentials) throw new Error('指纹浏览器自动登录未装配')
+    const id = accountIdOf(value)
+    const credentials = vault.credentials(id)
+    if (!credentials) throw new Error('该账号没有保存的登录凭据（仅卡号导入的账号支持自动登录）')
+    // 窗口锚定账号绑定（导入时记录）；未绑定回退默认窗口（通道内解析）。
+    const account = vault.list().find((candidate) => candidate.id === id)
+    const login = await options.loginWithCredentials(
+      { email: credentials.email, password: credentials.cursorPassword },
+      account?.fingerprintProfileId
+    )
+    return { accounts: vault.replaceToken(id, login.token), outcome: login.outcome }
+  })
+  ipcMain.handle(IPC.cursorAccountsStartProUpgrade, async (event, value: unknown) => {
+    assertTrustedSender(event, getWindow)
+    if (!options.startProUpgrade) throw new Error('升级 Pro 结账通道未装配')
+    // 编排（归属守门/凭据/账单资料/窗口解析）在装配闭包内；这里只做入参校验。
+    return options.startProUpgrade(accountIdOf(value))
   })
   ipcMain.handle(IPC.cursorAccountsSelect, (event, accountId: unknown) => {
     assertTrustedSender(event, getWindow)
@@ -275,6 +336,9 @@ export function registerCursorAccountIpc(
   return () => {
     ipcMain.removeHandler(IPC.cursorAccountsList)
     ipcMain.removeHandler(IPC.cursorAccountsSave)
+    ipcMain.removeHandler(IPC.cursorAccountsSaveCard)
+    ipcMain.removeHandler(IPC.cursorAccountsLogin)
+    ipcMain.removeHandler(IPC.cursorAccountsStartProUpgrade)
     ipcMain.removeHandler(IPC.cursorAccountsSelect)
     ipcMain.removeHandler(IPC.cursorAccountsRemove)
     ipcMain.removeHandler(IPC.cursorAccountsImportFromLocal)

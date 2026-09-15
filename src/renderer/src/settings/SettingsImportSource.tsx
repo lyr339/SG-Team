@@ -1,12 +1,14 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { AccountAutomationPhase } from '../../../domain/account-automation'
+import { detectPastedSecret, parseCursorAccountCard, type ParsedCursorAccountCard } from '../../../domain/cursor-account-card'
 import { AccountBrowserPanel } from '../lobby/AccountBrowserPanel'
+import { formatFullClock } from '../format'
 import type { SettingsPageProps } from './settings-view'
 import { isActiveAutomationPhase } from './settings-view'
 import { SettingsSection } from './SettingsSection'
 
 type ImportSourceProps = Pick<SettingsPageProps,
-  | 'accounts' | 'busy' | 'onSave'
+  | 'accounts' | 'busy' | 'onSave' | 'onSaveCard'
   | 'onImportFromLocal' | 'onImportFromBrowser' | 'onImportFromFingerprint'
   | 'onOpenFingerprintLogin' | 'onCleanupFingerprintEnvironment'
   | 'automationSettings' | 'onSaveAutomationSettings'
@@ -26,6 +28,7 @@ interface SettingsImportSourceProps extends ImportSourceProps {
 export function SettingsImportSource({
   busy,
   onSave,
+  onSaveCard,
   onImportFromLocal,
   onImportFromBrowser,
   onImportFromFingerprint,
@@ -115,32 +118,90 @@ export function SettingsImportSource({
             </button>
           ) : null}
           <button className={adding ? 'is-active' : ''} onClick={() => setAdding((value) => !value)}
-            title="粘贴从 cursor.com 控制台手动获取的 Session Token">
-            {adding ? '收起手动添加' : '手动粘贴 Token'}
+            title="粘贴账号卡号（邮箱----邮箱密码----Cursor密码----辅邮----辅邮密码----Token）或单独的 Session Token">
+            {adding ? '收起手动添加' : '手动粘贴卡号 / Token'}
           </button>
         </div>
         {!adding ? (
           <p className="lobby-account__note">Token 仅在本机加密保存，不会写入明文存储、日志或再次显示；读取所选浏览器的登录会话；浏览器刷新需要联网。</p>
         ) : null}
-        {adding ? <SettingsManualAddForm busy={busy} onSave={onSave} /> : null}
+        {adding ? <SettingsManualAddForm busy={busy} onSave={onSave} onSaveCard={onSaveCard} /> : null}
       </SettingsSection>
     </>
   )
 }
 
-/** 手动粘贴表单（原步骤一的折叠表单，结构与校验逐字保留）。 */
+/** 粘贴内容的识别结果：空 / 单独 Token / 合法卡号（含预览信息）/ 卡号但字段非法。 */
+type SecretDetection =
+  | { kind: 'empty' }
+  | { kind: 'token' }
+  | { kind: 'card'; card: ParsedCursorAccountCard }
+  | { kind: 'card-error'; message: string }
+
+/**
+ * 手动粘贴表单：一个输入框自动识别卡号（邮箱----…----Token）与单独 Token。
+ * 卡号识别成功即出预览（邮箱/有效期/辅邮），备注自动跟随邮箱（可改）；
+ * 解析与主进程入库共用同一领域实现，预览所见即所得。
+ */
 function SettingsManualAddForm({
   busy,
-  onSave
-}: Pick<SettingsPageProps, 'busy' | 'onSave'>): React.JSX.Element {
+  onSave,
+  onSaveCard
+}: Pick<SettingsPageProps, 'busy' | 'onSave' | 'onSaveCard'>): React.JSX.Element {
   const [label, setLabel] = useState('')
-  const [token, setToken] = useState('')
+  const [labelTouched, setLabelTouched] = useState(false)
+  const [secret, setSecret] = useState('')
+
+  const detection = useMemo<SecretDetection>(() => {
+    const kind = detectPastedSecret(secret)
+    if (kind === 'empty') return { kind: 'empty' }
+    if (kind === 'token') return { kind: 'token' }
+    try {
+      return { kind: 'card', card: parseCursorAccountCard(secret) }
+    } catch (reason) {
+      return { kind: 'card-error', message: reason instanceof Error ? reason.message : String(reason) }
+    }
+  }, [secret])
+
+  // 卡号识别成功且用户未手动改过备注时，备注跟随邮箱（用户一改即不再覆盖）；
+  // 离开卡号形态（清空/改贴单独 Token）时清掉自动填充，避免旧邮箱残留误导保存。
+  useEffect(() => {
+    if (labelTouched) return
+    if (detection.kind === 'card') setLabel(detection.card.label)
+    else if (label) setLabel('')
+  }, [detection, labelTouched, label])
+
+  const isCard = detection.kind === 'card'
+  const cardExpired = isCard && detection.card.expiresAt !== undefined && detection.card.expiresAt <= Date.now()
+  const canSubmit = isCard
+    ? Boolean(onSaveCard) && !busy
+    : detection.kind === 'token' && Boolean(label.trim()) && secret.trim().length >= 8 && !busy
+
+  const [feedback, setFeedback] = useState<{ tone: 'ok' | 'warn'; message: string }>()
 
   const submit = async (): Promise<void> => {
+    setFeedback(undefined)
     try {
-      await onSave({ label, token })
+      if (detection.kind === 'card' && onSaveCard) {
+        const result = await onSaveCard({ card: secret })
+        const base = result.outcome === 'updated'
+          ? `已更新账号「${result.label}」的 Token 与登录凭据`
+          : `已导入账号「${result.label}」；登录凭据已加密保存，可用于自动登录`
+        if (result.tokenRefreshed) {
+          setFeedback({ tone: 'ok', message: `${base}；卡内 Token 已过期，已用凭据自动登录刷新` })
+        } else if (result.loginError) {
+          setFeedback({ tone: 'warn', message: `${base}。卡内 Token 已过期，自动登录未成功（可在账号卡片点「重新登录」重试）：${result.loginError}` })
+        } else {
+          setFeedback({ tone: 'ok', message: base })
+        }
+      } else if (detection.kind === 'token') {
+        await onSave({ label, token: secret })
+      } else {
+        return
+      }
       setLabel('')
-      setToken('')
+      setSecret('')
+      setLabelTouched(false)
     } catch {
       // 错误由父级在卡片底部展示，避免回显凭据。
     }
@@ -148,11 +209,47 @@ function SettingsManualAddForm({
 
   return (
     <div className="account-add-form settings-add-form">
-      <label><span>账号备注</span><input value={label} maxLength={80} placeholder="例如：工作账号 A" disabled={busy} onChange={(event) => setLabel(event.target.value)} /></label>
-      <label><span>Cursor Auth Token</span><input type="password" value={token} maxLength={8192} autoComplete="off" spellCheck={false} placeholder="粘贴 Token" disabled={busy} onChange={(event) => setToken(event.target.value)} /></label>
+      <label>
+        <span>卡号 / Token</span>
+        <textarea
+          value={secret}
+          rows={3}
+          maxLength={16384}
+          autoComplete="off"
+          spellCheck={false}
+          placeholder="粘贴卡号：邮箱----邮箱密码----Cursor密码----辅邮----辅邮密码----Token；或单独粘贴 Token"
+          disabled={busy}
+          onChange={(event) => { setSecret(event.target.value); setFeedback(undefined) }}
+        />
+      </label>
+      {detection.kind === 'card' ? (
+        <div className="settings-card-preview" data-expired={cardExpired || undefined}>
+          <span>识别为卡号：{detection.card.email}</span>
+          <small>
+            {detection.card.expiresAt
+              ? `Token 有效期至 ${formatFullClock(detection.card.expiresAt).split(' ')[0]}${cardExpired ? '（已过期，保存后可自动登录刷新）' : ''}`
+              : 'Token 有效期未知'}
+            {detection.card.recoveryEmail ? ' · 含辅邮' : ''} · 密码凭据随账号加密保存
+          </small>
+        </div>
+      ) : null}
+      {detection.kind === 'card-error' ? <p className="settings-add-form__error" role="alert">{detection.message}</p> : null}
+      <label>
+        <span>账号备注</span>
+        <input
+          value={label}
+          maxLength={80}
+          placeholder={isCard ? '默认为卡号邮箱' : '例如：工作账号 A'}
+          disabled={busy}
+          onChange={(event) => { setLabel(event.target.value); setLabelTouched(true) }}
+        />
+      </label>
       <small>明文不会写入 SQLite、日志或再次显示。</small>
-      <button className="lobby-account__save" disabled={busy || !label.trim() || token.trim().length < 8} onClick={() => void submit()}>
-        {busy ? '保存中…' : '保存账号'}
+      {feedback ? (
+        <p className={feedback.tone === 'warn' ? 'settings-add-form__warn' : 'settings-add-form__ok'} role="status">{feedback.message}</p>
+      ) : null}
+      <button className="lobby-account__save" disabled={!canSubmit} onClick={() => void submit()}>
+        {busy ? '保存中…' : isCard ? '导入卡号' : '保存账号'}
       </button>
     </div>
   )

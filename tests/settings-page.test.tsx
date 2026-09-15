@@ -39,6 +39,7 @@ function propsFor(overrides: Partial<SettingsPageProps> = {}): SettingsPageProps
     onClearAozaiCard: async () => {},
     onRefreshAozaiBalance: async () => {},
     onProcessAozaiAccount: async () => {},
+    onProcessAozaiToken: async () => {},
     automationSettings: { ...DEFAULT_ACCOUNT_AUTOMATION_SETTINGS, enabled: true, delaySec: 10 },
     automationRun: { phase: 'idle', message: '', startedAt: 0 },
     cursorUpdatePreferences: {
@@ -355,14 +356,19 @@ describe('SettingsPage', () => {
     expect(html).toContain('票据已就绪，等待退款完成')
   })
 
-  it('自动化设置行统一为左文案右控件，倒计时滑杆编组于主开关之下的展开区', () => {
+  it('自动化设置行统一为左文案右控件，倒计时步进输入编组于主开关之下的展开区', () => {
     const html = renderToStaticMarkup(<SettingsPage {...propsFor()} />)
     // 主开关行：左侧标题 + 说明，右侧开关（aria-label 标注，无内联文本）
     expect(html).toMatch(/settings-row__label">会话创建后自动处理账号<\/span>[\s\S]*?aria-label="会话创建后自动处理账号"/)
-    // 双倒计时在编组子组内：处理前 + 加固前各一根滑杆
-    expect(html).toMatch(/settings-collapse is-open[\s\S]*?settings-subgroup[\s\S]*?处理前倒计时[\s\S]*?type="range"[\s\S]*?加固前倒计时[\s\S]*?type="range"/)
-    // 无感切换为独立平级行，接手账号选择器编组于其下
+    // 双倒计时在编组子组内：处理前 + 加固前各一个步进输入（role="spinbutton"）
+    expect(html).toMatch(/settings-collapse is-open[\s\S]*?settings-subgroup[\s\S]*?处理前倒计时[\s\S]*?role="spinbutton"[\s\S]*?加固前倒计时[\s\S]*?role="spinbutton"/)
+    // 无感切换为独立平级行，接手账号选择器与切换前等待编组于其下
     expect(html).toMatch(/settings-row--divided[\s\S]*?退款完成后无感切换[\s\S]*?settings-row--sub[\s\S]*?接手账号/)
+    expect(html).toContain('切换前等待')
+    expect(html).toContain('aria-label="无感切换前等待秒数"')
+    // 复核开关：倒计时后会话复检的显式开关
+    expect(html).toContain('倒计时后复核会话')
+    expect(html).toContain('aria-label="倒计时后复核会话"')
   })
 
   it('自动化关闭时参数区折叠且不可见，开启时展开', () => {
@@ -439,16 +445,21 @@ describe('SettingsPage', () => {
     // 获取路径并列（external 来源下从浏览器导入为工作流主路径）
     expect(html).toContain('从浏览器导入 Token')
     expect(html).toContain('自动获取本机 Token')
-    expect(html).toContain('手动粘贴 Token')
+    expect(html).toContain('手动粘贴卡号 / Token')
     expect(html).not.toContain('其他获取方式')
     // 奥仔卡密：刷新余额 / 更换卡密
     expect(html).toContain('刷新余额')
     expect(html).toContain('更换卡密')
-    // 自动化开关（自绘 ToggleSwitch，保留原生 checkbox 可达性）与延时滑杆
+    // 奥仔手动处理：独立于自动化的任意 Token 直提入口
+    expect(html).toContain('手动处理')
+    expect(html).toContain('aria-label="手动处理的 Session Token"')
+    expect(html).toContain('提交处理')
+    // 自动化开关（自绘 ToggleSwitch，保留原生 checkbox 可达性）与倒计时步进输入
     expect(html).toContain('会话创建后自动处理账号')
     expect(html).toContain('toggle-switch')
-    expect(html).toContain('type="range"')
-    expect(html).toContain('range-field__value')
+    expect(html).toContain('role="spinbutton"')
+    expect(html).toContain('aria-label="奥仔处理前倒计时秒数"')
+    expect(html).toContain('aria-label="奥仔完成后账号加固前倒计时秒数"')
     // Cursor 本机维护
     expect(html).toContain('关闭 Cursor 自动更新')
     expect(html).toContain('受限模型数据政策')
@@ -764,6 +775,18 @@ describe('SettingsPage', () => {
     expect(section).not.toContain('settings-collapse is-open')
   })
 
+  it('奥仔手动处理区：有卡密且有回调才渲染；无卡密或无回调时隐藏', () => {
+    const withCard = renderToStaticMarkup(<SettingsPage {...propsFor()} />)
+    expect(withCard).toContain('手动处理')
+    expect(withCard).toContain('aria-label="手动处理的 Session Token"')
+
+    const noCard = renderToStaticMarkup(<SettingsPage {...propsFor({ aozaiStatus: { saved: false } })} />)
+    expect(noCard).not.toContain('手动处理')
+
+    const noHandler = renderToStaticMarkup(<SettingsPage {...propsFor({ onProcessAozaiToken: undefined })} />)
+    expect(noHandler).not.toContain('手动处理')
+  })
+
   it('hides the external browser segment on windows', () => {
     const html = renderToStaticMarkup(
       <SettingsPage {...propsFor({
@@ -771,7 +794,6 @@ describe('SettingsPage', () => {
         automationSettings: { ...DEFAULT_ACCOUNT_AUTOMATION_SETTINGS, enabled: true, delaySec: 10, bitProfileId: 'bit-proxy' }
       })} />
     )
-
     // 系统浏览器宿主是 macOS 专属（Keychain + Apple Events），Windows 不提供
     expect(html).not.toContain('>系统浏览器</button>')
     expect(html).not.toContain('需在 Edge / Chrome 登录 cursor.com')

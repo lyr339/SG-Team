@@ -5,6 +5,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { AccountAutomationRun } from '../../../domain/account-automation'
+import { parseCursorAccountCard } from '../../../domain/cursor-account-card'
 import type { ConversationEntry } from '../../../domain/conversation-entry'
 import { AGENT_AVATAR_IDS, TEAM_ROLE_TEMPLATES, createConfiguredTeamBundle, emptyTeamControlSnapshot } from '../../../domain/team-control'
 import type { TeamRunStatus } from '../../../domain/team-control'
@@ -639,9 +640,11 @@ const teamListeners = new Set<Listener<typeof state.team>>()
 let previewCursorAccounts: Array<{
   id: string; label: string; maskedToken: string; active: boolean; createdAt: number; updatedAt: number
   fingerprintProfileId?: string
+  email?: string
+  hasCredentials?: boolean
 }> = [
-  // 首个账号预置窗口绑定：预览同时覆盖「已绑定 / 跟随默认」两种行形态
-  { id: 'preview-acc-1', label: 'work@example.com', maskedToken: '••••9f2k', active: true, createdAt: previewNow - 40 * 60_000, updatedAt: previewNow - 5 * 60_000, fingerprintProfileId: 'bit-proxy' },
+  // 首个账号预置窗口绑定 + 卡号凭据：预览同时覆盖「已绑定 / 跟随默认」与「可自动登录 / 仅 Token」两种行形态
+  { id: 'preview-acc-1', label: 'work@example.com', maskedToken: '••••9f2k', active: true, createdAt: previewNow - 40 * 60_000, updatedAt: previewNow - 5 * 60_000, fingerprintProfileId: 'bit-proxy', email: 'work@example.com', hasCredentials: true },
   { id: 'preview-acc-2', label: 'spare@example.com', maskedToken: '••••41qz', active: false, createdAt: previewNow - 90 * 60_000, updatedAt: previewNow - 30 * 60_000 }
 ]
 
@@ -726,6 +729,49 @@ const api: SgDesktopApi = {
     })
     return structuredClone(previewCursorAccounts)
   },
+  saveCursorAccountCard: async ({ card }) => {
+    // 与主进程同一领域解析：预览所见即真实入库结果
+    const parsed = parseCursorAccountCard(card)
+    const at = Date.now()
+    const existing = parsed.sub
+      ? previewCursorAccounts.find((account) => account.label === parsed.email)
+      : undefined
+    if (existing) {
+      previewCursorAccounts = previewCursorAccounts.map((account) => ({
+        ...account,
+        active: account.id === existing.id,
+        ...(account.id === existing.id
+          ? { maskedToken: `••••${parsed.token.slice(-4)}`, updatedAt: at, hasCredentials: true }
+          : {})
+      }))
+      return { accounts: structuredClone(previewCursorAccounts), outcome: 'updated' as const, accountId: existing.id, label: existing.label }
+    }
+    previewCursorAccounts = previewCursorAccounts.map((account) => ({ ...account, active: false }))
+    const created = {
+      id: `preview-cursor-account-${at}`,
+      label: parsed.label,
+      maskedToken: `••••${parsed.token.slice(-4)}`,
+      active: true,
+      createdAt: at,
+      updatedAt: at,
+      email: parsed.email,
+      hasCredentials: true
+    }
+    previewCursorAccounts.push(created)
+    return { accounts: structuredClone(previewCursorAccounts), outcome: 'created' as const, accountId: created.id, label: created.label }
+  },
+  loginCursorAccount: async (accountId) => {
+    const at = Date.now()
+    previewCursorAccounts = previewCursorAccounts.map((account) => (
+      account.id === accountId ? { ...account, maskedToken: '••••rfrsh', updatedAt: at } : account
+    ))
+    return { accounts: structuredClone(previewCursorAccounts), outcome: 'logged_in' as const }
+  },
+  // 预览停在提交前闸门（verified）：预览环境绝不模拟「已提交待付款」。
+  startCursorProUpgrade: async () => ({
+    outcome: 'verified' as const,
+    detail: '账单资料已填写并复核通过；按测试闸门停在提交前（未生成付款二维码）'
+  }),
   selectCursorAccount: async (accountId) => {
     previewCursorAccounts = previewCursorAccounts.map((account) => ({ ...account, active: account.id === accountId }))
     return structuredClone(previewCursorAccounts)
@@ -796,6 +842,7 @@ const api: SgDesktopApi = {
   clearAozaiCard: async () => ({ saved: false }),
   refreshAozaiBalance: async () => ({ saved: true, maskedCode: '••••6l8Q', type: '50次卡', remaining: 46 }),
   processAozaiAccount: async () => ({ ok: true, message: '处理成功', remaining: 45 }),
+  processAozaiToken: async () => ({ ok: true, message: '处理成功', remaining: 45 }),
   onAozaiProgress: () => () => {},
   launchAgentSessions: async (requests) => ({
     id: 'preview-launch',

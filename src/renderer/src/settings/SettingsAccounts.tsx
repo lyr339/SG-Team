@@ -15,7 +15,7 @@ type AccountsProps = Pick<SettingsPageProps,
   | 'accounts' | 'busy' | 'onSave' | 'onSelect' | 'onRemove' | 'onRestartWithAccount' | 'onSwitchLiveAccount' | 'switchPumpStatus'
   | 'runtimeMatch' | 'membership' | 'accountMemberships' | 'onRefreshMembership'
   | 'aozaiStatus' | 'aozaiBusy' | 'aozaiProgress' | 'aozaiError' | 'aozaiFeedback' | 'onProcessAozaiAccount'
-  | 'bitProfiles' | 'onSetAccountFingerprintProfile'
+  | 'bitProfiles' | 'onSetAccountFingerprintProfile' | 'onReloginAccount' | 'onStartProUpgrade' | 'proUpgradeFeedback'
 >
 
 interface SettingsAccountsProps extends AccountsProps {
@@ -71,12 +71,19 @@ export function SettingsAccounts({
   onProcessAozaiAccount,
   onNavigateToImport,
   bitProfiles,
-  onSetAccountFingerprintProfile
+  onSetAccountFingerprintProfile,
+  onReloginAccount,
+  onStartProUpgrade,
+  proUpgradeFeedback
 }: SettingsAccountsProps): React.JSX.Element {
   const [confirmRemove, setConfirmRemove] = useState('')
   const [confirmRestart, setConfirmRestart] = useState('')
   useEffect(() => { if (!active) { setConfirmRemove(''); setConfirmRestart('') } }, [active])
   const [refreshingMembershipAccountId, setRefreshingMembershipAccountId] = useState('')
+  // 自动登录按账号粒度置忙（可能等人机验证，不锁全局面板）
+  const [reloginAccountId, setReloginAccountId] = useState('')
+  // 升级 Pro 结账按账号粒度置忙（直达+填单最长约 2 分钟，不锁全局面板）
+  const [proUpgradeAccountId, setProUpgradeAccountId] = useState('')
   const activeAccount = accounts.find((account) => account.active)
   const aozaiEnabled = Boolean(onProcessAozaiAccount)
   const liveSwitch = liveSwitchAvailability(switchPumpStatus)
@@ -174,6 +181,40 @@ export function SettingsAccounts({
                 ) : null}
               </div>
               <div className="lobby-account__row-actions account-card__actions">
+                {account.hasCredentials && onReloginAccount ? (
+                  <button
+                    className="account-process"
+                    disabled={busy || aozaiBusy || Boolean(reloginAccountId)}
+                    title="用保存的邮箱与 Cursor 密码在指纹浏览器窗口自动登录并刷新 Token；若弹出人机验证，在窗口中手动完成即可"
+                    onClick={() => {
+                      if (reloginAccountId) return
+                      setReloginAccountId(account.id)
+                      void Promise.resolve()
+                        .then(() => onReloginAccount(account.id))
+                        .catch(() => undefined)
+                        .finally(() => setReloginAccountId(''))
+                    }}
+                  >
+                    {reloginAccountId === account.id ? '登录中…' : '重新登录'}
+                  </button>
+                ) : null}
+                {onStartProUpgrade ? (
+                  <button
+                    className="account-process account-pro-upgrade"
+                    disabled={busy || aozaiBusy || Boolean(reloginAccountId) || Boolean(proUpgradeAccountId)}
+                    title="在账号绑定的指纹窗口直达 Stripe 月付结账（USD · 支付宝），自动填写「自动化」设置里的账单资料并提交；随后在窗口中用支付宝扫码完成付款"
+                    onClick={() => {
+                      if (proUpgradeAccountId) return
+                      setProUpgradeAccountId(account.id)
+                      void Promise.resolve()
+                        .then(() => onStartProUpgrade(account.id))
+                        .catch(() => undefined)
+                        .finally(() => setProUpgradeAccountId(''))
+                    }}
+                  >
+                    {proUpgradeAccountId === account.id ? '结账中…' : '升级 Pro'}
+                  </button>
+                ) : null}
                 {aozaiEnabled && aozaiStatus?.saved && onProcessAozaiAccount ? (
                   <button
                     className="account-process"
@@ -229,6 +270,7 @@ export function SettingsAccounts({
         </div>
         {aozaiError ? <p className="account-aozai__fail" role="alert">{aozaiError}</p> : null}
         {!aozaiBusy && aozaiFeedback ? <p className={aozaiFeedback.ok ? 'account-aozai__ok' : 'account-aozai__fail'} role="status">{aozaiFeedback.message}</p> : null}
+        {proUpgradeFeedback ? <p className={proUpgradeFeedback.ok ? 'account-aozai__ok' : 'account-aozai__fail'} role="status">{proUpgradeFeedback.message}</p> : null}
       </SettingsSection>
     </>
   )

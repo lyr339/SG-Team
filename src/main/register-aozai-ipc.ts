@@ -19,6 +19,14 @@ function processInputOf(value: unknown): { accountId: string; requestId: string 
   return { accountId: input.accountId.trim(), requestId: input.requestId.trim() }
 }
 
+function processTokenInputOf(value: unknown): { token: string; requestId: string } {
+  if (!value || typeof value !== 'object') throw new Error('处理参数无效')
+  const input = value as Record<string, unknown>
+  if (typeof input.token !== 'string' || !input.token.trim() || input.token.length > 16384) throw new Error('Session Token 无效')
+  if (typeof input.requestId !== 'string' || !input.requestId.trim() || input.requestId.length > 64) throw new Error('请求 ID 无效')
+  return { token: input.token.trim(), requestId: input.requestId.trim() }
+}
+
 export function registerAozaiIpc(
   cardVault: AozaiCardVault,
   service: AozaiService,
@@ -66,11 +74,26 @@ export function registerAozaiIpc(
     }
     return service.processToken(token, emit)
   })
+  // 手动模式：token 由用户粘贴、经渲染进程传入（与保险库取数的账号处理不同，是有意的边界）；
+  // 进度事件的 accountId 置空串 = 无账号归属，不会匹配任何账号卡片的「处理中」标记。
+  ipcMain.handle(IPC.aozaiProcessToken, async (event, value: unknown) => {
+    assertTrustedSender(event, getWindow)
+    const { token, requestId } = processTokenInputOf(value)
+    const emit = (state: AozaiProgressEvent['state'], message: string): void => {
+      const window = getWindow()
+      if (window && !window.isDestroyed()) {
+        const payload: AozaiProgressEvent = { requestId, accountId: '', state, message }
+        window.webContents.send(IPC.aozaiProgress, payload)
+      }
+    }
+    return service.processToken(token, emit)
+  })
   return () => {
     ipcMain.removeHandler(IPC.aozaiGetCardStatus)
     ipcMain.removeHandler(IPC.aozaiRefreshBalance)
     ipcMain.removeHandler(IPC.aozaiSaveCard)
     ipcMain.removeHandler(IPC.aozaiClearCard)
     ipcMain.removeHandler(IPC.aozaiProcessAccount)
+    ipcMain.removeHandler(IPC.aozaiProcessToken)
   }
 }

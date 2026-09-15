@@ -142,6 +142,19 @@ export interface SettingsPageProps {
   busy: boolean
   error: string
   onSave: (input: { label: string; token: string }) => Promise<void>
+  /** 卡号粘贴导入：返回新建/更新与自动登录结果供表单亮出反馈；失败抛错（同时进账号区错误条）。 */
+  onSaveCard?: (input: { card: string }) => Promise<{
+    outcome: 'created' | 'updated'
+    label: string
+    tokenRefreshed?: boolean
+    loginError?: string
+  }>
+  /** 用账号保存的凭据在指纹浏览器自动登录并刷新 Token（仅卡号导入的账号展示入口）。 */
+  onReloginAccount?: (accountId: string) => Promise<void>
+  /** 升级 Pro 扫码付款：直达 Stripe 月付结账（USD · 支付宝）并自动填写账单资料；结果经 proUpgradeFeedback 亮出。 */
+  onStartProUpgrade?: (accountId: string) => Promise<void>
+  /** 升级 Pro 结果反馈（待扫码/复核通过/失败原因）。 */
+  proUpgradeFeedback?: AozaiFeedback | null
   onSelect: (accountId: string) => Promise<void>
   onRemove: (accountId: string) => Promise<void>
   onRestartWithAccount?: (accountId: string) => Promise<void>
@@ -163,6 +176,8 @@ export interface SettingsPageProps {
   onClearAozaiCard?: () => Promise<void>
   onRefreshAozaiBalance?: () => Promise<void>
   onProcessAozaiAccount?: (accountId: string) => Promise<void>
+  /** 手动模式：用户粘贴任意 Session Token 直接提交处理（独立于自动化，不触发加固/删除/换号；token 不持久化）。 */
+  onProcessAozaiToken?: (token: string) => Promise<void>
   automationSettings?: AccountAutomationSettings
   automationRun?: AccountAutomationRun
   /** 指纹浏览器窗口列表（账号自动化链的浏览器宿主，用户按当次网络选择）。 */

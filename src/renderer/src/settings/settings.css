@@ -257,12 +257,13 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
 
 .settings-status-strip .lobby-account__current { min-width: 0; }
 
-/* 账号卡片网格：宽度允许时双列排布，卡片垂直三层（主体 / 元信息 / 操作）。
-   列宽设上限（320px）而非 1fr 拉满——卡片过宽会让卡内右侧留下大白块，
-   网格留白（布局层）比卡内留白（内容层）观感好得多。 */
+/* 账号卡片网格：auto-fill + minmax(250px, 1fr)——目标每行 3 张（设置页内容区 800px → 3×260px）。
+   min 250 保证四按钮操作行（处理/无感切换/切换并重启/删除 ≈ 241px）不挤；
+   1fr 让列均分容器：会话栏拉宽把内容区压到 ~611px 时降为 2 列 300px，而不是 1 列留白。
+   单卡 460px 封顶：单列超宽容器（如窄断点单列）时卡片不拉满——卡片过宽会让卡内右侧留下大白块。 */
 .settings-account-list {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 246px), 320px));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr));
   gap: 10px;
   max-height: none;
   padding: 0;
@@ -270,6 +271,7 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
 }
 
 .settings-account-list > article {
+  max-width: 460px;
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -395,8 +397,9 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
   row-gap: 3px;
 }
 
-/* 窗口绑定控件：读作行内元信息的紧凑 chip；已绑定态略强，未绑定（默认窗口）保持克制。 */
-.account-window-binding { display: inline-flex; min-width: 0; max-width: 168px; }
+/* 窗口绑定控件：读作行内元信息的紧凑 chip；已绑定态略强，未绑定（默认窗口）保持克制。
+   min-width 96px 保证「默认窗口 ▾」全显——flex 行内先压缩到此宽度再换行，不出现「默认窗…」截断。 */
+.account-window-binding { display: inline-flex; min-width: 96px; max-width: 168px; }
 .account-window-binding .menu-select { width: auto; min-width: 0; max-width: 100%; }
 .account-window-binding .menu-select__button {
   min-height: 21px;
@@ -511,6 +514,10 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
   background: color-mix(in srgb, var(--anthropic-orange) 12%, var(--color-background-primary));
 }
 
+/* 升级 Pro：资金动作，品牌橙文字 + 同族悬停底色，与普通操作区分。 */
+.account-pro-upgrade { color: var(--anthropic-orange); }
+.account-pro-upgrade:hover:not(:disabled) { background: color-mix(in srgb, var(--anthropic-orange) 12%, transparent); }
+
 .settings-page .lobby-account__note { margin: 2px 0 0; -webkit-line-clamp: none; display: block; }
 
 .settings-add-form {
@@ -521,6 +528,45 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
 }
 
 .settings-add-form input { min-height: 32px; }
+
+/* 卡号/Token 粘贴框：与 input 同一表面语言，等宽字体便于核对分段。 */
+.settings-add-form textarea {
+  min-height: 64px;
+  padding: 8px 10px;
+  color: var(--text);
+  background: var(--surface);
+  border: var(--border-width-regular) solid var(--line);
+  border-radius: 8px;
+  outline: none;
+  resize: vertical;
+  font-family: var(--mono);
+  font-size: var(--fs-10);
+  line-height: 1.5;
+  word-break: break-all;
+}
+.settings-add-form textarea:focus { border-color: var(--accent-border-strong); box-shadow: 0 0 0 3px color-mix(in srgb, var(--anthropic-orange) 10%, transparent); }
+
+/* 卡号识别预览：确认事实（邮箱/有效期/辅邮），过期用警示色。 */
+.settings-card-preview {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  padding: 7px 9px;
+  background: var(--surface);
+  border: var(--border-width-regular) solid var(--line-faint);
+  border-radius: 8px;
+}
+.settings-card-preview > span { overflow: hidden; color: var(--text-soft); font-size: var(--fs-10); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.settings-card-preview > small { color: var(--muted); font-size: var(--fs-9); line-height: 1.45; }
+.settings-card-preview[data-expired] > small { color: var(--color-text-warning, var(--red)); }
+
+.settings-add-form__error { margin: 0; color: var(--red); font-size: var(--fs-10); line-height: 1.45; }
+.settings-add-form__ok { margin: 0; color: var(--accent); font-size: var(--fs-10); line-height: 1.45; }
+.settings-add-form__warn { margin: 0; color: var(--color-text-warning); font-size: var(--fs-10); line-height: 1.45; }
+
+/* 升级 Pro 账单资料：两列网格；地址行与完整性提示整行。 */
+.settings-checkout-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.settings-checkout-form__wide { grid-column: 1 / -1; }
 
 /* ---------- 自动化分组：运行状态横幅（设置页签名元素） ---------- */
 .settings-flow-banner {
@@ -747,17 +793,10 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
   gap: 6px;
 }
 
-.settings-maintenance .cursor-maintenance__action em { padding: 2px 6px; }
-.cursor-maintenance__switch-pump-copy { min-width: 0; display: grid; gap: 4px; }
-.cursor-maintenance__switch-pump-title { min-width: 0; display: inline-flex; align-items: center; gap: 9px; color: var(--text-soft); font-size: var(--fs-11); font-weight: 550; }
-.cursor-maintenance__switch-pump-title > i { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--muted); box-shadow: 0 0 0 3px color-mix(in srgb, var(--muted) 10%, transparent); }
-.cursor-maintenance__switch-pump-copy > small { padding-left: 16px; color: var(--muted); font-size: var(--fs-10); line-height: 1.4; }
-.cursor-maintenance__switch-pump.is-installed .cursor-maintenance__switch-pump-title > i { background: var(--color-text-success); box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-text-success) 12%, transparent); }
-.cursor-maintenance__switch-pump.is-compatible .cursor-maintenance__switch-pump-title > i { background: var(--color-text-info); box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-text-info) 12%, transparent); }
-.settings-maintenance .cursor-maintenance__switch-pump > em.is-compatible { color: var(--color-text-info); background: var(--color-background-info); border-color: var(--color-border-info); font-family: var(--font-sans); }
-.cursor-maintenance__pump-action { min-width: 58px; min-height: 30px; padding: 0 12px; color: var(--accent); background: var(--accent-wash); border: var(--border-width-regular) solid var(--accent-border); border-radius: 8px; font-size: var(--fs-10); font-weight: 600; }
-.cursor-maintenance__pump-action:hover:not(:disabled) { border-color: var(--accent-border-strong); }
-.cursor-maintenance__pump-action.is-remove { color: var(--muted); background: transparent; border-color: var(--line); }
+/* Cursor 维护：与自动化同一「左文案右控件」行语言（.settings-row），
+   三行右列统一为开关——切号补丁的 installed 即「无感换号已开启」，
+   外部兼容（开态禁用）与不支持版本（关态禁用）由说明文字承载。 */
+.settings-maintenance { min-width: 0; display: grid; }
 .settings-handover-status { min-width: 0; display: grid; grid-template-columns: auto minmax(0, auto) minmax(0, 1fr); align-items: center; gap: 7px; padding: 7px 9px; color: var(--color-text-info); background: color-mix(in srgb, var(--color-background-info) 58%, transparent); border: var(--border-width-regular) solid var(--color-border-info); border-radius: 9px; font-size: var(--fs-10); }
 .settings-handover-status > span { color: var(--muted); }
 .settings-handover-status > strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650; }

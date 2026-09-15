@@ -81,6 +81,7 @@ import type { AccountAutomationBrowserHost } from '../infrastructure/cursor/acco
 import { AccountAutomationService } from '../application/account-automation-service'
 import { AccountAutomationSettingsStore } from '../application/account-automation-store'
 import { resolveExecutionProfileId, selectAccountHandoverTarget } from '../domain/account-automation'
+import { DEFAULT_CURSOR_CHECKOUT_PROFILE } from '../domain/cursor-checkout-profile'
 import { registerAccountAutomationIpc } from './register-account-automation-ipc'
 import { LocalSessionBridge } from '../application/local-session-bridge'
 import { IPC } from '../shared/desktop-api'
@@ -720,6 +721,26 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
       acknowledgeModelDataPolicies: () => fingerprintAccountChannel.acknowledgeRequiredModelDataPolicies(
         resolveAutomationProfileId()
       ),
+      // 卡号账号的凭据自动登录（Token 过期续期）：profileId 缺省按「活跃绑定 ?? 默认窗口」。
+      loginWithCredentials: (input, profileId) => fingerprintAccountChannel.loginWithCredentials(input, profileId),
+      // 升级 Pro 扫码付款编排：归属守门（token user_xxx 前缀）+ 卡号凭据自愈 +
+      // 「自动化」设置里的账单资料；窗口锚定账号绑定（未绑定由通道回退默认窗口）。
+      startProUpgrade: (accountId) => {
+        const account = cursorAccountVault.list().find((candidate) => candidate.id === accountId)
+        if (!account) throw new Error('账号不存在或已被移除')
+        const owner = cursorAccountVault.credential(accountId).split('::', 1)[0]?.trim()
+        if (!owner) throw new Error('账号 Token 缺少归属标识（user_xxx），已中止')
+        const saved = cursorAccountVault.credentials(accountId)
+        const settings = accountAutomationSettingsStore.load()
+        return fingerprintAccountChannel.startProUpgradeCheckout(
+          {
+            expectedAccountId: owner,
+            ...(saved ? { credentials: { email: saved.email, password: saved.cursorPassword } } : {}),
+            profile: settings.checkoutProfile ?? DEFAULT_CURSOR_CHECKOUT_PROFILE
+          },
+          account.fingerprintProfileId
+        )
+      },
       // 无感换号手动入口与补丁管理（维护页状态卡/一键安装）。
       liveSwitcher: cursorLiveSwitcher,
       switchPumpInstaller: cursorSwitchPumpInstaller,

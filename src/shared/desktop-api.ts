@@ -8,6 +8,7 @@ import type { TeamMemorySnapshot } from '../domain/team-memory'
 import type { AgentSkillCatalogEntry } from '../domain/agent-skill'
 import type { TeamRoleTemplate } from '../domain/team-control'
 import type { CursorAccountMetadata, CursorRuntimeAccountMatch } from '../domain/cursor-account'
+import type { CursorProUpgradeResult } from '../domain/cursor-checkout-profile'
 import type { CursorMembershipStatus } from '../domain/cursor-membership'
 import type { ManualTeamHandoffInput, ManualTeamHandoffOutcome, TeamHandoffOptions } from '../domain/team-handoff'
 import type { CursorWorkspaceDetection } from '../domain/cursor-workspace'
@@ -298,9 +299,31 @@ export interface McpInstallationResult {
   serverNames: string[]
 }
 
+/** 卡号导入结果：accounts 为最新列表；outcome 区分新建/按 JWT sub 原地更新。 */
+export interface SaveCursorAccountCardResult {
+  accounts: CursorAccountMetadata[]
+  outcome: 'created' | 'updated'
+  accountId: string
+  label: string
+  /** 卡内 Token 已过期且经凭据自动登录刷新成功。 */
+  tokenRefreshed?: boolean
+  /** 卡内 Token 已过期且自动登录未成功（账号与凭据已保存，可稍后重试）。 */
+  loginError?: string
+}
+
 export interface SgDesktopApi {
   listCursorAccounts(): Promise<CursorAccountMetadata[]>
   saveCursorAccount(input: { label: string; token: string; makeActive?: boolean }): Promise<CursorAccountMetadata[]>
+  /** 卡号粘贴导入（邮箱----邮箱密码----Cursor密码----辅邮----辅邮密码----Token）：主进程权威解析，凭据整体加密随账号保存。 */
+  saveCursorAccountCard(input: { card: string; makeActive?: boolean }): Promise<SaveCursorAccountCardResult>
+  /** 用账号保存的凭据在指纹浏览器窗口自动登录并刷新 Token（仅卡号导入的账号）。 */
+  loginCursorAccount(accountId: string): Promise<{ accounts: CursorAccountMetadata[]; outcome: 'already_logged_in' | 'logged_in' }>
+  /**
+   * 升级 Pro 扫码付款：在账号绑定的指纹窗口直达 Stripe 月付结账（USD · 支付宝），
+   * 自动填写「自动化」设置里的账单资料并提交；窗口保留，用户扫码完成付款。
+   * 登录态归属 ≠ 目标账号时 fail-closed 中止（绝不给错误账号付款）。
+   */
+  startCursorProUpgrade(accountId: string): Promise<CursorProUpgradeResult>
   selectCursorAccount(accountId: string): Promise<CursorAccountMetadata[]>
   removeCursorAccount(accountId: string): Promise<CursorAccountMetadata[]>
   /** 绑定/改绑/解绑账号的指纹浏览器窗口（undefined 解绑，回退默认窗口）。 */
@@ -367,6 +390,8 @@ export interface SgDesktopApi {
   clearAozaiCard(): Promise<AozaiCardStatus>
   refreshAozaiBalance(): Promise<AozaiCardStatus>
   processAozaiAccount(input: { accountId: string; requestId: string }): Promise<AozaiProcessResult>
+  /** 手动模式：用户自行粘贴任意 Session Token 提交处理；token 不持久化，独立于自动化链。 */
+  processAozaiToken(input: { token: string; requestId: string }): Promise<AozaiProcessResult>
   onAozaiProgress(listener: (event: AozaiProgressEvent) => void): () => void
   launchAgentSessions(requests: AgentLaunchRequest[]): Promise<AgentLaunchPlan>
   getAgentLaunchPlan(): Promise<AgentLaunchPlan | undefined>
@@ -491,6 +516,9 @@ export interface SgDesktopApi {
 export const IPC = {
   cursorAccountsList: 'cursor-accounts:list',
   cursorAccountsSave: 'cursor-accounts:save',
+  cursorAccountsSaveCard: 'cursor-accounts:save-card',
+  cursorAccountsLogin: 'cursor-accounts:login',
+  cursorAccountsStartProUpgrade: 'cursor-accounts:start-pro-upgrade',
   cursorAccountsSelect: 'cursor-accounts:select',
   cursorAccountsRemove: 'cursor-accounts:remove',
   cursorAccountsSetFingerprintProfile: 'cursor-accounts:set-fingerprint-profile',
@@ -513,6 +541,7 @@ export const IPC = {
   aozaiClearCard: 'aozai:clear-card',
   aozaiRefreshBalance: 'aozai:refresh-balance',
   aozaiProcessAccount: 'aozai:process-account',
+  aozaiProcessToken: 'aozai:process-token',
   aozaiProgress: 'aozai:progress',
   agentLaunchStart: 'agent-launch:start',
   agentLaunchGet: 'agent-launch:get',

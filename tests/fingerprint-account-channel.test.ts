@@ -26,6 +26,20 @@ class FakeCdpSocket {
   pollResultQueue: string[] = []
   /** 模型政策脚本结果；缺省表示官网已确认。 */
   policyResultQueue: unknown[] = []
+  /** __sgLoginProbe 逐次返回；空时用最后一项。 */
+  loginProbeQueue: string[] = []
+  /** __sgReadAccountEmail 的返回（邮箱或空串）。 */
+  accountEmail = ''
+  /** __sgCheckoutProbe 逐次返回；空时用最后一项（脏帧给空串）。 */
+  checkoutProbeQueue: string[] = []
+  /** __sgCheckoutTarget 的返回（JSON 视口中心坐标；null 表示目标不可点）。 */
+  checkoutTarget: string | null = JSON.stringify({ x: 120, y: 320 })
+  /** __sgCheckoutFill 的返回（'filled' 为成功）。 */
+  checkoutFillResult = 'filled'
+  /** __sgCheckoutSelect 按字段名脚本化（缺省 'set'；'no-option' 模拟省份未命中）。 */
+  checkoutSelectResults: Record<string, string> = {}
+  /** __sgCheckoutVerify 的返回（JSON 表单现值）。 */
+  checkoutVerify = ''
 
   onMessage(handler: (data: string) => void): void {
     this.messageHandler = handler
@@ -75,6 +89,9 @@ class FakeCdpSocket {
       case 'Target.closeTarget':
         respond({ success: true })
         return
+      case 'Input.dispatchMouseEvent':
+        respond({})
+        return
       case 'Network.getCookies': {
         const value = this.tokenQueue.length > 1 ? this.tokenQueue.shift() : this.tokenQueue[0]
         const cookies = value === undefined ? [] : [{ name: 'WorkosCursorSessionToken', value: String(value) }]
@@ -83,6 +100,46 @@ class FakeCdpSocket {
       }
       case 'Runtime.evaluate': {
         const expression = String(message.params.expression ?? '')
+        if (expression.includes('__sgLoginProbe')) {
+          const value = this.loginProbeQueue.length > 1 ? this.loginProbeQueue.shift() : this.loginProbeQueue[0]
+          respond({ result: { value: value ?? READY } })
+          return
+        }
+        if (expression.includes('__sgReadAccountEmail')) {
+          respond({ result: { value: this.accountEmail } })
+          return
+        }
+        if (expression.includes('__sgFillEmail') || expression.includes('__sgFillPassword') || expression.includes('__sgResubmitPassword')) {
+          respond({ result: { value: 'submitted' } })
+          return
+        }
+        // 结账链桩（__sgCheckout*）必须先于 location.hostname 分支——探测脚本内含该字段
+        if (expression.includes('__sgCheckoutProbe')) {
+          const value = this.checkoutProbeQueue.length > 1 ? this.checkoutProbeQueue.shift() : this.checkoutProbeQueue[0]
+          respond({ result: { value: value ?? '' } })
+          return
+        }
+        if (expression.includes('__sgCheckoutTarget')) {
+          respond({ result: { value: this.checkoutTarget } })
+          return
+        }
+        if (expression.includes('__sgCheckoutFill')) {
+          respond({ result: { value: this.checkoutFillResult } })
+          return
+        }
+        if (expression.includes('__sgCheckoutSelect')) {
+          const name = expression.includes('billingCountry')
+            ? 'billingCountry'
+            : expression.includes('billingProvince')
+              ? 'billingProvince'
+              : ''
+          respond({ result: { value: this.checkoutSelectResults[name] ?? 'set' } })
+          return
+        }
+        if (expression.includes('__sgCheckoutVerify')) {
+          respond({ result: { value: this.checkoutVerify } })
+          return
+        }
         if (expression.includes('location.hostname')) {
           const value = this.readinessQueue.length > 1 ? this.readinessQueue.shift() : this.readinessQueue[0] ?? READY
           respond({ result: { value } })
@@ -177,6 +234,10 @@ const NEW_TOKEN = encodeURIComponent('user_abc::new-jwt')
 const READY = JSON.stringify({ h: 'cursor.com', p: '/dashboard', s: 'complete' })
 const AUTH_PAGE = JSON.stringify({ h: 'authenticator.cursor.sh', p: '/', s: 'complete' })
 const LOADING = JSON.stringify({ h: 'cursor.com', p: '/dashboard', s: 'loading' })
+const EMAIL_PAGE = JSON.stringify({ h: 'authenticator.cursor.sh', p: '/', s: 'complete', email: true })
+const PASSWORD_PAGE = JSON.stringify({ h: 'authenticator.cursor.sh', p: '/password', s: 'complete', password: true })
+const CODE_PAGE = JSON.stringify({ h: 'authenticator.cursor.sh', p: '/email-verification', s: 'complete', code: true })
+const HUMAN_PAGE = JSON.stringify({ h: 'authenticator.cursor.sh', p: '/password', s: 'complete', password: true, human: true })
 
 describe('FingerprintAccountChannel', () => {
   it('readToken：开窗→建 CDP 会话→内存读 cookie 并解码', async () => {
@@ -748,5 +809,190 @@ describe('defaultSocketFactory（生产 ws 装配）', () => {
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()))
     }
+  })
+})
+
+describe('FingerprintAccountChannel.loginWithCredentials（凭据自动登录）', () => {
+  const LOGIN = { email: 'a@b.co', password: 'cursor-pass' }
+
+  it('窗口已是同账号登录态：/api/auth/me 核对后直接交付，不触碰表单', async () => {
+    const harness = createHarness()
+    harness.socket.tokenQueue = [OLD_TOKEN]
+    harness.socket.loginProbeQueue = [READY]
+    harness.socket.accountEmail = 'a@b.co'
+    const result = await harness.channel.loginWithCredentials(LOGIN)
+    expect(result).toEqual({ token: 'user_abc::old-jwt', outcome: 'already_logged_in' })
+    expect(harness.socket.sent.some((entry) => String(entry.params.expression ?? '').includes('__sgFillEmail'))).toBe(false)
+  })
+
+  it('窗口登录他人账号：拒绝触碰并报出当前账号', async () => {
+    const harness = createHarness()
+    harness.socket.tokenQueue = [OLD_TOKEN]
+    harness.socket.loginProbeQueue = [READY]
+    harness.socket.accountEmail = 'other@b.co'
+    await expect(harness.channel.loginWithCredentials(LOGIN)).rejects.toThrow(/其他账号（other@b\.co）/)
+  })
+
+  it('完整登录链：导航 → 填邮箱 → 填密码 → cookie 落罐交付新 token', async () => {
+    const harness = createHarness()
+    harness.socket.tokenQueue = [undefined, undefined, NEW_TOKEN]
+    harness.socket.loginProbeQueue = [READY, EMAIL_PAGE, PASSWORD_PAGE]
+    const result = await harness.channel.loginWithCredentials(LOGIN)
+    expect(result).toEqual({ token: 'user_abc::new-jwt', outcome: 'logged_in' })
+    const expressions = harness.socket.sent.map((entry) => String(entry.params.expression ?? ''))
+    expect(expressions.some((expression) => expression.includes('__sgFillEmail') && expression.includes('a@b.co'))).toBe(true)
+    expect(expressions.some((expression) => expression.includes('__sgFillPassword') && expression.includes('cursor-pass'))).toBe(true)
+  })
+
+  it('邮箱验证码账号（无密码路径）：明确报错并保留窗口供手动完成', async () => {
+    const harness = createHarness()
+    harness.socket.tokenQueue = [undefined]
+    harness.socket.loginProbeQueue = [READY, EMAIL_PAGE, CODE_PAGE]
+    await expect(harness.channel.loginWithCredentials(LOGIN)).rejects.toThrow(/邮箱验证码/)
+    expect(harness.closeWindowCalls).toEqual([])
+  })
+
+  it('密码错误等官网拒绝：透出 role=alert 文案', async () => {
+    const harness = createHarness()
+    harness.socket.tokenQueue = [undefined]
+    harness.socket.loginProbeQueue = [
+      READY,
+      EMAIL_PAGE,
+      PASSWORD_PAGE,
+      JSON.stringify({ h: 'authenticator.cursor.sh', p: '/password', s: 'complete', password: true, alert: '邮箱或密码不正确' })
+    ]
+    await expect(harness.channel.loginWithCredentials(LOGIN)).rejects.toThrow(/邮箱或密码不正确/)
+  })
+
+  it('Turnstile 挑战：周期补提交直到 cookie 落罐', async () => {
+    const harness = createHarness()
+    // 挑战期 token 不出现；第 13 次读取（挑战通过、补提交生效后）落罐
+    harness.socket.tokenQueue = [...Array.from({ length: 12 }, () => undefined), NEW_TOKEN] as Array<string | undefined>
+    harness.socket.loginProbeQueue = [READY, EMAIL_PAGE, PASSWORD_PAGE, HUMAN_PAGE]
+    const result = await harness.channel.loginWithCredentials(LOGIN)
+    expect(result.outcome).toBe('logged_in')
+    expect(harness.socket.sent.some((entry) => String(entry.params.expression ?? '').includes('__sgResubmitPassword'))).toBe(true)
+  })
+
+  it('登录总窗口超时：报出手动完成引导', async () => {
+    const harness = createHarness()
+    harness.socket.tokenQueue = [undefined]
+    harness.socket.loginProbeQueue = [READY, EMAIL_PAGE, PASSWORD_PAGE]
+    await expect(harness.channel.loginWithCredentials(LOGIN)).rejects.toThrow(/自动登录超时/)
+  })
+
+  it('凭据不完整直接拒绝', async () => {
+    const harness = createHarness()
+    await expect(harness.channel.loginWithCredentials({ email: ' ', password: 'x' })).rejects.toThrow(/凭据不完整/)
+  })
+
+  it('① 的 cookie 读取瞬时落空而会话其实有效：② 重读落罐即交付，不误判认证页超时', async () => {
+    const harness = createHarness()
+    harness.socket.tokenQueue = [undefined, NEW_TOKEN]
+    harness.socket.loginProbeQueue = [READY]
+    const result = await harness.channel.loginWithCredentials(LOGIN)
+    expect(result).toEqual({ token: 'user_abc::new-jwt', outcome: 'already_logged_in' })
+    expect(harness.socket.sent.some((entry) => String(entry.params.expression ?? '').includes('__sgFillEmail'))).toBe(false)
+  })
+})
+
+describe('FingerprintAccountChannel.startProUpgradeCheckout（升级 Pro 结账）', () => {
+  const PROFILE = {
+    name: 'Li Ming',
+    province: '湖北省',
+    city: '武汉市',
+    district: '洪山区',
+    line1: '珞喻路 456 号',
+    postalCode: '430070'
+  }
+  const INPUT = { expectedAccountId: 'user_abc', profile: PROFILE }
+  // 结账页探测分幕：落地 → 表单出现（USD 未选中）→ USD 生效 → 支付宝出现 → 支付宝选中
+  const LANDED = JSON.stringify({ h: 'checkout.stripe.com', p: '/c/pay/cs_test_1', s: 'complete', form: false, usd: false, usdActive: false, alipay: false, alipayChecked: false, alert: '' })
+  const FORM_UP = JSON.stringify({ h: 'checkout.stripe.com', p: '/c/pay/cs_test_1', s: 'complete', form: true, usd: true, usdActive: false, alipay: false, alipayChecked: false, alert: '' })
+  const USD_ON = JSON.stringify({ h: 'checkout.stripe.com', p: '/c/pay/cs_test_1', s: 'complete', form: true, usd: true, usdActive: true, alipay: false, alipayChecked: false, alert: '' })
+  const ALIPAY_UP = JSON.stringify({ h: 'checkout.stripe.com', p: '/c/pay/cs_test_1', s: 'complete', form: true, usd: true, usdActive: true, alipay: true, alipayChecked: false, alert: '' })
+  const ALIPAY_ON = JSON.stringify({ h: 'checkout.stripe.com', p: '/c/pay/cs_test_1', s: 'complete', form: true, usd: true, usdActive: true, alipay: true, alipayChecked: true, alert: '' })
+  const ALIPAY_CASHIER = JSON.stringify({ h: 'www.alipay.com', p: '/cashier', s: 'complete', form: false, usd: false, usdActive: false, alipay: false, alipayChecked: false, alert: '' })
+  const VERIFY_OK = JSON.stringify({
+    name: 'Li Ming', country: 'CN', province: '湖北省', provinceText: '湖北省',
+    locality: '武汉市', dependentLocality: '洪山区', line1: '珞喻路 456 号', line2: '',
+    postal: '430070', invalid: 0, alert: ''
+  })
+  const checkoutExpressions = (harness: ReturnType<typeof createHarness>, marker: string) => (
+    harness.socket.sent
+      .map((entry) => String(entry.params.expression ?? ''))
+      .filter((expression) => expression.includes(marker))
+  )
+
+  it('测试闸门（allowSubmit:false）：直达→USD→中国→支付宝→填单→复核通过，停在提交前', async () => {
+    const harness = createHarness()
+    harness.socket.tokenQueue = [OLD_TOKEN]
+    harness.socket.checkoutProbeQueue = [LANDED, FORM_UP, FORM_UP, USD_ON, ALIPAY_UP, ALIPAY_ON]
+    harness.socket.checkoutVerify = VERIFY_OK
+    const result = await harness.channel.startProUpgradeCheckout({ ...INPUT, allowSubmit: false })
+    expect(result.outcome).toBe('verified')
+    expect(result.detail).toContain('复核通过')
+    // 直达月付深链
+    const navigations = harness.socket.sent.filter((entry) => entry.method === 'Page.navigate')
+    expect(navigations.some((entry) => String(entry.params.url).includes('checkoutDeepControl?yearly=false'))).toBe(true)
+    // 可信点击只落在 USD 与支付宝（各按下+抬起两次事件），绝不触碰提交
+    expect(harness.socket.methodCount('Input.dispatchMouseEvent')).toBe(4)
+    expect(checkoutExpressions(harness, '__sgCheckoutTarget').some((expression) => expression.includes('"submit"'))).toBe(false)
+    // 账单资料逐字段落页：国家/省份 select + 姓名/地址文本
+    expect(checkoutExpressions(harness, '__sgCheckoutSelect').some((expression) => expression.includes('billingCountry') && expression.includes('CN'))).toBe(true)
+    expect(checkoutExpressions(harness, '__sgCheckoutSelect').some((expression) => expression.includes('billingProvince') && expression.includes('湖北省'))).toBe(true)
+    expect(checkoutExpressions(harness, '__sgCheckoutFill').some((expression) => expression.includes('珞喻路 456 号'))).toBe(true)
+  })
+
+  it('完整提交链（缺省 allowSubmit）：复核通过后提交，离开收银台即 awaiting_payment', async () => {
+    const harness = createHarness()
+    harness.socket.tokenQueue = [OLD_TOKEN]
+    harness.socket.checkoutProbeQueue = [LANDED, FORM_UP, FORM_UP, USD_ON, ALIPAY_UP, ALIPAY_ON, ALIPAY_CASHIER]
+    harness.socket.checkoutVerify = VERIFY_OK
+    const result = await harness.channel.startProUpgradeCheckout(INPUT)
+    expect(result.outcome).toBe('awaiting_payment')
+    expect(result.detail).toContain('扫码')
+    expect(harness.socket.methodCount('Input.dispatchMouseEvent')).toBe(6)
+    expect(checkoutExpressions(harness, '__sgCheckoutTarget').some((expression) => expression.includes('"submit"'))).toBe(true)
+  })
+
+  it('归属守门：窗口登录他人账号时 fail-closed 中止，绝不导航去结账', async () => {
+    const harness = createHarness()
+    harness.socket.tokenQueue = [encodeURIComponent('user_other::jwt')]
+    await expect(harness.channel.startProUpgradeCheckout(INPUT)).rejects.toThrow(/其他账号/)
+    expect(harness.socket.methodCount('Page.navigate')).toBe(0)
+  })
+
+  it('窗口未登录且无保存凭据：明确报错引导', async () => {
+    const harness = createHarness()
+    harness.socket.tokenQueue = [undefined]
+    await expect(harness.channel.startProUpgradeCheckout(INPUT)).rejects.toThrow(/无保存凭据/)
+    expect(harness.socket.methodCount('Page.navigate')).toBe(0)
+  })
+
+  it('账单资料不完整：执行前拦截（缺姓名），不开窗', async () => {
+    const harness = createHarness()
+    await expect(harness.channel.startProUpgradeCheckout({
+      ...INPUT,
+      profile: { ...PROFILE, name: '' }
+    })).rejects.toThrow(/账单资料不完整（缺姓名）/)
+    expect(harness.openCalls).toHaveLength(0)
+  })
+
+  it('提交前复核不一致：报出差异字段并中止，不提交', async () => {
+    const harness = createHarness()
+    harness.socket.tokenQueue = [OLD_TOKEN]
+    harness.socket.checkoutProbeQueue = [LANDED, FORM_UP, FORM_UP, USD_ON, ALIPAY_UP, ALIPAY_ON]
+    harness.socket.checkoutVerify = JSON.stringify({ ...JSON.parse(VERIFY_OK), name: 'Zhang San' })
+    await expect(harness.channel.startProUpgradeCheckout({ ...INPUT, allowSubmit: false })).rejects.toThrow(/复核不一致.*姓名/)
+    expect(checkoutExpressions(harness, '__sgCheckoutTarget').some((expression) => expression.includes('"submit"'))).toBe(false)
+  })
+
+  it('省份选项未命中：报出省名引导核对设置', async () => {
+    const harness = createHarness()
+    harness.socket.tokenQueue = [OLD_TOKEN]
+    harness.socket.checkoutProbeQueue = [LANDED, FORM_UP, FORM_UP, USD_ON, ALIPAY_UP, ALIPAY_ON]
+    harness.socket.checkoutSelectResults = { billingProvince: 'no-option' }
+    await expect(harness.channel.startProUpgradeCheckout({ ...INPUT, allowSubmit: false })).rejects.toThrow(/省份选项未找到：湖北省/)
   })
 })

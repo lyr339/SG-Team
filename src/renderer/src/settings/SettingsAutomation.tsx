@@ -10,8 +10,14 @@ import {
   SEAT_ROTATION_THRESHOLD_MIN,
   SEAT_ROTATION_THRESHOLD_STEP
 } from '../../../domain/seat-rotation'
+import {
+  DEFAULT_CURSOR_CHECKOUT_PROFILE,
+  cursorCheckoutProfileIssue,
+  type CursorCheckoutProfile
+} from '../../../domain/cursor-checkout-profile'
 import { ToggleSwitch } from '../lobby/ToggleSwitch'
 import { RangeField } from '../lobby/RangeField'
+import { NumberStepperField } from '../lobby/NumberStepperField'
 import { FlowStatusIcon } from '../lobby/FlowStatusIcon'
 import { MenuSelect } from '../lobby/MenuSelect'
 import type { SettingsPageProps } from './settings-view'
@@ -86,6 +92,13 @@ export function SettingsAutomation({
     : undefined
   // 展开区可见性与父级联动：自动化关闭时整个参数区折叠，嵌套的接手账号区亦不标记展开。
   const handoverOpen = automationSettings?.enabled === true && automationSettings.seamlessHandoverEnabled !== false
+  // 升级 Pro 账单资料：存储层恒归一为完整结构（编辑中途空串原样保留），缺省给整套默认。
+  const checkoutProfile = automationSettings?.checkoutProfile ?? DEFAULT_CURSOR_CHECKOUT_PROFILE
+  const checkoutIssue = cursorCheckoutProfileIssue(checkoutProfile)
+  const updateCheckoutField = (key: keyof CursorCheckoutProfile, value: string): void => {
+    if (!automationSettings || !onSaveAutomationSettings) return
+    void onSaveAutomationSettings({ ...automationSettings, checkoutProfile: { ...checkoutProfile, [key]: value } })
+  }
 
   return (
     <>
@@ -201,7 +214,7 @@ export function SettingsAutomation({
                       <span className="settings-row__label">处理前倒计时</span>
                       <span className="settings-row__hint">处理前等待，期间可随时取消</span>
                     </div>
-                    <RangeField
+                    <NumberStepperField
                       value={automationSettings.delaySec}
                       min={ACCOUNT_AUTOMATION_DELAY_MIN_SEC}
                       max={ACCOUNT_AUTOMATION_DELAY_MAX_SEC}
@@ -217,7 +230,7 @@ export function SettingsAutomation({
                       <span className="settings-row__label">加固前倒计时</span>
                       <span className="settings-row__hint">处理完成后等待，随后秒级加固账号</span>
                     </div>
-                    <RangeField
+                    <NumberStepperField
                       value={automationSettings.postProcessDelaySec}
                       min={ACCOUNT_AUTOMATION_DELAY_MIN_SEC}
                       max={ACCOUNT_AUTOMATION_DELAY_MAX_SEC}
@@ -228,6 +241,19 @@ export function SettingsAutomation({
                       onChange={(postProcessDelaySec) => onSaveAutomationSettings({ ...automationSettings, postProcessDelaySec })}
                     />
                   </div>
+                </div>
+
+                <div className="settings-row settings-row--divided">
+                  <div className="settings-row__copy">
+                    <span className="settings-row__label">倒计时后复核会话</span>
+                    <span className="settings-row__hint">倒计时结束时再读一次浏览器会话，期间改动会被拦截；关闭可省去一次会话读取（连/开窗）</span>
+                  </div>
+                  <ToggleSwitch
+                    checked={automationSettings.preflightRecheckEnabled !== false}
+                    disabled={aozaiBusy || active}
+                    label="倒计时后复核会话"
+                    onChange={(preflightRecheckEnabled) => onSaveAutomationSettings({ ...automationSettings, preflightRecheckEnabled })}
+                  />
                 </div>
 
                 <div className="settings-row settings-row--divided">
@@ -266,6 +292,22 @@ export function SettingsAutomation({
                           })}
                         />
                       </div>
+                      <div className="settings-row settings-row--sub">
+                        <div className="settings-row__copy">
+                          <span className="settings-row__label">切换前等待</span>
+                          <span className="settings-row__hint">退款成功后等待再热切运行中的 Cursor；0 = 立即。等待期间取消自动化则不再切换；等待长于加固倒计时时，切换会发生在旧号删除之后</span>
+                        </div>
+                        <NumberStepperField
+                          value={automationSettings.handoverDelaySec ?? 0}
+                          min={0}
+                          max={ACCOUNT_AUTOMATION_DELAY_MAX_SEC}
+                          step={0.5}
+                          unit="秒"
+                          disabled={aozaiBusy || active}
+                          label="无感切换前等待秒数"
+                          onChange={(handoverDelaySec) => onSaveAutomationSettings({ ...automationSettings, handoverDelaySec })}
+                        />
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -285,6 +327,92 @@ export function SettingsAutomation({
           <p className="flow-step__hint">保存奥仔卡密后开启自动化。</p>
         )}
       </SettingsSection>
+
+      {automationSettings && onSaveAutomationSettings ? (
+        <SettingsSection
+          title="升级 Pro 账单资料"
+          description="账号卡片「升级 Pro」在 Stripe 结账页自动填写的姓名与中国账单地址；国家（中国）、币种（USD）、月付由链路固定，付款在指纹窗口内用支付宝扫码完成。"
+        >
+          <div className="account-add-form settings-add-form settings-checkout-form">
+            <label>
+              <span>账单姓名</span>
+              <input
+                value={checkoutProfile.name}
+                maxLength={80}
+                autoComplete="off"
+                placeholder="拼音 / 英文，如 Li Ming"
+                onChange={(event) => updateCheckoutField('name', event.target.value)}
+              />
+            </label>
+            <label>
+              <span>省份</span>
+              <input
+                value={checkoutProfile.province}
+                maxLength={40}
+                autoComplete="off"
+                placeholder="与 Stripe 选项一致，如 湖北省"
+                onChange={(event) => updateCheckoutField('province', event.target.value)}
+              />
+            </label>
+            <label>
+              <span>城市</span>
+              <input
+                value={checkoutProfile.city}
+                maxLength={60}
+                autoComplete="off"
+                placeholder="如 武汉市"
+                onChange={(event) => updateCheckoutField('city', event.target.value)}
+              />
+            </label>
+            <label>
+              <span>区 / 县</span>
+              <input
+                value={checkoutProfile.district}
+                maxLength={60}
+                autoComplete="off"
+                placeholder="如 洪山区"
+                onChange={(event) => updateCheckoutField('district', event.target.value)}
+              />
+            </label>
+            <label className="settings-checkout-form__wide">
+              <span>地址行 1</span>
+              <input
+                value={checkoutProfile.line1}
+                maxLength={120}
+                autoComplete="off"
+                placeholder="街道、门牌号，如 珞喻路 456 号"
+                onChange={(event) => updateCheckoutField('line1', event.target.value)}
+              />
+            </label>
+            <label className="settings-checkout-form__wide">
+              <span>地址行 2（可选）</span>
+              <input
+                value={checkoutProfile.line2 ?? ''}
+                maxLength={120}
+                autoComplete="off"
+                placeholder="楼栋、单元、室等补充信息"
+                onChange={(event) => updateCheckoutField('line2', event.target.value)}
+              />
+            </label>
+            <label>
+              <span>邮编</span>
+              <input
+                value={checkoutProfile.postalCode}
+                maxLength={10}
+                autoComplete="off"
+                inputMode="numeric"
+                placeholder="如 430070"
+                onChange={(event) => updateCheckoutField('postalCode', event.target.value)}
+              />
+            </label>
+            {checkoutIssue ? (
+              <p className="settings-add-form__warn settings-checkout-form__wide">资料不完整：缺{checkoutIssue}，补齐后才能发起升级</p>
+            ) : (
+              <p className="settings-add-form__ok settings-checkout-form__wide">资料完整，可在账号卡片发起「升级 Pro」</p>
+            )}
+          </div>
+        </SettingsSection>
+      ) : null}
 
       {seatRotationSettings && onSaveSeatRotationSettings ? (
         <SettingsSection

@@ -1,5 +1,7 @@
 /** 会话创建后的账号自动化（玩法开关 + 延时 + RoxyBrowser 指纹浏览器窗口）。 */
 
+import { normalizeCursorCheckoutProfile, type CursorCheckoutProfile } from './cursor-checkout-profile'
+
 export interface AccountAutomationSettings {
   /** 总开关：一键创建会话全部提交成功后，是否自动执行账号自动化链。默认关。 */
   enabled: boolean
@@ -34,6 +36,23 @@ export interface AccountAutomationSettings {
   seamlessHandoverEnabled?: boolean
   /** 指定接手账号；缺省为自动选择最近更新的非当前账号。 */
   seamlessHandoverAccountId?: string
+  /**
+   * 切换前等待秒数（0.5 步进，0–60）：退款成功后延迟 commit 热切。
+   * 缺省 0 = 立即（旧号额度已废，运行态尽快落到接手号）。等待期间主链取消/被取代则不再切换。
+   */
+  handoverDelaySec?: number
+  /**
+   * 倒计时后复检浏览器会话（preflight 闸 4）：倒计时结束时再读一次浏览器会话并比对凭据。
+   * 默认开；关闭可省去一次浏览器会话读取（连/开窗的可见副作用），
+   * 但倒计时期间的会话改动不再拦截。本地闸（卡密/活跃账号/运行态一致性）始终复检——毫秒级零副作用。
+   */
+  preflightRecheckEnabled?: boolean
+  /**
+   * 「升级 Pro」扫码付款的账单资料（Stripe 结账页填写用；明文非敏感）。
+   * 国家/币种/月付是链路既定拍板（见 cursor-checkout-profile.ts），资料只含姓名与地址。
+   * 归一化始终返回完整结构（编辑表单直接可填）；编辑中途的空串原样保留，执行前再校验完整性。
+   */
+  checkoutProfile?: CursorCheckoutProfile
 }
 
 export const ACCOUNT_AUTOMATION_DELAY_MIN_SEC = 0.5
@@ -62,6 +81,10 @@ export function normalizeAccountAutomationSettings(value: unknown): AccountAutom
   const seamlessHandoverAccountId = typeof raw.seamlessHandoverAccountId === 'string' && raw.seamlessHandoverAccountId.trim()
     ? raw.seamlessHandoverAccountId.trim()
     : undefined
+  // 切换前等待：0 = 立即热切（默认，不落盘，与 seamlessHandoverAccountId 同族的稀疏字段）；0.5 步进，上限 60s。
+  const handoverDelay = typeof raw.handoverDelaySec === 'number' && Number.isFinite(raw.handoverDelaySec)
+    ? Math.min(ACCOUNT_AUTOMATION_DELAY_MAX_SEC, Math.max(0, Math.round(raw.handoverDelaySec * 2) / 2))
+    : 0
   return {
     enabled: raw.enabled === true,
     delaySec: Math.min(ACCOUNT_AUTOMATION_DELAY_MAX_SEC, Math.max(ACCOUNT_AUTOMATION_DELAY_MIN_SEC, delay)),
@@ -70,7 +93,12 @@ export function normalizeAccountAutomationSettings(value: unknown): AccountAutom
     bitProfileId,
     autoAcknowledgeModelDataPolicies: raw.autoAcknowledgeModelDataPolicies !== false,
     seamlessHandoverEnabled: raw.seamlessHandoverEnabled !== false,
-    ...(seamlessHandoverAccountId ? { seamlessHandoverAccountId } : {})
+    ...(handoverDelay > 0 ? { handoverDelaySec: handoverDelay } : {}),
+    // 复检开关默认开；仅显式关闭时落盘（稀疏字段，不污染旧档精确结构）。
+    ...(raw.preflightRecheckEnabled === false ? { preflightRecheckEnabled: false } : {}),
+    ...(seamlessHandoverAccountId ? { seamlessHandoverAccountId } : {}),
+    // 结账资料恒完整返回（表单直接可填）；字段级编辑态（空串）原样保留，不落字段默认。
+    checkoutProfile: normalizeCursorCheckoutProfile(raw.checkoutProfile)
   }
 }
 

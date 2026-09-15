@@ -73,6 +73,8 @@ interface LiveSwitchResult {
   retryable?: boolean
   /** 自动化内部标记：本轮结果来自一次精准补投。 */
   retried?: boolean
+  /** 自动化内部标记：切换前等待随主链取消而放弃（commit 未发出），不写回 failed。 */
+  cancelled?: boolean
 }
 
 interface LiveSwitchPreparation {
@@ -291,18 +293,30 @@ export class AccountAutomationService {
     }
   }
 
-  /** 退款确认后提交已预热票据，并把结果即时写入独立子状态。 */
-  private startLiveSwitch(preparation: LiveSwitchPreparation): typeof this.pendingLiveSwitch {
-    this.setRun({
-      handover: {
-        accountId: preparation.targetAccountId,
-        label: preparation.targetLabel,
-        status: 'switching',
-        message: '等待 Cursor 接收并确认',
-        startedAt: this.run.handover?.startedAt ?? this.now()
-      }
-    })
+  /** 退款确认后提交已预热票据，并把结果即时写入独立子状态。delaySec > 0 时先等待再 commit。 */
+  private startLiveSwitch(preparation: LiveSwitchPreparation, delaySec = 0): typeof this.pendingLiveSwitch {
+    const handoverBase = {
+      accountId: preparation.targetAccountId,
+      label: preparation.targetLabel,
+      startedAt: this.run.handover?.startedAt ?? this.now()
+    }
+    const announceSwitching = (): void => {
+      this.setRun({ handover: { ...handoverBase, status: 'switching', message: '等待 Cursor 接收并确认' } })
+    }
+    if (delaySec <= 0) announceSwitching()
     const run = async (): Promise<LiveSwitchResult> => {
+      // 切换前等待：handover 保持 preparing 并倒计时；commit 尚未发出，
+      // 主链取消/被取代即放弃热切（与「请求已发出后不可中止」互补：未发出的不发出）。
+      if (delaySec > 0) {
+        for (let left = delaySec; left > 0; left -= 0.5) {
+          if (this.runSeq !== preparation.runSeq || this.cancelRequested) {
+            return { switched: false, reason: '切换前等待已随自动化取消', cancelled: true }
+          }
+          this.setRun({ handover: { ...handoverBase, status: 'preparing', message: `票据已就绪，${left}s 后切换` } })
+          await this.sleep(TICK_MS)
+        }
+        announceSwitching()
+      }
       const prepared = await preparation.prepared
       return prepared.ok ? prepared.commit() : prepared.result
     }
@@ -320,7 +334,8 @@ export class AccountAutomationService {
       const retried = await run()
       return { ...retried, retried: true }
     }).then((result) => {
-      if (this.runSeq === preparation.runSeq) {
+      // 取消放弃的切换不写回 failed——主链已按用户意图定型为 cancelled。
+      if (this.runSeq === preparation.runSeq && !result.cancelled) {
         this.setRun({
           handover: {
             accountId: preparation.targetAccountId,
@@ -342,12 +357,13 @@ export class AccountAutomationService {
     }
   }
 
-  /** 等待已在退款后即时执行（含精准补投）的热切，并生成最终摘要。 */
+  /** 等待已在退款后执行（含切换前等待与精准补投）的热切，并生成最终摘要。 */
   private async settleLiveSwitch(runSeq: number): Promise<string | undefined> {
     const pending = this.pendingLiveSwitch
     if (!pending || pending.runSeq !== runSeq) return undefined
     this.pendingLiveSwitch = undefined
     const first = await pending.promise
+    if (first.cancelled) return '无感换号已随自动化取消（未切换）'
     if (first.switched) return first.warning
       ? `无感换号已完成，但需处理：${first.warning}`
       : first.retried
@@ -418,8 +434,10 @@ export class AccountAutomationService {
         message: `将在 ${settings.delaySec}s 后自动处理当前账号（可取消）`
       })
 
-      // 前置校验放在倒计时之前亮相、倒计时之后复检（期间用户可能改动）
-      const preflight = async (): Promise<string | undefined> => {
+      // 前置校验放在倒计时之前亮相、倒计时之后复检（期间用户可能改动）。
+      // stage='recheck' 时闸 4（浏览器会话一致性，要连/读浏览器窗口）可按
+      // preflightRecheckEnabled 关闭；闸 1-3 是内存/SQLite 毫秒级读，始终复检。
+      const preflight = async (stage: 'early' | 'recheck'): Promise<string | undefined> => {
         if (!this.deps.cardVault.maskedCode()) return '未配置奥仔卡密，自动化中止'
         const active = this.deps.accounts.list().find((account) => account.active)
         if (!active) return '尚未选择 Cursor 账号，自动化中止'
@@ -431,7 +449,7 @@ export class AccountAutomationService {
         }
         // 消耗卡密前的最后一道闸：浏览器会话必须可读且与拾光凭据一致——
         // 否则会把已失效/错误账号的 token 提交给奥仔，失败还浪费一次排查时间
-        if (this.deps.readBrowserToken) {
+        if (this.deps.readBrowserToken && !(stage === 'recheck' && this.getSettings().preflightRecheckEnabled === false)) {
           // 会话来源描述：指纹宿主精确到「账号绑定窗口 / 默认窗口」，外部宿主为系统浏览器。
           // 绑定语义让报错能指到具体窗口与修法，而不是泛泛的「重新导入」。
           const host = this.getSettings().browserHost ?? 'fingerprint'
@@ -462,7 +480,7 @@ export class AccountAutomationService {
         }
         return undefined
       }
-      const earlyIssue = await preflight()
+      const earlyIssue = await preflight('early')
       if (earlyIssue) {
         this.setRun({ phase: 'failed', message: earlyIssue, remainingSec: undefined, finishedAt: this.now() })
         return
@@ -480,7 +498,7 @@ export class AccountAutomationService {
         }
       })
       if (beforeProcess !== 'completed') return
-      const issue = await preflight()
+      const issue = await preflight('recheck')
       if (issue) {
         this.setRun({ phase: 'failed', message: issue, finishedAt: this.now() })
         return
@@ -517,8 +535,9 @@ export class AccountAutomationService {
       // 退款成功即热切（对齐小辰 accountRefunded 点）：旧号额度已废，运行中的
       // Cursor 必须尽快落到接手号上；加固倒计时/删除与热切并行，互不阻塞。
       // fire-and-forget：结果在 finishDeletedAccount 收口时 settle 呈现。
+      // handoverDelaySec > 0 时先经「切换前等待」再 commit（commit 未发出前取消即放弃）。
       this.pendingLiveSwitch = liveSwitchPreparation
-        ? this.startLiveSwitch(liveSwitchPreparation)
+        ? this.startLiveSwitch(liveSwitchPreparation, settings.handoverDelaySec ?? 0)
         : undefined
 
       // 加固前第二段倒计时：奥仔已完成（卡密已扣），此段取消只跳过加固、保留本地账号。

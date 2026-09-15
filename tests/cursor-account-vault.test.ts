@@ -166,4 +166,109 @@ describe('CursorAccountVault', () => {
       expect(new CursorAccountVault(path, crypto).list()[0]).not.toHaveProperty('fingerprintProfileId')
     })
   })
+
+  describe('卡号导入（saveCard）', () => {
+    const card = {
+      email: 'ElliotMooreeza@outlook.com',
+      emailPassword: 'mail-pass',
+      cursorPassword: 'cursor-pass',
+      recoveryEmail: 'sub@ouleyx.cc',
+      recoveryEmailPassword: 'sub-pass',
+      token: 'user_01M25::jwt-token-abcdef'
+    }
+
+    it('新建：凭据整体加密入库，元数据暴露 email/hasCredentials，明文不落盘', () => {
+      const path = join(mkdtempSync(join(tmpdir(), 'sg-cursor-accounts-')), 'accounts.json')
+      const vault = new CursorAccountVault(path, crypto, () => 123)
+      const result = vault.saveCard({ card, sub: 'auth0|user_01M25' })
+
+      expect(result.outcome).toBe('created')
+      expect(result.label).toBe(card.email)
+      expect(result.accounts).toEqual([
+        expect.objectContaining({ label: card.email, email: card.email, hasCredentials: true, active: true })
+      ])
+      const raw = readFileSync(path, 'utf8')
+      expect(raw).not.toContain('cursor-pass')
+      expect(raw).not.toContain('mail-pass')
+      expect(raw).not.toContain('jwt-token-abcdef')
+      expect(vault.credentials(result.accountId)).toEqual({
+        email: card.email,
+        cursorPassword: card.cursorPassword,
+        emailPassword: card.emailPassword,
+        recoveryEmail: card.recoveryEmail,
+        recoveryEmailPassword: card.recoveryEmailPassword
+      })
+    })
+
+    it('同一 sub 再粘贴：原地更新 Token 与凭据，保留备注、窗口绑定与账号 id', () => {
+      const path = join(mkdtempSync(join(tmpdir(), 'sg-cursor-accounts-')), 'accounts.json')
+      let clock = 1000
+      const vault = new CursorAccountVault(path, crypto, () => clock)
+      const created = vault.saveCard({ card, sub: 'auth0|user_01M25', fingerprintProfileId: 'win-1' })
+      const accountId = created.accountId
+
+      clock = 2000
+      const updated = vault.saveCard({
+        card: { ...card, token: 'user_01M25::jwt-token-NEW999', cursorPassword: 'new-cursor-pass' },
+        sub: 'auth0|user_01M25'
+      })
+      expect(updated.outcome).toBe('updated')
+      expect(updated.accountId).toBe(accountId)
+      expect(updated.accounts).toHaveLength(1)
+      expect(updated.accounts[0]).toMatchObject({
+        label: card.email, fingerprintProfileId: 'win-1', maskedToken: '••••W999', updatedAt: 2000
+      })
+      expect(vault.credential(accountId)).toBe('user_01M25::jwt-token-NEW999')
+      expect(vault.credentials(accountId)?.cursorPassword).toBe('new-cursor-pass')
+    })
+
+    it('无 sub 或 sub 不匹配时新建；makeActive:false 不抢活跃位', () => {
+      const path = join(mkdtempSync(join(tmpdir(), 'sg-cursor-accounts-')), 'accounts.json')
+      const vault = new CursorAccountVault(path, crypto)
+      vault.saveCard({ card, sub: 'auth0|user_01M25' })
+      const second = vault.saveCard({ card: { ...card, email: 'other@x.co' }, makeActive: false })
+      expect(second.outcome).toBe('created')
+      expect(second.accounts).toHaveLength(2)
+      expect(second.accounts[0]!.active).toBe(true)
+      expect(second.accounts[1]!.active).toBe(false)
+      // 无凭据来源（save）的账号不暴露 email/hasCredentials
+      vault.save({ label: 'plain', token: 'cursor-token-plain' })
+      const plain = vault.list().find((account) => account.label === 'plain')!
+      expect(plain).not.toHaveProperty('email')
+      expect(plain).not.toHaveProperty('hasCredentials')
+    })
+
+    it('credentials：未保存凭据、解密失败、格式漂移均返回 undefined', () => {
+      const path = join(mkdtempSync(join(tmpdir(), 'sg-cursor-accounts-')), 'accounts.json')
+      const vault = new CursorAccountVault(path, crypto)
+      const [plain] = vault.save({ label: 'plain', token: 'cursor-token-plain' })
+      expect(vault.credentials(plain!.id)).toBeUndefined()
+      expect(vault.credentials()).toBeUndefined()
+
+      const created = vault.saveCard({ card, sub: 'auth0|user_01M25' })
+      const raw = JSON.parse(readFileSync(path, 'utf8')) as { accounts: Array<Record<string, unknown>> }
+      raw.accounts.find((account) => account.id === created.accountId)!.encryptedCredentials = '!!!not-ciphertext!!!'
+      writeFileSync(path, JSON.stringify(raw), 'utf8')
+      expect(vault.credentials(created.accountId)).toBeUndefined()
+    })
+
+    it('超长邮箱（>80，备注上限）拒绝入库', () => {
+      const path = join(mkdtempSync(join(tmpdir(), 'sg-cursor-accounts-')), 'accounts.json')
+      const vault = new CursorAccountVault(path, crypto)
+      const longEmail = `${'a'.repeat(70)}@example.com`
+      expect(() => vault.saveCard({ card: { ...card, email: longEmail } })).toThrow(/备注上限/)
+    })
+
+    it('旧数据回退：sub/email/encryptedCredentials 脏数据按缺省处理', () => {
+      const path = join(mkdtempSync(join(tmpdir(), 'sg-cursor-accounts-')), 'accounts.json')
+      const vault = new CursorAccountVault(path, crypto)
+      vault.saveCard({ card, sub: 'auth0|user_01M25' })
+      const raw = JSON.parse(readFileSync(path, 'utf8')) as { accounts: Array<Record<string, unknown>> }
+      Object.assign(raw.accounts[0]!, { sub: 42, email: null, encryptedCredentials: 7 })
+      writeFileSync(path, JSON.stringify(raw), 'utf8')
+      const [account] = new CursorAccountVault(path, crypto).list()
+      expect(account).not.toHaveProperty('email')
+      expect(account).not.toHaveProperty('hasCredentials')
+    })
+  })
 })

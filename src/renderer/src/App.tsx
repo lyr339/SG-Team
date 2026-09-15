@@ -146,6 +146,8 @@ export function App(): React.JSX.Element {
   const [cursorAccounts, setCursorAccounts] = useState<CursorAccountMetadata[]>([])
   const [cursorAccountBusy, setCursorAccountBusy] = useState(false)
   const [cursorAccountError, setCursorAccountError] = useState('')
+  // 升级 Pro 结账结果反馈（待扫码/复核通过/失败原因）；按账号粒度置忙在组件内。
+  const [proUpgradeFeedback, setProUpgradeFeedback] = useState<{ ok: boolean; message: string } | null>(null)
   const [cursorUpdatePreferences, setCursorUpdatePreferences] = useState<CursorUpdatePreferences>()
   const [cursorUpdateBusy, setCursorUpdateBusy] = useState(false)
   const [cursorUpdateError, setCursorUpdateError] = useState('')
@@ -713,6 +715,27 @@ export function App(): React.JSX.Element {
     }
   }, [refreshMembership])
 
+  // 手动模式：token 由用户粘贴，不属于库内账号——不触发档位重查，其余状态流与账号处理一致。
+  const processAozaiToken = useCallback(async (token: string): Promise<void> => {
+    setAozaiBusy(true)
+    setAozaiError('')
+    setAozaiFeedback(null)
+    setAozaiProgress(null)
+    try {
+      const result = await window.sgDesktop.processAozaiToken({ token, requestId: crypto.randomUUID() })
+      setAozaiFeedback({ ok: result.ok, message: result.message })
+      setAozaiStatus((previous) => ({
+        ...previous,
+        remaining: typeof result.remaining === 'number' ? result.remaining : previous.remaining
+      }))
+    } catch (reason) {
+      setAozaiFeedback({ ok: false, message: userFacingErrorMessage(reason) })
+    } finally {
+      setAozaiBusy(false)
+      setAozaiProgress(null)
+    }
+  }, [])
+
   useEffect(() => {
     let disposed = false
     let polling = false
@@ -997,6 +1020,44 @@ export function App(): React.JSX.Element {
       catch (reason) { setCursorAccountError(reason instanceof Error ? reason.message : String(reason)); throw reason }
       finally { setCursorAccountBusy(false) }
     },
+    onSaveCard: async (input) => {
+      setCursorAccountBusy(true); setCursorAccountError('')
+      try {
+        const result = await window.sgDesktop.saveCursorAccountCard(input)
+        setCursorAccounts(result.accounts)
+        // 与 onSave 同理：卡号导入默认活跃，一致性锚点与档位同步重查
+        void refreshRuntimeMatch()
+        void refreshMembership()
+        void refreshAccountMemberships()
+        return { outcome: result.outcome, label: result.label, tokenRefreshed: result.tokenRefreshed, loginError: result.loginError }
+      }
+      catch (reason) { setCursorAccountError(reason instanceof Error ? reason.message : String(reason)); throw reason }
+      finally { setCursorAccountBusy(false) }
+    },
+    onReloginAccount: async (accountId) => {
+      // 自动登录可能等人机验证（最长约 2 分钟）：不锁全局 busy，按账号粒度置忙；
+      // 失败走账号区错误条，成功后列表刷新（maskedToken 变化即可见确认）。
+      try {
+        const result = await window.sgDesktop.loginCursorAccount(accountId)
+        setCursorAccounts(result.accounts)
+        void refreshRuntimeMatch()
+      }
+      catch (reason) { setCursorAccountError(reason instanceof Error ? reason.message : String(reason)); throw reason }
+    },
+    onStartProUpgrade: async (accountId) => {
+      // 结账链可能等页面加载/人机验证（最长约 2 分钟）：不锁全局 busy（组件内按账号置忙）。
+      // 结果不分成败都走反馈条——awaiting_payment（请扫码）与 verified（复核通过）都是正常出口。
+      setProUpgradeFeedback(null)
+      try {
+        const result = await window.sgDesktop.startCursorProUpgrade(accountId)
+        setProUpgradeFeedback({ ok: true, message: result.detail })
+      }
+      catch (reason) {
+        setProUpgradeFeedback({ ok: false, message: reason instanceof Error ? reason.message : String(reason) })
+        throw reason
+      }
+    },
+    proUpgradeFeedback,
     onSelect: async (accountId) => {
       setCursorAccountBusy(true); setCursorAccountError('')
       try { setCursorAccounts(await window.sgDesktop.selectCursorAccount(accountId)) }
@@ -1140,6 +1201,7 @@ export function App(): React.JSX.Element {
     onClearAozaiCard: clearAozaiCard,
     onRefreshAozaiBalance: refreshAozaiBalance,
     onProcessAozaiAccount: processAozaiAccount,
+    onProcessAozaiToken: processAozaiToken,
     automationSettings: accountAutomationSettings,
     automationRun: accountAutomationRun,
     bitProfiles,

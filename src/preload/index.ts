@@ -25,6 +25,9 @@ if (document.documentElement) {
 const api: SgDesktopApi = {
   listCursorAccounts: () => ipcRenderer.invoke(IPC.cursorAccountsList),
   saveCursorAccount: (input) => ipcRenderer.invoke(IPC.cursorAccountsSave, input),
+  saveCursorAccountCard: (input) => ipcRenderer.invoke(IPC.cursorAccountsSaveCard, input),
+  loginCursorAccount: (accountId) => ipcRenderer.invoke(IPC.cursorAccountsLogin, accountId),
+  startCursorProUpgrade: (accountId) => ipcRenderer.invoke(IPC.cursorAccountsStartProUpgrade, accountId),
   selectCursorAccount: (accountId) => ipcRenderer.invoke(IPC.cursorAccountsSelect, accountId),
   removeCursorAccount: (accountId) => ipcRenderer.invoke(IPC.cursorAccountsRemove, accountId),
   setCursorAccountFingerprintProfile: (accountId, profileId) => ipcRenderer.invoke(IPC.cursorAccountsSetFingerprintProfile, { accountId, profileId }),
@@ -47,6 +50,7 @@ const api: SgDesktopApi = {
   clearAozaiCard: () => ipcRenderer.invoke(IPC.aozaiClearCard),
   refreshAozaiBalance: () => ipcRenderer.invoke(IPC.aozaiRefreshBalance),
   processAozaiAccount: (input) => ipcRenderer.invoke(IPC.aozaiProcessAccount, input),
+  processAozaiToken: (input) => ipcRenderer.invoke(IPC.aozaiProcessToken, input),
   launchAgentSessions: (requests) => ipcRenderer.invoke(IPC.agentLaunchStart, requests),
   getAgentLaunchPlan: () => ipcRenderer.invoke(IPC.agentLaunchGet),
   enableCursorCdp: () => ipcRenderer.invoke(IPC.agentLaunchEnableCdp),
