@@ -27,6 +27,8 @@ import { resolveTaskMcpServerPath } from './task-mcp-runtime'
 import { TeamContinuityService } from '../application/team-continuity-service'
 import { TeamFailoverService } from '../application/team-failover-service'
 import { registerTeamContinuityIpc } from './register-team-continuity-ipc'
+import { TeamGroupService } from '../application/team-group-service'
+import { registerTeamGroupIpc } from './register-team-group-ipc'
 import { TaskDispatcher } from '../application/task-dispatcher'
 import { MemoryReviewCoordinator } from '../application/memory-review-coordinator'
 import { TeamOrchestrator } from '../application/team-orchestrator'
@@ -106,6 +108,7 @@ let disposeMcpInstallerIpc: (() => void) | undefined
 let disposeTeamControlIpc: (() => void) | undefined
 let disposeTeamCollaborationIpc: (() => void) | undefined
 let disposeTeamContinuityIpc: (() => void) | undefined
+let disposeTeamGroupIpc: (() => void) | undefined
 let disposeRunContext: (() => void) | undefined
 let disposeCursorAccountIpc: (() => void) | undefined
 let disposeAozaiIpc: (() => void) | undefined
@@ -627,6 +630,16 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     { onerror: orchestrationError }
   )
   teamFailoverService.start()
+  // 会话池 · 协作组：成员关系的操作员服务。仓储事务是真相源，副作用（成员关系通知 / 释放租约 /
+  // 孤儿回执 / lead 知情）在事务成功后各自 fail-soft；出站队列持久，所以不需要也不做回滚。
+  const teamGroupService = new TeamGroupService(
+    teamControlRepository,
+    teamControlService,
+    taskPoolService,
+    teamCollaborationRepository,
+    localSessionBridge,
+    { onerror: orchestrationError }
+  )
   let activeRunId = teamControlService.getActiveRunId()
   disposeRunContext = teamControlService.subscribe((snapshot) => {
     const nextRunId = snapshot.activeRun?.id
@@ -889,6 +902,11 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     // 离线职责迁移可附带上下文交接：上下文在迁移前解析、迁移后投递，见 manualHandoffWithContext。
     sessionHandoffService
   )
+  disposeTeamGroupIpc = registerTeamGroupIpc(
+    teamGroupService,
+    () => mainWindow,
+    { isSessionLaunchRunning: () => agentSessionLauncher.getPlan()?.state === 'running' }
+  )
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -919,6 +937,7 @@ app.on('before-quit', () => {
   disposeTeamControlIpc?.()
   disposeTeamCollaborationIpc?.()
   disposeTeamContinuityIpc?.()
+  disposeTeamGroupIpc?.()
   disposeRunContext?.()
   disposeCursorAccountIpc?.()
   disposeAozaiIpc?.()

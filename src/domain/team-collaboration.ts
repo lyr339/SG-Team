@@ -191,6 +191,16 @@ export function teamMessageRequiresResponse(kind: TeamMessageKind): boolean {
   return kind === 'directive' || kind === 'question'
 }
 
+/**
+ * 成员出组 / 组解散时，其名下仍待回应的 directive / question 的回执标记（任务书 §7 规则 2）。
+ * 写进 `notificationDetail`（stage 不变），清扫器据此不再把它当「未回应」催办——它永远不会有回应了。
+ */
+export const ORPHANED_RECEIPT_DETAIL = 'orphaned: member left'
+
+export function isOrphanedReceipt(receipt: Partial<Pick<TeamMessageReceipt, 'notificationDetail'>> | undefined): boolean {
+  return (receipt?.notificationDetail ?? '').includes(ORPHANED_RECEIPT_DETAIL)
+}
+
 export function sameTeamMessageActor(left: TeamMessageActor, right: TeamMessageActor): boolean {
   return left.type === right.type
     && (left.type === 'operator' || (right.type === 'agent' && left.slotId === right.slotId))

@@ -1,6 +1,6 @@
 # 交接任务书：会话池 + 动态分组（先独立、后建组、可拆组）· 阶段 1 数据模型与迁移
 
-> **状态（2026-09-14）：阶段 1 进行中**——切片 ①②③ 已落地并全绿（详见 §13）；④ 成员关系通知、⑤ 服务 API / IPC / 最小 UI、⑥ 集成测试与文档待做。
+> **状态（2026-09-15）：阶段 1 进行中**——切片 ①②③④⑤a 已落地并全绿（详见 §13）；⑤b 最小 UI、⑥ 集成测试与文档待做。
 > 每完成一步在第 13 节追加一行；中断后接手者只读第 0、13、14 节即可定位。
 > 四个阶段的索引、依赖与决策点见 `DYNAMIC-GROUPS-ROADMAP.md`；阶段 2 / 3 / 4 各有独立任务书
 > （`…-PHASE2-RUNTIME-TODO.md` / `…-PHASE3-UI-TODO.md` / `…-PHASE4-MCP-TODO.md`）。
@@ -450,6 +450,8 @@ interface TeamControlSnapshot { …; groups: TeamGroupView[] }   // 只含 activ
 | 09-14 15:00–15:10 | 切片③a | 任务池：`TeamTask.groupId` + `sameTaskGroup`；`plan(runId, inputs, groupId)` 依赖只能指向同组；`leaseNext/leaseTask/leaseReview` 按组过滤（`task_group_mismatch`）；`releaseAgentWork`（出组：attempt cancelled、任务回 queued、清空对该席位的定向、验收回 queued，事件 `lease/review.released_by_membership`）；`TaskPoolService.closeGroup/releaseAgentWork`、`CreateTaskInput.groupId`；`TaskAgentService` 全部视图 `inScope`；`tasks.group_id` 列存在性守卫 + 索引 | `tests/task-pool-group-scope.test.ts` 5 例 |
 | 09-14 15:10–15:25 | 切片③b/c | 协作库：`team_messages/threads.group_id`；`loadRun(runId, groupId?)`、`listRunMembers(runId, groupId?)`；`resolveAuthorizedAgent` 返回 `groupId`、`isEffectiveLead` 以组 lead / acting 为准（`leadStatusOf` 与 team-control 同口径）；`createMessage` 组快照按「显式 → 接收方组 → 发送方组」推得，跨组互发 `recipient_not_in_group`，串线程 `thread_group_mismatch`；agent service 全部读写按 `agent.groupId`。记忆库：`team_memory_items.group_id`；`load/search(…, groupId)` run 级按组、项目级跨组；`propose` 组快照、修订同组；`review` 组内成员限定 | `tests/team-group-scope.test.ts` 5 例 |
 | 09-14 15:25–15:31 | 切片③d | 编排域 `collaboratingMembers / groupScopedMembers / groupScopedLead`（池内无组对象没有执行者）；`TaskDispatcher` 分派 / 验收派单按任务组；`TeamOrchestrator` 催办 / 预警按任务组 lead；`selectMemoryReviewMember` run 级按组、项目级池内任一质量角色、lead 与模板解耦；`TeamCollaborationSweeper` 池内按活动组逐组清扫（lead 心跳周期键按作用域）；continuity 检查点 `members[].groupId` + 可选 `groups[]` | `tests/team-orchestration-groups.test.ts` 4 例；全量 180 文件 / 1789 用例、typecheck、knip 全绿 |
+| 09-14 15:35–15:52 | 切片④ | `channel_outbox.kind`（user / internal / membership，旧行按标题前缀推断）；`buildMembershipNotice` 四模板 + `buildMembershipNoticeSuffix`；instructions 预告成员关系通知、`team_*` 禁令改「未入组时」；`not_in_group` 统一 `nextAction`；`team_check_in` 组简报（组目标 / lead / 无 lead 工作流）；`team_run` 池语义（start → `not_applicable`，transfer / claim / clear 写组 acting lead） | `channel-protocol-policy` +5、`channel-message-relay` +1；全量 1795 用例全绿；提交 `ffa22fb` |
+| 09-15 13:00–13:25 | 切片⑤a | （CH-1 接手）`application/team-group-service.ts`：create / addMembers / remove / setLead / updateGoal / dissolve——仓储事务为真相源，成功后副作用 fail-soft：成员关系通知（`bridge.sendMessage kind:'membership'`）、出组 `releaseAgentWork`、解散 `closeGroup`、孤儿回执、lead 收「成员已移出」notice、改目标全员 notice；协作库新增 `orphanPendingReceipts`（queued / sending → `not_required`，已投递只追加 detail）+ 清扫器跳过孤儿；`project()` 池 run 去掉「团队目标」「团队已经运行」两条 blocker；IPC `team-group:*` 六个 + preload + `DesktopApi` + 主进程装配（构造在 failover 之后） | `tests/team-group-service.test.ts` 9 例、`register-team-group-ipc.test.ts` 2 例、`team-collab-sweeps` +1；全量 182 文件 / 1807 用例、typecheck、knip 全绿 |
 
 ***
 
@@ -480,3 +482,7 @@ interface TeamControlSnapshot { …; groups: TeamGroupView[] }   // 只含 activ
 - **池内不带组的对象没有执行者**（`groupScopedMembers(team, undefined)` 在池 run 返回空）：操作员在池里建的 run 级任务不会被派给任何组成员（阶段 3 UI 建任务必须选组）。
 - **`registerSeat / addSeats / removeSeat` 推后**：§11 验收脚本不需要；独立批次创建仍走 `configureIndependentWorkspace`。
 - **`recordAgentCheckIn` 的 totals 未按 §5.1 改**：池 run 已是 `running`，状态推进本就是 no-op。
+- **组 API 落在独立的 `TeamGroupService`，不进 `TeamControlService`**：后者在主进程里先于任务池 / 协作服务构造，只持有 control 仓储 + bridge；组操作的副作用需要任务池与协作库，照 `TeamFailoverService` 的形状组合（control 仓储、control 服务、任务池服务、协作仓储、bridge），在 failover 之后装配。仓储事务成功后副作用各自 fail-soft（只记 onerror，不回滚——出站队列持久，通知投不出去不该撤销一次已生效的成员关系）。IPC 单独 `register-team-group-ipc.ts`（`team-group:*` 六个，全部 `assertNoSessionLaunch`）。
+- **孤儿回执（§7 规则 2）的细化**：`orphanPendingReceipts` 对尚未投递的（`queued` / `sending`）改 `not_required` 并清 command id——否则 `TeamMessageDispatcher` 会把一条它已读不到的团队消息投给已出组的会话；已投递的只在 `notificationDetail` 追加 `orphaned: member left`，stage 不变。`findUnansweredDirectives` 跳过带孤儿标记的消息（它永远不会有回应，催办只会打扰发送方）。
+- **通知的收件范围**：建组 / 加人只通知新入组者（既有成员靠 `team_check_in` 的成员目录感知）；换 lead 只通知新旧 lead；移出只通知出组者 + 给组内有效 lead 一条 team `notice`；改目标给全体成员 team `notice`；解散每人一条。被移出的席位若恰是最后一名成员或被 `force` 移出，组保留为空的 active 组，由用户决定解散或再加人。
+- **`preflight.blockers` 池化（§5.7）**：池 run 不再产生「请先填写并保存团队目标」「团队已经运行」；`agentsWaiting` 仍按「非 solo = 已入组席位」计算。

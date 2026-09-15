@@ -4,7 +4,7 @@ import {
   findUnansweredDirectives,
   leadSilenceEvidence
 } from '../src/domain/team-collab-sweeps'
-import { emptyTeamCollaborationSnapshot, type TeamMessage } from '../src/domain/team-collaboration'
+import { ORPHANED_RECEIPT_DETAIL, emptyTeamCollaborationSnapshot, type TeamMessage } from '../src/domain/team-collaboration'
 
 const NOW = 1_800_000_000_000
 
@@ -44,6 +44,17 @@ describe('findUnansweredDirectives', () => {
     const result = findUnansweredDirectives(snapshotWith([old, fresh]), NOW)
     expect(result.map((item) => item.id)).toEqual(['m-old'])
     expect(result[0]?.ageMs).toBeGreaterThan(DEFAULT_UNANSWERED_TTL_MS)
+  })
+
+  it('接收方已出组（回执带孤儿标记）的 directive 不再被当作挂死', () => {
+    const orphaned = makeMessage({
+      id: 'm-orphan',
+      kind: 'directive',
+      createdAt: NOW - DEFAULT_UNANSWERED_TTL_MS * 2,
+      receipt: { notificationState: 'notified', notificationDetail: `已通知；${ORPHANED_RECEIPT_DETAIL}`, updatedAt: NOW } as TeamMessage['receipt']
+    })
+    const live = makeMessage({ id: 'm-live', kind: 'directive', createdAt: NOW - DEFAULT_UNANSWERED_TTL_MS * 2 })
+    expect(findUnansweredDirectives(snapshotWith([orphaned, live]), NOW).map((item) => item.id)).toEqual(['m-live'])
   })
 
   it('已有 response 关联的消息不算挂死', () => {

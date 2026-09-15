@@ -1,7 +1,8 @@
-import type {
-  ChannelLivenessRecord,
-  TeamCollaborationSnapshot,
-  TeamMessage
+import {
+  isOrphanedReceipt,
+  type ChannelLivenessRecord,
+  type TeamCollaborationSnapshot,
+  type TeamMessage
 } from './team-collaboration'
 import { hasInFlightExecution, isExplicitlyStoppedPhase } from './channel-message'
 import type { AgentSessionStatus } from './agent-session'
@@ -55,6 +56,8 @@ export function findUnansweredDirectives(
     const message = snapshot.messages[id]
     if (!message || !REQUIRES_RESPONSE.has(message.kind)) continue
     if (answered.has(message.id)) continue
+    // 接收方已出组 / 组已解散：这条消息不会再有回应，催办只会打扰发送方。
+    if (isOrphanedReceipt(message.receipt)) continue
     const ageMs = now - message.createdAt
     if (ageMs < ttlMs) continue
     result.push({

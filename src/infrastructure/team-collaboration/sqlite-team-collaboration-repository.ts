@@ -18,7 +18,7 @@ import type {
   TeamMessageThread,
   TeamMemberDirectoryEntry
 } from '../../domain/team-collaboration'
-import { sameTeamMessageActor } from '../../domain/team-collaboration'
+import { ORPHANED_RECEIPT_DETAIL, sameTeamMessageActor } from '../../domain/team-collaboration'
 import { TaskPoolError } from '../../domain/task-pool'
 import type { AssignedAgentSkill } from '../../domain/agent-skill'
 import { assertAgentRegistrationAuthorized } from '../sqlite/agent-registrations'
@@ -538,6 +538,52 @@ export class SqliteTeamCollaborationRepository implements TeamCollaborationRepos
 
   acknowledge(messageId: string, recipient: TeamMessageActor, at = Date.now()): TeamMessage {
     return this.advanceReceipt(messageId, recipient, 'acknowledged', at)
+  }
+
+  orphanPendingReceipts(input: { runId: string; slotId: string; groupId?: string; at?: number }): string[] {
+    const runId = input.runId.trim()
+    const recipientKey = actorKey({ type: 'agent', slotId: input.slotId.trim() })
+    const groupId = input.groupId?.trim() || undefined
+    const at = input.at ?? Date.now()
+    // 只看仍待回应且尚未标记过的 directive / question；给出组时限定该组的消息（席位同一时刻只在一个组）。
+    const rows = this.database.prepare(`
+      SELECT m.id, m.thread_id, r.notification_state
+      FROM team_messages m
+      JOIN team_message_receipts r ON r.message_id = m.id
+      WHERE m.run_id = ? AND m.recipient_key = ? AND m.kind IN ('directive', 'question')
+        AND r.responded_at IS NULL AND r.notification_detail NOT LIKE ?
+        ${groupId ? 'AND m.group_id = ?' : ''}
+      ORDER BY m.created_at ASC, m.id ASC
+    `).all(...[runId, recipientKey, `%${ORPHANED_RECEIPT_DETAIL}%`, ...(groupId ? [groupId] : [])]) as SqliteRow[]
+    if (!rows.length) return []
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      const update = this.database.prepare(`
+        UPDATE team_message_receipts
+        SET notification_state = CASE WHEN notification_state IN ('queued', 'sending') THEN 'not_required' ELSE notification_state END,
+            notification_command_id = CASE WHEN notification_state IN ('queued', 'sending') THEN NULL ELSE notification_command_id END,
+            notification_detail = CASE WHEN notification_detail = '' THEN ? ELSE notification_detail || '；' || ? END,
+            updated_at = ?
+        WHERE message_id = ?
+      `)
+      for (const row of rows) {
+        update.run(ORPHANED_RECEIPT_DETAIL, ORPHANED_RECEIPT_DETAIL, at, String(row.id))
+        this.appendEvent({
+          type: 'message.orphaned',
+          runId,
+          threadId: String(row.thread_id),
+          messageId: String(row.id),
+          actor: { type: 'operator' },
+          detail: `${ORPHANED_RECEIPT_DETAIL}（${String(row.notification_state)}）`,
+          at
+        })
+      }
+      this.database.exec('COMMIT')
+    } catch (error) {
+      if (this.database.isTransaction) this.database.exec('ROLLBACK')
+      throw error
+    }
+    return rows.map((row) => String(row.id))
   }
 
   listPendingNotifications(runId?: string, limit = 25): TeamMessage[] {

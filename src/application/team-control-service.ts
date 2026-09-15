@@ -12,6 +12,7 @@ import {
   buildTeamLaunchHint,
   createConfiguredTeamBundle,
   createDefaultTeamBundle,
+  isSessionPoolRun,
   projectGroups,
   type TeamControlSnapshot,
   type TeamControlState,
@@ -761,20 +762,23 @@ export class TeamControlService {
       Boolean(member.slot.channelId && registrationByChannel.has(member.slot.channelId))
     )
     const mcpInstalled = activeMembersInstalled && activeMemberChannelsRegistered
+    // 会话池里「非 solo」= 已入组席位（任务书 §5.7）：agentsWaiting 只看入组成员。
     const teamMembers = members.filter((member) => member.slot.solo !== true)
     const agentsWaiting = teamMembers.length > 0 && teamMembers.every((member) =>
       member.runtime?.online && member.runtime.waiting
     )
+    // 池没有「团队目标」与「启动」这两个概念：目标在组上，组即建即用；这两条 blocker 只属于一次性团队 run。
+    const pool = activeRun !== undefined && isSessionPoolRun(activeRun)
     const blockers: string[] = []
     if (!bridgeConnected) blockers.push('拾光本地通道尚未就绪')
     if (!workspaceBound) blockers.push('尚未绑定 Cursor 工作区')
-    if (activeRun && !goalDefined) blockers.push('请先填写并保存团队目标')
+    if (activeRun && !goalDefined && !pool) blockers.push('请先填写并保存团队目标')
     if (workspaceBound && !mcpInstalled) blockers.push('Agent MCP 尚未接入全部本轮通道')
     if (mcpInstalled && !agentsWaiting && activeRun && !['running', 'completed'].includes(activeRun.status)) {
       blockers.push('并非所有 Agent 通道都已在线待命')
     }
     if (activeRun?.status === 'launching') blockers.push('团队启动指令正在投递')
-    if (activeRun?.status === 'running' && agentsWaiting) blockers.push('团队已经运行')
+    if (activeRun?.status === 'running' && agentsWaiting && !pool) blockers.push('团队已经运行')
     if (activeRun?.status === 'paused') blockers.push('团队已暂停，当前版本尚未开放恢复')
     if (activeRun?.status === 'completed') blockers.push('本次团队运行已经完成')
 

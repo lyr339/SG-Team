@@ -1179,6 +1179,13 @@ const api: SgDesktopApi = {
   },
   launchTeam: async () => structuredClone(state.team),
   setSlotModelSelection: async () => structuredClone(state.team),
+  // 协作组操作在预览里只回传当前快照；组卡片的交互预览由 ⑤b 的 `?groups=1` 场景补齐。
+  createTeamGroup: async () => structuredClone(state.team),
+  addTeamGroupMembers: async () => structuredClone(state.team),
+  removeTeamGroupMember: async () => structuredClone(state.team),
+  setTeamGroupLead: async () => structuredClone(state.team),
+  updateTeamGroupGoal: async () => structuredClone(state.team),
+  dissolveTeamGroup: async () => structuredClone(state.team),
   getTeamCollaborationSnapshot: async () => structuredClone(collaborationSnapshot),
   getManualHandoffOptions: async (slotId) => {
     const source = state.team.members.find((member) => member.slot.id === slotId)

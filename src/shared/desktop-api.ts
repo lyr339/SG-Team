@@ -250,6 +250,41 @@ export interface IndependentWorkspaceSelection {
   path: string
 }
 
+/** 会话池 · 协作组：建组 / 加人的成员配置（席位 + 组内角色模板，不能是 solo）。 */
+export interface TeamGroupMemberInput {
+  slotId: string
+  roleTemplateKey: string
+}
+
+export interface CreateTeamGroupInput {
+  name: string
+  goal?: string
+  members: TeamGroupMemberInput[]
+  /** 可空：无 lead 的纯协作组（共享目标 + 消息 + 记忆，没有任务板调度）。 */
+  leadSlotId?: string
+}
+
+export interface TeamGroupMembersInput {
+  groupId: string
+  members: TeamGroupMemberInput[]
+}
+
+export interface TeamGroupMemberRef {
+  groupId: string
+  slotId: string
+}
+
+export interface TeamGroupLeadInput {
+  groupId: string
+  /** null = 清空 lead（组变为无 lead 的纯协作组）。 */
+  slotId: string | null
+}
+
+export interface TeamGroupGoalInput {
+  groupId: string
+  goal: string
+}
+
 export type ChooseTeamWorkspaceResult =
   | { cancelled: true }
   | { kind: 'existing'; snapshot: TeamControlSnapshot }
@@ -412,6 +447,17 @@ export interface SgDesktopApi {
   updateTeamGoal(goal: string): Promise<TeamControlSnapshot>
   launchTeam(): Promise<TeamControlSnapshot>
   setSlotModelSelection(channelId: string, selection: CursorModelSelection): Promise<TeamControlSnapshot>
+  /**
+   * 会话池 · 协作组（只在独立批次 run 内可用）。成员关系变化落库后，拾光向相关席位投递
+   * 成员关系通知；出组释放其任务租约，解散取消本组未完成任务。全部返回最新团队快照。
+   */
+  createTeamGroup(input: CreateTeamGroupInput): Promise<TeamControlSnapshot>
+  addTeamGroupMembers(input: TeamGroupMembersInput): Promise<TeamControlSnapshot>
+  /** 有效 lead 且组内仍有其他成员时被拒绝（`lead_must_transfer_first`）：先换 lead 再移出。 */
+  removeTeamGroupMember(input: TeamGroupMemberRef): Promise<TeamControlSnapshot>
+  setTeamGroupLead(input: TeamGroupLeadInput): Promise<TeamControlSnapshot>
+  updateTeamGroupGoal(input: TeamGroupGoalInput): Promise<TeamControlSnapshot>
+  dissolveTeamGroup(input: { groupId: string }): Promise<TeamControlSnapshot>
   getTeamCollaborationSnapshot(): Promise<TeamCollaborationSnapshot>
   getManualHandoffOptions(slotId: string): Promise<TeamHandoffOptions>
   /**
@@ -533,6 +579,12 @@ export const IPC = {
   teamControlLaunch: 'team-control:launch',
   teamControlSetSlotModelSelection: 'team-control:set-slot-model-selection',
   teamControlSnapshot: 'team-control:snapshot',
+  teamGroupCreate: 'team-group:create',
+  teamGroupAddMembers: 'team-group:add-members',
+  teamGroupRemoveMember: 'team-group:remove-member',
+  teamGroupSetLead: 'team-group:set-lead',
+  teamGroupUpdateGoal: 'team-group:update-goal',
+  teamGroupDissolve: 'team-group:dissolve',
   teamCollaborationGet: 'team-collaboration:get',
   teamCollaborationSnapshot: 'team-collaboration:snapshot',
   teamContinuityHandoffOptions: 'team-continuity:handoff-options',

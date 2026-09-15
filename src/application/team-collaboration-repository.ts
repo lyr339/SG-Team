@@ -30,6 +30,12 @@ export interface TeamCollaborationRepository {
   ): TeamMessage
   markRead(messageId: string, recipient: TeamMessage['recipient'], at?: number): TeamMessage
   acknowledge(messageId: string, recipient: TeamMessage['recipient'], at?: number): TeamMessage
+  /**
+   * 成员出组 / 组解散（任务书 §7 规则 2）：该席位名下仍待回应的 directive / question 标记为孤儿——
+   * 尚未投递的（queued / sending）改为 `not_required`，不再投给已出组的会话；已投递的只在
+   * `notificationDetail` 追加 `ORPHANED_RECEIPT_DETAIL`，stage 不变。返回受影响的消息 id。
+   */
+  orphanPendingReceipts(input: { runId: string; slotId: string; groupId?: string; at?: number }): string[]
   listPendingNotifications(runId?: string, limit?: number): TeamMessage[]
   recoverStaleSending(beforeAt: number): number
   /** 记录通道活性验证结果。 */

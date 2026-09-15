@@ -23,6 +23,7 @@ class FakeCollaborationRepository implements TeamCollaborationRepository {
   markNotificationResult(): never { throw new Error('unused') }
   markRead(): never { throw new Error('unused') }
   acknowledge(): never { throw new Error('unused') }
+  orphanPendingReceipts(): [] { return [] }
   listPendingNotifications(): [] { return [] }
   recoverStaleSending(): number { return 0 }
   recordLiveness(): void {}
