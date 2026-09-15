@@ -46,6 +46,10 @@ export function AccountBrowserPanel({
 }: AccountBrowserPanelProps): React.JSX.Element {
   const [keyInput, setKeyInput] = useState('')
   const [keySaving, setKeySaving] = useState(false)
+  // 已保存 Key 时默认只回显掩码；「更换」切到输入态，保存成功 / 取消 / 掩码刷新即退出。
+  const [keyEditing, setKeyEditing] = useState(false)
+  const keySaved = apiKeyStatus?.saved === true && Boolean(apiKeyStatus.maskedKey)
+  useEffect(() => { setKeyEditing(false); setKeyInput('') }, [apiKeyStatus?.maskedKey])
   const [cleanupArmed, setCleanupArmed] = useState(false)
   const [cleanupBusy, setCleanupBusy] = useState(false)
   const [cleanupNote, setCleanupNote] = useState('')
@@ -118,9 +122,20 @@ export function AccountBrowserPanel({
         <div className="account-browser__config">
           <div className="account-browser__connection-row">
             <div className="account-browser__key-cell">
-              <span><b>Roxy 连接</b><small>{apiKeyStatus?.saved ? 'API Key 已保存在本机' : '先连接本机 Roxy 客户端'}</small></span>
-            {apiKeyStatus?.saved && apiKeyStatus.maskedKey ? (
-              <code title="Roxy API Key 已保存在本机（重新粘贴可覆盖）">{apiKeyStatus.maskedKey}</code>
+              <span><b>Roxy 连接</b><small>{keySaved ? (keyEditing ? '粘贴新的 Key 覆盖已保存的' : 'API Key 已保存在本机') : '先连接本机 Roxy 客户端'}</small></span>
+            {keySaved && !keyEditing ? (
+              <span className="account-browser__key-input account-browser__key-saved">
+                <code title="Roxy API Key 已保存在本机；点「更换」粘贴新的 Key 覆盖">{apiKeyStatus?.maskedKey}</code>
+                {onSaveApiKey ? (
+                  <button
+                    type="button"
+                    className="is-secondary"
+                    disabled={disabled}
+                    title="粘贴新的 Roxy API Key 覆盖已保存的 Key"
+                    onClick={() => setKeyEditing(true)}
+                  >更换</button>
+                ) : null}
+              </span>
             ) : (
               <span className="account-browser__key-input">
                 <input
@@ -128,8 +143,9 @@ export function AccountBrowserPanel({
                   value={keyInput}
                   maxLength={128}
                   autoComplete="off"
+                  autoFocus={keyEditing}
                   spellCheck={false}
-                  placeholder="Roxy API Key"
+                  placeholder={keySaved ? '粘贴新的 Roxy API Key' : 'Roxy API Key'}
                   disabled={keySaving || disabled}
                   onChange={(event) => setKeyInput(event.target.value)}
                 />
@@ -140,11 +156,20 @@ export function AccountBrowserPanel({
                     onClick={() => {
                       setKeySaving(true)
                       void onSaveApiKey(keyInput.trim())
-                        .then(() => setKeyInput(''))
+                        .then(() => { setKeyInput(''); setKeyEditing(false) })
                         .catch(() => {})
                         .finally(() => setKeySaving(false))
                     }}
-                  >{keySaving ? '保存中…' : '连接'}</button>
+                  >{keySaving ? '保存中…' : keySaved ? '保存' : '连接'}</button>
+                ) : null}
+                {keySaved ? (
+                  <button
+                    type="button"
+                    className="is-secondary"
+                    disabled={keySaving}
+                    title="放弃更换，保留已保存的 Key"
+                    onClick={() => { setKeyEditing(false); setKeyInput('') }}
+                  >取消</button>
                 ) : null}
               </span>
             )}

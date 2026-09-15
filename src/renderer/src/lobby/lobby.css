@@ -453,10 +453,13 @@
 .account-browser__key-cell b, .account-browser__window-cell b { color: var(--text-soft); font-size: var(--fs-10); }
 .account-browser__key-cell small, .account-browser__window-cell small { overflow: hidden; color: var(--muted); font-size: var(--fs-10); text-overflow: ellipsis; white-space: nowrap; }
 .account-browser__key-cell code { max-width: 150px; overflow: hidden; padding: 5px 8px; color: var(--color-text-success); background: var(--color-background-success); border: 1px solid color-mix(in srgb, var(--color-border-success) 60%, transparent); border-radius: 7px; font: 600 var(--fs-10)/1 var(--mono); text-overflow: ellipsis; white-space: nowrap; }
-.account-browser__key-input { min-width: 180px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px; }
+.account-browser__key-input { min-width: 180px; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-auto-flow: column; grid-auto-columns: auto; align-items: center; gap: 5px; }
+.account-browser__key-saved { min-width: 0; }
 .account-browser__key-input input { min-width: 0; min-height: 30px; padding: 0 8px; color: var(--text); background: var(--surface-pure); border: 1px solid var(--color-border-tertiary); border-radius: 7px; outline: none; font: var(--fs-10)/1 var(--mono); }
 .account-browser__key-input input:focus { border-color: var(--accent-border-strong); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 8%, transparent); }
 .account-browser__key-input button { min-height: 30px; padding: 0 9px; color: white; background: var(--accent); border: 1px solid var(--accent); border-radius: 7px; font-size: var(--fs-10); font-weight: 650; }
+.account-browser__key-input button.is-secondary { color: var(--text-soft); background: var(--surface-pure); border-color: var(--color-border-tertiary); }
+.account-browser__key-input button.is-secondary:hover:not(:disabled) { color: var(--text); border-color: var(--accent-border-strong); }
 .account-browser__divider { width: 1px; height: 34px; background: var(--color-border-tertiary); }
 .account-browser__window-cell { min-width: 0; display: grid; grid-template-columns: minmax(96px, .32fr) minmax(0, 1fr); align-items: center; gap: 8px; }
 .account-browser__window-cell .menu-select { min-width: 0; }
