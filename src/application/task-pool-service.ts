@@ -137,7 +137,7 @@ export class TaskPoolService {
     )
   }
 
-  /** 成员出组：释放其持有的任务租约与验收（任务书 §7 规则 1、3），返回受影响的任务 id。 */
+  /** 成员出组：释放其持有的任务租约与验收、清空定向给该席位的任务（任务书 §7 规则 1、3），返回受影响的任务 id。 */
   releaseAgentWork(input: { agentSessionId: string; slotId?: string; reason: string }): string[] {
     const released = transactTaskPool(this.repository, (pool) => pool.releaseAgentWork(input))
     if (released.length) this.emit()

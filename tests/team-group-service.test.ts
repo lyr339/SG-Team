@@ -256,7 +256,7 @@ describe('TeamGroupService · 移出', () => {
       expect(leadNotices).toHaveLength(1)
       expect(leadNotices[0]).toMatchObject({ kind: 'notice', sender: { type: 'operator' }, groupId })
       expect(leadNotices[0]!.content).toContain('成员「架构实现 · CH-2」已被移出协作组「验收组」')
-      expect(leadNotices[0]!.content).toContain('其持有的 1 项任务已回到队列')
+      expect(leadNotices[0]!.content).toContain('与其相关的 1 项任务已回到队列')
       expect(leadNotices[0]!.content).toContain('尚未回应的 2 条消息已标记为无人应答')
       expect(data.messagesTo(data.slotIdOf('3')).map((message) => message.id)).toEqual([untouched.id])
       expect(data.errors).toEqual([])

@@ -10,7 +10,7 @@
 | 阶段 | 文档 | 一句话 | 依赖 | 状态 |
 |---|---|---|---|---|
 | 0 | `DYNAMIC-GROUPS-HANDOFF-TODO.md` §2 | 实机验证：运行中的独立会话能否不重启地入组 / 出组 | — | **已通过**（09-13，CH-3） |
-| 1 | `DYNAMIC-GROUPS-HANDOFF-TODO.md` | 数据模型与迁移：`team_groups` / `agent_slots.group_id` / run 内对象 `group_id`；身份与授权；服务 API；编排器按组；失效接管收敛；最小 UI | 0 | **进行中**（09-14 起，分支 `feat/dynamic-groups-phase1`；进度见其 §13） |
+| 1 | `DYNAMIC-GROUPS-HANDOFF-TODO.md` | 数据模型与迁移：`team_groups` / `agent_slots.group_id` / run 内对象 `group_id`；身份与授权；服务 API；编排器按组；失效接管收敛；最小 UI | 0 | **代码侧完成**（09-14 → 09-15，分支 `feat/dynamic-groups-phase1`，切片 ①–⑥ 全绿；待其 §11 实机验收 + 合回 main；进度见其 §13） |
 | 2 | `DYNAMIC-GROUPS-PHASE2-RUNTIME-TODO.md` | 运行时语义收口：编排边界定稿、团队 run 启动状态机退役、席位重建 / 交接与组的交互、检查点与用量按组、（可选）lease 语义修正 | 1 | 待动工 |
 | 3 | `DYNAMIC-GROUPS-PHASE3-UI-TODO.md` | 渲染层「会话与分组」页：替换模式切换 / 团队面板 / ReplaceRunSheet / TeamSetupPage | 1（可与 2 并行） | 待动工 |
 | 4 | `DYNAMIC-GROUPS-PHASE4-MCP-TODO.md` | MCP 工具面收敛：按分组状态暴露工具、schema 判别联合、删死参数、团队消息内联投递、删探活动作 | 1、2 | 待动工 |
@@ -50,4 +50,4 @@
 1. `activeRun` = 会话池 run，直到阶段 3 结束前不改变其语义。
 2. 入组 / 出组不碰令牌、Composer、作用域；每次成员变化 = 事务 + silent 通知 + 审计行。
 3. 事件序列级测试；实机验收只用一个空闲独立会话，观测法沿用阶段 0（`state.vscdb` 气泡 + 拾光库只读）。
-4. 主工作树的未提交文件属其他 Agent；四个阶段都在独立 worktree / 分支进行（阶段 1：`../SG-Team-groups` · `feat/dynamic-groups-phase1`，基于 `2b498f9`）。
+4. 主工作树的未提交文件属其他 Agent；四个阶段都在独立 worktree / 分支进行（阶段 1：`../SG-Team-groups` · `feat/dynamic-groups-phase1`，基于 `2b498f9`，09-15 已 rebase 到 `f57e4dc`）。

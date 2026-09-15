@@ -43,7 +43,7 @@ const GROUP_DISSOLVED_REASON = 'group_dissolved'
  *
  * - 成员关系通知：`bridge.sendMessage({ kind: 'membership' })`，正文由 domain `buildMembershipNotice` 生成，
  *   投递时 check_messages 用独立后缀（没有 messageId、不要求 record_reply）。
- * - 任务池：出组释放其租约与验收（`releaseAgentWork`）；解散取消本组未完成任务（`closeGroup`）。
+ * - 任务池：出组释放其租约与验收、清空定向给它的任务（`releaseAgentWork`）；解散取消本组未完成任务（`closeGroup`）。
  * - 协作库：出组 / 解散把该席位名下待回应的 directive / question 标记为孤儿（`orphanPendingReceipts`）。
  * - lead 的知情：成员被移出后向本组有效 lead 发一条 `notice`；改目标向全体成员发 `notice`
  *  （这两类走 team_message，不是成员关系通知）。
@@ -116,8 +116,8 @@ export class TeamGroupService {
       const summary = [
         `【系统通知】成员「${left.roleName} · CH-${left.channelId ?? '?'}」已被移出协作组「${mutation.group.name}」，恢复为独立席位。`,
         released.length
-          ? `其持有的 ${released.length} 项任务已回到队列，等待组内其他成员领取（定向给该席位的任务已清空定向）。`
-          : '其名下没有进行中的任务。',
+          ? `与其相关的 ${released.length} 项任务已回到队列（持有的租约与验收已释放，定向给该席位的已清空定向），等待组内其他成员领取。`
+          : '其名下没有进行中或定向给它的任务。',
         orphaned.length ? `发给该成员、尚未回应的 ${orphaned.length} 条消息已标记为无人应答，不会再催办。` : ''
       ].filter(Boolean).join('')
       this.safely('通知 lead 成员已移出', () => this.collaboration.createMessage({

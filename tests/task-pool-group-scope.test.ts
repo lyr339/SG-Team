@@ -137,6 +137,31 @@ describe('task pool · 协作组作用域', () => {
     expect(repository.load().revision).toBe(revision)
   })
 
+  it('releaseAgentWork also un-targets queued tasks aimed at the leaving seat that nobody has claimed yet', () => {
+    const { repository, leadA, builderA, taskA } = twoGroups()
+    // lead 规划时定向给 builderA，builderA 还没来得及领就被移出：不清定向则 leaseNext / leaseTask / 派单器都跳过它，
+    // 而 builderA 已是 not_in_group——任务会在组内被静默搁置。
+    const [pending] = leadA.plan([{ key: 'a-pending', title: '定向未领', requiredCapabilities: ['code'], targetSlotId: builderA.identity.slotId }])
+    const otherBuilder = agent(repository, 'builder-a2', GROUP_A, ['code'])
+    expect(otherBuilder.listAvailable().map((task) => task.id)).toEqual([taskA.id])
+    expect(() => otherBuilder.claim(pending!.id)).toThrowError(expect.objectContaining({ code: 'task_reserved_for_other_slot' }))
+
+    const service = new TaskPoolService(repository, { getActiveRunId: () => RUN })
+    expect(service.releaseAgentWork({ agentSessionId: builderA.identity.agentSessionId, slotId: builderA.identity.slotId, reason: 'member_left' }))
+      .toEqual([pending!.id])
+    const state = repository.load()
+    // 任务本来就在队列里：只清定向，不算失败、不消耗 attempt。
+    expect(state.tasks[pending!.id]).toMatchObject({ status: 'queued', targetSlotId: undefined, attemptCount: 0 })
+    expect(state.tasks[pending!.id]?.failureReason).toBeUndefined()
+    expect(state.events.at(-1)).toMatchObject({ type: 'task.untargeted_by_membership', taskId: pending!.id, detail: 'member_left' })
+    expect(otherBuilder.listAvailable().map((task) => task.id).sort()).toEqual([taskA.id, pending!.id].sort())
+    expect(otherBuilder.claim(pending!.id)?.task.id).toBe(pending!.id)
+    // 不传 slotId（只知会话）时不做定向清理；已终态的任务不受影响。
+    const [another] = leadA.plan([{ key: 'a-pending-2', title: '定向未领 2', targetSlotId: builderA.identity.slotId }])
+    expect(service.releaseAgentWork({ agentSessionId: builderA.identity.agentSessionId, reason: 'member_left' })).toEqual([])
+    expect(repository.load().tasks[another!.id]?.targetSlotId).toBe(builderA.identity.slotId)
+  })
+
   it('persists group_id through the SQLite repository and adds the column to a pre-group database idempotently', () => {
     const path = join(mkdtempSync(join(tmpdir(), 'sg-task-pool-group-')), 'pool.sqlite3')
     // 先造一个没有 group_id 列的旧库。

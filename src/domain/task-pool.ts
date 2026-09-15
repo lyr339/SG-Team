@@ -741,9 +741,11 @@ export class TaskPoolAggregate {
   /**
    * 成员出组 / 解散专用（任务书 §7 规则 1、3）：该会话持有的 leased/running attempt → cancelled
    *（error = reason），任务回 queued 等组内其他成员领取；其持有的验收 → queued 重新派验收。
-   * 与 recoverAgentWork 的区别：没有接管方，也不指向新席位——若任务原本定向给该席位，
-   * 定向随之清空，否则组内无人能再领。回队沿用 requeueOrFail：attempt 次数用尽时任务转 failed
-   *（与主控接管路径口径一致）。
+   * 与 recoverAgentWork 的区别：没有接管方，也不指向新席位——凡定向给该席位的非终态任务
+   *（含尚未被领取的 queued 任务）定向一律清空，否则组内无人能再领：`leaseNext` / `leaseTask` /
+   * 派单器都按 `targetSlotId` 过滤，而出组席位已是 `not_in_group`，任务会被静默搁置。
+   * 回队沿用 requeueOrFail：attempt 次数用尽时任务转 failed（与主控接管路径口径一致）。
+   * 返回全部受影响的任务 id（释放租约 / 验收 + 清定向）。
    */
   releaseAgentWork(input: { agentSessionId: string; slotId?: string; reason: string }): string[] {
     const agentSessionId = input.agentSessionId.trim()
@@ -780,6 +782,19 @@ export class TaskPoolAggregate {
       task.updatedAt = at
       this.note('review.released_by_membership', task.id, review.attemptId, agentSessionId, reason)
       released.add(task.id)
+    }
+    // 定向给该席位、但不在其名下的任务（典型：lead 规划时 targetSlotId 指向它、尚未被领取；
+    // 或正在验收、被拒后会回队）：不清定向就永远没人能领。席位 id 含 run key，天然只命中本 run；
+    // 已结束 run 的任务都已终态，也不会被碰。
+    if (slotId) {
+      for (const task of Object.values(this.state.tasks)) {
+        if (task.targetSlotId !== slotId || released.has(task.id)) continue
+        if (['done', 'failed', 'cancelled'].includes(task.status)) continue
+        task.targetSlotId = undefined
+        task.updatedAt = at
+        this.note('task.untargeted_by_membership', task.id, task.currentAttemptId, agentSessionId, reason)
+        released.add(task.id)
+      }
     }
     if (released.size) this.bumpRevision()
     return [...released]
