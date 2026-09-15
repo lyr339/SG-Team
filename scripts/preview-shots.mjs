@@ -93,6 +93,35 @@ function editCardProbe(expanded, arrowVisible) {
   })()`
 }
 const scenes = [
+  ...['light', 'dark'].map(colorMode => ({
+    name: `session-typing-isolation-${colorMode}`, width: 1180, height: 900, colorScheme: colorMode,
+    storage: railStorage({ colorMode }), clip: null,
+    actions: [{ label: '真实 App 输入与时间线稳定性', probe: `new Promise(async (resolve, reject) => {
+      const timeline = document.querySelector('.workspace-timeline')
+      const textarea = document.querySelector('.workspace-composer textarea')
+      if (!timeline || !textarea) { reject(new Error('时间线或输入区未加载')); return }
+      const rows = [...timeline.querySelectorAll('.chat-row')]
+      const before = timeline.textContent
+      let mutations = 0
+      const observer = new MutationObserver(records => { mutations += records.length })
+      observer.observe(timeline, {childList: true, characterData: true, subtree: true})
+      try {
+        textarea.focus({preventScroll:true})
+        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set
+        const text = '输入性能验收：只修改草稿，历史消息保持原位。'
+        for (let i = 1; i <= text.length; i++) {
+          setter.call(textarea, text.slice(0, i))
+          textarea.dispatchEvent(new Event('input', {bubbles:true}))
+          await new Promise(requestAnimationFrame)
+        }
+        if (textarea.value !== text) throw new Error('草稿更新失败')
+        const after = [...timeline.querySelectorAll('.chat-row')]
+        if (rows.length !== after.length || rows.some((row, i) => row !== after[i])) throw new Error('打字导致历史行重挂载')
+        if (timeline.textContent !== before || mutations !== 0) throw new Error('打字修改了历史内容: ' + mutations)
+        resolve({characters:text.length, rows:rows.length, contentMutations:mutations, stableNodes:true})
+      } catch (error) { reject(error) } finally { observer.disconnect() }
+    })` }]
+  })),
   ...['light', 'dark'].map((colorMode) => ({
     name: `run-prelaunch-switch-${colorMode}`, run: true, width: 1180, height: 1000,
     query: 'runStatus=ready', colorScheme: colorMode, storage: baseStorage({ colorMode }),

@@ -61,16 +61,13 @@ describe('Cursor 本机维护操作', () => {
       onSetModelDataPolicyAutoAcknowledge: setPolicy
     })} />))
 
-    const toggleByText = (text: string): HTMLInputElement => {
-      const label = [...container.querySelectorAll<HTMLLabelElement>('label')]
-        .find((candidate) => candidate.textContent?.includes(text))!
-      return label.querySelector<HTMLInputElement>('input[type="checkbox"]')!
-    }
-    const updateToggle = toggleByText('关闭 Cursor 自动更新')
+    const toggleByLabel = (text: string): HTMLInputElement =>
+      container.querySelector<HTMLInputElement>(`input[aria-label="${text}"]`)!
+    const updateToggle = toggleByLabel('关闭 Cursor 自动更新')
     await act(async () => updateToggle.click())
     expect(setUpdate).toHaveBeenCalledWith(true)
 
-    const policyToggle = toggleByText('自动确认受限模型数据政策')
+    const policyToggle = toggleByLabel('自动确认受限模型数据政策')
     expect(policyToggle.disabled).toBe(false)
     await act(async () => policyToggle.click())
     expect(setPolicy).toHaveBeenCalledWith(true)
@@ -83,9 +80,8 @@ describe('Cursor 本机维护操作', () => {
       automationSettings: { ...DEFAULT_ACCOUNT_AUTOMATION_SETTINGS, browserHost: 'fingerprint' },
       onSetModelDataPolicyAutoAcknowledge: setPolicy
     })} />))
-    const label = [...container.querySelectorAll<HTMLLabelElement>('label')]
-      .find((candidate) => candidate.textContent?.includes('自动确认受限模型数据政策'))!
-    const input = label.querySelector<HTMLInputElement>('input')!
+    const input = container.querySelector<HTMLInputElement>('input[aria-label="自动确认受限模型数据政策"]')!
+    const label = input.closest('label')!
     expect(input.disabled).toBe(false)
     expect(label.title).toContain('重新开启前请先在「导入来源」选择默认窗口')
     await act(async () => input.click())
@@ -111,7 +107,7 @@ describe('Cursor 本机维护操作', () => {
     expect(button.disabled).toBe(false)
   })
 
-  it('复用外部兼容切号泵时显示可用状态，但不给拾光卸载权限', async () => {
+  it('复用外部兼容切号泵时开关呈开态禁用，不给拾光卸载权限', async () => {
     const remove = vi.fn(async () => {})
     await act(async () => root.render(<LobbyAccountTile {...props({
       switchPumpStatus: {
@@ -123,15 +119,16 @@ describe('Cursor 本机维护操作', () => {
     })} />))
     const row = container.querySelector('.cursor-maintenance__switch-pump')!
     expect(row.classList.contains('is-compatible')).toBe(true)
-    expect(row.textContent).toContain('兼容切号补丁可用（端口 51824）')
-    expect(row.querySelector('input')).toBeNull()
+    const toggle = row.querySelector<HTMLInputElement>('input[aria-label="切号补丁（无感换号）"]')!
+    expect(toggle.checked).toBe(true)
+    expect(toggle.disabled).toBe(true)
     expect(row.querySelector('button')).toBeNull()
-    expect(row.textContent).toContain('兼容可用')
-    expect(row.textContent).toContain('拾光只复用，不覆盖或卸载')
+    expect(row.textContent).toContain('端口 51824')
+    expect(row.textContent).toContain('拾光只复用、不覆盖或卸载')
     expect(remove).not.toHaveBeenCalled()
   })
 
-  it('未安装与拾光管理的已安装补丁使用明确的安装／移除动作', async () => {
+  it('未安装与拾光管理的已安装补丁由开关触发安装／移除', async () => {
     const ensure = vi.fn(async () => {})
     const remove = vi.fn(async () => {})
     const render = (installed: boolean) => root.render(<LobbyAccountTile {...props({
@@ -141,12 +138,16 @@ describe('Cursor 本机维护操作', () => {
       onEnsureSwitchPump: ensure, onRemoveSwitchPump: remove
     })} />)
     await act(async () => render(false))
-    expect(container.querySelector('.cursor-maintenance__switch-pump')?.textContent).toContain('切号补丁未安装')
-    await act(async () => container.querySelector<HTMLButtonElement>('.cursor-maintenance__pump-action')!.click())
+    const row = () => container.querySelector('.cursor-maintenance__switch-pump')!
+    expect(row().textContent).toContain('未安装')
+    const toggle = () => row().querySelector<HTMLInputElement>('input[aria-label="切号补丁（无感换号）"]')!
+    expect(toggle().checked).toBe(false)
+    await act(async () => toggle().click())
     expect(ensure).toHaveBeenCalledTimes(1)
     await act(async () => render(true))
-    expect(container.querySelector('.cursor-maintenance__switch-pump')?.textContent).toContain('拾光切号补丁已安装')
-    await act(async () => container.querySelector<HTMLButtonElement>('.cursor-maintenance__pump-action.is-remove')!.click())
+    expect(row().textContent).toContain('已安装（端口 51824）')
+    expect(toggle().checked).toBe(true)
+    await act(async () => toggle().click())
     expect(remove).toHaveBeenCalledTimes(1)
   })
 
@@ -158,7 +159,8 @@ describe('Cursor 本机维护操作', () => {
       },
       onSetCursorAutoUpdateDisabled: async () => {}
     })} />))
-    expect(container.querySelector('.cursor-maintenance__action em')?.textContent).toBe('已关闭')
+    const hints = [...container.querySelectorAll('.settings-row__hint')].map((node) => node.textContent)
+    expect(hints.some((text) => text?.includes('已关闭'))).toBe(true)
     expect(container.textContent).not.toContain('none')
   })
 })

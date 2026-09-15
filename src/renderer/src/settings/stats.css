@@ -92,6 +92,7 @@
 }
 
 .stats-spectrum {
+  position: relative;
   display: flex;
   gap: 2px;
   height: 14px;
@@ -246,6 +247,17 @@ html[data-card-transparency="clear"] .stats-card { background: color-mix(in srgb
   outline-offset: 3px;
 }
 
+/* X 轴基线：柱子落在一根连续细线上（tick 行高 14px，基线贴其顶缘）。 */
+.stats-bars::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 14px;
+  height: 1px;
+  background: var(--line-faint);
+}
+
 .stats-bars__col {
   flex: 1;
   min-width: 0;
@@ -281,9 +293,10 @@ html[data-card-transparency="clear"] .stats-card { background: color-mix(in srgb
   align-self: end;
 }
 
-.stats-bars__tip {
+/* 悬浮卡：节奏柱（上方）与光谱带（下方）共用同一视觉语言。 */
+.stats-bars__tip,
+.stats-spectrum__tip {
   position: absolute;
-  bottom: calc(100% + 6px);
   z-index: 3;
   min-width: 150px;
   pointer-events: none;
@@ -298,10 +311,18 @@ html[data-card-transparency="clear"] .stats-card { background: color-mix(in srgb
   box-shadow: 0 8px 22px rgb(9 14 22 / 0.12);
 }
 
-.stats-bars__tip.is-center { transform: translateX(-50%); }
-.stats-bars__tip.is-end { transform: translateX(-100%); }
-.stats-bars__tip strong { font-size: var(--fs-11); color: var(--text); }
-.stats-bars__tip span { font-variant-numeric: tabular-nums; }
+.stats-bars__tip { bottom: calc(100% + 6px); }
+.stats-spectrum__tip { top: calc(100% + 6px); }
+.stats-bars__tip.is-center,
+.stats-spectrum__tip.is-center { transform: translateX(-50%); }
+.stats-bars__tip.is-end,
+.stats-spectrum__tip.is-end { transform: translateX(-100%); }
+.stats-bars__tip strong,
+.stats-spectrum__tip strong { font-size: var(--fs-11); color: var(--text); }
+.stats-bars__tip span,
+.stats-spectrum__tip span { font-variant-numeric: tabular-nums; }
+
+.stats-spectrum__tip-alt { color: var(--faint); }
 
 .stats-bars__tip-row {
   display: inline-flex;
@@ -317,6 +338,8 @@ html[data-card-transparency="clear"] .stats-card { background: color-mix(in srgb
   border-radius: 50%;
   background: var(--seat-color);
 }
+
+.stats-bars__tip-row.is-more { color: var(--faint); }
 
 /* ---------- Token 构成 ---------- */
 .stats-mix {
@@ -525,6 +548,11 @@ html[data-card-transparency="clear"] .stats-card { background: color-mix(in srgb
 }
 
 .stats-table__num.is-cost { font-weight: 650; }
+
+/* 成本列数据条：accent 淡洗背景从数字轴（右缘）生长，零行高增量；相对全量行最大成本。 */
+.stats-table td.is-cost {
+  background: linear-gradient(to left, var(--accent-wash) var(--cost-share, 0%), transparent var(--cost-share, 0%));
+}
 
 .stats-table__quality {
   display: inline-block;

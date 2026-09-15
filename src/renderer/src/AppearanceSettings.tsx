@@ -66,7 +66,21 @@ export function AppearanceSettings({
             <span>主题色</span>
             <em>{activeAccent.label}</em>
           </div>
-          <div role="group" aria-label="主题色">
+          <div
+            role="group"
+            aria-label="主题色"
+            onKeyDown={(event) => {
+              // 选项组惯例：←/→ 在色卡间漫游，移动即选中（与节奏柱键盘漫游同语言）。
+              if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+              const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button'))
+              const index = buttons.findIndex((button) => button === document.activeElement)
+              if (index < 0) return
+              event.preventDefault()
+              const next = (index + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length
+              buttons[next]!.focus()
+              buttons[next]!.click()
+            }}
+          >
             {ACCENT_PRESETS.map((preset) => (
               <button
                 key={preset.id}

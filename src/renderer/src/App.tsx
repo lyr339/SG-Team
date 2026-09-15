@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { QuestionActions } from './QuestionCard'
 import type {
   ChooseTeamWorkspaceResult,
   CreateIndependentSessionsInput,
@@ -47,6 +48,7 @@ import {
 } from './team/team-collaboration-view'
 import {
   applyAppearancePreferences,
+  isDiscreteAppearanceChange,
   persistAppearancePreferences,
   readAppearancePreferences,
   type AppearancePreferences
@@ -208,6 +210,21 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     applyAppearancePreferences(appearance)
     persistAppearancePreferences(appearance)
+  }, [appearance])
+
+  /**
+   * 外观更新单入口。离散换肤（主题色 / 深浅模式）用 View Transition 做全站交叉淡化：
+   * transition 快照之间同步写 :root 变量（effect 里的再写同值幂等），
+   * React 驱动的 swatch 选中环等 UI 在淡化中随下一帧落地。
+   * 透明度滑杆连续拖动不拍快照（见 isDiscreteAppearanceChange）。
+   */
+  const changeAppearance = useCallback((patch: Partial<AppearancePreferences>): void => {
+    const next = { ...appearance, ...patch }
+    setAppearance(next)
+    if (!isDiscreteAppearanceChange(patch)) return
+    const reduced = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    if (reduced || typeof document.startViewTransition !== 'function') return
+    document.startViewTransition(() => applyAppearancePreferences(next))
   }, [appearance])
 
   // Windows 标题栏覆盖层是系统原生绘制，读不到 CSS 主题：每次主题生效时推送
@@ -823,6 +840,30 @@ export function App(): React.JSX.Element {
   const selectedMember = teamControl.members.find((member) => (
     (member.binding?.channelId ?? member.slot.channelId) === selectedSession?.channelId
   ))
+  // 会话工作区回调的引用稳定化：draft 每次按键都触发 App 重渲染，这些回调若内联新建，
+  // 会把 SessionWorkspace 时间线的 memo 边界打穿（所有历史卡被迫参与 reconciliation）。
+  const workspaceChannelId = selectedSession?.channelId ?? ''
+  const handleWorkspaceDraftChange = useCallback((value: string): void => {
+    if (!workspaceChannelId) return
+    setComposerDrafts((current) => ({ ...current, [workspaceChannelId]: value }))
+  }, [workspaceChannelId])
+  const workspaceQuestionActions = useMemo((): QuestionActions => ({
+    answer: (toolCallId, draft) => window.sgDesktop.answerCursorQuestion({
+      channelId: workspaceChannelId, toolCallId, ...draft
+    }),
+    skip: (toolCallId) => window.sgDesktop.skipCursorQuestion({ channelId: workspaceChannelId, toolCallId })
+  }), [workspaceChannelId])
+  const handleWorkspaceSend = useCallback(async (text: string, attachments?: MessageAttachment[]): Promise<void> => {
+    if (!workspaceChannelId) return
+    await window.sgDesktop.sendMessage({ channelId: workspaceChannelId, text, attachments })
+  }, [workspaceChannelId])
+  const handleWorkspaceQuote = useCallback((text: string): void => {
+    if (!workspaceChannelId) return
+    setComposerDrafts((current) => {
+      const existing = (current[workspaceChannelId] ?? '').trimEnd()
+      return { ...current, [workspaceChannelId]: existing ? `${existing}\n\n${text}` : text }
+    })
+  }, [workspaceChannelId])
   // 「交接」三态：离线团队席位 → 职责迁移（可附带上下文）；其余在运行中的席位（独立或团队、
   // 在线或离线）→ 上下文交接；运行已结束 / 非本轮席位 → 禁用并说明原因。
   const handoffEntry = resolveHandoffEntry({ member: selectedMember, run: teamControl.activeRun })
@@ -1268,13 +1309,7 @@ export function App(): React.JSX.Element {
           workspaceName={activeProjectName}
           workspacePath={activeWorkspace?.path}
           hidden={!visible}
-          onQuoteToComposer={(text) => {
-            const channelId = selectedSession.channelId
-            setComposerDrafts((current) => {
-              const existing = (current[channelId] ?? '').trimEnd()
-              return { ...current, [channelId]: existing ? `${existing}\n\n${text}` : text }
-            })
-          }}
+          onQuoteToComposer={handleWorkspaceQuote}
           onClose={close}
         />
       ) : undefined}
@@ -1286,9 +1321,9 @@ export function App(): React.JSX.Element {
       colorMode={appearance.colorMode}
       accent={appearance.accent}
       onModuleChange={changeModule}
-      onCardOpacityChange={(cardOpacity) => setAppearance((current) => ({ ...current, cardOpacity }))}
-      onColorModeChange={(colorMode) => setAppearance((current) => ({ ...current, colorMode }))}
-      onAccentChange={(accent) => setAppearance((current) => ({ ...current, accent }))}
+      onCardOpacityChange={(cardOpacity) => changeAppearance({ cardOpacity })}
+      onColorModeChange={(colorMode) => changeAppearance({ colorMode })}
+      onAccentChange={(accent) => changeAppearance({ accent })}
       onOpenProjectConfiguration={() => changeModule('run')}
     >
       {activeModule === 'account' ? (
@@ -1450,21 +1485,14 @@ export function App(): React.JSX.Element {
             return ok
           }}
           draft={composerDrafts[selectedSession.channelId] ?? ''}
-          onDraftChange={(value) => setComposerDrafts((current) => ({ ...current, [selectedSession.channelId]: value }))}
+          onDraftChange={handleWorkspaceDraftChange}
           attachments={composerAttachments[selectedSession.channelId] ?? []}
           onAttachmentsChange={(attachments) => setComposerAttachments((current) => ({ ...current, [selectedSession.channelId]: attachments }))}
           liveProcess={snapshot.liveProcess?.[selectedSession.channelId]}
           liveAgentResponse={snapshot.liveAgentResponses?.[selectedSession.channelId]}
           nativeProcessStream={snapshot.nativeProcessStream}
-          questionActions={{
-            answer: (toolCallId, draft) => window.sgDesktop.answerCursorQuestion({
-              channelId: selectedSession.channelId, toolCallId, ...draft
-            }),
-            skip: (toolCallId) => window.sgDesktop.skipCursorQuestion({ channelId: selectedSession.channelId, toolCallId })
-          }}
-          onSend={async (text, attachments) => {
-            await window.sgDesktop.sendMessage({ channelId: selectedSession.channelId, text, attachments })
-          }}
+          questionActions={workspaceQuestionActions}
+          onSend={handleWorkspaceSend}
         />
       ) : (
         <SessionOverview

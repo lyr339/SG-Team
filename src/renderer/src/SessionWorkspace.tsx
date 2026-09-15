@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { AgentSession } from '../../domain/agent-session'
 import { conversationTextIdentity, type ConversationEntry, type MessageAttachment, type ProcessBlock } from '../../domain/conversation-entry'
 import type { LiveAgentResponseState, LiveProcessState, NativeProcessStreamStatus } from '../../shared/desktop-api'
@@ -58,9 +58,10 @@ type TimelineItem = { type: 'turn'; key: string; item: TurnTimelineItem }
 function replyProcessBlocks(entry: ConversationEntry): ProcessBlock[] | undefined {
   const finalIdentity = entry.text.trim() ? conversationTextIdentity(entry.text) : undefined
   if (!entry.processBlocks?.length || !finalIdentity) return entry.processBlocks
-  return entry.processBlocks.filter((block) => (
+  const filtered = entry.processBlocks.filter((block) => (
     !(block.kind === 'message' && conversationTextIdentity(block.text) === finalIdentity)
   ))
+  return filtered.length === entry.processBlocks.length ? entry.processBlocks : filtered
 }
 
 function renderAttachments(entry: ConversationEntry): React.JSX.Element | null {
@@ -161,6 +162,10 @@ export function SessionWorkspace({
   const [submitting, setSubmitting] = useState(false)
   const [copiedId, setCopiedId] = useState('')
   const [starredIds, setStarredIds] = useState<ReadonlySet<string>>(new Set())
+  // draft 的最新值镜像到 ref：时间线的「引用」按钮要读最新草稿，但引用不进
+  // timelineContent 的 useMemo 依赖——否则每敲一个键整条时间线都重渲染（打字延迟根因）。
+  const draftRef = useRef(draft)
+  useLayoutEffect(() => { draftRef.current = draft }, [draft])
   const visibleEntries = useMemo(() => entries.filter((entry) => !entry.silent), [entries])
   const queuedTransport = session.deliveryMode === 'queued'
   // 时间线只放已进入对话的内容；队列传输下尚未被 check_messages 取走的用户消息停在
@@ -305,7 +310,8 @@ export function SessionWorkspace({
 
   const quoteEntry = (entry: ConversationEntry): void => {
     const quoted = entry.text.split('\n').map((line) => `> ${line}`).join('\n')
-    onDraftChange(draft ? `${draft}\n\n${quoted}\n\n` : `${quoted}\n\n`)
+    const currentDraft = draftRef.current
+    onDraftChange(currentDraft ? `${currentDraft}\n\n${quoted}\n\n` : `${quoted}\n\n`)
   }
 
   const retryEntry = async (entry: ConversationEntry): Promise<void> => {
@@ -693,6 +699,15 @@ export function SessionWorkspace({
     })
   }
 
+  // 时间线渲染结果按语义依赖 memo：draft（每键变）不在依赖内——quoteEntry 经 draftRef
+  // 读最新草稿。打字时只重渲染输入区，时间线（含全部历史过程卡/消息行）整体 bailout。
+  const timelineContent = useMemo(
+    () => renderTimelineItems(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- renderTimelineItems 是纯投影：依赖即闭包读取的全部响应式值
+    [timelineItems, timelineEntries, session, copiedId, starredIds, latestAssistantId, placeholderTurnKey,
+      nativeProcessStream, questionActions, onDraftChange, onSend, canSend, follow.beginFollowing]
+  )
+
   return (
     <section className="workspace-main">
       <header className="workspace-header">
@@ -759,7 +774,7 @@ export function SessionWorkspace({
                 <h2>本轮尚无消息</h2>
                 <p>这里只显示当前 TeamRun 的新消息；旧对话仍保留在 Cursor 历史中。</p>
               </div>
-            ) : renderTimelineItems()}
+            ) : timelineContent}
           </div>
         </div>
         {follow.awayFromBottom && timelineItems.length > 0 && (

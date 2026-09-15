@@ -918,6 +918,10 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 .chat-divider span { padding: 4px 10px; color: var(--faint); background: var(--canvas); border-radius: var(--border-radius-full); font: 600 var(--fs-10)/1 var(--mono); }
 
 .chat-row { display: flex; align-items: flex-start; gap: 10px; margin-top: 16px; }
+/* 屏外条目跳过布局/绘制（长时间会话的时间线无限增长，全量渲染会让渲染进程越用越卡）；
+   contain-intrinsic-size 的 auto 记住上次实渲尺寸，滚动回去时不跳。live 行（流式中）
+   尺寸帧帧在变，不走此优化。 */
+.chat-row:not(.live-process-row) { content-visibility: auto; contain-intrinsic-size: auto 120px; }
 .chat-row.is-grouped { margin-top: 3px; }
 .chat-row--mine { flex-direction: row-reverse; }
 
@@ -1429,6 +1433,15 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 @keyframes aozai-pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
 .account-aozai__ok { margin: 0; color: var(--accent); font-size: var(--fs-10); font-weight: 600; }
 .account-aozai__fail { margin: 0; color: var(--red); font-size: var(--fs-10); }
+.account-aozai__manual { display: grid; gap: 6px; padding-top: 9px; border-top: 1px solid var(--line-faint); }
+.account-aozai__manual-copy { display: grid; gap: 2px; }
+.account-aozai__manual-copy strong { color: var(--text-soft); font-size: var(--fs-10); font-weight: 600; }
+.account-aozai__manual-hint { color: var(--muted); font-size: var(--fs-10); line-height: 1.5; }
+.account-aozai__manual-input { display: flex; align-items: flex-end; gap: 8px; }
+.account-aozai__manual textarea { flex: 1; min-width: 0; min-height: 54px; padding: 7px 10px; color: var(--text); background: var(--canvas); border: var(--border-width-regular) solid var(--line); border-radius: 8px; outline: none; resize: vertical; font-family: var(--mono); font-size: var(--fs-10); line-height: 1.5; word-break: break-all; }
+.account-aozai__manual textarea:focus { border-color: var(--accent-border-strong); box-shadow: 0 0 0 3px color-mix(in srgb, var(--anthropic-orange) 10%, transparent); }
+.account-aozai__manual button { min-height: 32px; padding: 0 12px; color: var(--color-text-inverse); background: var(--color-background-inverse); border: var(--border-width-regular) solid var(--color-background-inverse); border-radius: 8px; font-size: var(--fs-10); font-weight: 600; white-space: nowrap; }
+.account-aozai__manual button:disabled { opacity: 0.48; }
 
 /* ---------- 账号管线通用控件：开关 / 下拉 / 滑杆（自绘，替代原生控件） ---------- */
 .toggle-switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
@@ -1472,6 +1485,18 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 .range-field input[type="range"]:disabled { opacity: 0.5; cursor: not-allowed; }
 .range-field__value { flex: none; min-width: 46px; color: var(--text); font: 600 var(--fs-10)/1 var(--mono); font-variant-numeric: tabular-nums; text-align: right; }
 .range-field__value i { color: var(--muted); font-style: normal; font-weight: 400; }
+
+/* 数值步进输入：− / 数字框 / + 一体的胶囊控件（倒计时等「确切数值」场景替代滑杆）。 */
+.stepper-field { flex: none; display: inline-flex; align-items: stretch; background: var(--canvas); border: var(--border-width-regular) solid var(--line); border-radius: 8px; overflow: hidden; transition: border-color 120ms ease, box-shadow 120ms ease; }
+.stepper-field:focus-within { border-color: var(--accent-border-strong); box-shadow: 0 0 0 3px color-mix(in srgb, var(--anthropic-orange) 10%, transparent); }
+.stepper-field.is-disabled { opacity: 0.55; }
+.stepper-field__btn { flex: none; width: 30px; min-height: 30px; padding: 0; color: var(--muted); background: transparent; border: 0; font-size: 14px; line-height: 1; cursor: pointer; user-select: none; -webkit-user-select: none; touch-action: none; transition: background 120ms ease, color 120ms ease, transform 100ms ease; }
+.stepper-field__btn:hover:not(:disabled) { color: var(--text); background: var(--accent-wash); }
+.stepper-field__btn:active:not(:disabled) { transform: scale(0.9); }
+.stepper-field__btn:disabled { color: var(--faint); cursor: default; }
+.stepper-field__value { display: inline-flex; align-items: baseline; gap: 3px; padding: 0 2px; border-inline: var(--border-width-regular) solid var(--line-faint); }
+.stepper-field__value input { width: 44px; min-height: 30px; padding: 0; color: var(--text); background: transparent; border: 0; outline: none; font: 600 var(--fs-10)/1 var(--mono); font-variant-numeric: tabular-nums; text-align: right; }
+.stepper-field__value i { flex: none; padding-right: 6px; color: var(--muted); font-size: var(--fs-10); font-style: normal; }
 /* ---------- 账号管线第一步：导入来源（分段选择 + 紧凑配置行） ---------- */
 .account-automation__follow { margin: 2px 0 0; color: var(--muted); font-size: var(--fs-9); line-height: 1.6; }
 .cursor-maintenance { display: grid; gap: 7px; padding: 12px 15px; background: var(--surface); border-bottom: var(--border-width-regular) solid var(--line-faint); }

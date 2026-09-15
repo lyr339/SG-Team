@@ -7,6 +7,7 @@ import {
   ACCENT_PRESETS,
   APPEARANCE_STORAGE_KEY,
   applyAppearancePreferences,
+  isDiscreteAppearanceChange,
   normalizeAccent,
   normalizeCardOpacity,
   persistAppearancePreferences,
@@ -71,6 +72,14 @@ describe('appearance preferences', () => {
     expect(ACCENT_PRESETS.length).toBeLessThanOrEqual(8)
     // id 唯一
     expect(new Set(ACCENT_PRESETS.map((preset) => preset.id)).size).toBe(ACCENT_PRESETS.length)
+  })
+
+  it('离散换肤判定：主题色与深浅模式走 View Transition，透明度拖杆不拍快照', () => {
+    expect(isDiscreteAppearanceChange({ accent: 'dai-blue' })).toBe(true)
+    expect(isDiscreteAppearanceChange({ colorMode: 'dark' })).toBe(true)
+    expect(isDiscreteAppearanceChange({ accent: 'ink-jade', colorMode: 'light' })).toBe(true)
+    expect(isDiscreteAppearanceChange({ cardOpacity: 0.45 })).toBe(false)
+    expect(isDiscreteAppearanceChange({})).toBe(false)
   })
 })
 
@@ -177,5 +186,48 @@ describe('AppearanceSettings', () => {
     expect(active).toHaveLength(1)
     expect(active[0]!.getAttribute('aria-label')).toBe('拾光橙')
     expect(container.querySelector('.appearance-accent em')?.textContent).toBe('拾光橙')
+  })
+
+  it('主题色行：←/→ 方向键在色卡间漫游，移动即选中（环绕）', async () => {
+    const onAccentChange = vi.fn<(accent: string) => void>()
+    await act(async () => {
+      root.render(
+        <AppearanceSettings
+          cardOpacity={0.9}
+          colorMode="system"
+          accent="sg-orange"
+          onCardOpacityChange={() => {}}
+          onColorModeChange={() => {}}
+          onAccentChange={onAccentChange}
+          onClose={() => {}}
+        />
+      )
+    })
+
+    const group = container.querySelector<HTMLDivElement>('.appearance-accent [role="group"]')!
+    const swatches = [...container.querySelectorAll<HTMLButtonElement>('.appearance-accent__swatch')]
+    const first = swatches.find((button) => button.getAttribute('aria-label') === '拾光橙')!
+    const second = swatches[1]!
+
+    // 从首项出发：→ 移到第二项并选中；← 从首项环绕到末项
+    await act(async () => first.focus())
+    await act(async () => {
+      group.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }))
+    })
+    expect(document.activeElement).toBe(second)
+    expect(onAccentChange).toHaveBeenLastCalledWith(ACCENT_PRESETS[1]!.id)
+
+    await act(async () => first.focus())
+    await act(async () => {
+      group.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }))
+    })
+    expect(document.activeElement).toBe(swatches[swatches.length - 1]!)
+    expect(onAccentChange).toHaveBeenLastCalledWith(ACCENT_PRESETS[ACCENT_PRESETS.length - 1]!.id)
+
+    // 其它键不干预
+    await act(async () => {
+      group.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    })
+    expect(onAccentChange).toHaveBeenCalledTimes(2)
   })
 })

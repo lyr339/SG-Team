@@ -50,6 +50,14 @@ export function normalizeAccent(value: unknown): string {
   return typeof value === 'string' && ACCENT_PRESETS.some((preset) => preset.id === value) ? value : DEFAULT_ACCENT_ID
 }
 
+/**
+ * 离散换肤（主题色 / 深浅模式）适合 View Transition 全站交叉淡化；
+ * 透明度滑杆连续拖动不拍快照——高频调用 transition 会掉帧。
+ */
+export function isDiscreteAppearanceChange(patch: Partial<AppearancePreferences>): boolean {
+  return 'accent' in patch || 'colorMode' in patch
+}
+
 export function normalizeCardOpacity(value: unknown): number {
   const numeric = typeof value === 'number' ? value : Number(value)
   if (!Number.isFinite(numeric)) return DEFAULT_APPEARANCE_PREFERENCES.cardOpacity

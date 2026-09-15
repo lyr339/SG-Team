@@ -14,7 +14,8 @@ import {
   type StatsBucket,
   type StatsMetric,
   type StatsRange,
-  type StatsSortKey
+  type StatsSortKey,
+  type StatsSpectrumSegment
 } from './stats-view'
 
 type StatsProps = Pick<SettingsPageProps, 'usageSnapshot' | 'statsSeats'> & { active?: boolean }
@@ -66,6 +67,10 @@ export function SettingsStats({ usageSnapshot, statsSeats, active }: StatsProps)
   const [seatKey, setSeatKey] = useState<string>()
   const [sort, setSort] = useState<{ key: StatsSortKey; direction: 'asc' | 'desc' }>({ key: 'cost', direction: 'desc' })
   const [activeBucket, setActiveBucket] = useState<number>()
+  // 光谱带 hover 悬浮卡：直接持有段对象（而非索引）——hover 期间 usage 推送重算 spectrum 也不会越界；
+  // x 为段中心相对容器的水平百分比（hover 时实测，跟随 flexGrow 动画）。
+  const [hoverSegment, setHoverSegment] = useState<{ segment: StatsSpectrumSegment; index: number; x: number }>()
+  const spectrumRef = useRef<HTMLDivElement>(null)
 
   // 页级度量：一把尺子量全页——光谱带、节奏柱、模型条与明细默认排序全部跟随。
   const metricOf = (value: { costUsd: number; tokens: number }): number => (metric === 'cost' ? value.costUsd : value.tokens)
@@ -96,6 +101,8 @@ export function SettingsStats({ usageSnapshot, statsSeats, active }: StatsProps)
   const shownRows = sortedRows.slice(0, TABLE_ROW_CAP)
   const foldedRows = sortedRows.slice(TABLE_ROW_CAP)
   const foldedCost = foldedRows.reduce((sum, row) => sum + row.costUsd, 0)
+  // 成本列数据条的分母：全量行的最大成本（不只当前页），条宽跨页可比。
+  const maxRowCost = useMemo(() => view.rows.reduce((max, row) => Math.max(max, row.costUsd), 0), [view.rows])
 
   const filteredSeat = seatKey ? view.seatGroups.find((group) => group.key === seatKey) ?? (seatKey === STATS_HISTORY_SEAT.key ? STATS_HISTORY_SEAT : undefined) : undefined
   const savingsVisible = view.totals.savingsUsd > 0 && view.totals.savingsRatio !== undefined
@@ -182,12 +189,23 @@ export function SettingsStats({ usageSnapshot, statsSeats, active }: StatsProps)
       </div>
 
       <section className="stats-spectrum-block" aria-label="席位成本分布">
-        <div className="stats-spectrum" role="group" aria-label="按席位筛选">
+        <div className="stats-spectrum" role="group" aria-label="按席位筛选" ref={spectrumRef} onMouseLeave={() => setHoverSegment(undefined)}>
           {view.spectrum.length === 0 ? (
             <i className="stats-spectrum__ghost" aria-hidden="true" />
-          ) : view.spectrum.map((segment) => {
+          ) : view.spectrum.map((segment, index) => {
             const denominator = metricOf(view.spectrumTotals)
             const share = denominator > 0 ? metricOf(segment) / denominator : 0
+            const showSegmentTip = (target: HTMLElement): void => {
+              const container = spectrumRef.current
+              if (!container) return
+              const rect = target.getBoundingClientRect()
+              const parent = container.getBoundingClientRect()
+              setHoverSegment({
+                segment,
+                index,
+                x: ((rect.left + rect.width / 2) - parent.left) / Math.max(parent.width, 1) * 100
+              })
+            }
             return (
               <button
                 key={segment.seat.key}
@@ -195,13 +213,31 @@ export function SettingsStats({ usageSnapshot, statsSeats, active }: StatsProps)
                 className={`stats-spectrum__segment ${seatToneClass(segment.seat.colorIndex)}${seatKey && seatKey !== segment.seat.key ? ' is-dimmed' : ''}${seatKey === segment.seat.key ? ' is-selected' : ''}`}
                 style={{ flexGrow: Math.max(share, 0.015) }}
                 aria-pressed={seatKey === segment.seat.key}
-                title={`${segment.seat.label}${segment.seat.sub ? ` · ${segment.seat.sub}` : ''} · ${formatCostUsd(segment.costUsd)} · ${formatTokenCount(segment.tokens)} tokens · ${Math.round(share * 100)}%`}
+                onMouseEnter={(event) => showSegmentTip(event.currentTarget)}
+                onFocus={(event) => showSegmentTip(event.currentTarget)}
+                onBlur={() => setHoverSegment(undefined)}
                 onClick={() => setSeatKey((previous) => previous === segment.seat.key ? undefined : segment.seat.key)}
               >
-                <span className="stats-visually-hidden">{segment.seat.label} {formatMetric(segment)}</span>
+                <span className="stats-visually-hidden">{segment.seat.label} {formatMetric(segment)}，占比 {Math.round(share * 100)}%</span>
               </button>
             )
           })}
+          {hoverSegment ? (() => {
+            const { segment, index, x } = hoverSegment
+            const denominator = metricOf(view.spectrumTotals)
+            const share = denominator > 0 ? metricOf(segment) / denominator : 0
+            return (
+              <div
+                className={`stats-spectrum__tip is-${tooltipAlign(index, view.spectrum.length)}`}
+                style={{ left: `${x}%` }}
+                role="presentation"
+              >
+                <strong>{segment.seat.label}{segment.seat.sub ? ` · ${segment.seat.sub}` : ''}</strong>
+                <span>{formatMetric(segment)} · {Math.round(share * 100)}%</span>
+                <span className="stats-spectrum__tip-alt">{metric === 'cost' ? `${formatTokenCount(segment.tokens)} tokens` : formatCostUsd(segment.costUsd)}</span>
+              </div>
+            )
+          })() : null}
         </div>
         <p className="stats-ledger">
           {metric === 'cost' ? (
@@ -295,6 +331,9 @@ export function SettingsStats({ usageSnapshot, statsSeats, active }: StatsProps)
                       </span>
                     )
                   })}
+                  {activeBucketData.parts.length > 4 ? (
+                    <span className="stats-bars__tip-row is-more">… 另有 {activeBucketData.parts.length - 4} 个席位</span>
+                  ) : null}
                 </div>
               ) : null}
             </div>
@@ -455,7 +494,7 @@ export function SettingsStats({ usageSnapshot, statsSeats, active }: StatsProps)
                   <td className="stats-table__num" title={`Input ${formatTokenCount(row.freshInput)} · Output ${formatTokenCount(row.output)} · Cache Write ${formatTokenCount(row.cacheWrite)} · Cache Read ${formatTokenCount(row.cacheRead)}`}>
                     {formatTokenCount(row.tokens)}
                   </td>
-                  <td className="stats-table__num is-cost">{formatCostUsd(row.costUsd)}</td>
+                  <td className="stats-table__num is-cost" style={{ '--cost-share': `${maxRowCost > 0 ? row.costUsd / maxRowCost * 100 : 0}%` } as React.CSSProperties}>{formatCostUsd(row.costUsd)}</td>
                   <td><span className={`stats-table__quality is-${row.quality}`}>{STATS_QUALITY_LABEL[row.quality]}</span></td>
                   <td className="stats-table__time" title={formatFullClock(row.lastTurnAt)}>{formatRelativeClock(row.lastTurnAt)}</td>
                 </tr>

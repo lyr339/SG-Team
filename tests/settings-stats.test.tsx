@@ -190,4 +190,51 @@ describe('统计页组件', () => {
     expect(container.querySelector('.settings-groups > div:not([hidden]) .settings-stats')).not.toBeNull()
     history.replaceState(null, '', '#account')
   })
+
+  it('光谱带 hover 悬浮卡：即时显示席位明细（替代原生 title），离开即消', async () => {
+    const { usage, seats } = fixture(Date.now())
+    await render({ usageSnapshot: usage, statsSeats: seats, active: true })
+    const segment = container.querySelector<HTMLButtonElement>('.stats-spectrum__segment')!
+    // 原生 title 已移除，席位明细由即时悬浮卡承担
+    expect(segment.getAttribute('title')).toBeNull()
+    expect(container.querySelector('.stats-spectrum__tip')).toBeNull()
+    await act(async () => { segment.dispatchEvent(new window.MouseEvent('mouseover', { bubbles: true })) })
+    const tip = container.querySelector('.stats-spectrum__tip')
+    expect(tip?.textContent).toContain('主控席')
+    expect(tip?.textContent).toContain('CH-1')
+    expect(tip?.textContent).toMatch(/\d+%/)
+    // 次度量行：成本度量下补 tokens
+    expect(tip?.querySelector('.stats-spectrum__tip-alt')?.textContent).toContain('tokens')
+    await act(async () => { segment.dispatchEvent(new window.MouseEvent('mouseout', { bubbles: true })) })
+    expect(container.querySelector('.stats-spectrum__tip')).toBeNull()
+  })
+
+  it('成本列带数据条背景：--cost-share 相对全量行最大成本', async () => {
+    const { usage, seats } = fixture(Date.now())
+    await render({ usageSnapshot: usage, statsSeats: seats, active: true })
+    const cells = [...container.querySelectorAll<HTMLTableCellElement>('td.is-cost')]
+    expect(cells.length).toBeGreaterThan(0)
+    const shares = cells.map((cell) => Number.parseFloat(cell.style.getPropertyValue('--cost-share')))
+    expect(shares.every((share) => share >= 0 && share <= 100)).toBe(true)
+    expect(Math.max(...shares)).toBeCloseTo(100, 0)
+  })
+
+  it('节奏柱悬浮卡的席位行超过 4 个时折叠为「另有 N 个席位」', async () => {
+    const now = Date.now()
+    const composerIds = ['c-1', 'c-2', 'c-3', 'c-4', 'c-5']
+    const usage = Object.fromEntries(composerIds.map((id) => [
+      id,
+      projectUsage(id, { turns: { g0: turnAt(now) } })
+    ]))
+    const seats: StatsSeatSource[] = composerIds.map((id, index) => ({
+      channelId: String(index + 1), roleName: `席位${index + 1}`, displayName: `席位${index + 1}`, online: true, composerId: id
+    }))
+    await render({ usageSnapshot: usage, statsSeats: seats, active: true })
+    const currentHourCol = container.querySelectorAll('.stats-bars__col')[new Date(now).getHours()]!
+    await act(async () => { currentHourCol.dispatchEvent(new window.MouseEvent('mouseover', { bubbles: true })) })
+    const tip = container.querySelector('.stats-bars__tip')
+    // 4 行席位明细 + 1 行汇总
+    expect(tip?.querySelectorAll('.stats-bars__tip-row').length).toBe(5)
+    expect(tip?.textContent).toContain('另有 1 个席位')
+  })
 })

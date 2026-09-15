@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type { ProcessBlock } from '../../domain/conversation-entry'
 import { MessageImage } from './AttachmentImageViewer'
 import { stepDomId, subscribeReveal } from './inspector/reveal-bus'
@@ -338,7 +338,7 @@ function StepDetails({ step, questionActions, preview = false }: { step: Process
   )
 }
 
-export function ProcessTurnCard({
+function ProcessTurnCardImpl({
   id,
   blocks,
   startedAt,
@@ -700,3 +700,10 @@ export function ProcessTurnCard({
     </section>
   )
 }
+
+/**
+ * 会话时间线里每张过程卡在 live 推送帧下都会被父级重渲染；props 的引用
+ *（blocks / hydratedBlockIds / questionActions / 标量）在历史卡上是稳定的，
+ * memo 让只有真正变化的卡（进行中的那张）参与重渲染。
+ */
+export const ProcessTurnCard = memo(ProcessTurnCardImpl)

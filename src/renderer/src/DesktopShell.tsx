@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { DesktopSnapshot } from '../../shared/desktop-api'
 import type { CursorWorkspaceDetection } from '../../domain/cursor-workspace'
 import {
-  AccountIcon,
+  GearIcon,
   PanelIcon,
   PlayIcon,
   SettingsIcon,
@@ -221,7 +221,7 @@ export function DesktopShell({
             aria-label={MODULE_LABELS.account}
             aria-pressed={activeModule === 'account'}
           >
-            <AccountIcon />
+            <GearIcon />
           </button>
           {activeModule === 'sessions' ? (
             <button

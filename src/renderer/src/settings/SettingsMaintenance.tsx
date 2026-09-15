@@ -20,8 +20,8 @@ function updateModeLabel(mode: string | undefined, disabled: boolean): string {
 }
 
 /**
- * Cursor 本机维护分组：自动更新开关 + 受限模型数据政策自动确认。
- * 全部结构与文案逐字继承自原 LobbyAccountTile 底部维护块。
+ * Cursor 本机维护分组：自动更新开关 + 受限模型数据政策自动确认 + 切号补丁。
+ * 行结构与自动化分组同一语言：左文案（标题 + 说明），右控件，右缘对齐。
  */
 export function SettingsMaintenance({
   cursorUpdatePreferences,
@@ -42,17 +42,28 @@ export function SettingsMaintenance({
   const phase = automationRun?.phase ?? 'idle'
 
   const externalCompatiblePump = switchPumpStatus?.kind === 'installed' && switchPumpStatus.managed === false
-  const switchPumpTitle = switchPumpStatus?.kind === 'installed'
-    ? externalCompatiblePump
-      ? `兼容切号补丁可用（端口 ${switchPumpStatus.config?.port ?? '—'}）`
-      : `拾光切号补丁已安装（端口 ${switchPumpStatus.config?.port ?? '—'}）`
-    : switchPumpStatus?.kind === 'not-installed'
-      ? switchPumpStatus.managed
-        ? '切号补丁需要更新'
-        : '切号补丁未安装'
-      : switchPumpStatus?.kind === 'unsupported'
-        ? '当前 Cursor 版本装不了切号补丁'
-        : '切号补丁状态未检测'
+  const pumpInstalled = switchPumpStatus?.kind === 'installed'
+  const pumpPort = switchPumpStatus?.config?.port
+  // 切号补丁建模为开关：开 = 无感换号能力已就位。两种不可操作态用禁用表达——
+  // 外部工具管理的兼容补丁（开态禁用：拾光只复用，不卸载）与不支持的版本（关态禁用）。
+  const pumpDisabled = switchPumpBusy
+    || externalCompatiblePump
+    || switchPumpStatus?.kind === 'unsupported'
+    || switchPumpStatus?.kind === 'unavailable'
+    || (pumpInstalled && !onRemoveSwitchPump)
+  const switchPumpHint = switchPumpBusy
+    ? '正在处理切号补丁…'
+    : externalCompatiblePump
+      ? `已安装（端口 ${pumpPort ?? '—'}）；由其他工具管理，拾光只复用、不覆盖或卸载`
+      : pumpInstalled
+        ? `已安装（端口 ${pumpPort ?? '—'}）；运行中的 Cursor 已具备无感换号能力`
+        : switchPumpStatus?.kind === 'not-installed'
+          ? switchPumpStatus.managed
+            ? '补丁需要更新；重新安装后重启一次 Cursor 即可启用无感换号'
+            : '未安装；安装后重启一次 Cursor 即可启用无感换号'
+          : switchPumpStatus?.kind === 'unsupported'
+            ? '当前 Cursor 版本装不了切号补丁'
+            : '切号补丁状态未检测'
 
   if (!(onSetCursorAutoUpdateDisabled && cursorUpdatePreferences) && !onSetModelDataPolicyAutoAcknowledge && !onEnsureSwitchPump) {
     return null
@@ -64,25 +75,38 @@ export function SettingsMaintenance({
       description={cursorUpdatePreferences ? 'settings.json' : 'Roxy profile'}
       descriptionTitle={cursorUpdatePreferences?.settingsPath}
     >
-      <div className="cursor-maintenance settings-maintenance">
+      <div className="settings-maintenance">
         {onSetCursorAutoUpdateDisabled && cursorUpdatePreferences ? (
-          <div className="cursor-maintenance__action">
+          <div className="settings-row">
+            <div className="settings-row__copy">
+              <span className="settings-row__label">关闭 Cursor 自动更新</span>
+              <span className="settings-row__hint">
+                {cursorUpdatePreferences.autoUpdateDisabled
+                  ? '已关闭自动更新；新版本发布后需手动安装'
+                  : `当前更新策略：${updateModeLabel(cursorUpdatePreferences.updateMode, false)}；关闭后需手动升级`}
+              </span>
+            </div>
             <ToggleSwitch
               checked={cursorUpdatePreferences.autoUpdateDisabled}
               disabled={cursorUpdateBusy}
+              label="关闭 Cursor 自动更新"
               onChange={(checked) => void onSetCursorAutoUpdateDisabled(checked)}
-            >
-              关闭 Cursor 自动更新
-            </ToggleSwitch>
-            <em>{updateModeLabel(cursorUpdatePreferences.updateMode, cursorUpdatePreferences.autoUpdateDisabled)}</em>
+            />
           </div>
         ) : null}
         {onSetModelDataPolicyAutoAcknowledge && automationSettings ? (
-          <div className="cursor-maintenance__action cursor-maintenance__policy">
+          <div className="settings-row settings-row--divided">
+            <div className="settings-row__copy">
+              <span className="settings-row__label">自动确认受限模型数据政策</span>
+              <span className="settings-row__hint">
+                {policyBusy ? '正在更新受限模型政策…' : '新账号导入与自动化预检时查询官网状态，缺失才确认'}
+              </span>
+            </div>
             <ToggleSwitch
               checked={automationSettings.autoAcknowledgeModelDataPolicies !== false}
               disabled={policyBusy || isActiveAutomationPhase(phase)}
-              title={!automationSettings.bitProfileId ? '关闭可直接生效；重新开启前请先在「导入来源」选择默认窗口' : '新账号导入与自动化预检时查询官网状态，缺失才确认'}
+              label="自动确认受限模型数据政策"
+              title={!automationSettings.bitProfileId ? '关闭可直接生效；重新开启前请先在「导入来源」选择默认窗口' : undefined}
               onChange={(enabled) => {
                 setPolicyBusy(true)
                 setPolicyFeedback(undefined)
@@ -94,10 +118,7 @@ export function SettingsMaintenance({
                   }))
                   .finally(() => setPolicyBusy(false))
               }}
-            >
-              {policyBusy ? '正在更新受限模型政策' : '自动确认受限模型数据政策'}
-            </ToggleSwitch>
-            <em>{automationSettings.autoAcknowledgeModelDataPolicies !== false ? '自动' : '关闭'}</em>
+            />
           </div>
         ) : null}
         {policyFeedback ? (
@@ -106,22 +127,20 @@ export function SettingsMaintenance({
           </p>
         ) : null}
         {onEnsureSwitchPump ? (
-          <div className={`cursor-maintenance__action cursor-maintenance__switch-pump${externalCompatiblePump ? ' is-compatible' : switchPumpStatus?.kind === 'installed' ? ' is-installed' : ' is-inactive'}`}>
-            <span className="cursor-maintenance__switch-pump-copy">
-              <span className="cursor-maintenance__switch-pump-title"><i aria-hidden="true" />{switchPumpBusy ? '正在处理切号补丁…' : switchPumpTitle}</span>
-              <small>{externalCompatiblePump
-                ? '由其他工具管理；拾光只复用，不覆盖或卸载'
-                : switchPumpStatus?.kind === 'installed'
-                  ? '运行中的 Cursor 已具备无感换号能力'
-                  : '安装后重启一次 Cursor 即可启用无感换号'}</small>
-            </span>
-            {externalCompatiblePump ? (
-              <em className="is-compatible">兼容可用</em>
-            ) : switchPumpStatus?.kind === 'installed' ? (
-              <button type="button" className="cursor-maintenance__pump-action is-remove" disabled={switchPumpBusy || !onRemoveSwitchPump} onClick={() => void onRemoveSwitchPump?.()}>移除</button>
-            ) : (
-              <button type="button" className="cursor-maintenance__pump-action" disabled={switchPumpBusy || switchPumpStatus?.kind === 'unsupported' || switchPumpStatus?.kind === 'unavailable'} onClick={() => void onEnsureSwitchPump()}>安装</button>
-            )}
+          <div className={`settings-row settings-row--divided cursor-maintenance__switch-pump${externalCompatiblePump ? ' is-compatible' : pumpInstalled ? ' is-installed' : ' is-inactive'}`}>
+            <div className="settings-row__copy">
+              <span className="settings-row__label">切号补丁（无感换号）</span>
+              <span className="settings-row__hint">{switchPumpHint}</span>
+            </div>
+            <ToggleSwitch
+              checked={pumpInstalled}
+              disabled={pumpDisabled}
+              label="切号补丁（无感换号）"
+              onChange={(checked) => {
+                if (checked) void onEnsureSwitchPump()
+                else void onRemoveSwitchPump?.()
+              }}
+            />
           </div>
         ) : null}
         {switchPumpStatus?.message && (switchPumpStatus.kind === 'unsupported' || switchPumpStatus.kind === 'unavailable') ? (

@@ -235,7 +235,7 @@ export function AttachmentThumbnail({
           setMenu({ x: event.clientX, y: event.clientY })
         }}
       >
-        <img src={source} alt={attachment.name} draggable={false} />
+        <img src={source} alt={attachment.name} draggable={false} loading="lazy" />
         {actions.feedback && !viewerOpen ? <span className="attachment-thumb__feedback" role="status">{actions.feedback}</span> : null}
       </button>
       {menu ? <AttachmentContextMenu x={menu.x} y={menu.y} items={items} onClose={() => setMenu(undefined)} /> : null}
