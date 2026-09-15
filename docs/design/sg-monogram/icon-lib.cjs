@@ -78,6 +78,34 @@ function bladePath(o, beamX, widthFactor = 1) {
   return `M${x(0)} ${y(-half)}L${x(w)} ${y(-half + taper)}L${x(w)} ${y(half - taper)}L${x(0)} ${y(half)}L${x(-w)} ${y(half - taper)}L${x(-w)} ${y(-half + taper)}Z`
 }
 
+/**
+ * V12 光栅主图（1024×1024）：大尺寸档直接用选定的 AI 原图，不再矢量重绘。
+ * 用户定稿：矢量版的光刃落在 S/G 交界上，而 Futura 的 S 窄 G 宽，交界天然偏离底板中心约 6.5%——
+ * V12 原图的光刃过正中，字形也是为此定制的；两者不可兼得，用户选原图。
+ * 几何（全部按像素实测）：原图 v12-master.png（1152×864）底板 x 88–688、y 119–720（601×602），
+ * 按边精确映射到 TILE_PATH 的 72–952。原图底板的圆角弧比 macOS squircle 切得深（弧中段最多差 ~27px），
+ * 直接用 TILE_PATH 剪裁会在角部采到原图的浅色背景——所以图像单独用一个"更深圆角"的圆角矩形剪裁
+ * （内缩 6px、rx 240，处处包住原图自己的角弧），角部缺口由底下的纯色底板补齐：那里本来就是平坦的深色。
+ * ≤64px 档与托盘模板仍走矢量（iconSvg）：600px 的原图缩到 16–64px 会糊，矢量按目标像素重算才干脆。
+ */
+function rasterIconSvg(pngBase64, overrides = {}) {
+  const o = { scale: 1, tileShadow: true, ...overrides }
+  const s = 880 / 601.5 // 源底板边长 ≈601.5px → 画布 880px（72–952）
+  const x = 72 - 88 * s, y = 72 - 119 * s
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <clipPath id="v12-img-clip"><rect x="78" y="78" width="868" height="868" rx="240"/></clipPath>
+    <clipPath id="v12-tile-clip"><path d="${TILE_PATH}"/></clipPath>
+    ${o.tileShadow ? `<filter id="v12-tile-shadow" x="-15%" y="-15%" width="130%" height="135%"><feDropShadow dx="0" dy="13" stdDeviation="18" flood-color="#0b0608" flood-opacity="0.22"/></filter>` : ''}
+  </defs>
+  <g transform="translate(512 512) scale(${o.scale.toFixed(4)}) translate(-512 -512)">
+  <path d="${TILE_PATH}" fill="${TILE_DARK}"${o.tileShadow ? ` filter="url(#v12-tile-shadow)"` : ''}/>
+  <g clip-path="url(#v12-tile-clip)"><g clip-path="url(#v12-img-clip)"><image href="data:image/png;base64,${pngBase64}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${(1152 * s).toFixed(1)}" height="${(864 * s).toFixed(1)}"/></g></g>
+  <path d="${TILE_PATH}" fill="none" stroke="#fff" stroke-opacity="0.05" stroke-width="2"/>
+  </g>
+</svg>`
+}
+
 /** 完整图标 SVG（1024×1024）。 */
 function iconSvg(overrides = {}) {
   const o = { ...DEFAULTS, ...overrides }
@@ -129,4 +157,4 @@ function iconSvg(overrides = {}) {
 </svg>`
 }
 
-module.exports = { iconSvg, DEFAULTS }
+module.exports = { iconSvg, rasterIconSvg, DEFAULTS }
