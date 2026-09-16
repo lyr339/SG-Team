@@ -16,6 +16,8 @@ import type { StatsSeatSource } from '../src/renderer/src/settings/stats-view'
 
 const HOUR = 3_600_000
 const DAY = 86_400_000
+/** 钉死时钟在本地 14:00：夹具把「今天」的回合放在 now - 0.5h / 1h / 2h，跨过午夜跑真实时钟会全部落到昨天。 */
+const FIXED_NOW = new Date(2026, 8, 16, 14, 0, 0).getTime()
 
 function turnAt(at: number, modelId = 'claude-fable-5'): UsageTurn {
   const price = priceForModel(modelId)
@@ -23,7 +25,7 @@ function turnAt(at: number, modelId = 'claude-fable-5'): UsageTurn {
   return { ...counts, estimatedCostUsd: estimateTurnCostUsd({ ...counts, occurredAt: at }, price), price, exact: true, at }
 }
 
-/** 组件测试用实时 now：回合分布在今天与最近几天。 */
+/** 组件测试用的 now（已钉死）：回合分布在今天与最近几天。 */
 function fixture(now: number): { usage: CursorUsageSnapshot; seats: StatsSeatSource[] } {
   const usageEntries: Array<[string, UsageTurn[]]> = [
     ['composer-01', [turnAt(now - 30 * 60_000), turnAt(now - 2 * HOUR), turnAt(now - DAY)]],
@@ -47,6 +49,8 @@ describe('统计页组件', () => {
   let root: Root
 
   beforeEach(() => {
+    // 只伪造 Date（组件与夹具都读 Date.now()），计时器保持真实，act / 事件派发不受影响。
+    vi.useFakeTimers({ now: FIXED_NOW, toFake: ['Date'] })
     ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
     container = document.createElement('div')
     document.body.appendChild(container)
@@ -56,6 +60,7 @@ describe('统计页组件', () => {
   afterEach(async () => {
     await act(async () => root.unmount())
     container.remove()
+    vi.useRealTimers()
   })
 
   const render = async (props: Parameters<typeof SettingsStats>[0]): Promise<void> => {
