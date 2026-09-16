@@ -1,12 +1,17 @@
-# 交接任务书：拾光自动更新（mac 先行 · 不买证书 · 远端 GitHub Releases）
+# 交接任务书：拾光自动更新（Windows 先行 · electron-updater · 手动组件；mac 自替换待做）
 
-> **状态（2026-09-15 18:38）：待动工。** 本文由 CH-1 14:31–14:55 的可行性分析（用户当场拍板：**不花钱、先做 mac、先出任务书**）
-> 加上本次对发布链、运行方式与 GitHub 端点的实测（§0.3）汇成。每完成一步在 §12 追加一行；
-> 中断后接手者只读 §0、§12、§13 即可定位。
+> **状态（2026-09-16 21:40）：Windows 路线（§0.6）代码侧完成并已提交**——分支 `feat/app-auto-update`，worktree `E:\SG-update`（已 rebase 到 main 最新，v0.3.2 之后），
+> typecheck / knip / 全量测试 / build / smoke:channel 全绿，预览截图矩阵含更新场景；**待真机验收（§0.6.4）并合回 main（可 fast-forward）**。
+> mac 自替换路线（§4–§7、§11）仍待动工，设计不变。每完成一步在 §12 追加一行；中断后接手者只读 §0、§12、§13 即可定位。
 >
-> 项目：拾光 / SG Team（`shiguang-team` 0.2.1）· 基线 main `2ce4299`（v0.2.1 之后 7 个未推送提交）。
-> 建议在独立 worktree `../SG-Team-update` · 分支 `feat/app-auto-update` 上进行，`node_modules` 软链到主仓
-> （`ln -s ../SG-Team/node_modules`，与 `../SG-Team-groups` 相同）。**主工作树的未提交文件属其他 Agent——不要碰**（§9.2 列了会碰面的文件）。
+> **2026-09-16 用户重新拍板**（在真实 Windows 机器上，覆盖 09-15 的 U2 / U3）：① **Windows 先行**；② **允许引入 `electron-updater`**（运行时依赖从 ws + zod 扩到三项）；
+> ③ 按机安装带来的 **UAC 弹窗可接受**；④ **手动组件**——用户使用中不得被打断，只允许一个不打扰的小提醒告知有新版本，下载与安装都由用户显式点击。
+>
+> 原始来源：CH-1 09-15 14:31–14:55 的可行性分析（当时拍板：不花钱、先做 mac、先出任务书）+ CH-4 对发布链、运行方式与 GitHub 端点的实测（§0.3）。
+> 09-16 CH-2 在真机上补齐 Windows 事实（§0.5）并落地 Windows 路线（§0.6）。
+>
+> 项目：拾光 / SG Team（`shiguang-team` 0.3.2）· 仓库 `lyr339/SG-Team`（09-15 文中的 `SG-Team-for-Mac` 是旧名，GitHub 会重定向，新代码一律用新名）。
+> Windows 上 `E:` 是 exFAT，建不了软链 / junction：worktree 的 `node_modules` 是从主仓 robocopy 的完整副本。**主工作树的未提交文件属其他 Agent——不要碰**（§9.2 列了会碰面的文件）。
 >
 > 命名提醒：仓库里已有 `domain/cursor-update.ts` / `register-cursor-update-ipc.ts` / 设置页「Cursor 维护」——那是**关闭 Cursor 自身自动更新**的开关，
 > 与本任务无关。本任务一律叫 **`app-update`（拾光自更新）**，不要混用。
@@ -25,9 +30,13 @@
 | # | 决策 | 结论 |
 |---|---|---|
 | U1 | 是否购买 Apple Developer Program（99 美元/年）走 Squirrel.Mac 标准路 | **否**。mac 走「路线 B：自己替换」（§7） |
-| U2 | 平台顺序 | **mac 先做**；Windows 只保留设计备忘（§14），等有真实 Windows 机器再开 |
-| U3 | 交付顺序 | 先出本任务书（本文）→ 阶段 0（检查 + 提示 + 手动下载）→ 阶段 1（mac 自替换 + 回滚） |
-| U4 | 更新源 | GitHub Releases（仓库公开 `lyr339/SG-Team-for-Mac`）；国内镜像留接口（清单 URL 可覆盖），暂不实现 |
+| U2 | 平台顺序 | ~~mac 先做~~ → **09-16 改为 Windows 先做**（真机在手；§0.6）；mac 自替换随后 |
+| U3 | 交付顺序 | ~~任务书 → 阶段 0 → 阶段 1（mac）~~ → **09-16 改为**：Windows 全链（检查 + 提醒 + 下载 + 安装，`electron-updater`）一次落地 → 真机验收 → mac 路线 B |
+| U4 | 更新源 | GitHub Releases（仓库 `lyr339/SG-Team`）；国内镜像留接口（Windows：设置页「自定义更新源」= electron-updater `generic` 目录；mac：清单 URL 可覆盖），暂不搭镜像 |
+| U5 | Windows 用 `electron-updater` 还是零依赖自研 rename-swap | **`electron-updater`**（09-16）。代价：新增运行时依赖 + 安装器会杀掉 Cursor 托管的 MCP 进程（§0.5-5）；收益：差分下载、注册表 / 快捷方式 / 卸载项由安装器维护、成熟度 |
+| U6 | 按机安装的 UAC 弹窗 | **接受**（09-16）。发布说明建议新装机选「仅当前用户」 |
+| U7 | 席位在线时是否允许安装 | **确认后继续**（`confirm` 门禁，文案写清 5 秒瞬断）；一键建会话在途 → `block` |
+| U8 | 组件性质 | **手动组件**（09-16）：只静默检查；发现新版 = 右下角小提醒框（15 秒自动收起，每版每次运行一次）+ 齿轮 / 导航角标；不自动下载、不在退出时静默安装、不弹模态框 |
 
 ### 0.3 实测事实（2026-09-15，决定设计的硬约束）
 
@@ -69,12 +78,47 @@
 7. 全部网络失败静默（只写 `[app-update]` stderr 日志），绝不弹错误框——国内访问 GitHub 失败是常态不是异常。
 8. 提交前 `npm run typecheck && npm run lint:dead && npm test && npm run build && npm run smoke:channel`（与 `ci.yml` 一致）。
 
-### 0.5 明确排除
+### 0.5 Windows 实测事实（2026-09-16，CH-2 在真机 `D:\SG-Team\ShiGuang` 上补齐）
 
-- Windows 自动更新的实现（保留 §14 备忘；`electron-updater` + NSIS 路线可行但需真机）。
-- 差分 / 增量更新（blockmap）；后台静默安装；强制更新策略（清单里预留 `minimumVersion` 字段，本期只展示不强制）。
-- 国内镜像源的搭建（只留 `manifestUrl` 覆盖项）。
-- 更新期间保住 Cursor 里的长轮询不中断——MCP 重载是 Cursor 行为，Agent 端协议已把它当瞬断处理（等待 5 秒重试），本期只做「先提示、后重载」。
+1. **已装包自带更新源**：`resources/app-update.yml` 内容为 `provider: github, owner: lyr339, repo: SG-Team`（electron-builder 从 git remote 推断；`build.publish` 现已显式写入以免漂移）。
+2. **差分缓存目录**：`%LOCALAPPDATA%\shiguang-team-updater\installer.exe` 是 NSIS 自拷贝，供 electron-updater 做 blockmap 差分下载；`updaterCacheDirName` 必须与 `package.json` `build` 一致。
+3. **发布链缺口（已修）**：`pack:win` 本地已产出 `latest.yml` + `*.exe.blockmap`，但 v0.3.2 的 `release.yml` 只上传 `.exe`——Release 上没有更新 feed；`release.yml` 现已一并上传 `latest.yml` 与 `.blockmap`。
+4. **安装器读注册表**：`HKLM\Software\<guid>\InstallLocation` 记录自定义目录与 `/allusers` 模式；`--updated` 模式（安装器装完拉起新版）沿用同一目录与模式；per-machine 安装会弹一次 UAC（U6 已接受）。
+5. **进程终止语义**：electron-builder NSIS 的 `_CHECK_APP_RUNNING` 用 `Get-CimInstance Win32_Process | ? Path.StartsWith($INSTDIR)` 按**安装目录前缀**杀进程，无提示；Cursor 托管的 MCP 是同一个 `ShiGuang.exe … index.mjs`，安装必然打断每个在线席位一次（Agent 端按瞬断续接 5 秒重试）。
+6. **Windows 文件锁**：运行中的 exe 及其父目录可 `rename`，不可 `delete` / 覆盖（用复制的 `node.exe` 探过）——保留日后零依赖 rename-swap 备选；本期走 electron-updater + NSIS。
+7. **electron-updater 检查源**：GitHub provider 读 `releases.atom` + `releases/download/<tag>/latest.yml`，**不碰** REST API（§0.3-4 的 60/h 限额与此无关）。
+8. **ESM 导入陷阱**：`import { autoUpdater } from 'electron-updater'` 在 ESM 链接期失败（`autoUpdater` 是 CJS `module.exports` 上的 lazy getter）；主进程必须用 `import electronUpdater from 'electron-updater'` 再取 `.autoUpdater`。
+
+### 0.6 Windows 路线已落地（2026-09-16，分支 `feat/app-auto-update`）
+
+**代码落点**（与 §9.1  mac 清单路线不同——Windows 走 electron-updater，无 `update-manifest.mjs`）：
+
+| 层 | 文件 | 职责 |
+|---|---|---|
+| domain | `src/domain/app-update.ts` | 版本比较、设置归一化、状态机、提醒判定、安装门禁 |
+| application | `app-update-service.ts` / `app-update-settings-store.ts` | 定时检查、check/download/cancel/install/skip/snooze、userData 持久化 |
+| infrastructure | `infrastructure/app-update/electron-updater-port.ts` | win32 + packaged 才支持；`autoDownload=false`、`autoInstallOnAppQuit=false` |
+| main | `register-app-update-ipc.ts` + `main/index.ts` 装配 | `app-update:*` IPC + `app-update:status` 推送 |
+| renderer | `SettingsUpdate` / `UpdateReminder` / `update-view.ts` / `update.css` | 设置页第 8 组「软件更新」+ 右下角小提醒 + 齿轮角标 |
+| 共享 | `global-mcp-registrar` 写 `SG_TEAM_APP_VERSION` | 升级后首次启动改写 mcp.json → Cursor 重载 MCP |
+| CI | `release.yml` 上传 `latest.yml` + `.blockmap`；`package.json` `build.publish` | 更新 feed 不再依赖 remote 推断 |
+
+**行为摘要**（U8 手动组件）：启动 45 s 后静默检查，之后每 6 h（可关 / 改 12 / 24 h）；有新版 → 右下角小提醒（15 s 自动收起，每版每运行一次）+ 设置齿轮 / 导航角标；不自动下载、不静默安装、不弹模态框；下载 / 安装只在 设置 › 软件更新 里点；安装前门禁：`sessionLaunchRunning` → block，席位在线 → confirm（文案写清约 5 秒瞬断）；`quitAndInstall(true, true)` 静默安装并拉起；`--updated`  argv 触发一次「已更新到 x」提示。
+
+#### 0.6.4 真机验收（待用户）
+
+1. 先发一个带 `latest.yml` + `.blockmap` 的 tag（≥ 0.3.3）；从已装的 0.3.2 **不能**应用内升到该版——发布说明须写明「首版带更新能力，请手动装一次 0.3.3+」。
+2. 装 0.3.3+ 后：等 45 s 或点「立即检查」→ 发布更高 tag → 小提醒出现 → 下载 → 安装 → 确认门禁 → 拾光退出 → 新版拉起 → 「已更新到 x」→ `mcp.json` 的 `SG_TEAM_APP_VERSION` 变化 → Cursor 重载 SG Team（在线席位瞬断后 5 s 续接）。
+3. 负面：检查失败无弹窗；一键建会话在途时安装按钮 block；per-machine UAC 出现一次可接受。
+
+**验证（代码侧，2026-09-16）**：typecheck、knip、198/199 测试文件全绿（`brand-migration` 在 Node 22 因 vitest 无法 bundle `node:sqlite` 失败——CI Node 24 无此问题）、build、smoke:channel；新增 8 个测试文件 + 预览截图矩阵 `?update=<phase>`。
+
+### 0.7 明确排除
+
+- mac 自替换（§4–§7、§11 设计不变，待做）；mac 面板本期只链发布页。
+- 后台静默安装；强制更新（`minimumVersion` 字段预留，本期不强制）。
+- 国内镜像源的搭建（Windows 只留设置页 `feedUrl` → `generic` 目录；mac 留清单 URL 覆盖项）。
+- 更新期间保住 Cursor 长轮询不中断——MCP 重载是 Cursor 行为，Agent 端协议已当瞬断处理（5 秒重试），本期只做「先提示、后重载」。
 
 ***
 
@@ -554,6 +598,11 @@ tests/mac-app-replacer.test.ts · tests/update-backup.test.ts · tests/register-
 |---|---|---|---|
 | 09-15 14:31–14:55 | 可行性 | （CH-1）盘点打包 / CI / 签名 / MCP 接入；结论：检查层零风险，mac 全自动被 adhoc 签名卡住，两条路线；用户拍板不买证书、mac 先行 | — |
 | 09-15 18:20–18:38 | 任务书 | （CH-4 接 CH-1）实测 GitHub 端点（REST 限额已耗尽、重定向端点可用、资产 133 MB）、adhoc 签名、mcp.json 重写即重载、库版本严格相等、Info.plist 无隔离标记、同卷；写成本文 | 全程只读 |
+| 09-16 全天 | 重拍板 | 用户在真 Windows 上拍板：Windows 先行、允许 `electron-updater`、UAC 可接受、手动组件（只小提醒，使用中不打断） | 用户消息 |
+| 09-16 下午–晚 | Windows 全链 | domain / service / port / IPC / 渲染层（SettingsUpdate + UpdateReminder）/ `SG_TEAM_APP_VERSION` / `release.yml` + `build.publish` / 测试 + 预览截图 | typecheck · knip · 1970 tests · build · smoke:channel |
+| 09-16 晚 | 文档 | `docs/ARCHITECTURE.md` Self-update boundary + 日期条目；`docs/TASK-MCP.md` env；本文 §0.5–§0.7 · §12 | 与代码同步 |
+| 09-16 21:10–21:40 | 接手复核 + 提交 | （CH-1 接 CH-2 中断处）复跑五步验证全绿；读代码发现一处缺陷并修：`SettingsUpdate` 用 `download` IPC 的 promise 占住 `busyAction`，而该 IPC 直到下载结束才返回 → 整个下载期间「取消下载」不可点。改为下载不占 busy、进度与终态由推送驱动；补一条「下载 IPC 挂起时取消仍可点」的用例（改前失败、改后通过）。提交到 `feat/app-auto-update` 并 rebase 到 main 最新（仅 `docs/ARCHITECTURE.md` 尾部追加冲突，两边保留） | typecheck · knip · 1972 tests（rebase 后含 main 新用例）· build · smoke:channel |
+| — | 真机验收 | §0.6.4：发带 feed 的 tag → 应用内升一级 → 观察 MCP 重载。**不发版也能验**：`pack:win` 打两个本地版本（0.3.3 / 0.3.4），装 0.3.3，把 `release/` 用本机静态 HTTP 服务起来，在 设置 › 软件更新 › 自定义更新源 填该目录 URL → 检查 → 下载 → 安装；安装会杀掉 Cursor 托管的 MCP（在线席位瞬断） | **待用户** |
 
 ***
 
@@ -579,12 +628,10 @@ tests/mac-app-replacer.test.ts · tests/update-backup.test.ts · tests/register-
 1. **席位在线时是否允许确认后继续安装**——建议：允许（`confirm`），文案写清瞬断 5 秒；否则改为 `block`。
 2. **自动检查默认开、间隔 6 小时、启动后 45 秒首检**——建议：如此；可在设置里关。
 3. **回滚是否总是连库一起回**——建议：是（§7.5 的理由）；替代方案是只在检测到 schema 前进时回库，但要跨五个仓储比对 meta 表，复杂度不值。
-4. **Windows 何时开工**——需要一台真实 Windows 机器先把基础安装跑通；开工时按 §14 另立任务书。
+4. ~~**Windows 何时开工**~~ → **09-16 已落地**（§0.6）；真机应用内升级验收仍待 §0.6.4。
 
 ***
 
-## 14. Windows 备忘（不在本期）
+## 14. Windows 路线备忘（09-16 已落地，本节留作历史）
 
-`electron-updater` 对 NSIS 原生支持且不要求签名；需要 `package.json` 加 `publish: { provider: 'github', owner: 'lyr339', repo: 'SG-Team-for-Mac' }` 让 electron-builder 生成 `latest.yml` + `.blockmap`（继续 `--publish never`，由 `publish` job 一起上传）；主进程 `autoDownload=false`、`checkForUpdates` → `download-progress` → `quitAndInstall`。
-两个硬约束：① NSIS 安装前会结束 `ShiGuang.exe`，Cursor 起的 MCP 进程同名同路径且被 Windows 锁定，必须先经门禁并明确告知会打断会话；② Windows 版至今未在真机验证过基础安装。
-清单里 `assets['win-x64']` 已预留，阶段 0 的「检查 + 提示 + 下载到 Downloads」在 Windows 上即可直接工作（下载器与 UI 无平台分支；替换器为 mac 专用）。
+09-16 之前本节是设计备忘；实现见 §0.5–§0.6 与 `docs/ARCHITECTURE.md` Self-update boundary。要点：`electron-updater` + NSIS、`build.publish`、`latest.yml` + `.blockmap` 上传、`autoDownload=false`、`quitAndInstall(true, true)`、安装器按安装目录前缀杀进程（含 MCP）、门禁 confirm/block、手动组件 UI。

@@ -13,6 +13,16 @@ import type { LiveProcessState, LiveStatusLineState, SgDesktopApi, TeamSetupDraf
 import type { WorkspaceReviewSummary } from '../../../domain/workspace-review'
 import { estimateTurnCostUsd, estimateUsageFromReference, priceForModel, projectUsage, type CursorUsageSnapshot, type UsageTurn } from '../../../domain/cursor-usage'
 import { CURSOR_STORAGE_CATALOG, buildCleanupPlan, type CursorStorageScan } from '../../../domain/cursor-storage-cleanup'
+import {
+  APP_UPDATE_SNOOZE_MS,
+  appUpdateReminderVersion,
+  evaluateUpdateGate,
+  normalizeAppUpdateSettings,
+  type AppUpdateRelease,
+  type AppUpdateSettings,
+  type AppUpdateState,
+  type AppUpdateStatus
+} from '../../../domain/app-update'
 import { formatFileSize } from '../../../shared/format-file-size'
 import { App } from '../App'
 import { applyAppearancePreferences, readAppearancePreferences } from '../appearance-preferences'
@@ -30,6 +40,7 @@ import '../team-setup.css'
 import '../lobby/lobby.css'
 import '../settings/settings.css'
 import '../settings/stats.css'
+import '../settings/update.css'
 import '../run/run.css'
 import '../controls.css'
 import '../workspace-inspector.css'
@@ -708,6 +719,54 @@ function previewStorageScan(olderThanDays = 90): CursorStorageScan {
   }
 }
 
+/**
+ * 软件更新走查：?update=idle（默认）| up_to_date | available | downloading | downloaded | failed | unsupported。
+ * `available` 场景会让顶栏出现小提醒与齿轮角标；下载在预览里用假进度跑完。
+ */
+const previewUpdateScene = previewParameters.get('update') ?? 'idle'
+const previewUpdateRelease: AppUpdateRelease = {
+  version: '0.3.3',
+  releaseDate: new Date(previewNow - 5 * 3_600_000).toISOString(),
+  releaseName: '拾光 v0.3.3',
+  releaseNotes: '## v0.3.3 更新\n- **软件更新**：设置页新增「软件更新」，Windows 可在应用内下载安装\n- 会话名册分组条改为书签形态\n- 修复用量弹层 Cache Write 行在无该桶模型下消失的问题',
+  sizeBytes: 116_467_543,
+  releaseUrl: 'https://github.com/lyr339/SG-Team/releases/tag/v0.3.3'
+}
+function previewUpdateInitialState(): AppUpdateState {
+  switch (previewUpdateScene) {
+    case 'up_to_date': return { phase: 'up_to_date', checkedAt: previewNow - 12 * 60_000 }
+    case 'available': return { phase: 'available', release: previewUpdateRelease, checkedAt: previewNow - 2 * 60_000 }
+    case 'downloading': return { phase: 'downloading', release: previewUpdateRelease, receivedBytes: 48_300_000, totalBytes: 116_467_543, bytesPerSecond: 3_200_000, startedAt: previewNow - 15_000 }
+    case 'downloaded': return { phase: 'downloaded', release: previewUpdateRelease, filePath: 'C:\\Users\\demo\\AppData\\Local\\shiguang-team-updater\\pending\\ShiGuang-Setup-0.3.3.exe', downloadedAt: previewNow - 60_000 }
+    case 'failed': return { phase: 'failed', step: 'download', message: 'sha512 checksum mismatch, expected 5f2a… got 91c0…', at: previewNow - 30_000, release: previewUpdateRelease }
+    case 'unsupported': return { phase: 'unsupported', reason: '此平台的应用内更新尚未提供：请到发布页下载新版后手动替换。' }
+    default: return { phase: 'idle', lastCheckedAt: previewNow - 3 * 3_600_000 }
+  }
+}
+let previewUpdateState: AppUpdateState = previewUpdateInitialState()
+/** 经函数读取以躲开 TS 对模块级 let 的控制流收窄（下载循环里状态会被取消按钮改写）。 */
+const currentPreviewUpdateState = (): AppUpdateState => previewUpdateState
+let previewUpdateSettings: AppUpdateSettings = { autoCheck: true, checkIntervalHours: 6 }
+const updateListeners = new Set<Listener<AppUpdateStatus>>()
+function previewUpdateStatus(): AppUpdateStatus {
+  const reminderVersion = appUpdateReminderVersion(previewUpdateState, previewUpdateSettings, Date.now())
+  const release = 'release' in previewUpdateState ? previewUpdateState.release : undefined
+  return {
+    currentVersion: '0.3.2',
+    state: previewUpdateState,
+    settings: previewUpdateSettings,
+    ...(reminderVersion ? { reminderVersion } : {}),
+    launchedAfterUpdate: previewParameters.get('updated') === '1',
+    releaseUrl: release?.releaseUrl ?? 'https://github.com/lyr339/SG-Team/releases/tag/v0.3.2'
+  }
+}
+function pushUpdate(next: AppUpdateState = previewUpdateState): AppUpdateStatus {
+  previewUpdateState = next
+  const status = previewUpdateStatus()
+  for (const listener of updateListeners) listener(structuredClone(status))
+  return status
+}
+
 function pushDesktop(): void {
   state.desktop = { ...state.desktop, updatedAt: Date.now() }
   for (const listener of desktopListeners) listener(structuredClone(state.desktop))
@@ -914,6 +973,66 @@ const api: SgDesktopApi = {
   revealCursorStorage: async () => {},
   cancelCdpAutoHealCountdown: async () => {},
   onCdpAutoHealEvent: () => () => {},
+  getAppUpdateStatus: async () => previewUpdateStatus(),
+  checkAppUpdate: async () => {
+    if (previewUpdateState.phase === 'unsupported') return previewUpdateStatus()
+    const release = 'release' in previewUpdateState ? previewUpdateState.release : undefined
+    pushUpdate({ phase: 'checking', startedAt: Date.now(), ...(release ? { release } : {}) })
+    await new Promise((resolve) => setTimeout(resolve, 700))
+    return pushUpdate(previewUpdateScene === 'idle' || previewUpdateScene === 'up_to_date'
+      ? { phase: 'up_to_date', checkedAt: Date.now() }
+      : { phase: 'available', release: previewUpdateRelease, checkedAt: Date.now() })
+  },
+  downloadAppUpdate: async () => {
+    if (previewUpdateState.phase !== 'available') return previewUpdateStatus()
+    const release = previewUpdateState.release
+    const total = release.sizeBytes ?? 100_000_000
+    pushUpdate({ phase: 'downloading', release, receivedBytes: 0, totalBytes: total, startedAt: Date.now() })
+    for (let step = 1; step <= 20; step += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 120))
+      const live = currentPreviewUpdateState()
+      if (live.phase !== 'downloading') return previewUpdateStatus()
+      pushUpdate({ ...live, receivedBytes: Math.round(total * step / 20), bytesPerSecond: 4_800_000 })
+    }
+    return pushUpdate({ phase: 'downloaded', release, filePath: 'C:\\Users\\demo\\AppData\\Local\\shiguang-team-updater\\pending\\ShiGuang-Setup-0.3.3.exe', downloadedAt: Date.now() })
+  },
+  cancelAppUpdateDownload: async () => previewUpdateState.phase === 'downloading'
+    ? pushUpdate({ phase: 'available', release: previewUpdateState.release, checkedAt: Date.now() })
+    : previewUpdateStatus(),
+  installAppUpdate: async ({ confirmed }) => {
+    if (previewUpdateState.phase !== 'downloaded') return { gate: { verdict: 'allow' as const }, status: previewUpdateStatus() }
+    const gate = evaluateUpdateGate({ onlineSeats: state.desktop.sessions.filter((session) => session.online).length, sessionLaunchRunning: false })
+    if (gate.verdict === 'block' || (gate.verdict === 'confirm' && !confirmed)) return { gate, status: previewUpdateStatus() }
+    return { gate, status: pushUpdate({ phase: 'installing', release: previewUpdateState.release, startedAt: Date.now() }) }
+  },
+  skipAppUpdate: async () => {
+    const release = 'release' in previewUpdateState ? previewUpdateState.release : undefined
+    if (release) previewUpdateSettings = { ...previewUpdateSettings, skippedVersion: release.version }
+    return pushUpdate()
+  },
+  unskipAppUpdate: async () => {
+    const { skippedVersion: _skipped, ...rest } = previewUpdateSettings
+    previewUpdateSettings = rest
+    return pushUpdate()
+  },
+  snoozeAppUpdate: async () => {
+    previewUpdateSettings = { ...previewUpdateSettings, snoozedUntil: Date.now() + APP_UPDATE_SNOOZE_MS }
+    return pushUpdate()
+  },
+  dismissAppUpdateFailure: async () => previewUpdateState.phase === 'failed'
+    ? pushUpdate(previewUpdateState.release
+        ? { phase: 'available', release: previewUpdateState.release, checkedAt: Date.now() }
+        : { phase: 'idle', lastCheckedAt: Date.now() })
+    : previewUpdateStatus(),
+  saveAppUpdateSettings: async (settings) => {
+    previewUpdateSettings = normalizeAppUpdateSettings(settings)
+    return pushUpdate()
+  },
+  openAppUpdateReleasePage: async () => true,
+  onAppUpdateStatus: (listener) => {
+    updateListeners.add(listener)
+    return () => { updateListeners.delete(listener) }
+  },
   getAccountAutomationSettings: async () => ({ enabled: Boolean(automationSceneRun), delaySec: 10, postProcessDelaySec: 10 }),
   saveAccountAutomationSettings: async (settings) => settings,
   getAccountAutomationRun: async () => automationSceneRun ?? { phase: 'idle' as const, message: '', startedAt: 0 },

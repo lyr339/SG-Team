@@ -96,6 +96,13 @@ import { CursorQuestionResponder } from '../infrastructure/cursor/cursor-questio
 import { CursorQuestionService } from '../application/cursor-question-service'
 import { registerCursorQuestionIpc } from './register-cursor-question-ipc'
 import { legacyUserDataDirectory, resolveUserDataDirectory } from './user-data-directory'
+import { AppUpdateService } from '../application/app-update-service'
+import { AppUpdateSettingsStore } from '../application/app-update-settings-store'
+import { createElectronUpdaterPort } from '../infrastructure/app-update/electron-updater-port'
+import { registerAppUpdateIpc } from './register-app-update-ipc'
+// electron-updater 是 CJS，`autoUpdater` 是 exports 上的惰性 getter：主进程是 ESM，命名导入会在链接期
+// 找不到该导出（cjs-module-lexer 认不出 getter），只能默认导入整个 module.exports 再取属性。
+import electronUpdater from 'electron-updater'
 import { homedir } from 'node:os'
 
 let mainWindow: BrowserWindow | undefined
@@ -121,6 +128,8 @@ let disposeWindowChromeIpc: (() => void) | undefined
 let disposeWorkspaceReviewIpc: (() => void) | undefined
 let disposeSessionHandoffIpc: (() => void) | undefined
 let disposeCursorQuestionIpc: (() => void) | undefined
+let disposeAppUpdateIpc: (() => void) | undefined
+let appUpdateServiceRef: AppUpdateService | undefined
 let cursorCdpKeeperRef: CursorCdpKeeper | undefined
 /** 退出前清理账号自动化浏览器宿主（按当前设置解析：指纹=关窗断连；外部=noop）。 */
 let accountBrowserHostDisposeRef: (() => Promise<void>) | undefined
@@ -337,7 +346,9 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
         appPath: app.getAppPath(),
         resourcesPath: process.resourcesPath
       }),
-      databasePath
+      databasePath,
+      // 版本进条目 env：原地升级后路径不变，只有这项变化能让 Cursor 重载一次 MCP，新服务器代码才上线。
+      appVersion: app.getVersion()
     })
     if (registration.changed) {
       process.stderr.write(`[sg-team-global-mcp] registered ${registration.serverNames.join(', ')}\n`)
@@ -823,6 +834,26 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     () => mainWindow
   )
   disposeCursorUpdateIpc = registerCursorUpdateIpc(cursorUpdatePreferencesStore, () => mainWindow)
+  // 拾光自更新（手动组件）：只静默检查，发现新版由渲染层出小提醒；下载 / 安装都由用户点。
+  // electron-updater 只在打包后的 Windows 上启用（mac 包 adhoc 签名过不了 Squirrel 校验）。
+  appUpdateServiceRef = new AppUpdateService({
+    currentVersion: app.getVersion(),
+    port: createElectronUpdaterPort({
+      // 只在 Windows 上碰 getter（它才实例化 NsisUpdater）；其他平台不接更新器。
+      ...(process.platform === 'win32' ? { updater: electronUpdater.autoUpdater } : {}),
+      platform: process.platform,
+      isPackaged: app.isPackaged
+    }),
+    settings: new AppUpdateSettingsStore(join(app.getPath('userData'), 'app-update.json')),
+    gateInput: () => ({
+      onlineSeats: desktopSessionService?.getSnapshot().sessions.filter((session) => session.online).length ?? 0,
+      sessionLaunchRunning: agentSessionLauncher.getPlan()?.state === 'running'
+    }),
+    // 安装器装完拉起新版时带 `--updated`（electron-builder NSIS 约定）：首页可提示一次「已更新」。
+    launchedAfterUpdate: process.argv.includes('--updated')
+  })
+  disposeAppUpdateIpc = registerAppUpdateIpc(appUpdateServiceRef, () => mainWindow)
+  appUpdateServiceRef.start()
   // Cursor 本机存储清理：盘点只读；对话历史的数据库分析/删除在 worker 线程（22GB 库上
   // 一次索引遍历要数秒）；目录类清理走系统回收站。拾光运行绑定过的 Composer 永不清理。
   const cursorStorageUserDataRoot = cursorUserDataRoot()
@@ -956,6 +987,8 @@ app.on('before-quit', () => {
   disposeWorkspaceReviewIpc?.()
   disposeSessionHandoffIpc?.()
   disposeCursorQuestionIpc?.()
+  disposeAppUpdateIpc?.()
+  appUpdateServiceRef?.stop()
   cursorCdpKeeperRef?.stop()
   teamControlService?.dispose()
   teamControlRepository?.close()

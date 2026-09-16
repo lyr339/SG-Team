@@ -89,6 +89,36 @@ describe('global mcp registrar', () => {
     expect(reconcileGlobalChannelServers(inputOf(files)).changed).toBe(false)
   })
 
+  it('SG_TEAM_APP_VERSION：版本变化即改写（升级后让 Cursor 重载一次 MCP），同版本不改写，且保留手写的 keepalive', () => {
+    const files = fixture()
+    writeFileSync(files.configPath, JSON.stringify({
+      mcpServers: {
+        'SG Team': {
+          command: files.command, args: [files.server],
+          env: {
+            ELECTRON_RUN_AS_NODE: '1', SG_TEAM_DB: files.database, SG_TEAM_SERVER_ROLE: 'unified',
+            SG_TEAM_APP_VERSION: '0.3.2', SG_TEAM_KEEPALIVE_MS: '60000'
+          }
+        }
+      }
+    }))
+    // 同版本：条目一致，不动文件
+    expect(reconcileGlobalChannelServers(inputOf(files, { appVersion: '0.3.2' })).changed).toBe(false)
+    // 新版本首次启动：改写并带上新版本号，手写的 keepalive 仍在
+    expect(reconcileGlobalChannelServers(inputOf(files, { appVersion: '0.3.3' })).changed).toBe(true)
+    const config = JSON.parse(readFileSync(files.configPath, 'utf8'))
+    expect(config.mcpServers['SG Team'].env).toEqual({
+      ELECTRON_RUN_AS_NODE: '1',
+      SG_TEAM_DB: files.database,
+      SG_TEAM_SERVER_ROLE: 'unified',
+      SG_TEAM_APP_VERSION: '0.3.3',
+      SG_TEAM_KEEPALIVE_MS: '60000'
+    })
+    // 不传版本（开发态 / 旧调用方）：不写该键，也不因旧文件里有它而反复改写以外的语义——这里它被视作漂移一次抹掉
+    expect(reconcileGlobalChannelServers(inputOf(files)).changed).toBe(true)
+    expect(JSON.parse(readFileSync(files.configPath, 'utf8')).mcpServers['SG Team'].env.SG_TEAM_APP_VERSION).toBeUndefined()
+  })
+
   it('refuses malformed global config without touching it', () => {
     const files = fixture()
     writeFileSync(files.configPath, '{ broken')

@@ -1,0 +1,332 @@
+/**
+ * 拾光自更新（app-update）的纯领域：版本比较、设置归一化、状态机、提醒判定与安装门禁。
+ *
+ * 与 `cursor-update.ts`（关闭 Cursor 自身自动更新的开关）无关。这里描述的是拾光自己
+ * 从 GitHub Releases 发现新版、由用户手动下载并安装的流程：更新是**手动组件**——
+ * 服务端只静默检查，发现新版只允许一个不打扰的小提醒；下载与安装都由用户显式触发。
+ */
+
+export const APP_UPDATE_REPOSITORY = { owner: 'lyr339', repo: 'SG-Team' } as const
+
+/** 启动后首次静默检查的延迟：让会话、遥测与 CDP 先就位，不与启动期的磁盘 / 网络争抢。 */
+export const APP_UPDATE_FIRST_CHECK_DELAY_MS = 45_000
+/** 「稍后」压制提醒的时长。 */
+export const APP_UPDATE_SNOOZE_MS = 24 * 60 * 60_000
+/** 自动检查间隔的可选档位（小时）。 */
+export const APP_UPDATE_CHECK_INTERVAL_HOURS = [6, 12, 24] as const
+export type AppUpdateCheckIntervalHours = (typeof APP_UPDATE_CHECK_INTERVAL_HOURS)[number]
+
+export interface AppVersion {
+  major: number
+  minor: number
+  patch: number
+  /** 预发布标识（`0.3.0-beta.1` 的 `beta.1`）；同号下有预发布标识的低于正式版。 */
+  prerelease?: string
+}
+
+/** 接受 `v0.2.1` / `0.2.1` / `0.3.0-beta.1`；其余形态返回 undefined。 */
+export function parseAppVersion(text: string): AppVersion | undefined {
+  const match = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(text.trim())
+  if (!match) return undefined
+  const [, major, minor, patch, prerelease] = match
+  return {
+    major: Number(major),
+    minor: Number(minor),
+    patch: Number(patch),
+    ...(prerelease ? { prerelease } : {})
+  }
+}
+
+function comparePrerelease(left: string | undefined, right: string | undefined): -1 | 0 | 1 {
+  if (left === right) return 0
+  if (left === undefined) return 1
+  if (right === undefined) return -1
+  const leftParts = left.split('.')
+  const rightParts = right.split('.')
+  const length = Math.max(leftParts.length, rightParts.length)
+  for (let index = 0; index < length; index += 1) {
+    const a = leftParts[index]
+    const b = rightParts[index]
+    if (a === undefined) return -1
+    if (b === undefined) return 1
+    const aNumeric = /^\d+$/.test(a)
+    const bNumeric = /^\d+$/.test(b)
+    if (aNumeric && bNumeric) {
+      const diff = Number(a) - Number(b)
+      if (diff !== 0) return diff < 0 ? -1 : 1
+      continue
+    }
+    if (aNumeric !== bNumeric) return aNumeric ? -1 : 1
+    if (a !== b) return a < b ? -1 : 1
+  }
+  return 0
+}
+
+export function compareAppVersions(left: AppVersion, right: AppVersion): -1 | 0 | 1 {
+  for (const key of ['major', 'minor', 'patch'] as const) {
+    if (left[key] !== right[key]) return left[key] < right[key] ? -1 : 1
+  }
+  return comparePrerelease(left.prerelease, right.prerelease)
+}
+
+/** 候选版本是否严格高于当前版本；任一无法解析视为不更新（宁可漏报，不误报）。 */
+export function isNewerAppVersion(candidate: string, current: string): boolean {
+  const next = parseAppVersion(candidate)
+  const now = parseAppVersion(current)
+  if (!next || !now) return false
+  return compareAppVersions(next, now) > 0
+}
+
+export interface AppUpdateSettings {
+  /** 静默自动检查开关（默认开）。只检查，不下载。 */
+  autoCheck: boolean
+  checkIntervalHours: AppUpdateCheckIntervalHours
+  /** 用户「跳过此版本」：该版本不再提醒，直到出现更高版本。 */
+  skippedVersion?: string
+  /** 用户「稍后」：此刻之前不弹提醒（手动检查不受限）。 */
+  snoozedUntil?: number
+  /**
+   * 自定义更新源（高级）：electron-updater `generic` 提供方的目录 URL，目录下须有
+   * `latest.yml` 与安装包。缺省走 GitHub Releases。国内镜像与本机验收用。
+   */
+  feedUrl?: string
+}
+
+export const DEFAULT_APP_UPDATE_SETTINGS: AppUpdateSettings = {
+  autoCheck: true,
+  checkIntervalHours: 6
+}
+
+function normalizeHttpUrl(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  if (!trimmed) return undefined
+  try {
+    const url = new URL(trimmed)
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return undefined
+    return trimmed
+  } catch {
+    return undefined
+  }
+}
+
+export function normalizeAppUpdateSettings(value: unknown): AppUpdateSettings {
+  const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {}
+  const interval = APP_UPDATE_CHECK_INTERVAL_HOURS.find((hours) => hours === raw.checkIntervalHours)
+    ?? DEFAULT_APP_UPDATE_SETTINGS.checkIntervalHours
+  const skippedVersion = typeof raw.skippedVersion === 'string' && parseAppVersion(raw.skippedVersion)
+    ? raw.skippedVersion.trim()
+    : undefined
+  const snoozedUntil = typeof raw.snoozedUntil === 'number' && Number.isFinite(raw.snoozedUntil) && raw.snoozedUntil > 0
+    ? raw.snoozedUntil
+    : undefined
+  const feedUrl = normalizeHttpUrl(raw.feedUrl)
+  return {
+    autoCheck: raw.autoCheck !== false,
+    checkIntervalHours: interval,
+    ...(skippedVersion ? { skippedVersion } : {}),
+    ...(snoozedUntil ? { snoozedUntil } : {}),
+    ...(feedUrl ? { feedUrl } : {})
+  }
+}
+
+/** 一次发布（来自 latest.yml / GitHub Release）；渲染层只消费这些字段。 */
+export interface AppUpdateRelease {
+  version: string
+  /** ISO 8601；提供方没给时缺省。 */
+  releaseDate?: string
+  releaseName?: string
+  /** GitHub Release 正文（HTML 或 Markdown 原文）；渲染层按纯文本段落展示。 */
+  releaseNotes?: string
+  /** 本平台安装包字节数。 */
+  sizeBytes?: number
+  releaseUrl: string
+}
+
+export type AppUpdateFailureStep = 'check' | 'download' | 'install'
+
+export type AppUpdateState =
+  | { phase: 'unsupported'; reason: string }
+  | { phase: 'idle'; lastCheckedAt?: number; lastError?: string }
+  | { phase: 'checking'; startedAt: number; release?: AppUpdateRelease }
+  | { phase: 'up_to_date'; checkedAt: number }
+  | { phase: 'available'; release: AppUpdateRelease; checkedAt: number }
+  | { phase: 'downloading'; release: AppUpdateRelease; receivedBytes: number; totalBytes: number; bytesPerSecond?: number; startedAt: number }
+  | { phase: 'downloaded'; release: AppUpdateRelease; filePath?: string; downloadedAt: number }
+  | { phase: 'installing'; release: AppUpdateRelease; startedAt: number }
+  | { phase: 'failed'; step: AppUpdateFailureStep; message: string; at: number; release?: AppUpdateRelease }
+
+export type AppUpdateEvent =
+  | { type: 'check_started' }
+  | { type: 'check_up_to_date' }
+  | { type: 'check_available'; release: AppUpdateRelease }
+  | { type: 'check_failed'; message: string }
+  | { type: 'download_started' }
+  | { type: 'download_progress'; receivedBytes: number; totalBytes: number; bytesPerSecond?: number }
+  | { type: 'download_completed'; filePath?: string }
+  | { type: 'download_cancelled' }
+  | { type: 'download_failed'; message: string }
+  | { type: 'install_started' }
+  | { type: 'install_failed'; message: string }
+  | { type: 'dismissed' }
+
+function releaseOf(state: AppUpdateState): AppUpdateRelease | undefined {
+  return 'release' in state ? state.release : undefined
+}
+
+/**
+ * 状态机（纯 reducer）。不合法的边返回原状态：调用方只在允许的相位上派发，
+ * 但网络回调可能迟到（取消后仍收到进度），这里静默吸收而不是抛错。
+ */
+export function reduceAppUpdate(state: AppUpdateState, event: AppUpdateEvent, now: number): AppUpdateState {
+  if (state.phase === 'unsupported') return state
+  switch (event.type) {
+    case 'check_started': {
+      // 已下载待安装也不再检查：再报一个更新版本只会让「装哪个」变得含糊。
+      if (state.phase === 'downloading' || state.phase === 'downloaded' || state.phase === 'installing' || state.phase === 'checking') {
+        return state
+      }
+      const release = releaseOf(state)
+      return { phase: 'checking', startedAt: now, ...(release ? { release } : {}) }
+    }
+    case 'check_up_to_date':
+      return state.phase === 'checking' ? { phase: 'up_to_date', checkedAt: now } : state
+    case 'check_available':
+      return state.phase === 'checking' ? { phase: 'available', release: event.release, checkedAt: now } : state
+    case 'check_failed':
+      return state.phase === 'checking' ? { phase: 'idle', lastCheckedAt: now, lastError: event.message } : state
+    case 'download_started':
+      return state.phase === 'available'
+        ? { phase: 'downloading', release: state.release, receivedBytes: 0, totalBytes: state.release.sizeBytes ?? 0, startedAt: now }
+        : state
+    case 'download_progress':
+      return state.phase === 'downloading'
+        ? {
+            ...state,
+            receivedBytes: Math.max(0, event.receivedBytes),
+            totalBytes: Math.max(0, event.totalBytes),
+            ...(event.bytesPerSecond !== undefined ? { bytesPerSecond: event.bytesPerSecond } : {})
+          }
+        : state
+    case 'download_completed':
+      return state.phase === 'downloading'
+        ? { phase: 'downloaded', release: state.release, downloadedAt: now, ...(event.filePath ? { filePath: event.filePath } : {}) }
+        : state
+    case 'download_cancelled':
+      return state.phase === 'downloading' ? { phase: 'available', release: state.release, checkedAt: now } : state
+    case 'download_failed':
+      return state.phase === 'downloading'
+        ? { phase: 'failed', step: 'download', message: event.message, at: now, release: state.release }
+        : state
+    case 'install_started':
+      return state.phase === 'downloaded' ? { phase: 'installing', release: state.release, startedAt: now } : state
+    case 'install_failed':
+      return state.phase === 'installing'
+        ? { phase: 'failed', step: 'install', message: event.message, at: now, release: state.release }
+        : state
+    case 'dismissed': {
+      if (state.phase !== 'failed') return state
+      // 下载 / 安装失败后回到「有新版」，让用户能重试；检查失败已在 idle 里带 lastError。
+      return state.release ? { phase: 'available', release: state.release, checkedAt: now } : { phase: 'idle', lastCheckedAt: now }
+    }
+  }
+}
+
+/** 面板 / 角标 / 提醒共用的「有可用新版」判定：跳过的版本与稍后期内不提醒。 */
+export function shouldRemindAppUpdate(state: AppUpdateState, settings: AppUpdateSettings, now: number): boolean {
+  const release = releaseOf(state)
+  if (!release || state.phase === 'installing' || state.phase === 'checking') return false
+  if (settings.skippedVersion && !isNewerAppVersion(release.version, settings.skippedVersion)) return false
+  if (settings.snoozedUntil !== undefined && now < settings.snoozedUntil) return false
+  return true
+}
+
+/** 是否该把「有新版」的提醒推给用户（相对 shouldRemind 只多一条：只有 available 相位才主动提醒）。 */
+export function appUpdateReminderVersion(state: AppUpdateState, settings: AppUpdateSettings, now: number): string | undefined {
+  if (state.phase !== 'available' && state.phase !== 'downloaded') return undefined
+  return shouldRemindAppUpdate(state, settings, now) ? state.release.version : undefined
+}
+
+/** 渲染层看到的自更新全貌（主进程每次状态变化推送一份，拉取亦同）。 */
+export interface AppUpdateStatus {
+  currentVersion: string
+  state: AppUpdateState
+  settings: AppUpdateSettings
+  /** 该提醒用户的新版本号（角标 / 小提醒框）；跳过、稍后与非 available 相位下缺省。 */
+  reminderVersion?: string
+  /** 本次进程由安装器在更新完成后拉起（命令行带 `--updated`）：首页可以提示一次「已更新」。 */
+  launchedAfterUpdate: boolean
+  /** 当前版本或新版本的发布页。 */
+  releaseUrl: string
+}
+
+export interface UpdateGateInput {
+  onlineSeats: number
+  sessionLaunchRunning: boolean
+}
+
+export type UpdateGate =
+  | { verdict: 'allow' }
+  /** 席位在线：安装会让 Cursor 里的 SG Team 服务器重启一次；用户确认后继续。 */
+  | { verdict: 'confirm'; reasons: string[] }
+  /** 一键建会话在途：不可继续。 */
+  | { verdict: 'block'; reasons: string[] }
+
+/**
+ * 安装门禁。安装器会结束安装目录下的所有进程——包括 Cursor 托管的 SG Team MCP 服务器，
+ * 各在线席位的长轮询会瞬断一次并按协议自动续接；一键建会话正在进行时则不允许安装。
+ */
+export function evaluateUpdateGate(input: UpdateGateInput): UpdateGate {
+  if (input.sessionLaunchRunning) {
+    return { verdict: 'block', reasons: ['一键会话创建正在进行，等它完成后再安装。'] }
+  }
+  if (input.onlineSeats > 0) {
+    return {
+      verdict: 'confirm',
+      reasons: [
+        `有 ${input.onlineSeats} 个席位在线。安装会退出拾光并让 Cursor 里的 SG Team 服务器重启一次，各会话经历约 5 秒瞬断后自动续接；进行中的运行与任务不会丢数据。`
+      ]
+    }
+  }
+  return { verdict: 'allow' }
+}
+
+/** 下次自动检查的等待时长：从未检查过 → 首检延迟；否则按间隔补齐，最少也隔一段首检延迟。 */
+export function nextAppUpdateCheckDelayMs(
+  settings: AppUpdateSettings,
+  lastCheckedAt: number | undefined,
+  now: number
+): number {
+  if (lastCheckedAt === undefined) return APP_UPDATE_FIRST_CHECK_DELAY_MS
+  const due = lastCheckedAt + settings.checkIntervalHours * 60 * 60_000
+  return Math.max(APP_UPDATE_FIRST_CHECK_DELAY_MS, due - now)
+}
+
+export function appUpdateReleaseUrl(version?: string): string {
+  const base = `https://github.com/${APP_UPDATE_REPOSITORY.owner}/${APP_UPDATE_REPOSITORY.repo}/releases`
+  if (!version) return `${base}/latest`
+  return `${base}/tag/v${version.replace(/^v/, '')}`
+}
+
+/** 渲染层展示用：把 GitHub Release 正文（HTML / Markdown）压成纯文本段落。 */
+export function releaseNotesToPlainText(notes: string | undefined): string[] {
+  if (!notes) return []
+  const text = notes
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|li|h[1-6]|div|tr)>/gi, '\n')
+    .replace(/<li[^>]*>/gi, '- ')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+}

@@ -381,6 +381,42 @@ const scenes = [
     actions: [{ wait: 600 }, { click: '[data-item="chat-history"] input[type="checkbox"]' }, { click: '.storage-cleanup__button.is-primary' }, { wait: 120 }]
   },
   { name: 'settings-cleanup-empty-dark', hash: 'account:cleanup', query: 'cleanup=empty', width: 1440, height: 900, colorScheme: 'dark', storage: baseStorage({ colorMode: 'dark' }), clip: null },
+  // 软件更新（手动组件）：状态卡的每个相位（?update=…）× 深浅色；已就绪时点「安装并重启」出现门禁确认块；
+  // 有新版时会话页右下角的小提醒框与齿轮角标（geometry probe：不遮挡输入框、齿轮上有角标）。
+  ...['idle', 'up_to_date', 'available', 'downloading', 'downloaded', 'failed', 'unsupported'].flatMap(phase =>
+    ['light', 'dark'].map(colorScheme => ({
+      name: `settings-update-${phase.replace('_', '-')}-${colorScheme}`, hash: 'account:update', query: `update=${phase}`,
+      width: 1440, height: 900, colorScheme, storage: baseStorage({ colorMode: colorScheme }), clip: null
+    }))
+  ),
+  {
+    name: 'settings-update-confirm-light', hash: 'account:update', query: 'update=downloaded', width: 1440, height: 900, colorScheme: 'light', storage: baseStorage({ colorMode: 'light' }), clip: '.app-update__card',
+    actions: [{ wait: 200 }, { click: '.app-update__button.is-primary' }, { wait: 200 }, { label: '门禁确认块', probe: `(() => {
+      const confirm = document.querySelector('.app-update__confirm')
+      if (!confirm) throw new Error('未出现门禁确认块')
+      if (!confirm.textContent.includes('席位在线')) throw new Error('确认文案缺少在线席位后果')
+      if (document.querySelectorAll('.app-update__card > .app-update__actions').length) throw new Error('确认块出现时普通操作按钮应收起')
+      return { text: confirm.textContent.slice(0, 60) }
+    })()` }]
+  },
+  ...['light', 'dark'].map(colorScheme => ({
+    name: `update-reminder-${colorScheme}`, query: 'update=available', width: 1440, height: 900, colorScheme, storage: baseStorage({ colorMode: colorScheme }), clip: null,
+    actions: [{ wait: 300 }, { label: '小提醒框几何', probe: `(() => {
+      const toast = document.querySelector('.update-reminder')
+      if (!toast) throw new Error('有新版时未出现小提醒框')
+      const box = toast.getBoundingClientRect()
+      if (box.width > 440) throw new Error('小提醒框过宽：' + box.width)
+      if (box.right > window.innerWidth || box.bottom > window.innerHeight) throw new Error('小提醒框溢出视口')
+      const composer = document.querySelector('.composer textarea, .composer-workbench textarea, textarea')
+      if (composer) {
+        const c = composer.getBoundingClientRect()
+        if (box.left < c.right && box.right > c.left && box.top < c.bottom && box.bottom > c.top) throw new Error('小提醒框遮住了输入框')
+      }
+      if (!document.querySelector('.account-button__dot')) throw new Error('齿轮上没有新版角标')
+      if (document.activeElement === toast || toast.contains(document.activeElement)) throw new Error('小提醒框不应抢焦点')
+      return { width: Math.round(box.width), height: Math.round(box.height) }
+    })()` }]
+  })),
   { name: 'account-page', hash: 'account', width: 1440, height: 900, colorScheme: 'light', storage: baseStorage(), clip: null },
 
   // ---------- 会话侧栏（名册）：右栏收起，特写裁 .session-pane ----------

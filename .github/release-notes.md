@@ -1,3 +1,13 @@
+## v0.3.3 更新
+
+- **应用内软件更新（Windows）**：设置 › 软件更新 可检查 GitHub Releases、手动下载并安装；启动后静默检查，发现新版只在右下角显示小提醒和设置角标，不会自动下载或打断使用。安装前若有席位在线会确认（约 5 秒 MCP 瞬断）；一键建会话进行中不可安装。
+- **升级后 MCP 自动对齐**：`mcp.json` 条目写入 `SG_TEAM_APP_VERSION`，版本变化时 Cursor 重载 SG Team 服务器；若席位未恢复，面板提示在 Cursor MCP 设置里刷新一次。
+- **发布链**：Windows Release 现附带 `latest.yml` 与 `.blockmap`，供差分更新使用。
+
+### 从 v0.3.2 升级
+
+**首版带应用内更新能力：v0.3.2 无法通过应用内检查升到 v0.3.3**（v0.3.2 的 Release 没有 `latest.yml`）。请从 GitHub 下载 `ShiGuang-Setup-0.3.3.exe` 手动安装一次；装好后以后版本可在应用内更新。数据在 `%APPDATA%\sg-team`，不受影响。
+
 ## v0.3.2 更新
 
 - **Windows 无感换号支持自定义安装位置**：切号补丁优先定位运行中 Cursor 的真实路径，支持 D/E 等盘符以及中文、空格目录。未运行时查找安装器登记位置，再回退默认目录。
@@ -28,7 +38,9 @@ xattr -dr com.apple.quarantine /Applications/拾光.app && open -a 拾光
 
 ## 升级
 
-覆盖安装即可；数据在 `~/Library/Application Support/sg-team/`（Windows：`%APPDATA%\sg-team`），不受影响。两点提醒：
+**Windows（v0.3.3 起）**：设置 › 软件更新 可检查并安装；或仍可从 GitHub 下载安装包覆盖安装。安装会结束 Cursor 里跑的 SG Team 进程——有在线席位时请先确认提醒。
+
+**macOS / 旧版 Windows**：覆盖安装或解压替换；数据在 `~/Library/Application Support/sg-team/`（Windows：`%APPDATA%\sg-team`），不受影响。两点提醒：
 
 - 从 v0.3.0 升级不新增数据库迁移；从更早版本升级会沿用 v0.3.0 的运行库迁移（v7 → v8）。升级前建议退出拾光并备份用户数据。
 - Cursor 里正在跑的 SG Team 服务器进程来自旧版 app，覆盖安装后它不会自动换新——请在 Cursor 的 MCP 设置里刷新一次 SG Team（或重启 Cursor），协作组的工具面要新服务器才有。旧服务器读 v8 库也能工作，只是看不到组。

@@ -28,6 +28,7 @@
     "lint:dead": "npx --yes knip@5"
   },
   "dependencies": {
+    "electron-updater": "^6.8.9",
     "ws": "^8.21.3",
     "zod": "^4.4.3"
   },
@@ -54,6 +55,11 @@
     "appId": "app.shiguang.team",
     "productName": "拾光",
     "asar": true,
+    "publish": {
+      "provider": "github",
+      "owner": "lyr339",
+      "repo": "SG-Team"
+    },
     "directories": {
       "output": "release",
       "buildResources": "build"

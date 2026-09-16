@@ -14,6 +14,7 @@ import { BrandMark } from './BrandMark'
 import { ResizableColumns, useCompactLayout } from './ResizableColumns'
 import { AppearanceSettings } from './AppearanceSettings'
 import { WorkspaceMenu } from './WorkspaceMenu'
+import { UpdateReminder, useAppUpdateStatus } from './UpdateReminder'
 
 /** 会话（工作区）/ 运行（团队或独立批次的控制）/ 账号与 Cursor（右上角设置入口，不在主导航里）。 */
 export type AppModule = 'sessions' | 'run' | 'account'
@@ -124,6 +125,13 @@ export function DesktopShell({
   })
   const popoverRef = useRef<HTMLElement>(null)
   const appearanceRef = useRef<HTMLDivElement>(null)
+  // 软件更新是手动组件：这里只消费「该提醒的版本号」——齿轮角标 + 右下角小提醒框，不弹窗、不阻塞。
+  const appUpdateStatus = useAppUpdateStatus()
+  const updateReminderVersion = appUpdateStatus?.reminderVersion
+  const openUpdateSettings = (): void => {
+    try { window.location.hash = '#account:update' } catch { /* 受限环境忽略 */ }
+    onModuleChange('account')
+  }
   // 顶栏在线统计只按团队成员口径（备用/未编入通道不计入，避免 1/4 式困惑）
   const teamSessions = teamChannelIds?.length
     ? snapshot.sessions.filter((session) => teamChannelIds.includes(session.channelId))
@@ -222,11 +230,14 @@ export function DesktopShell({
           <button
             className={`account-button ${activeModule === 'account' ? 'is-active' : ''}`}
             onClick={() => onModuleChange(activeModule === 'account' ? 'sessions' : 'account')}
-            title={`${MODULE_LABELS.account} ${MODULE_SWITCH_MODIFIER}${MODULE_ORDER.indexOf('account') + 1}`}
+            title={updateReminderVersion
+              ? `${MODULE_LABELS.account} · 拾光 ${updateReminderVersion} 可用`
+              : `${MODULE_LABELS.account} ${MODULE_SWITCH_MODIFIER}${MODULE_ORDER.indexOf('account') + 1}`}
             aria-label={MODULE_LABELS.account}
             aria-pressed={activeModule === 'account'}
           >
             <GearIcon />
+            {updateReminderVersion ? <i className="account-button__dot" aria-label={`拾光 ${updateReminderVersion} 可用`} /> : null}
           </button>
           {activeModule === 'sessions' ? (
             <button
@@ -356,6 +367,7 @@ export function DesktopShell({
           </ResizableColumns>
         )}
       </div>
+      <UpdateReminder status={appUpdateStatus} onOpen={openUpdateSettings} />
     </div>
   )
 }

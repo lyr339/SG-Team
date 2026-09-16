@@ -37,6 +37,7 @@ import type {
 } from '../domain/workspace-review'
 import type { SessionHandoffContext, SessionHandoffRequest, SessionHandoffResult } from '../domain/session-handoff'
 import type { CursorStatusLine } from '../domain/cursor-status-line'
+import type { AppUpdateSettings, AppUpdateStatus, UpdateGate } from '../domain/app-update'
 
 export type BridgeConnectionState =
   | 'disconnected'
@@ -413,6 +414,25 @@ export interface SgDesktopApi {
   /** 用户取消 auto-heal 倒计时：本次 Cursor 启动不再自动重启。 */
   cancelCdpAutoHealCountdown(): Promise<void>
   onCdpAutoHealEvent(listener: (event: CdpAutoHealEvent) => void): () => void
+  /**
+   * 拾光自更新（手动组件）：主进程只静默检查；发现新版由渲染层按 reminderVersion 出一个不打扰的小提醒；
+   * 下载与安装都由用户显式触发。安装会退出拾光运行安装器（按机安装经一次 UAC），装完自动拉起新版。
+   */
+  getAppUpdateStatus(): Promise<AppUpdateStatus>
+  checkAppUpdate(): Promise<AppUpdateStatus>
+  downloadAppUpdate(): Promise<AppUpdateStatus>
+  cancelAppUpdateDownload(): Promise<AppUpdateStatus>
+  /** 先过门禁：`block` / 未确认的 `confirm` 只返回结论；放行后进程随即退出安装。 */
+  installAppUpdate(input: { confirmed: boolean }): Promise<{ gate: UpdateGate; status: AppUpdateStatus }>
+  skipAppUpdate(): Promise<AppUpdateStatus>
+  unskipAppUpdate(): Promise<AppUpdateStatus>
+  /** 稍后：24 小时内不再提醒。 */
+  snoozeAppUpdate(): Promise<AppUpdateStatus>
+  dismissAppUpdateFailure(): Promise<AppUpdateStatus>
+  saveAppUpdateSettings(settings: AppUpdateSettings): Promise<AppUpdateStatus>
+  /** 在系统浏览器打开当前状态对应的发布页。 */
+  openAppUpdateReleasePage(): Promise<boolean>
+  onAppUpdateStatus(listener: (status: AppUpdateStatus) => void): () => void
   getAccountAutomationSettings(): Promise<AccountAutomationSettings>
   saveAccountAutomationSettings(settings: AccountAutomationSettings): Promise<AccountAutomationSettings>
   getAccountAutomationRun(): Promise<AccountAutomationRun>
@@ -555,6 +575,18 @@ export const IPC = {
   cursorStorageReveal: 'cursor-storage:reveal',
   cursorCdpCancelCountdown: 'cursor-cdp:cancel-countdown',
   cursorCdpAutoHealEvent: 'cursor-cdp:auto-heal-event',
+  appUpdateGetStatus: 'app-update:get-status',
+  appUpdateCheck: 'app-update:check',
+  appUpdateDownload: 'app-update:download',
+  appUpdateCancelDownload: 'app-update:cancel-download',
+  appUpdateInstall: 'app-update:install',
+  appUpdateSkip: 'app-update:skip',
+  appUpdateUnskip: 'app-update:unskip',
+  appUpdateSnooze: 'app-update:snooze',
+  appUpdateDismissFailure: 'app-update:dismiss-failure',
+  appUpdateSaveSettings: 'app-update:save-settings',
+  appUpdateOpenReleasePage: 'app-update:open-release-page',
+  appUpdateStatus: 'app-update:status',
   cursorUsageGet: 'cursor-usage:get',
   cursorUsageSnapshot: 'cursor-usage:snapshot',
   workspaceReviewGet: 'workspace-review:get',

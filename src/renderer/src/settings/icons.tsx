@@ -50,6 +50,16 @@ export function SettingsStatsIcon(props: IconProps): React.JSX.Element {
   )
 }
 
+/** 软件更新：托盘上方一支向上的箭头（与「导入来源」的向下箭头成对）。 */
+export function SettingsUpdateIcon(props: IconProps): React.JSX.Element {
+  return (
+    <Icon {...props}>
+      <path d="M12 14.5V4.8M8 8.8l4-4 4 4" {...stroke} />
+      <path d="M4.5 15v2.8a1.7 1.7 0 0 0 1.7 1.7h11.6a1.7 1.7 0 0 0 1.7-1.7V15" {...stroke} />
+    </Icon>
+  )
+}
+
 /** 存储清理：带盖整理箱（两道格线），与「维护」的扳手同一笔画语言。 */
 export function SettingsCleanupIcon(props: IconProps): React.JSX.Element {
   return (

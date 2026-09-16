@@ -69,6 +69,22 @@ const api: SgDesktopApi = {
     ipcRenderer.on(IPC.cursorCdpAutoHealEvent, wrapped)
     return () => ipcRenderer.off(IPC.cursorCdpAutoHealEvent, wrapped)
   },
+  getAppUpdateStatus: () => ipcRenderer.invoke(IPC.appUpdateGetStatus),
+  checkAppUpdate: () => ipcRenderer.invoke(IPC.appUpdateCheck),
+  downloadAppUpdate: () => ipcRenderer.invoke(IPC.appUpdateDownload),
+  cancelAppUpdateDownload: () => ipcRenderer.invoke(IPC.appUpdateCancelDownload),
+  installAppUpdate: (input) => ipcRenderer.invoke(IPC.appUpdateInstall, input),
+  skipAppUpdate: () => ipcRenderer.invoke(IPC.appUpdateSkip),
+  unskipAppUpdate: () => ipcRenderer.invoke(IPC.appUpdateUnskip),
+  snoozeAppUpdate: () => ipcRenderer.invoke(IPC.appUpdateSnooze),
+  dismissAppUpdateFailure: () => ipcRenderer.invoke(IPC.appUpdateDismissFailure),
+  saveAppUpdateSettings: (settings) => ipcRenderer.invoke(IPC.appUpdateSaveSettings, settings),
+  openAppUpdateReleasePage: () => ipcRenderer.invoke(IPC.appUpdateOpenReleasePage),
+  onAppUpdateStatus: (listener) => {
+    const wrapped = (_event: Electron.IpcRendererEvent, status: Parameters<typeof listener>[0]): void => listener(status)
+    ipcRenderer.on(IPC.appUpdateStatus, wrapped)
+    return () => ipcRenderer.off(IPC.appUpdateStatus, wrapped)
+  },
   getAccountAutomationSettings: () => ipcRenderer.invoke(IPC.accountAutomationGetSettings),
   saveAccountAutomationSettings: (settings) => ipcRenderer.invoke(IPC.accountAutomationSaveSettings, settings),
   getAccountAutomationRun: () => ipcRenderer.invoke(IPC.accountAutomationGetRun),

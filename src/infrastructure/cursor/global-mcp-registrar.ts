@@ -14,6 +14,12 @@ export interface GlobalChannelRegistrationInput {
   channelCount?: number
   /** 测试可注入临时路径；生产默认 ~/.cursor/mcp.json。 */
   configPath?: string
+  /**
+   * 拾光版本号，写进条目 env（`SG_TEAM_APP_VERSION`）。MCP 服务器不读它——它的唯一作用是让
+   * 升级后的首次启动改变条目内容：安装路径不变时 Cursor 不会重载 MCP，旧版服务器会一直跑到
+   * Cursor 重启；条目变化则触发一次重载，新 MCP 代码随之上线。
+   */
+  appVersion?: string
 }
 
 export interface GlobalChannelRegistrationResult {
@@ -89,6 +95,7 @@ export function reconcileGlobalChannelServers(input: GlobalChannelRegistrationIn
   // S4：单一原生条目「SG Team」，通道由工具参数 channel_id 区分。
   // 用户手写的运维开关（目前只有 keepalive 窗口覆盖）随条目保留，否则每次启动的幂等重写
   // 会把它抹掉，还顺带触发 Cursor 重载 MCP。
+  const appVersion = input.appVersion?.trim()
   const desired = new Map<string, unknown>()
   desired.set(SG_TEAM_MCP_SERVER_ID, {
     command: input.command,
@@ -97,6 +104,7 @@ export function reconcileGlobalChannelServers(input: GlobalChannelRegistrationIn
       ELECTRON_RUN_AS_NODE: '1',
       SG_TEAM_DB: input.databasePath,
       SG_TEAM_SERVER_ROLE: 'unified',
+      ...(appVersion ? { SG_TEAM_APP_VERSION: appVersion } : {}),
       ...preservedOperatorEnv(servers[SG_TEAM_MCP_SERVER_ID])
     }
   })
