@@ -36,11 +36,14 @@ interface DesktopShellProps {
   colorMode: 'system' | 'light' | 'dark'
   /** 主题色预设 id（缺省拾光橙）；未传 onAccentChange 时弹层不出现主题色行。 */
   accent?: string
+  /** 背景预设 id（缺省折光）；未传 onBackgroundChange 时弹层不出现背景行。 */
+  background?: string
   onModuleChange: (module: AppModule) => void
   onOpenProjectConfiguration: () => void
   onCardOpacityChange: (value: number) => void
   onColorModeChange: (value: 'system' | 'light' | 'dark') => void
   onAccentChange?: (accent: string) => void
+  onBackgroundChange?: (background: string) => void
   children: ReactNode
 }
 
@@ -102,11 +105,13 @@ export function DesktopShell({
   cardOpacity,
   colorMode,
   accent,
+  background,
   onModuleChange,
   onOpenProjectConfiguration,
   onCardOpacityChange,
   onColorModeChange,
   onAccentChange,
+  onBackgroundChange,
   children
 }: DesktopShellProps): React.JSX.Element {
   const [showConnection, setShowConnection] = useState(false)
@@ -263,9 +268,11 @@ export function DesktopShell({
                 cardOpacity={cardOpacity}
                 colorMode={colorMode}
                 accent={accent}
+                background={background}
                 onCardOpacityChange={onCardOpacityChange}
                 onColorModeChange={onColorModeChange}
                 onAccentChange={onAccentChange}
+                onBackgroundChange={onBackgroundChange}
                 onClose={() => setShowAppearance(false)}
               />
             ) : null}

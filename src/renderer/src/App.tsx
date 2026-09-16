@@ -1368,10 +1368,12 @@ export function App(): React.JSX.Element {
       cardOpacity={appearance.cardOpacity}
       colorMode={appearance.colorMode}
       accent={appearance.accent}
+      background={appearance.background}
       onModuleChange={changeModule}
       onCardOpacityChange={(cardOpacity) => changeAppearance({ cardOpacity })}
       onColorModeChange={(colorMode) => changeAppearance({ colorMode })}
       onAccentChange={(accent) => changeAppearance({ accent })}
+      onBackgroundChange={(background) => changeAppearance({ background })}
       onOpenProjectConfiguration={() => changeModule('run')}
     >
       {activeModule === 'account' ? (

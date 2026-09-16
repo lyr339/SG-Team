@@ -36,14 +36,14 @@ const INSPECTOR_WIDTH_KEY = 'sg-team.layout:v1:shell.workspace-inspector'
 const REVIEW_SCOPE_KEY = 'sg-team.inspector:review-scope'
 const APPEARANCE_KEY = 'shiguang.appearance.v1'
 
-/** 基础存储：右栏展开、CH-2 会话、默认宽度；accent 为主题色预设 id（缺省拾光橙）。 */
-function baseStorage({ tab = 'review', width = 420, cardOpacity = 0.9, colorMode = 'light', scope = 'uncommitted', accent = 'sg-orange' } = {}) {
+/** 基础存储：右栏展开、CH-2 会话、默认宽度；accent / background 为主题色 / 背景预设 id（缺省拾光橙 / 折光）。 */
+function baseStorage({ tab = 'review', width = 420, cardOpacity = 0.9, colorMode = 'light', scope = 'uncommitted', accent = 'sg-orange', background = 'refraction' } = {}) {
   return {
     [INSPECTOR_OPEN_KEY]: '1',
     [INSPECTOR_TAB_KEY]: tab,
     [INSPECTOR_WIDTH_KEY]: JSON.stringify([width]),
     [REVIEW_SCOPE_KEY]: scope,
-    [APPEARANCE_KEY]: JSON.stringify({ cardOpacity, colorMode, accent }),
+    [APPEARANCE_KEY]: JSON.stringify({ cardOpacity, colorMode, accent, background }),
     'shiguang.lastSessionChannel.v1': '2'
   }
 }
@@ -361,6 +361,16 @@ const scenes = [
     storage: baseStorage({ colorMode: 'dark', accent: 'luoshen-violet' }), clip: null,
     actions: [{ wait: 250 }, { click: '.stats-spectrum__segment:nth-child(2)' }, { wait: 300 }]
   },
+  // 背景预设：外观弹层的缩略卡行（极光选中），以及三套非默认背景在会话页上的整页效果（浅 / 深）。
+  ...['light', 'dark'].map(colorMode => ({
+    name: `appearance-background-popover-${colorMode}`, width: 1440, height: 900, colorScheme: colorMode,
+    storage: baseStorage({ colorMode, background: 'aurora' }), clip: '.appearance-popover',
+    actions: [{ wait: 250 }, { click: '.appearance-button' }, { wait: 250 }]
+  })),
+  ...['aurora', 'mesh', 'prism'].flatMap(background => ['light', 'dark'].map(colorMode => ({
+    name: `background-${background}-${colorMode}`, width: 1440, height: 900, colorScheme: colorMode,
+    storage: baseStorage({ colorMode, background }), clip: null
+  }))),
   { name: 'settings-maintenance-compatible-pump', hash: 'account:maintenance', query: 'pump=external', width: 1440, height: 900, colorScheme: 'dark', storage: baseStorage({ colorMode: 'dark' }), clip: null },
   { name: 'settings-maintenance-missing-pump', hash: 'account:maintenance', query: 'pump=missing', width: 1440, height: 900, colorScheme: 'light', storage: baseStorage({ colorMode: 'light' }), clip: null },
   // 存储清理：Cursor 已退出（全部可清，默认预选含缓存/日志；高窗一次看全八项）、勾上对话历史后的

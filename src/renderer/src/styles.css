@@ -158,7 +158,21 @@
   --handoff-dialog-border: var(--color-border-secondary);
   --window-control-safe-left: 0px;
   --window-control-safe-right: 0px;
-  --app-background-image: url("./assets/backgrounds/shiguang-light.png");
+
+  /* 背景预设：每套浅 / 深各一张，图片 URL 只在这里出现一次（页面背景与外观弹层的色卡共用）。
+     id 与文案在 appearance-preferences.ts（BACKGROUND_PRESETS）。 */
+  --bg-refraction-light: url("./assets/backgrounds/shiguang-light.png");
+  --bg-refraction-dark: url("./assets/backgrounds/shiguang-dark.png");
+  --bg-aurora-light: url("./assets/backgrounds/aurora-light.png");
+  --bg-aurora-dark: url("./assets/backgrounds/aurora-dark.png");
+  --bg-mesh-light: url("./assets/backgrounds/mesh-light.png");
+  --bg-mesh-dark: url("./assets/backgrounds/mesh-dark.png");
+  --bg-prism-light: url("./assets/backgrounds/prism-light.png");
+  --bg-prism-dark: url("./assets/backgrounds/prism-dark.png");
+  /* 当前预设的两张图（默认折光）；深浅由下方 color-mode 规则在两张之间选。 */
+  --app-background-light: var(--bg-refraction-light);
+  --app-background-dark: var(--bg-refraction-dark);
+  --app-background-image: var(--app-background-light);
 
   /* Worklog 节点 */
 
@@ -167,11 +181,16 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root { --app-background-image: url("./assets/backgrounds/shiguang-dark.png"); }
+  :root { --app-background-image: var(--app-background-dark); }
 }
 
-html[data-color-mode="light"] { --app-background-image: url("./assets/backgrounds/shiguang-light.png"); }
-html[data-color-mode="dark"] { --app-background-image: url("./assets/backgrounds/shiguang-dark.png"); }
+html[data-color-mode="light"] { --app-background-image: var(--app-background-light); }
+html[data-color-mode="dark"] { --app-background-image: var(--app-background-dark); }
+
+/* 非默认背景预设：applyAppearancePreferences 写 data-background，默认时移除属性。 */
+html[data-background="aurora"] { --app-background-light: var(--bg-aurora-light); --app-background-dark: var(--bg-aurora-dark); }
+html[data-background="mesh"] { --app-background-light: var(--bg-mesh-light); --app-background-dark: var(--bg-mesh-dark); }
+html[data-background="prism"] { --app-background-light: var(--bg-prism-light); --app-background-dark: var(--bg-prism-dark); }
 
 * { box-sizing: border-box; }
 html, body, #root { width: 100%; height: 100%; }
@@ -447,6 +466,51 @@ html[data-platform="darwin"] .topbar__context { position: relative; left: -8px; 
 .appearance-accent__swatch:focus-visible { outline: 2px solid var(--color-ring-primary); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) {
   .appearance-accent__swatch { transition: none; }
+}
+
+/* 背景：四张 16:9 缩略卡（真图，随当前深浅模式取对应那张），下方一行名字；
+   选中双环描边（与主题色色卡同一语言），标签行右端写出当前预设名。 */
+.appearance-background { display: grid; gap: 8px; }
+.appearance-background > div:first-child { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.appearance-background span { color: var(--text-soft); font-size: var(--font-text-xs-size); font-weight: var(--font-weight-semibold); }
+.appearance-background em { color: var(--accent-deep); font-size: var(--fs-11); font-style: normal; font-weight: 600; }
+.appearance-background > div[role="group"] { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.appearance-background__tile {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  font-size: var(--fs-10);
+  font-weight: 600;
+  cursor: pointer;
+}
+.appearance-background__tile > i {
+  display: block;
+  aspect-ratio: 16 / 9;
+  background: var(--canvas-solid) var(--tile-light) center / cover no-repeat;
+  border-radius: 7px;
+  box-shadow: inset 0 0 0 1px var(--line);
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+.appearance-background__tile:hover > i { transform: scale(1.04); }
+.appearance-background__tile.is-active { color: var(--accent-deep); }
+.appearance-background__tile.is-active > i { box-shadow: 0 0 0 2px var(--surface-solid), 0 0 0 4px var(--accent); }
+.appearance-background__tile:focus-visible { outline: none; }
+.appearance-background__tile:focus-visible > i { outline: 2px solid var(--color-ring-primary); outline-offset: 2px; }
+.appearance-background__tile[data-preset="refraction"] > i { --tile-light: var(--bg-refraction-light); --tile-dark: var(--bg-refraction-dark); }
+.appearance-background__tile[data-preset="aurora"] > i { --tile-light: var(--bg-aurora-light); --tile-dark: var(--bg-aurora-dark); }
+.appearance-background__tile[data-preset="mesh"] > i { --tile-light: var(--bg-mesh-light); --tile-dark: var(--bg-mesh-dark); }
+.appearance-background__tile[data-preset="prism"] > i { --tile-light: var(--bg-prism-light); --tile-dark: var(--bg-prism-dark); }
+@media (prefers-color-scheme: dark) {
+  .appearance-background__tile > i { background-image: var(--tile-dark); }
+}
+html[data-color-mode="light"] .appearance-background__tile > i { background-image: var(--tile-light); }
+html[data-color-mode="dark"] .appearance-background__tile > i { background-image: var(--tile-dark); }
+@media (prefers-reduced-motion: reduce) {
+  .appearance-background__tile > i { transition: none; }
 }
 
 .appearance-opacity { display: grid; gap: 9px; }

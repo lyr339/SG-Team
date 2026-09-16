@@ -1,13 +1,21 @@
-import { ACCENT_PRESETS, DEFAULT_ACCENT_ID } from './appearance-preferences'
+import {
+  ACCENT_PRESETS,
+  BACKGROUND_PRESETS,
+  DEFAULT_ACCENT_ID,
+  DEFAULT_BACKGROUND_ID
+} from './appearance-preferences'
 
 interface AppearanceSettingsProps {
   cardOpacity: number
   colorMode: 'system' | 'light' | 'dark'
   /** 主题色预设 id；缺省按拾光橙。 */
   accent?: string
+  /** 背景预设 id；缺省按折光。 */
+  background?: string
   onCardOpacityChange: (value: number) => void
   onColorModeChange: (value: 'system' | 'light' | 'dark') => void
   onAccentChange?: (accent: string) => void
+  onBackgroundChange?: (background: string) => void
   onClose: () => void
 }
 
@@ -18,18 +26,33 @@ const PRESETS = [
   { label: '实色', value: 1 }
 ] as const
 
+/** 选项组惯例：←/→ 在选项间漫游（环绕），移动即选中——主题色色卡与背景缩略卡共用。 */
+function roamOptionsWithArrowKeys(event: React.KeyboardEvent<HTMLDivElement>): void {
+  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+  const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button'))
+  const index = buttons.findIndex((button) => button === document.activeElement)
+  if (index < 0) return
+  event.preventDefault()
+  const next = (index + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length
+  buttons[next]!.focus()
+  buttons[next]!.click()
+}
+
 export function AppearanceSettings({
   cardOpacity,
   colorMode,
   accent = DEFAULT_ACCENT_ID,
+  background = DEFAULT_BACKGROUND_ID,
   onCardOpacityChange,
   onColorModeChange,
   onAccentChange,
+  onBackgroundChange,
   onClose
 }: AppearanceSettingsProps): React.JSX.Element {
   const percentage = Math.round(cardOpacity * 100)
   // 未知 id 与默认同待遇：选中环与右侧名字始终指向同一个预设。
   const activeAccent = ACCENT_PRESETS.find((preset) => preset.id === accent) ?? ACCENT_PRESETS[0]!
+  const activeBackground = BACKGROUND_PRESETS.find((preset) => preset.id === background) ?? BACKGROUND_PRESETS[0]!
 
   return (
     <section className="appearance-popover" aria-label="外观设置">
@@ -60,27 +83,39 @@ export function AppearanceSettings({
         </div>
       </div>
 
+      {onBackgroundChange ? (
+        <div className="appearance-background">
+          <div>
+            <span>背景</span>
+            <em>{activeBackground.label}</em>
+          </div>
+          <div role="group" aria-label="背景" onKeyDown={roamOptionsWithArrowKeys}>
+            {BACKGROUND_PRESETS.map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                className={`appearance-background__tile${activeBackground.id === preset.id ? ' is-active' : ''}`}
+                data-preset={preset.id}
+                title={preset.description}
+                aria-label={preset.label}
+                aria-pressed={activeBackground.id === preset.id}
+                onClick={() => onBackgroundChange(preset.id)}
+              >
+                <i aria-hidden="true" />
+                {preset.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
       {onAccentChange ? (
         <div className="appearance-accent">
           <div>
             <span>主题色</span>
             <em>{activeAccent.label}</em>
           </div>
-          <div
-            role="group"
-            aria-label="主题色"
-            onKeyDown={(event) => {
-              // 选项组惯例：←/→ 在色卡间漫游，移动即选中（与节奏柱键盘漫游同语言）。
-              if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
-              const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button'))
-              const index = buttons.findIndex((button) => button === document.activeElement)
-              if (index < 0) return
-              event.preventDefault()
-              const next = (index + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length
-              buttons[next]!.focus()
-              buttons[next]!.click()
-            }}
-          >
+          <div role="group" aria-label="主题色" onKeyDown={roamOptionsWithArrowKeys}>
             {ACCENT_PRESETS.map((preset) => (
               <button
                 key={preset.id}
