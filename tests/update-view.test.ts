@@ -95,5 +95,41 @@ describe('软件更新 · 面板视图', () => {
     expect(check.headline).toBe('检查失败')
     expect(check.actions[0]?.label).toBe('知道了')
     expect(buildUpdatePanelView(statusOf({ phase: 'failed', step: 'install', message: 'EACCES', at: NOW, release }), NOW).headline).toBe('安装失败')
+    expect(buildUpdatePanelView(statusOf({ phase: 'failed', step: 'rollback', message: 'EPERM', at: NOW }), NOW).headline).toBe('回滚失败')
+  })
+
+  it('downloading（verify）：进度满格、速率与取消都收起、文案改为校验解压', () => {
+    const view = buildUpdatePanelView(statusOf({
+      phase: 'downloading', release, receivedBytes: 116_467_543, totalBytes: 116_467_543, bytesPerSecond: 3_145_728, activity: 'verify', startedAt: NOW
+    }), NOW)
+    expect(view.headline).toBe('正在校验并解压 0.3.3…')
+    expect(view.detail).toBe('下载已完成；正在核对签名与版本，几秒后就绪。')
+    expect(view.progress).toMatchObject({ percent: 100 })
+    expect(view.progress?.rate).toBeUndefined()
+    expect(view.actions[0]).toMatchObject({ id: 'cancel', disabled: true })
+    expect(view.busy).toBe(true)
+  })
+
+  it('available（downloadable=false）：主按钮改为发布页，没有下载入口', () => {
+    const view = buildUpdatePanelView(statusOf({ phase: 'available', release: { ...release, downloadable: false }, checkedAt: NOW }), NOW)
+    expect(view.headline).toBe('发现新版本 0.3.3')
+    expect(view.detail).toContain('此版本未提供应用内下载')
+    expect(view.actions.map((action) => action.id)).toEqual(['open-release', 'skip', 'snooze'])
+    expect(view.actions[0]).toMatchObject({ id: 'open-release', kind: 'primary' })
+  })
+
+  it('rolling_back：忙态、无按钮', () => {
+    expect(buildUpdatePanelView(statusOf({ phase: 'rolling_back', targetVersion: '0.3.2', startedAt: NOW }), NOW))
+      .toMatchObject({ tone: 'info', headline: '正在回滚到 0.3.2…', actions: [], busy: true })
+  })
+
+  it('rollback 备份脚注：空闲相位给出（含数据回退警告），忙相位收起', () => {
+    const backup = { version: '0.3.2', createdAt: NOW - 3_600_000, dir: 'D:\\backup\\0.3.2-1' }
+    const idle = buildUpdatePanelView({ ...statusOf({ phase: 'idle', lastCheckedAt: NOW }), rollback: backup }, NOW)
+    expect(idle.rollback?.version).toBe('0.3.2')
+    expect(idle.rollback?.note).toContain('保留了 0.3.2 的备份（今天 09:30）')
+    expect(idle.rollback?.note).toContain('回滚会退出拾光')
+    const busy = buildUpdatePanelView({ ...statusOf({ phase: 'checking', startedAt: NOW }), rollback: backup }, NOW)
+    expect(busy.rollback).toBeUndefined()
   })
 })

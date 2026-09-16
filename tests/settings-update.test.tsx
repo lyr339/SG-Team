@@ -47,6 +47,10 @@ function installApi(initial: AppUpdateStatus) {
     installAppUpdate: vi.fn(async ({ confirmed }: { confirmed: boolean }) => confirmed
       ? { gate: { verdict: 'allow' as const }, status: push(statusOf({ phase: 'installing', release, startedAt: NOW })) }
       : { gate: { verdict: 'confirm' as const, reasons: ['有 2 个席位在线。安装会退出拾光…'] }, status: current }),
+    rollbackAppUpdate: vi.fn(async ({ confirmed }: { confirmed: boolean }) => confirmed
+      ? { gate: { verdict: 'allow' as const }, status: push(statusOf({ phase: 'rolling_back', targetVersion: '0.3.2', startedAt: NOW })) }
+      : { gate: { verdict: 'allow' as const }, status: current }),
+    dismissAppUpdateApplyResult: vi.fn(async () => push({ ...current, applyResult: undefined })),
     skipAppUpdate: vi.fn(async () => push({ ...current, settings: { ...current.settings, skippedVersion: '0.3.3' }, reminderVersion: undefined })),
     unskipAppUpdate: vi.fn(async () => push({ ...current, settings: { autoCheck: true, checkIntervalHours: 6 }, reminderVersion: '0.3.3' })),
     snoozeAppUpdate: vi.fn(async () => push({ ...current, settings: { ...current.settings, snoozedUntil: NOW + 86_400_000 }, reminderVersion: undefined })),
@@ -221,6 +225,48 @@ describe('设置 › 软件更新', () => {
     expect(container.querySelector('.app-update__updated')?.textContent).toContain('已更新到 0.3.2')
     await act(async () => container.querySelector<HTMLButtonElement>('.app-update__updated button')!.click())
     expect(container.querySelector('.app-update__updated')).toBeNull()
+  })
+
+  it('mac 脚本回执：applied 绿色横幅、收起走 IPC；apply_failed 红色 alert 带原因', async () => {
+    const { api, push } = installApi(statusOf({ phase: 'idle' }, { applyResult: { status: 'applied', from: '0.3.2', to: '0.3.3' } }))
+    await render()
+    const banner = container.querySelector('.app-update__updated')!
+    expect(banner.className).toContain('is-success')
+    expect(banner.getAttribute('role')).toBe('status')
+    expect(banner.textContent).toContain('已更新到 0.3.3（原 0.3.2）')
+    await act(async () => banner.querySelector('button')!.click())
+    expect(api.dismissAppUpdateApplyResult).toHaveBeenCalledTimes(1)
+    expect(container.querySelector('.app-update__updated')).toBeNull()
+
+    await act(async () => {
+      push(statusOf({ phase: 'idle' }, { applyResult: { status: 'apply_failed', from: '0.3.2', to: '0.3.3', reason: 'codesign_failed' } }))
+    })
+    const failed = container.querySelector('.app-update__updated')!
+    expect(failed.className).toContain('is-danger')
+    expect(failed.getAttribute('role')).toBe('alert')
+    expect(failed.textContent).toContain('更新到 0.3.3 失败，已恢复 0.3.2（codesign_failed）')
+  })
+
+  it('回滚：脚注按钮先拿门禁、必出确认块（含数据回退警告），确认后才真正回滚', async () => {
+    const backup = { version: '0.3.2', createdAt: NOW - 3_600_000, dir: 'D:\\backup\\0.3.2-1' }
+    const { api } = installApi(statusOf({ phase: 'idle', lastCheckedAt: NOW }, { rollback: backup }))
+    await render()
+    expect(container.querySelector('.app-update__rollback')?.textContent).toContain('保留了 0.3.2 的备份')
+    await click('回滚到 0.3.2…')
+    expect(api.rollbackAppUpdate).toHaveBeenLastCalledWith({ confirmed: false })
+    const confirm = container.querySelector('.app-update__confirm')!
+    expect(confirm.getAttribute('aria-label')).toBe('确认回滚')
+    expect(confirm.textContent).toContain('回滚会退出拾光')
+    // 确认块出现时脚注按钮收起，避免双入口
+    expect(container.querySelector('.app-update__rollback')).toBeNull()
+    await click('取消')
+    expect(api.rollbackAppUpdate).toHaveBeenCalledTimes(1)
+
+    await click('回滚到 0.3.2…')
+    await click('回滚到 0.3.2 并重启')
+    expect(api.rollbackAppUpdate).toHaveBeenLastCalledWith({ confirmed: true })
+    expect(container.querySelector('.app-update__headline')?.textContent).toBe('正在回滚到 0.3.2…')
+    expect(container.querySelector('.app-update__rollback')).toBeNull()
   })
 })
 

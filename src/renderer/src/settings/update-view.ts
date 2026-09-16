@@ -15,6 +15,7 @@ export type UpdateActionId =
   | 'snooze'
   | 'dismiss'
   | 'open-release'
+  | 'rollback'
 
 export interface UpdateAction {
   id: UpdateActionId
@@ -41,6 +42,8 @@ export interface UpdatePanelView {
   snoozedNote?: string
   /** 检查进行中 / 下载进行中 / 安装中：控件禁用、显示活动态。 */
   busy: boolean
+  /** mac：存在可回滚的备份且此刻没在忙——卡片底部给「回滚到 x」。 */
+  rollback?: { version: string; note: string }
 }
 
 const pad = (value: number): string => String(value).padStart(2, '0')
@@ -72,6 +75,19 @@ function releaseDetail(release: { releaseDate?: string; sizeBytes?: number }): s
 }
 
 export function buildUpdatePanelView(status: AppUpdateStatus, now: number): UpdatePanelView {
+  const view = buildPhaseView(status, now)
+  const rollback = status.rollback
+  if (!rollback || view.busy) return view
+  return {
+    ...view,
+    rollback: {
+      version: rollback.version,
+      note: `保留了 ${rollback.version} 的备份（${formatUpdateTime(rollback.createdAt, now)}）：回滚会退出拾光、换回旧版与更新前的数据库副本；当前数据库会另存一份，更新后产生的记录在旧版里不可见。`
+    }
+  }
+}
+
+function buildPhaseView(status: AppUpdateStatus, now: number): UpdatePanelView {
   const { state, settings, currentVersion } = status
   const openRelease: UpdateAction = { id: 'open-release', label: '打开发布页', kind: 'link' }
   const release = 'release' in state ? state.release : undefined
@@ -129,7 +145,21 @@ export function buildUpdatePanelView(status: AppUpdateStatus, now: number): Upda
         actions: [{ id: 'check', label: '立即检查', kind: 'primary' }, openRelease],
         busy: false
       }
-    case 'available':
+    case 'available': {
+      // 没有本平台资产（清单缺项 / 只拿到 tag）：只能去发布页手动更新。
+      if (state.release.downloadable === false) {
+        const detail = releaseDetail(state.release)
+        return {
+          tone: skippedNote ? 'muted' : 'accent',
+          headline: `发现新版本 ${state.release.version}`,
+          detail: `此版本未提供应用内下载，请到发布页手动更新${detail ? `（${detail}）` : ''}`,
+          notes,
+          actions: [{ id: 'open-release', label: '打开发布页', kind: 'primary' }, ...skipActions()],
+          ...(skippedNote ? { skippedNote } : {}),
+          ...(snoozedNote ? { snoozedNote } : {}),
+          busy: false
+        }
+      }
       return {
         tone: skippedNote ? 'muted' : 'accent',
         headline: `发现新版本 ${state.release.version}`,
@@ -140,20 +170,22 @@ export function buildUpdatePanelView(status: AppUpdateStatus, now: number): Upda
         ...(snoozedNote ? { snoozedNote } : {}),
         busy: false
       }
+    }
     case 'downloading': {
-      const percent = state.totalBytes > 0 ? Math.min(100, Math.floor((state.receivedBytes / state.totalBytes) * 100)) : 0
+      const verifying = state.activity === 'verify'
+      const percent = verifying ? 100 : state.totalBytes > 0 ? Math.min(100, Math.floor((state.receivedBytes / state.totalBytes) * 100)) : 0
       return {
         tone: 'info',
-        headline: `正在下载 ${state.release.version}…`,
-        detail: releaseDetail(state.release),
+        headline: verifying ? `正在校验并解压 ${state.release.version}…` : `正在下载 ${state.release.version}…`,
+        detail: verifying ? '下载已完成；正在核对签名与版本，几秒后就绪。' : releaseDetail(state.release),
         notes,
         progress: {
           percent,
           received: formatFileSize(state.receivedBytes),
           total: state.totalBytes > 0 ? formatFileSize(state.totalBytes) : '—',
-          ...(state.bytesPerSecond ? { rate: `${formatFileSize(state.bytesPerSecond)}/s` } : {})
+          ...(!verifying && state.bytesPerSecond ? { rate: `${formatFileSize(state.bytesPerSecond)}/s` } : {})
         },
-        actions: [{ id: 'cancel', label: '取消下载', kind: 'secondary' }, openRelease],
+        actions: [{ id: 'cancel', label: '取消下载', kind: 'secondary', ...(verifying ? { disabled: true } : {}) }, openRelease],
         busy: true
       }
     }
@@ -177,8 +209,17 @@ export function buildUpdatePanelView(status: AppUpdateStatus, now: number): Upda
         actions: [],
         busy: true
       }
+    case 'rolling_back':
+      return {
+        tone: 'info',
+        headline: `正在回滚到 ${state.targetVersion}…`,
+        detail: '拾光即将退出；换回旧版后会自动重新打开。',
+        notes: [],
+        actions: [],
+        busy: true
+      }
     case 'failed': {
-      const step = state.step === 'download' ? '下载' : state.step === 'install' ? '安装' : '检查'
+      const step = state.step === 'download' ? '下载' : state.step === 'install' ? '安装' : state.step === 'rollback' ? '回滚' : '检查'
       return {
         tone: 'danger',
         headline: `${step}失败`,

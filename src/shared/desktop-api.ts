@@ -424,6 +424,10 @@ export interface SgDesktopApi {
   cancelAppUpdateDownload(): Promise<AppUpdateStatus>
   /** 先过门禁：`block` / 未确认的 `confirm` 只返回结论；放行后进程随即退出安装。 */
   installAppUpdate(input: { confirmed: boolean }): Promise<{ gate: UpdateGate; status: AppUpdateStatus }>
+  /** mac：回滚到更新前的备份（app + 库）。`confirmed: false` 只返回门禁结论，永远不动手。 */
+  rollbackAppUpdate(input: { confirmed: boolean }): Promise<{ gate: UpdateGate; status: AppUpdateStatus }>
+  /** 用户看过「已更新 / 已回滚 / 失败已恢复」的提示后清掉它。 */
+  dismissAppUpdateApplyResult(): Promise<AppUpdateStatus>
   skipAppUpdate(): Promise<AppUpdateStatus>
   unskipAppUpdate(): Promise<AppUpdateStatus>
   /** 稍后：24 小时内不再提醒。 */
@@ -580,6 +584,8 @@ export const IPC = {
   appUpdateDownload: 'app-update:download',
   appUpdateCancelDownload: 'app-update:cancel-download',
   appUpdateInstall: 'app-update:install',
+  appUpdateRollback: 'app-update:rollback',
+  appUpdateDismissApplyResult: 'app-update:dismiss-apply-result',
   appUpdateSkip: 'app-update:skip',
   appUpdateUnskip: 'app-update:unskip',
   appUpdateSnooze: 'app-update:snooze',

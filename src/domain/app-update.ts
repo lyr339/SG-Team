@@ -141,9 +141,14 @@ export interface AppUpdateRelease {
   /** 本平台安装包字节数。 */
   sizeBytes?: number
   releaseUrl: string
+  /** false = 这一版没有本平台的应用内下载（清单缺资产 / 只拿到 tag）：只能去发布页。缺省视为可下载。 */
+  downloadable?: boolean
 }
 
-export type AppUpdateFailureStep = 'check' | 'download' | 'install'
+export type AppUpdateFailureStep = 'check' | 'download' | 'install' | 'rollback'
+
+/** 下载相位里的子活动：传输中，或传输完成后正在校验 / 解压（mac 的 ditto + codesign 要跑几秒）。 */
+export type AppUpdateDownloadActivity = 'transfer' | 'verify'
 
 export type AppUpdateState =
   | { phase: 'unsupported'; reason: string }
@@ -151,9 +156,19 @@ export type AppUpdateState =
   | { phase: 'checking'; startedAt: number; release?: AppUpdateRelease }
   | { phase: 'up_to_date'; checkedAt: number }
   | { phase: 'available'; release: AppUpdateRelease; checkedAt: number }
-  | { phase: 'downloading'; release: AppUpdateRelease; receivedBytes: number; totalBytes: number; bytesPerSecond?: number; startedAt: number }
+  | {
+      phase: 'downloading'
+      release: AppUpdateRelease
+      receivedBytes: number
+      totalBytes: number
+      bytesPerSecond?: number
+      activity?: AppUpdateDownloadActivity
+      startedAt: number
+    }
   | { phase: 'downloaded'; release: AppUpdateRelease; filePath?: string; downloadedAt: number }
   | { phase: 'installing'; release: AppUpdateRelease; startedAt: number }
+  /** mac：正在退出并把备份里的旧版换回来（Windows 没有这一相位）。 */
+  | { phase: 'rolling_back'; targetVersion: string; startedAt: number }
   | { phase: 'failed'; step: AppUpdateFailureStep; message: string; at: number; release?: AppUpdateRelease }
 
 export type AppUpdateEvent =
@@ -162,12 +177,14 @@ export type AppUpdateEvent =
   | { type: 'check_available'; release: AppUpdateRelease }
   | { type: 'check_failed'; message: string }
   | { type: 'download_started' }
-  | { type: 'download_progress'; receivedBytes: number; totalBytes: number; bytesPerSecond?: number }
+  | { type: 'download_progress'; receivedBytes: number; totalBytes: number; bytesPerSecond?: number; activity?: AppUpdateDownloadActivity }
   | { type: 'download_completed'; filePath?: string }
   | { type: 'download_cancelled' }
   | { type: 'download_failed'; message: string }
   | { type: 'install_started' }
   | { type: 'install_failed'; message: string }
+  | { type: 'rollback_started'; targetVersion: string }
+  | { type: 'rollback_failed'; message: string }
   | { type: 'dismissed' }
 
 function releaseOf(state: AppUpdateState): AppUpdateRelease | undefined {
@@ -183,7 +200,8 @@ export function reduceAppUpdate(state: AppUpdateState, event: AppUpdateEvent, no
   switch (event.type) {
     case 'check_started': {
       // 已下载待安装也不再检查：再报一个更新版本只会让「装哪个」变得含糊。
-      if (state.phase === 'downloading' || state.phase === 'downloaded' || state.phase === 'installing' || state.phase === 'checking') {
+      if (state.phase === 'downloading' || state.phase === 'downloaded' || state.phase === 'installing'
+        || state.phase === 'rolling_back' || state.phase === 'checking') {
         return state
       }
       const release = releaseOf(state)
@@ -196,18 +214,23 @@ export function reduceAppUpdate(state: AppUpdateState, event: AppUpdateEvent, no
     case 'check_failed':
       return state.phase === 'checking' ? { phase: 'idle', lastCheckedAt: now, lastError: event.message } : state
     case 'download_started':
-      return state.phase === 'available'
+      // 没有本平台资产的版本只能去发布页：下载边不成立。
+      return state.phase === 'available' && state.release.downloadable !== false
         ? { phase: 'downloading', release: state.release, receivedBytes: 0, totalBytes: state.release.sizeBytes ?? 0, startedAt: now }
         : state
-    case 'download_progress':
-      return state.phase === 'downloading'
-        ? {
-            ...state,
-            receivedBytes: Math.max(0, event.receivedBytes),
-            totalBytes: Math.max(0, event.totalBytes),
-            ...(event.bytesPerSecond !== undefined ? { bytesPerSecond: event.bytesPerSecond } : {})
-          }
-        : state
+    case 'download_progress': {
+      if (state.phase !== 'downloading') return state
+      // 进入校验阶段后传输速率没有意义，摘掉；传输中的事件没带速率则沿用上一次的。
+      const { bytesPerSecond: previousRate, ...rest } = state
+      const rate = event.bytesPerSecond ?? (event.activity === 'verify' ? undefined : previousRate)
+      return {
+        ...rest,
+        receivedBytes: Math.max(0, event.receivedBytes),
+        totalBytes: Math.max(0, event.totalBytes),
+        ...(rate !== undefined ? { bytesPerSecond: rate } : {}),
+        ...(event.activity !== undefined ? { activity: event.activity } : {})
+      }
+    }
     case 'download_completed':
       return state.phase === 'downloading'
         ? { phase: 'downloaded', release: state.release, downloadedAt: now, ...(event.filePath ? { filePath: event.filePath } : {}) }
@@ -224,6 +247,16 @@ export function reduceAppUpdate(state: AppUpdateState, event: AppUpdateEvent, no
       return state.phase === 'installing'
         ? { phase: 'failed', step: 'install', message: event.message, at: now, release: state.release }
         : state
+    case 'rollback_started':
+      // 回滚只从「没在忙」的相位出发；下载 / 安装 / 检查进行中不许插队。
+      return state.phase === 'idle' || state.phase === 'up_to_date' || state.phase === 'available'
+        || state.phase === 'downloaded' || state.phase === 'failed'
+        ? { phase: 'rolling_back', targetVersion: event.targetVersion, startedAt: now }
+        : state
+    case 'rollback_failed':
+      return state.phase === 'rolling_back'
+        ? { phase: 'failed', step: 'rollback', message: event.message, at: now }
+        : state
     case 'dismissed': {
       if (state.phase !== 'failed') return state
       // 下载 / 安装失败后回到「有新版」，让用户能重试；检查失败已在 idle 里带 lastError。
@@ -232,10 +265,41 @@ export function reduceAppUpdate(state: AppUpdateState, event: AppUpdateEvent, no
   }
 }
 
+/** 安装器 / 辅助脚本留给下一次启动的结果（mac：`updates/pending-result.json`）。 */
+export interface AppUpdateApplyResult {
+  status: 'applied' | 'rolled_back' | 'apply_failed' | 'rollback_failed'
+  from: string
+  to: string
+  reason?: string
+  backupDir?: string
+}
+
+export function parseAppUpdateApplyResult(raw: unknown): AppUpdateApplyResult | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const record = raw as Record<string, unknown>
+  const status = record.status
+  if (status !== 'applied' && status !== 'rolled_back' && status !== 'apply_failed' && status !== 'rollback_failed') return undefined
+  if (typeof record.from !== 'string' || typeof record.to !== 'string') return undefined
+  return {
+    status,
+    from: record.from,
+    to: record.to,
+    ...(typeof record.reason === 'string' && record.reason ? { reason: record.reason } : {}),
+    ...(typeof record.backupDir === 'string' && record.backupDir ? { backupDir: record.backupDir } : {})
+  }
+}
+
+/** 可回滚到的备份（mac）：更新前留下的旧 app + 库副本。 */
+export interface AppUpdateBackupInfo {
+  version: string
+  createdAt: number
+  dir: string
+}
+
 /** 面板 / 角标 / 提醒共用的「有可用新版」判定：跳过的版本与稍后期内不提醒。 */
 export function shouldRemindAppUpdate(state: AppUpdateState, settings: AppUpdateSettings, now: number): boolean {
   const release = releaseOf(state)
-  if (!release || state.phase === 'installing' || state.phase === 'checking') return false
+  if (!release || state.phase === 'installing' || state.phase === 'checking' || state.phase === 'rolling_back') return false
   if (settings.skippedVersion && !isNewerAppVersion(release.version, settings.skippedVersion)) return false
   if (settings.snoozedUntil !== undefined && now < settings.snoozedUntil) return false
   return true
@@ -256,6 +320,10 @@ export interface AppUpdateStatus {
   reminderVersion?: string
   /** 本次进程由安装器在更新完成后拉起（命令行带 `--updated`）：首页可以提示一次「已更新」。 */
   launchedAfterUpdate: boolean
+  /** mac：上一次退出时辅助脚本留下的结果（已更新 / 已回滚 / 失败已恢复），用户看过后清掉。 */
+  applyResult?: AppUpdateApplyResult
+  /** mac：存在可回滚的备份时给出（面板出「回滚到 x」）。 */
+  rollback?: AppUpdateBackupInfo
   /** 当前版本或新版本的发布页。 */
   releaseUrl: string
 }
@@ -284,7 +352,8 @@ export function evaluateUpdateGate(input: UpdateGateInput): UpdateGate {
     return {
       verdict: 'confirm',
       reasons: [
-        `有 ${input.onlineSeats} 个席位在线。安装会退出拾光并让 Cursor 里的 SG Team 服务器重启一次，各会话经历约 5 秒瞬断后自动续接；进行中的运行与任务不会丢数据。`
+        // 措辞不落「安装」二字：同一道门禁也拦回滚（两者都是退出并替换）。
+        `有 ${input.onlineSeats} 个席位在线。继续会退出拾光并让 Cursor 里的 SG Team 服务器重启一次，各会话经历约 5 秒瞬断后自动续接；进行中的运行与任务不会丢数据。`
       ]
     }
   }

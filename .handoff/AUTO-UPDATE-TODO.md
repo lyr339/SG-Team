@@ -1,8 +1,8 @@
 # 交接任务书：拾光自动更新（Windows 先行 · electron-updater · 手动组件；mac 自替换待做）
 
-> **状态（2026-09-16 21:40）：Windows 路线（§0.6）代码侧完成并已提交**——分支 `feat/app-auto-update`，worktree `E:\SG-update`（已 rebase 到 main 最新，v0.3.2 之后），
-> typecheck / knip / 全量测试 / build / smoke:channel 全绿，预览截图矩阵含更新场景；**待真机验收（§0.6.4）并合回 main（可 fast-forward）**。
-> mac 自替换路线（§4–§7、§11）仍待动工，设计不变。每完成一步在 §12 追加一行；中断后接手者只读 §0、§12、§13 即可定位。
+> **状态（2026-09-17 00:10）：Windows 路线已随 v0.3.3 发布**（合回 main、tag 已推、Release 带 `latest.yml`；真机应用内升级验收仍待 §0.6.4）。
+> **mac 自替换路线（§4–§7）代码与测试完成**——分支 `feat/app-update-mac`，worktree `E:\SG-update`（已 rebase 到 main `0f0cef7`），
+> typecheck / knip / 全量测试 / build / smoke:channel 全绿；**待 mac 真机验收（§11）并合回 main**。每完成一步在 §12 追加一行；中断后接手者只读 §0、§12、§13 即可定位。
 >
 > **2026-09-16 用户重新拍板**（在真实 Windows 机器上，覆盖 09-15 的 U2 / U3）：① **Windows 先行**；② **允许引入 `electron-updater`**（运行时依赖从 ws + zod 扩到三项）；
 > ③ 按机安装带来的 **UAC 弹窗可接受**；④ **手动组件**——用户使用中不得被打断，只允许一个不打扰的小提醒告知有新版本，下载与安装都由用户显式点击。
@@ -604,6 +604,8 @@ tests/mac-app-replacer.test.ts · tests/update-backup.test.ts · tests/register-
 | 09-16 21:10–21:40 | 接手复核 + 提交 | （CH-1 接 CH-2 中断处）复跑五步验证全绿；读代码发现一处缺陷并修：`SettingsUpdate` 用 `download` IPC 的 promise 占住 `busyAction`，而该 IPC 直到下载结束才返回 → 整个下载期间「取消下载」不可点。改为下载不占 busy、进度与终态由推送驱动；补一条「下载 IPC 挂起时取消仍可点」的用例（改前失败、改后通过）。提交到 `feat/app-auto-update` 并 rebase 到 main 最新（仅 `docs/ARCHITECTURE.md` 尾部追加冲突，两边保留） | typecheck · knip · 1972 tests（rebase 后含 main 新用例）· build · smoke:channel |
 | 09-16 21:27 | 合回 + 发版 | 用户拍板「先合、可先发版、不影响当前使用」：`main` fast-forward 到 `92f05c4`；版本 0.3.2 → 0.3.3，发布说明补「界面」与「移除轮换」两条；`57bf8cd` + tag `v0.3.3` 推到 `lyr339/SG-Team`。Release 工作流 mac / windows / publish 三步全绿（约 2.5 分钟）；Release 资产 4 个：`ShiGuang-Setup-0.3.3.exe`（117,596,850 B）、`.exe.blockmap`、`latest.yml`（version 0.3.3、path 与 size 与 exe 一致、sha512、releaseDate）、mac zip。**这是第一个带更新 feed 的版本；本机仍是 0.3.2，未安装** | GitHub API + `releases/download/v0.3.3/latest.yml` 实取 |
 | — | 真机验收 | §0.6.4：发带 feed 的 tag → 应用内升一级 → 观察 MCP 重载。**不发版也能验**：`pack:win` 打两个本地版本（0.3.3 / 0.3.4），装 0.3.3，把 `release/` 用本机静态 HTTP 服务起来，在 设置 › 软件更新 › 自定义更新源 填该目录 URL → 检查 → 下载 → 安装；安装会杀掉 Cursor 托管的 MCP（在线席位瞬断） | **待用户** |
+| 09-16 23:00–09-17 00:10 | mac 路线 B 全链 | （CH-7，两段会话接力）§4–§7 全部落地，分支 `feat/app-update-mac`：`domain/app-update-manifest.ts`（清单 schema 解析、安装位置判定、磁盘估算）＋ 状态机扩展（`downloading.activity` transfer/verify、`rolling_back` 相位、`downloadable=false`、`applyResult`/`backupInfo` 类型与解析）；`github-manifest-feed.ts`（清单源；404 退化到 `releases/latest` 302 取 tag）、`update-downloader.ts`（流式 sha512 边写边算、断线重试、取消删 `.part`）、`update-backup.ts`（`VACUUM INTO` 库快照＋配置小文件＋`backup.json`，只留最近一份）、`mac-app-replacer.ts`（`ditto`/`plutil`/`codesign` 验收暂存；apply / rollback 两个 `/bin/sh` 脚本纯函数生成，参数全部内联转义）、`mac-updater-port.ts`（AppUpdaterPort 全实现：清单检查、暂存下载、退出替换、`pending-result.json` 回执、回滚含当前库另存）；service 加 `rollback` / `dismissApplyResult` / `backupInfo` 与 activity 透传；IPC（`app-update:rollback` / `dismiss-apply-result`）＋ preload ＋ 设置面板（回执横幅、校验态进度、回滚脚注与二次确认）；`scripts/update-manifest.mjs`（零依赖清单生成，测试直接 import 其纯函数）＋ `release.yml` publish 步生成清单。新测试 7 个文件、扩展 4 个文件（净增 ~70 用例） | typecheck · knip · 2039 tests / 206 文件（唯 `brand-migration` 为既有 Node22 环境问题，main 同样失败）· build · smoke:channel |
+| — | mac 真机验收 | §11：真 mac 上过一遍支持矩阵 → 检查 → 下载校验 → 安装替换 → MCP 重载 → 回滚；`app.relaunch({ execPath: '/bin/sh' })` 语义、translocation 实况、「仅 env 变化是否触发 Cursor 重载」都只能真机验 | **待用户 / 待 mac 在手** |
 
 ***
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { AppUpdateSettings, AppUpdateStatus, UpdateGate } from '../../../domain/app-update'
+import type { AppUpdateApplyResult, AppUpdateSettings, AppUpdateStatus, UpdateGate } from '../../../domain/app-update'
 import { APP_UPDATE_CHECK_INTERVAL_HOURS, normalizeAppUpdateSettings } from '../../../domain/app-update'
 import { MenuSelect } from '../lobby/MenuSelect'
 import { ToggleSwitch } from '../lobby/ToggleSwitch'
@@ -14,6 +14,7 @@ interface SettingsUpdateProps {
 
 type UpdateApi = Pick<Window['sgDesktop'],
   | 'getAppUpdateStatus' | 'checkAppUpdate' | 'downloadAppUpdate' | 'cancelAppUpdateDownload' | 'installAppUpdate'
+  | 'rollbackAppUpdate' | 'dismissAppUpdateApplyResult'
   | 'skipAppUpdate' | 'unskipAppUpdate' | 'snoozeAppUpdate' | 'dismissAppUpdateFailure' | 'saveAppUpdateSettings'
   | 'openAppUpdateReleasePage' | 'onAppUpdateStatus'
 >
@@ -23,13 +24,41 @@ function updateApi(): UpdateApi | undefined {
   return api && typeof api.getAppUpdateStatus === 'function' ? api : undefined
 }
 
+/** 上次退出时辅助脚本留下的结果（mac）的一句话。 */
+export function applyResultText(result: AppUpdateApplyResult): { tone: 'success' | 'danger'; text: string } {
+  switch (result.status) {
+    case 'applied':
+      return {
+        tone: 'success',
+        text: `已更新到 ${result.to}（原 ${result.from}）。Cursor 里的 SG Team 服务器会随之重载一次；若席位长时间未恢复，到 Cursor 的 MCP 设置里刷新 SG Team。`
+      }
+    case 'rolled_back':
+      return {
+        tone: 'success',
+        text: `已回滚到 ${result.to}。${result.from} 期间产生的数据库记录已另存在数据目录的 updates/rollback-… 下，旧版里不可见但没有丢。`
+      }
+    case 'apply_failed':
+      return {
+        tone: 'danger',
+        text: `更新到 ${result.to} 失败，已恢复 ${result.from}${result.reason ? `（${result.reason}）` : ''}。详情见数据目录 updates/apply.log。`
+      }
+    case 'rollback_failed':
+      return {
+        tone: 'danger',
+        text: `回滚到 ${result.to} 失败${result.reason ? `（${result.reason}）` : ''}，当前仍是 ${result.from}。详情见数据目录 updates/apply.log。`
+      }
+  }
+}
+
+type PendingConfirm = { action: 'install' | 'rollback'; gate: UpdateGate }
+
 /**
  * 设置页「软件更新」组：手动组件。状态卡 + 检查设置。主进程只推状态；这里只发意图，
  * 不经 App.tsx 传 props（自取 window.sgDesktop），与在途工作零冲突。
  */
 export function SettingsUpdate({ initialStatus, now = () => Date.now() }: SettingsUpdateProps): React.JSX.Element {
   const [status, setStatus] = useState<AppUpdateStatus | undefined>(initialStatus)
-  const [confirmGate, setConfirmGate] = useState<UpdateGate>()
+  const [confirm, setConfirm] = useState<PendingConfirm>()
   const [blockedNote, setBlockedNote] = useState<string>()
   const [feedDraft, setFeedDraft] = useState<string>()
   const [updatedNoteDismissed, setUpdatedNoteDismissed] = useState(false)
@@ -76,8 +105,16 @@ export function SettingsUpdate({ initialStatus, now = () => Date.now() }: Settin
         case 'install': {
           const result = await api.installAppUpdate({ confirmed: false })
           setStatus(result.status)
-          if (result.gate.verdict === 'confirm') setConfirmGate(result.gate)
+          if (result.gate.verdict === 'confirm') setConfirm({ action: 'install', gate: result.gate })
           else if (result.gate.verdict === 'block') setBlockedNote(result.gate.reasons.join(' '))
+          break
+        }
+        case 'rollback': {
+          // 回滚总要确认（会用更新前的库快照覆盖当前库）；confirmed:false 只是拿门禁结论。
+          const result = await api.rollbackAppUpdate({ confirmed: false })
+          setStatus(result.status)
+          if (result.gate.verdict === 'block') setBlockedNote(result.gate.reasons.join(' '))
+          else setConfirm({ action: 'rollback', gate: result.gate })
           break
         }
         case 'skip': setStatus(await api.skipAppUpdate()); break
@@ -93,13 +130,16 @@ export function SettingsUpdate({ initialStatus, now = () => Date.now() }: Settin
     }
   }
 
-  const confirmInstall = async (): Promise<void> => {
+  const confirmPending = async (): Promise<void> => {
     const api = updateApi()
-    if (!api) return
-    setConfirmGate(undefined)
-    setBusyAction('install')
+    if (!api || !confirm) return
+    const action = confirm.action
+    setConfirm(undefined)
+    setBusyAction(action)
     try {
-      const result = await api.installAppUpdate({ confirmed: true })
+      const result = action === 'install'
+        ? await api.installAppUpdate({ confirmed: true })
+        : await api.rollbackAppUpdate({ confirmed: true })
       setStatus(result.status)
       if (result.gate.verdict === 'block') setBlockedNote(result.gate.reasons.join(' '))
     } catch (reason) {
@@ -107,6 +147,15 @@ export function SettingsUpdate({ initialStatus, now = () => Date.now() }: Settin
     } finally {
       setBusyAction(undefined)
     }
+  }
+
+  const dismissApplyResult = (): void => {
+    const api = updateApi()
+    if (!api) {
+      setStatus((current) => current ? { ...current, applyResult: undefined } : current)
+      return
+    }
+    void api.dismissAppUpdateApplyResult().then(setStatus).catch(() => {})
   }
 
   const feedValue = feedDraft ?? settings.feedUrl ?? ''
@@ -121,7 +170,12 @@ export function SettingsUpdate({ initialStatus, now = () => Date.now() }: Settin
         aside={view && view.tone === 'accent' && !view.skippedNote ? <span className="app-update__badge">有新版本</span> : undefined}
       >
         <div className="app-update">
-          {status?.launchedAfterUpdate && !updatedNoteDismissed ? (
+          {status?.applyResult ? (
+            <p className={`app-update__updated is-${applyResultText(status.applyResult).tone}`} role={applyResultText(status.applyResult).tone === 'danger' ? 'alert' : 'status'}>
+              <span>{applyResultText(status.applyResult).text}</span>
+              <button type="button" aria-label="收起" onClick={dismissApplyResult}>×</button>
+            </p>
+          ) : status?.launchedAfterUpdate && !updatedNoteDismissed ? (
             <p className="app-update__updated" role="status">
               <span>已更新到 {status.currentVersion}。Cursor 里的 SG Team 服务器会随之重载一次；若席位长时间未恢复，到 Cursor 的 MCP 设置里刷新 SG Team。</span>
               <button type="button" aria-label="收起" onClick={() => setUpdatedNoteDismissed(true)}>×</button>
@@ -160,17 +214,20 @@ export function SettingsUpdate({ initialStatus, now = () => Date.now() }: Settin
                   {view.notes.slice(0, 12).map((line, index) => <p key={`${index}-${line}`}>{line}</p>)}
                 </div>
               ) : null}
-              {confirmGate?.verdict === 'confirm' ? (
-                <div className="app-update__confirm" role="alertdialog" aria-label="确认安装">
-                  {confirmGate.reasons.map((reason) => <p key={reason}>{reason}</p>)}
+              {confirm ? (
+                <div className="app-update__confirm" role="alertdialog" aria-label={confirm.action === 'install' ? '确认安装' : '确认回滚'}>
+                  {confirm.action === 'rollback' && view.rollback ? <p>{view.rollback.note}</p> : null}
+                  {confirm.gate.verdict === 'confirm' ? confirm.gate.reasons.map((reason) => <p key={reason}>{reason}</p>) : null}
                   <div className="app-update__actions">
-                    <button type="button" className="app-update__button is-primary" disabled={Boolean(busyAction)} onClick={() => void confirmInstall()}>仍然安装并重启</button>
-                    <button type="button" className="app-update__button" onClick={() => setConfirmGate(undefined)}>取消</button>
+                    <button type="button" className="app-update__button is-primary" disabled={Boolean(busyAction)} onClick={() => void confirmPending()}>
+                      {confirm.action === 'install' ? '仍然安装并重启' : `回滚到 ${view.rollback?.version ?? status?.rollback?.version ?? ''} 并重启`}
+                    </button>
+                    <button type="button" className="app-update__button" onClick={() => setConfirm(undefined)}>取消</button>
                   </div>
                 </div>
               ) : null}
               {blockedNote ? <p className="app-update__error" role="alert">{blockedNote}</p> : null}
-              {view.actions.length && !confirmGate ? (
+              {view.actions.length && !confirm ? (
                 <div className="app-update__actions">
                   {view.actions.map((action) => (
                     <button
@@ -183,6 +240,19 @@ export function SettingsUpdate({ initialStatus, now = () => Date.now() }: Settin
                       {action.label}
                     </button>
                   ))}
+                </div>
+              ) : null}
+              {view.rollback && !confirm ? (
+                <div className="app-update__rollback">
+                  <span>保留了 {view.rollback.version} 的备份，可以回滚。</span>
+                  <button
+                    type="button"
+                    className="app-update__button is-link"
+                    disabled={Boolean(busyAction)}
+                    onClick={() => void run('rollback')}
+                  >
+                    回滚到 {view.rollback.version}…
+                  </button>
                 </div>
               ) : null}
             </div>

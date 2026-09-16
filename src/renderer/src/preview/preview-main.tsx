@@ -18,6 +18,8 @@ import {
   appUpdateReminderVersion,
   evaluateUpdateGate,
   normalizeAppUpdateSettings,
+  type AppUpdateApplyResult,
+  type AppUpdateBackupInfo,
   type AppUpdateRelease,
   type AppUpdateSettings,
   type AppUpdateState,
@@ -850,6 +852,21 @@ let previewUpdateState: AppUpdateState = previewUpdateInitialState()
 const currentPreviewUpdateState = (): AppUpdateState => previewUpdateState
 let previewUpdateSettings: AppUpdateSettings = { autoCheck: true, checkIntervalHours: 6 }
 const updateListeners = new Set<Listener<AppUpdateStatus>>()
+/**
+ * mac 分支的走查参数：?updated=1（Windows `--updated` 提示）| applied | rolled_back | apply_failed（脚本结果横幅）；
+ * ?rollback=1 让卡片底部出现「回滚到 0.3.1」。
+ */
+const previewUpdatedParam = previewParameters.get('updated')
+let previewApplyResult: AppUpdateApplyResult | undefined = previewUpdatedParam === 'applied'
+  ? { status: 'applied', from: '0.3.1', to: '0.3.2', backupDir: '/Users/demo/Library/Application Support/sg-team/updates/backup/0.3.1-1789560000000' }
+  : previewUpdatedParam === 'rolled_back'
+    ? { status: 'rolled_back', from: '0.3.2', to: '0.3.1' }
+    : previewUpdatedParam === 'apply_failed'
+      ? { status: 'apply_failed', from: '0.3.1', to: '0.3.2', reason: 'codesign_failed' }
+      : undefined
+const previewRollback: AppUpdateBackupInfo | undefined = previewParameters.get('rollback') === '1'
+  ? { version: '0.3.1', createdAt: previewNow - 26 * 3_600_000, dir: '/Users/demo/Library/Application Support/sg-team/updates/backup/0.3.1-1789560000000' }
+  : undefined
 function previewUpdateStatus(): AppUpdateStatus {
   const reminderVersion = appUpdateReminderVersion(previewUpdateState, previewUpdateSettings, Date.now())
   const release = 'release' in previewUpdateState ? previewUpdateState.release : undefined
@@ -858,7 +875,9 @@ function previewUpdateStatus(): AppUpdateStatus {
     state: previewUpdateState,
     settings: previewUpdateSettings,
     ...(reminderVersion ? { reminderVersion } : {}),
-    launchedAfterUpdate: previewParameters.get('updated') === '1',
+    launchedAfterUpdate: previewUpdatedParam === '1',
+    ...(previewApplyResult ? { applyResult: previewApplyResult } : {}),
+    ...(previewRollback ? { rollback: previewRollback } : {}),
     releaseUrl: release?.releaseUrl ?? 'https://github.com/lyr339/SG-Team/releases/tag/v0.3.2'
   }
 }
@@ -1106,6 +1125,16 @@ const api: SgDesktopApi = {
     const gate = evaluateUpdateGate({ onlineSeats: state.desktop.sessions.filter((session) => session.online).length, sessionLaunchRunning: false })
     if (gate.verdict === 'block' || (gate.verdict === 'confirm' && !confirmed)) return { gate, status: previewUpdateStatus() }
     return { gate, status: pushUpdate({ phase: 'installing', release: previewUpdateState.release, startedAt: Date.now() }) }
+  },
+  rollbackAppUpdate: async ({ confirmed }) => {
+    if (!previewRollback) return { gate: { verdict: 'allow' as const }, status: previewUpdateStatus() }
+    const gate = evaluateUpdateGate({ onlineSeats: state.desktop.sessions.filter((session) => session.online).length, sessionLaunchRunning: false })
+    if (gate.verdict === 'block' || !confirmed) return { gate, status: previewUpdateStatus() }
+    return { gate, status: pushUpdate({ phase: 'rolling_back', targetVersion: previewRollback.version, startedAt: Date.now() }) }
+  },
+  dismissAppUpdateApplyResult: async () => {
+    previewApplyResult = undefined
+    return pushUpdate()
   },
   skipAppUpdate: async () => {
     const release = 'release' in previewUpdateState ? previewUpdateState.release : undefined

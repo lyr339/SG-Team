@@ -40,6 +40,26 @@
   opacity: .7;
 }
 .app-update__updated > button:hover { opacity: 1; background: color-mix(in srgb, currentColor 10%, transparent); }
+/* mac 脚本结果的失败态（更新失败已恢复 / 回滚失败）：同一横幅，换成危险色。 */
+.app-update__updated.is-danger {
+  color: var(--color-text-danger);
+  background: var(--color-background-danger);
+  border-color: var(--color-border-danger);
+}
+
+/* mac：卡片底部的回滚入口——一句说明 + 链接式按钮，不与主操作抢眼。 */
+.app-update__rollback {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: center;
+  padding-top: 10px;
+  color: var(--text-soft);
+  border-top: 1px solid var(--line-faint);
+  font-size: var(--fs-10);
+  line-height: 1.5;
+}
+.app-update__rollback > .app-update__button { min-height: 26px; padding: 0 6px; font-size: var(--fs-10); }
 
 .app-update__card {
   display: grid;

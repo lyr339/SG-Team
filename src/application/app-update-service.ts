@@ -6,6 +6,9 @@ import {
   nextAppUpdateCheckDelayMs,
   reduceAppUpdate,
   APP_UPDATE_SNOOZE_MS,
+  type AppUpdateApplyResult,
+  type AppUpdateBackupInfo,
+  type AppUpdateDownloadActivity,
   type AppUpdateEvent,
   type AppUpdateRelease,
   type AppUpdateSettings,
@@ -24,11 +27,13 @@ export interface AppUpdateDownloadProgress {
   receivedBytes: number
   totalBytes: number
   bytesPerSecond?: number
+  /** 缺省 = 传输中；`verify` = 传输完成，正在校验 / 解压（进度条走满、不再显示速率）。 */
+  activity?: AppUpdateDownloadActivity
 }
 
 /**
- * 更新器端口：把 electron-updater（或任何提供方）收成四个动作。实现里不得弹窗、不得
- * 自动下载或在退出时静默安装——手动组件的所有触发都在服务层由用户意图驱动。
+ * 更新器端口：把 electron-updater（Windows）或拾光自己的 mac 替换器收成同一组动作。实现里不得弹窗、
+ * 不得自动下载或在退出时静默安装——手动组件的所有触发都在服务层由用户意图驱动。
  */
 export interface AppUpdaterPort {
   /** 平台 / 打包状态是否支持应用内更新；不支持时给出人话原因。 */
@@ -40,6 +45,12 @@ export interface AppUpdaterPort {
   downloadUpdate(input: { onProgress: (progress: AppUpdateDownloadProgress) => void; signal: AbortSignal }): Promise<{ filePath?: string }>
   /** 退出拾光并运行安装器（安装完成后拉起新版）。同步抛错表示没能启动安装器。 */
   quitAndInstall(): void
+  /** mac：上次退出时辅助脚本留下的结果；取走即删，只报一次。 */
+  takePendingApplyResult?(): AppUpdateApplyResult | undefined
+  /** mac：可回滚到的备份（没有则 undefined）。 */
+  backupInfo?(): AppUpdateBackupInfo | undefined
+  /** mac：退出拾光并把备份里的旧版（含库）换回来。同步抛错表示没能开始。 */
+  rollback?(): void
 }
 
 export interface AppUpdateServiceDeps {
@@ -76,6 +87,8 @@ export class AppUpdateService {
   private downloadAbort: AbortController | undefined
   private lastProgressEmitAt = 0
   private lastProgressPercent = -1
+  private lastProgressActivity: AppUpdateDownloadActivity | undefined
+  private applyResult: AppUpdateApplyResult | undefined
   private readonly now: () => number
   private readonly timers: NonNullable<AppUpdateServiceDeps['timers']>
   private readonly log: (message: string) => void
@@ -95,19 +108,38 @@ export class AppUpdateService {
       ? { phase: 'idle', ...(this.lastCheckedAt !== undefined ? { lastCheckedAt: this.lastCheckedAt } : {}) }
       : { phase: 'unsupported', reason: support.reason }
     if (support.ok && this.settings.feedUrl) deps.port.setFeedUrl(this.settings.feedUrl)
+    // 上次退出时辅助脚本留下的结果（mac）：取走即删，本次运行报一次。读失败不影响启动。
+    try {
+      this.applyResult = deps.port.takePendingApplyResult?.()
+    } catch (error) {
+      this.log(`读取上次更新结果失败：${errorMessage(error)}`)
+    }
   }
 
   getStatus(): AppUpdateStatus {
     const now = this.now()
     const reminderVersion = appUpdateReminderVersion(this.state, this.settings, now)
     const release = 'release' in this.state ? this.state.release : undefined
+    const rollback = this.backupInfo()
     return {
       currentVersion: this.deps.currentVersion,
       state: this.state,
       settings: this.settings,
       ...(reminderVersion ? { reminderVersion } : {}),
       launchedAfterUpdate: this.deps.launchedAfterUpdate === true,
+      ...(this.applyResult ? { applyResult: this.applyResult } : {}),
+      ...(rollback ? { rollback } : {}),
       releaseUrl: release?.releaseUrl ?? appUpdateReleaseUrl(this.deps.currentVersion)
+    }
+  }
+
+  private backupInfo(): AppUpdateBackupInfo | undefined {
+    if (this.state.phase === 'unsupported') return undefined
+    try {
+      return this.deps.port.backupInfo?.()
+    } catch (error) {
+      this.log(`读取备份信息失败：${errorMessage(error)}`)
+      return undefined
     }
   }
 
@@ -169,11 +201,12 @@ export class AppUpdateService {
   }
 
   async download(): Promise<AppUpdateStatus> {
-    if (this.state.phase !== 'available') return this.getStatus()
+    if (this.state.phase !== 'available' || this.state.release.downloadable === false) return this.getStatus()
     const abort = new AbortController()
     this.downloadAbort = abort
     this.lastProgressEmitAt = 0
     this.lastProgressPercent = -1
+    this.lastProgressActivity = undefined
     this.dispatch({ type: 'download_started' })
     try {
       const result = await this.deps.port.downloadUpdate({
@@ -226,6 +259,36 @@ export class AppUpdateService {
     return { gate, status: this.getStatus() }
   }
 
+  /**
+   * 回滚到更新前的备份（mac）。与安装同一道门禁（一键建会话在途 block、席位在线 confirm），但回滚
+   * 还会用更新前的库快照覆盖当前库，所以**总是**要用户显式确认：`confirmed: false` 只返回门禁结论。
+   * 放行后置 rolling_back 并交给替换器——正常情况下进程随即退出；没有备份或端口不支持时原样返回。
+   */
+  rollback(input: { confirmed: boolean }): { gate: UpdateGate; status: AppUpdateStatus } {
+    const backup = this.backupInfo()
+    if (!backup || !this.deps.port.rollback) return { gate: { verdict: 'allow' }, status: this.getStatus() }
+    const gate = evaluateUpdateGate(this.deps.gateInput())
+    if (gate.verdict === 'block' || !input.confirmed) return { gate, status: this.getStatus() }
+    const before = this.state
+    this.dispatch({ type: 'rollback_started', targetVersion: backup.version })
+    if (this.state === before) return { gate, status: this.getStatus() }
+    try {
+      this.deps.port.rollback()
+    } catch (error) {
+      const message = errorMessage(error)
+      this.log(`开始回滚失败：${message}`)
+      this.dispatch({ type: 'rollback_failed', message })
+    }
+    return { gate, status: this.getStatus() }
+  }
+
+  /** 用户看过「已更新 / 已回滚 / 失败已恢复」的提示后清掉它。 */
+  dismissApplyResult(): AppUpdateStatus {
+    if (!this.applyResult) return this.getStatus()
+    this.applyResult = undefined
+    return this.emit()
+  }
+
   /** 跳过当前发现的版本：不再提醒，直到出现更高版本。只改设置，不改状态。 */
   skipCurrent(): AppUpdateStatus {
     const release = 'release' in this.state ? this.state.release : undefined
@@ -254,10 +317,13 @@ export class AppUpdateService {
     const percent = progress.totalBytes > 0 ? Math.floor((progress.receivedBytes / progress.totalBytes) * 100) : -1
     const dueByTime = now - this.lastProgressEmitAt >= PROGRESS_EMIT_INTERVAL_MS
     const dueByPercent = percent !== this.lastProgressPercent
+    // 传输 → 校验的切换必须立刻可见，不受节流。
+    const dueByActivity = progress.activity !== this.lastProgressActivity
     this.state = reduceAppUpdate(this.state, { type: 'download_progress', ...progress }, now)
-    if (!dueByTime && !dueByPercent) return
+    if (!dueByTime && !dueByPercent && !dueByActivity) return
     this.lastProgressEmitAt = now
     this.lastProgressPercent = percent
+    this.lastProgressActivity = progress.activity
     this.emit()
   }
 

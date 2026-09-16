@@ -440,6 +440,19 @@ const scenes = [
       return { text: confirm.textContent.slice(0, 60) }
     })()` }]
   },
+  // mac 分支：辅助脚本结果横幅（applied 绿 / apply_failed 红 alert）与回滚脚注 → 确认块（含数据回退警告）。
+  { name: 'settings-update-applied-light', hash: 'account:update', query: 'update=idle&updated=applied', width: 1440, height: 900, colorScheme: 'light', storage: baseStorage({ colorMode: 'light' }), clip: '.app-update' },
+  { name: 'settings-update-apply-failed-dark', hash: 'account:update', query: 'update=idle&updated=apply_failed', width: 1440, height: 900, colorScheme: 'dark', storage: baseStorage({ colorMode: 'dark' }), clip: '.app-update' },
+  {
+    name: 'settings-update-rollback-confirm-light', hash: 'account:update', query: 'update=idle&rollback=1', width: 1440, height: 900, colorScheme: 'light', storage: baseStorage({ colorMode: 'light' }), clip: '.app-update__card',
+    actions: [{ wait: 200 }, { click: '.app-update__rollback button' }, { wait: 200 }, { label: '回滚确认块', probe: `(() => {
+      const confirm = document.querySelector('.app-update__confirm')
+      if (!confirm) throw new Error('点击回滚后未出现确认块')
+      if (!confirm.textContent.includes('回滚会退出拾光')) throw new Error('确认块缺少数据回退警告')
+      if (document.querySelector('.app-update__rollback')) throw new Error('确认块出现时回滚脚注应收起')
+      return { text: confirm.textContent.slice(0, 60) }
+    })()` }]
+  },
   ...['light', 'dark'].map(colorScheme => ({
     name: `update-reminder-${colorScheme}`, query: 'update=available', width: 1440, height: 900, colorScheme, storage: baseStorage({ colorMode: colorScheme }), clip: null,
     actions: [{ wait: 300 }, { label: '小提醒框几何', probe: `(() => {

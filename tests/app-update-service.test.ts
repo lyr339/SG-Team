@@ -285,6 +285,105 @@ describe('AppUpdateService · 下载 / 安装 / 跳过 / 稍后', () => {
   })
 })
 
+describe('AppUpdateService · mac 回执与回滚', () => {
+  const backup = { version: '0.3.1', createdAt: 1_700_000_000_000, dir: 'D:\\data\\updates\\backup\\0.3.1-1' }
+
+  it('构造时取走上次的 applyResult 并入状态；dismiss 清掉并推送一次', () => {
+    const h = harness({ portOverrides: { takePendingApplyResult: () => ({ status: 'applied', from: '0.3.1', to: '0.3.2' }) } })
+    expect(h.service.getStatus().applyResult).toEqual({ status: 'applied', from: '0.3.1', to: '0.3.2' })
+    const cleared = h.service.dismissApplyResult()
+    expect(cleared.applyResult).toBeUndefined()
+    expect(h.statuses).toHaveLength(1)
+    h.service.dismissApplyResult()
+    expect(h.statuses).toHaveLength(1) // 没有回执时不再推送
+  })
+
+  it('takePendingApplyResult 抛错只记日志，服务照常可用', () => {
+    const h = harness({ portOverrides: { takePendingApplyResult: () => { throw new Error('EACCES') } } })
+    expect(h.service.getStatus().applyResult).toBeUndefined()
+    expect(h.logs.some((line) => line.includes('EACCES'))).toBe(true)
+  })
+
+  it('status.rollback 来自端口 backupInfo；读取抛错时缺省；unsupported 不问端口', () => {
+    const h = harness({ portOverrides: { backupInfo: () => backup } })
+    expect(h.service.getStatus().rollback).toEqual(backup)
+
+    const broken = harness({ portOverrides: { backupInfo: () => { throw new Error('EIO') } } })
+    expect(broken.service.getStatus().rollback).toBeUndefined()
+    expect(broken.logs.some((line) => line.includes('EIO'))).toBe(true)
+
+    let asked = 0
+    const unsupported = harness({ portOverrides: {
+      support: () => ({ ok: false, reason: '开发模式下不检查更新。' }),
+      backupInfo: () => { asked += 1; return backup }
+    } })
+    expect(unsupported.service.getStatus().rollback).toBeUndefined()
+    expect(asked).toBe(0)
+  })
+
+  it('rollback：无备份原样返回；block 拦下；未确认只给门禁结论；确认后 rolling_back 并调端口', () => {
+    const bare = harness()
+    expect(bare.service.rollback({ confirmed: true })).toMatchObject({ gate: { verdict: 'allow' }, status: { state: { phase: 'idle' } } })
+
+    const rollbackCalls: string[] = []
+    const portOverrides = {
+      backupInfo: () => backup,
+      rollback: () => { rollbackCalls.push('rollback') }
+    }
+    const blocked = harness({ portOverrides, gate: { onlineSeats: 1, sessionLaunchRunning: true } })
+    expect(blocked.service.rollback({ confirmed: true }).gate.verdict).toBe('block')
+    expect(rollbackCalls).toEqual([])
+
+    const confirmFirst = harness({ portOverrides, gate: { onlineSeats: 2, sessionLaunchRunning: false } })
+    const asked = confirmFirst.service.rollback({ confirmed: false })
+    expect(asked.gate.verdict).toBe('confirm')
+    expect(asked.status.state.phase).toBe('idle')
+    expect(rollbackCalls).toEqual([])
+    const done = confirmFirst.service.rollback({ confirmed: true })
+    expect(done.status.state).toEqual({ phase: 'rolling_back', targetVersion: '0.3.1', startedAt: confirmFirst.clock.now })
+    expect(rollbackCalls).toEqual(['rollback'])
+
+    // 门禁 allow 也必须显式确认（回滚会覆盖数据库）
+    const idle = harness({ portOverrides })
+    expect(idle.service.rollback({ confirmed: false }).status.state.phase).toBe('idle')
+    expect(rollbackCalls).toEqual(['rollback'])
+  })
+
+  it('rollback：下载进行中 reducer 拒绝换相 → 不调端口；端口抛错 → failed(rollback)', async () => {
+    const rollbackCalls: string[] = []
+    const h = harness({ portOverrides: { backupInfo: () => backup, rollback: () => { rollbackCalls.push('rollback') } } })
+    h.fake.setCheck({ available: true, release })
+    await h.service.check({ manual: true })
+    h.fake.setDownload(() => new Promise(() => {}))
+    void h.service.download()
+    expect(h.service.getStatus().state.phase).toBe('downloading')
+    expect(h.service.rollback({ confirmed: true }).status.state.phase).toBe('downloading')
+    expect(rollbackCalls).toEqual([])
+    h.service.stop()
+
+    const failing = harness({ portOverrides: { backupInfo: () => backup, rollback: () => { throw new Error('EPERM') } } })
+    const result = failing.service.rollback({ confirmed: true })
+    expect(result.status.state).toEqual({ phase: 'failed', step: 'rollback', message: 'EPERM', at: failing.clock.now })
+  })
+
+  it('下载进度的 activity 透传：切到 verify 立即推送、状态携带 activity 且速率摘除', async () => {
+    const h = harness()
+    h.fake.setCheck({ available: true, release })
+    await h.service.check({ manual: true })
+    h.fake.setDownload(async ({ onProgress }) => {
+      onProgress({ receivedBytes: 50, totalBytes: 100, bytesPerSecond: 1_000, activity: 'transfer' })
+      onProgress({ receivedBytes: 100, totalBytes: 100, activity: 'verify' })
+      return { filePath: '/staging/拾光.app' }
+    })
+    h.statuses.length = 0
+    await h.service.download()
+    const verifying = h.statuses.find((status) => status.state.phase === 'downloading' && status.state.activity === 'verify')
+    expect(verifying?.state).toMatchObject({ receivedBytes: 100, activity: 'verify' })
+    expect(verifying?.state).not.toHaveProperty('bytesPerSecond')
+    expect(h.statuses.at(-1)?.state).toMatchObject({ phase: 'downloaded', filePath: '/staging/拾光.app' })
+  })
+})
+
 describe('AppUpdateSettingsStore', () => {
   it('缺文件 / 坏文件 / 版本不符回默认；保存归一化并保留 runtime', () => {
     const dir = mkdtempSync(join(tmpdir(), 'sg-app-update-store-'))

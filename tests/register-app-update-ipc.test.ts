@@ -40,6 +40,8 @@ function harness(releaseUrl?: string) {
     download: vi.fn(async () => statusOf()),
     cancelDownload: vi.fn(() => statusOf()),
     install: vi.fn((input: unknown) => ({ gate: { verdict: 'allow' }, status: statusOf(), input })),
+    rollback: vi.fn((input: unknown) => ({ gate: { verdict: 'allow' }, status: statusOf(), input })),
+    dismissApplyResult: vi.fn(() => statusOf()),
     skipCurrent: vi.fn(() => statusOf()),
     unskip: vi.fn(() => statusOf()),
     snooze: vi.fn(() => statusOf()),
@@ -69,14 +71,18 @@ describe('软件更新 IPC', () => {
     await invoke(IPC.appUpdateInstall, { confirmed: true })
     await invoke(IPC.appUpdateInstall, null)
     expect(service.install.mock.calls.map(([input]) => input)).toEqual([{ confirmed: false }, { confirmed: true }, { confirmed: false }])
+    await invoke(IPC.appUpdateRollback, { confirmed: true })
+    await invoke(IPC.appUpdateRollback, 'junk')
+    expect(service.rollback.mock.calls.map(([input]) => input)).toEqual([{ confirmed: true }, { confirmed: false }])
+    await invoke(IPC.appUpdateDismissApplyResult)
     await invoke(IPC.appUpdateSkip)
     await invoke(IPC.appUpdateUnskip)
     await invoke(IPC.appUpdateSnooze)
     await invoke(IPC.appUpdateDismissFailure)
-    for (const method of [service.download, service.cancelDownload, service.skipCurrent, service.unskip, service.snooze, service.dismissFailure]) {
+    for (const method of [service.download, service.cancelDownload, service.dismissApplyResult, service.skipCurrent, service.unskip, service.snooze, service.dismissFailure]) {
       expect(method).toHaveBeenCalledTimes(1)
     }
-    expect(assertTrustedSender).toHaveBeenCalledTimes(11)
+    expect(assertTrustedSender).toHaveBeenCalledTimes(14)
   })
 
   it('保存设置先归一化：非法档位与垃圾字段不会到达服务', async () => {

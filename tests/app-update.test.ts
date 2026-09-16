@@ -8,6 +8,7 @@ import {
   isNewerAppVersion,
   nextAppUpdateCheckDelayMs,
   normalizeAppUpdateSettings,
+  parseAppUpdateApplyResult,
   parseAppVersion,
   reduceAppUpdate,
   releaseNotesToPlainText,
@@ -126,6 +127,40 @@ describe('app-update · 状态机', () => {
     const unsupported: AppUpdateState = { phase: 'unsupported', reason: 'dev' }
     expect(reduceAppUpdate(unsupported, { type: 'check_started' }, NOW)).toBe(unsupported)
     expect(reduceAppUpdate(unsupported, { type: 'check_available', release }, NOW)).toBe(unsupported)
+  })
+
+  it('mac：不可下载的发布不进入 downloading；进度事件的 activity=verify 摘掉速率；rolling_back 只从空闲相位出发，失败进 failed(rollback)', () => {
+    const notDownloadable: AppUpdateState = { phase: 'available', release: { ...release, downloadable: false }, checkedAt: NOW }
+    expect(reduceAppUpdate(notDownloadable, { type: 'download_started' }, NOW)).toBe(notDownloadable)
+
+    const downloading: AppUpdateState = { phase: 'downloading', release, receivedBytes: 50, totalBytes: 100, bytesPerSecond: 7, startedAt: NOW }
+    // 传输事件不带速率 → 沿用上一次
+    expect(reduceAppUpdate(downloading, { type: 'download_progress', receivedBytes: 60, totalBytes: 100 }, NOW)).toMatchObject({ receivedBytes: 60, bytesPerSecond: 7 })
+    const verifying = reduceAppUpdate(downloading, { type: 'download_progress', receivedBytes: 100, totalBytes: 100, activity: 'verify' }, NOW)
+    expect(verifying).toEqual({ phase: 'downloading', release, receivedBytes: 100, totalBytes: 100, activity: 'verify', startedAt: NOW })
+
+    const idle: AppUpdateState = { phase: 'idle' }
+    const rolling = reduceAppUpdate(idle, { type: 'rollback_started', targetVersion: '0.3.2' }, NOW)
+    expect(rolling).toEqual({ phase: 'rolling_back', targetVersion: '0.3.2', startedAt: NOW })
+    expect(reduceAppUpdate(rolling, { type: 'check_started' }, NOW)).toBe(rolling)
+    expect(reduceAppUpdate(rolling, { type: 'rollback_failed', message: 'no backup' }, NOW + 1))
+      .toEqual({ phase: 'failed', step: 'rollback', message: 'no backup', at: NOW + 1 })
+    expect(reduceAppUpdate(downloading, { type: 'rollback_started', targetVersion: '0.3.2' }, NOW)).toBe(downloading)
+    const installing: AppUpdateState = { phase: 'installing', release, startedAt: NOW }
+    expect(reduceAppUpdate(installing, { type: 'rollback_started', targetVersion: '0.3.2' }, NOW)).toBe(installing)
+    expect(shouldRemindAppUpdate(rolling, normalizeAppUpdateSettings({}), NOW)).toBe(false)
+  })
+
+  it('脚本结果解析：四种状态合法，缺字段 / 未知状态返回 undefined', () => {
+    expect(parseAppUpdateApplyResult({ status: 'applied', from: '0.3.3', to: '0.3.4', backupDir: '/b' }))
+      .toEqual({ status: 'applied', from: '0.3.3', to: '0.3.4', backupDir: '/b' })
+    expect(parseAppUpdateApplyResult({ status: 'apply_failed', from: '0.3.3', to: '0.3.4', reason: 'codesign_failed' }))
+      .toEqual({ status: 'apply_failed', from: '0.3.3', to: '0.3.4', reason: 'codesign_failed' })
+    expect(parseAppUpdateApplyResult({ status: 'rolled_back', from: '0.3.4', to: '0.3.3' })).toMatchObject({ status: 'rolled_back' })
+    expect(parseAppUpdateApplyResult({ status: 'rollback_failed', from: '0.3.4', to: '0.3.3', reason: 'x' })).toMatchObject({ status: 'rollback_failed' })
+    expect(parseAppUpdateApplyResult({ status: 'exploded', from: 'a', to: 'b' })).toBeUndefined()
+    expect(parseAppUpdateApplyResult({ status: 'applied', from: 'a' })).toBeUndefined()
+    expect(parseAppUpdateApplyResult(null)).toBeUndefined()
   })
 })
 

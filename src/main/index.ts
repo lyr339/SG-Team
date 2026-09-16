@@ -1,6 +1,6 @@
 import { WINDOW_MIN_WIDTH } from '../shared/window-layout'
-import { app, BrowserWindow, Menu, nativeImage, safeStorage, shell, Tray } from 'electron'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { app, BrowserWindow, Menu, nativeImage, net, safeStorage, shell, Tray } from 'electron'
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { SqliteTaskPoolRepository } from '../infrastructure/task-pool/sqlite-task-pool-repository'
 import { TaskPoolService } from '../application/task-pool-service'
@@ -22,7 +22,7 @@ import { registerTeamCollaborationIpc } from './register-team-collaboration-ipc'
 import { SqliteTeamContinuityRepository } from '../infrastructure/team-continuity/sqlite-team-continuity-repository'
 import { SqliteChannelMessageRepository } from '../infrastructure/channel-messages/sqlite-channel-message-repository'
 import { ChannelMessageRelay } from '../application/channel-message-relay'
-import { reconcileGlobalChannelServers } from '../infrastructure/cursor/global-mcp-registrar'
+import { globalMcpConfigPath, reconcileGlobalChannelServers } from '../infrastructure/cursor/global-mcp-registrar'
 import { resolveTaskMcpServerPath } from './task-mcp-runtime'
 import { TeamContinuityService } from '../application/team-continuity-service'
 import { TeamFailoverService } from '../application/team-failover-service'
@@ -99,6 +99,7 @@ import { legacyUserDataDirectory, resolveUserDataDirectory } from './user-data-d
 import { AppUpdateService } from '../application/app-update-service'
 import { AppUpdateSettingsStore } from '../application/app-update-settings-store'
 import { createElectronUpdaterPort } from '../infrastructure/app-update/electron-updater-port'
+import { createMacUpdaterPort } from '../infrastructure/app-update/mac-updater-port'
 import { registerAppUpdateIpc } from './register-app-update-ipc'
 // electron-updater 是 CJS，`autoUpdater` 是 exports 上的惰性 getter：主进程是 ESM，命名导入会在链接期
 // 找不到该导出（cjs-module-lexer 认不出 getter），只能默认导入整个 module.exports 再取属性。
@@ -835,15 +836,36 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   )
   disposeCursorUpdateIpc = registerCursorUpdateIpc(cursorUpdatePreferencesStore, () => mainWindow)
   // 拾光自更新（手动组件）：只静默检查，发现新版由渲染层出小提醒；下载 / 安装都由用户点。
-  // electron-updater 只在打包后的 Windows 上启用（mac 包 adhoc 签名过不了 Squirrel 校验）。
+  // Windows 走 electron-updater（NSIS）；mac 包是 adhoc 签名过不了 Squirrel 校验，走拾光自己的
+  // 清单 + 整包 mv 替换器（`/bin/sh` 脚本在退出后交换，失败换回，可回滚）。
+  const appUpdatePort = process.platform === 'darwin'
+    ? createMacUpdaterPort({
+        platform: process.platform,
+        arch: process.arch,
+        isPackaged: app.isPackaged,
+        execPath: process.execPath,
+        homeDir: homedir(),
+        currentVersion: app.getVersion(),
+        userDataDir: app.getPath('userData'),
+        databasePath,
+        // 备份里除库快照外的小文件：mcp.json（回滚后路径 / 版本 env 一致）与 userData 根下的所有 json 设置。
+        backupFiles: () => [
+          globalMcpConfigPath(),
+          ...readdirSync(app.getPath('userData')).filter((name) => name.endsWith('.json')).map((name) => join(app.getPath('userData'), name))
+        ],
+        fetch: (url, init) => net.fetch(url, init),
+        relaunch: (execPath, args) => app.relaunch({ execPath, args }),
+        quit: () => app.quit()
+      })
+    : createElectronUpdaterPort({
+        // 只在 Windows 上碰 getter（它才实例化 NsisUpdater）；其他平台不接更新器。
+        ...(process.platform === 'win32' ? { updater: electronUpdater.autoUpdater } : {}),
+        platform: process.platform,
+        isPackaged: app.isPackaged
+      })
   appUpdateServiceRef = new AppUpdateService({
     currentVersion: app.getVersion(),
-    port: createElectronUpdaterPort({
-      // 只在 Windows 上碰 getter（它才实例化 NsisUpdater）；其他平台不接更新器。
-      ...(process.platform === 'win32' ? { updater: electronUpdater.autoUpdater } : {}),
-      platform: process.platform,
-      isPackaged: app.isPackaged
-    }),
+    port: appUpdatePort,
     settings: new AppUpdateSettingsStore(join(app.getPath('userData'), 'app-update.json')),
     gateInput: () => ({
       onlineSeats: desktopSessionService?.getSnapshot().sessions.filter((session) => session.online).length ?? 0,
