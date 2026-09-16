@@ -802,6 +802,8 @@ export interface TeamRoleBriefingGroup {
   /** 有效 lead 的角色名 + 通道（`主控协调 · CH-1`）；无 lead 组为空。 */
   leadLabel?: string
   memberCount: number
+  /** 无 lead 且策略 any_member：组内任一成员都能 team_task plan（见 `groupMembersMayPlan`）。 */
+  membersMayPlan?: boolean
 }
 
 export function buildTeamRoleBriefing(input: {
@@ -825,27 +827,35 @@ export function buildTeamRoleBriefing(input: {
   })
   // 带 channel_id 的调用示例：`{channel_id:'2', view:'board'}`。
   const call = (args: string) => `{channel_id:'${channelId}', ${args}}`
+  // 无 lead 且允许全员规划的组：成员也持有规划权（`groupMembersMayPlan`）。
+  const memberMayPlan = !effectiveLead && group?.membersMayPlan === true
+  const planRule = `只有收到用户明确要求“开始 / 分配 / 拆任务 / 执行”后，才用 team_task(${call("action:'plan', tasks:[...]")}) 创建带依赖、验收标准和目标 AgentSlot 的计划；创建后由拾光自动分派、催办与派验收，不需要你逐条派发。`
   const roleWorkflow = effectiveLead
-    ? `2. 调用 team_tasks(${call("view:'board'")}) 了解任务板。启动后即使任务板为空也只待命，不要依据团队目标自行调用 team_task plan；只有收到用户明确要求“开始 / 分配 / 拆任务 / 执行”后，才用 team_task(${call("action:'plan', tasks:[...]")}) 创建带依赖、验收标准和目标 AgentSlot 的计划。`
+    ? `2. 调用 team_tasks(${call("view:'board'")}) 了解任务板。启动后即使任务板为空也只待命，不要依据团队目标自行调用 team_task plan；${planRule}`
     : role.templateKey === 'reviewer'
       ? `2. 优先调用 team_tasks(${call("view:'reviews'")}) 并用 team_review(${call("action:'claim'")}) 领取独立验收；没有待验收项时再看 view:'mine' / view:'available'。`
-      : `2. 调用 team_tasks(${call("view:'mine'")})；有 leased/running 任务就继续，否则看 view:'available' 并用 team_task(${call("action:'claim'")}) 按能力领取。`
+      : `2. 调用 team_tasks(${call("view:'mine'")})；有 leased/running 任务就继续，否则看 view:'available' 并用 team_task(${call("action:'claim'")}) 按能力领取。${memberMayPlan ? `本组允许全体成员规划：${planRule}` : ''}`
   const executionWorkflow = role.templateKey === 'reviewer'
     ? "3. 验收必须独立复现并检查验收标准；用 team_review({action:'renew'}) 续租，最后用 team_review({action:'submit', decision, evidence, reason}) 提交通过证据或明确打回原因。"
     : "3. 领取后 team_task({action:'start'})；每个里程碑（实现完成、测试完成、遇到阻塞、返工完成）都用 team_task({action:'progress', progress, summary}) 上报，长任务定期 action:'renew' 续租；完成后 team_task({action:'submit', output}) 提交验收，不能自行宣布验收通过。"
+  // 阶段 2 · 2A（决策 D1）：分派、催办、派验收、打回后的重派全部由桌面编排器完成；lead 只规划、答用户、汇总真实上报，
+  // 成员的上报由 team_task / team_review 动作自动生成，不再要求手写一条 team_message。
   const collaborationWorkflow = effectiveLead
-    ? "4. 收件箱优先：每次被唤醒先 team_message({action:'inbox'}) 处理未读上报——成员的进度/提交/失败/验收是你调度的唯一依据，收到重要上报立即推进下一步（安排验收、打回返工、收尾）。只有出现新的可执行结论、阻塞、需要用户决策或用户明确询问时，才用 record_reply 向用户同步 1—3 句；无未读、已读重复、纯 keepalive 一律静默续等，禁止制造可见消息堵塞队列。用户要求“全体/各角色/多人”回答时必须 team_message broadcast + collect 收真实回应，禁止代答。"
-    : "4. 每轮先处理未读：team_message({action:'inbox'}) / team_message({action:'read', messageId})；directive 或 question 必须用 team_message({action:'respond', messageId, content}) 回应原 messageId。关键节点主动向主控上报（team_task progress / team_message send），静默干活即失职。"
+    ? "4. 收件箱优先：每次被唤醒先 team_message({action:'inbox'}) 读未读——成员的 status 上报与系统的【任务完成】/【任务失败】/【成员离线提醒】是你向用户汇报的依据。分派、催办、派验收、打回后的重派由拾光自动完成，你不要手动调度、催办或安排验收。只有出现新的可执行结论、阻塞、需要用户决策或用户明确询问时，才用 record_reply 向用户同步 1—3 句；无未读、已读重复、纯 keepalive 一律静默续等，禁止制造可见消息堵塞队列。用户要求“全体/各角色/多人”回答时必须 team_message broadcast + collect 收真实回应，禁止代答。"
+    : "4. 每轮先处理未读：team_message({action:'inbox'}) / team_message({action:'read', messageId})；directive 或 question 必须用 team_message({action:'respond', messageId, content}) 回应原 messageId。领取、进度、提交、失败与验收结论会随 team_task / team_review 的动作自动上报主控，不要再另发 team_message 复述；只有遇到需要主控或用户决策的阻塞时才 team_message send。"
   const skills = role.skills.length
     ? `已分配 Agent Skills：${role.skills.map((skill) => `/${skill.name}`).join('、')}。只在任务相关时按 Cursor Skills 机制调用，不要把技能名称当作已完成工作。`
     : '当前席位没有单独指定 Agent Skill；仍可按 Cursor 自动发现机制使用工作区内相关技能。'
   const scopeLabel = group ? `协作组「${group.name}」` : '本 TeamRun'
+  const leaderlessLabel = group?.membersMayPlan
+    ? '无——任务由用户在拾光里创建，或由任一成员规划，系统自动分派'
+    : '无——任务由用户在拾光里创建并自动分派，组内成员只共享目标、消息与记忆'
   return [
     group
-      ? `你是拾光外置协作中枢中协作组「${group.name}」的「${role.name}」Agent（组内 ${group.memberCount} 名成员；lead：${group.leadLabel ?? '无——本组只共享目标、消息与记忆，没有任务板调度'}）。`
+      ? `你是拾光外置协作中枢中协作组「${group.name}」的「${role.name}」Agent（组内 ${group.memberCount} 名成员；lead：${group.leadLabel ?? leaderlessLabel}）。`
       : `你是拾光外置协作中枢中的「${role.name}」Agent。`,
     effectiveLead && role.templateKey !== 'lead'
-      ? `当前权限：你已接管为${scopeLabel}的唯一有效主控；保留原专业职责，同时承担全局规划、调度、消息协调与收尾责任。`
+      ? `当前权限：你已接管为${scopeLabel}的唯一有效主控；保留原专业职责，同时承担全局规划、消息协调与向用户汇报的责任（分派与催办由拾光自动完成）。`
       : input.originalLeadDemoted
         ? '当前权限：主控权限已转移给临时主控；你保留原席位上下文，但不得再调用主控专用工具，直至权限复位。'
         : '',
@@ -866,9 +876,9 @@ export function buildTeamRoleBriefing(input: {
     '5. 单点 Agent 间指令与回应用 team_message 的 send / respond，以 messageId 建立回执；禁止用普通回复或冒充成员已响应。',
     "6. 会影响团队后续工作的决策、约束、风险或经验，用 team_memory({action:'propose', kind, title, content, sources}) 记录并附消息/任务/文件来源；主控与质量角色用 team_memory review 处理待确认提案，不要求用户整理记忆。",
     effectiveLead
-      ? '7. 只有任务板已由用户明确启动/分配后，才主动调度、催办（team_message send 询问成员）或处理真实上报；空任务板表示等待用户下一条指令。向用户说明现状只用于状态真的变化、出现阻塞或用户询问，禁止重复发送同一进展。'
+      ? '7. 空任务板表示等待用户下一条指令。有任务时不要催办、不要安排验收、不要打回返工——验收结论由质量角色给出，系统负责重派；收到【任务失败】后是否重新规划由你判断。向用户说明现状只用于状态真的变化、出现阻塞或用户询问，禁止重复发送同一进展。'
       : group && !group.leadLabel
-        ? '7. 本组没有 lead：任务由用户直接指派，成员间用 team_message 协调；额度耗尽、工具缺失或无法推进时用 record_reply 向用户说明一次。'
+        ? `7. 本组没有 lead：任务由用户在拾光里创建${group.membersMayPlan ? '，或按第 2 条由成员规划' : ''}，系统自动分派；成员间用 team_message 协调；额度耗尽、工具缺失或无法推进时用 record_reply 向用户说明一次。`
         : '7. 额度耗尽、工具缺失或无法推进时，立即向主控 team_message send 上报阻塞原因与已尝试步骤，禁止沉默卡死。',
     ...(group
       ? [`成员关系：拾光操作员随时可能把你移出本组或解散本组，届时 check_messages 会投递${MEMBERSHIP_NOTICE_PREFIX}；出组后回到只用 check_messages / record_reply，不再调用 team_*。`]

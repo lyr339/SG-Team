@@ -151,9 +151,56 @@ describe('team control domain', () => {
       }
     })
     expect(prompt).toContain('唯一有效主控')
-    expect(prompt).toContain('全局规划、调度、消息协调')
+    expect(prompt).toContain('全局规划、消息协调与向用户汇报的责任（分派与催办由拾光自动完成）')
     expect(prompt).toContain("team_tasks({channel_id:'2', view:'board'})")
     expect(prompt).toContain('team_message broadcast + collect')
+  })
+
+  it('briefs lead and members for an orchestrator-driven team: no manual dispatch / chase / review scheduling, no hand-written status reports (2A)', () => {
+    const bundle = createDefaultTeamBundle({
+      workspaceId: 'orch', workspaceName: 'orch', workspacePath: '/workspace/orch',
+      channelIds: ['1', '2', '3'], now: 100
+    })
+    bundle.run.goal = '编排边界'
+    const bindingFor = (slot: (typeof bundle.slots)[number]) => ({
+      id: `binding-${slot.channelId}`, workspaceId: bundle.workspace.id, runId: bundle.run.id,
+      slotId: slot.id, channelId: slot.channelId!, agentSessionId: `orch:ch-${slot.channelId}:g`,
+      generation: 'g', installedAt: 100, launchStatus: 'acknowledged' as const,
+      launchDetail: '', lastCheckInNote: '', composerBindingKey: 'g'
+    })
+    const briefingOf = (templateKey: string, group?: Parameters<typeof buildTeamRoleBriefing>[0]['group']) => {
+      const role = bundle.roles.find((candidate) => candidate.templateKey === templateKey)!
+      const slot = bundle.slots.find((candidate) => candidate.roleId === role.id)!
+      return buildTeamRoleBriefing({ run: bundle.run, role, slot, binding: bindingFor(slot), effectiveLead: templateKey === 'lead', group })
+    }
+
+    const lead = briefingOf('lead')
+    // lead：规划 + 答用户 + 汇总真实上报；催办 / 安排验收 / 打回返工三句删除，禁止代答保留。
+    expect(lead).toContain('分派、催办、派验收、打回后的重派由拾光自动完成')
+    expect(lead).toContain('不要催办、不要安排验收、不要打回返工')
+    expect(lead).toContain('【任务完成】/【任务失败】/【成员离线提醒】')
+    expect(lead).toContain('禁止代答')
+    expect(lead).not.toContain('安排验收、打回返工、收尾')
+    expect(lead).not.toContain('才主动调度、催办')
+    expect(lead).not.toContain('team_message send 询问成员')
+
+    const builder = briefingOf('builder')
+    // 成员：上报由 team_task / team_review 动作自动生成，不再要求手写 team_message；respond 义务保留。
+    expect(builder).toContain('自动上报主控，不要再另发 team_message 复述')
+    expect(builder).not.toContain('静默干活即失职')
+    expect(builder).not.toContain('关键节点主动向主控上报')
+    expect(builder).toContain("team_message({action:'respond', messageId, content})")
+    expect(builder).not.toContain('本组允许全体成员规划')
+
+    // 无 lead 组：any_member 时成员简报带规划规则；lead_only 时说明任务由用户创建、成员只共享。
+    const flat = briefingOf('builder', { name: '扁平组', goal: '', memberCount: 2, membersMayPlan: true })
+    expect(flat).toContain('lead：无——任务由用户在拾光里创建，或由任一成员规划，系统自动分派')
+    expect(flat).toContain('本组允许全体成员规划：只有收到用户明确要求')
+    expect(flat).toContain('或按第 2 条由成员规划')
+    const sharing = briefingOf('builder', { name: '共享组', goal: '', memberCount: 2, membersMayPlan: false })
+    expect(sharing).toContain('lead：无——任务由用户在拾光里创建并自动分派，组内成员只共享目标、消息与记忆')
+    expect(sharing).not.toContain('本组允许全体成员规划')
+    expect(sharing).not.toContain('由成员规划')
   })
 
   it('requires exactly one lead regardless of team size', () => {

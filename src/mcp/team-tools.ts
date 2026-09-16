@@ -252,7 +252,7 @@ export function registerTeamTools(server: McpServer, deps: TeamToolsDeps): void 
     'team_task',
     {
       title: '推进任务',
-      description: 'claim：原子领取（不传 taskId 按优先级领取下一条匹配能力的任务）；start：leased→running；renew：延长 Lease，长任务定期调用；progress：单调进度 0–99 + 阶段摘要；submit：提交完整交付并释放 Lease，任务进入 review（不是直接完成）；fail：报告明确失败原因，系统按 maxAttempts 回池或 failed；plan（主控专用）：仅在真实用户明确要求开始/分配/拆任务/执行后，原子创建 1–30 条带依赖与目标 AgentSlot 的可验收任务。所有动作重试安全。',
+      description: 'claim：原子领取（不传 taskId 按优先级领取下一条匹配能力的任务）；start：leased→running；renew：延长 Lease，长任务定期调用；progress：单调进度 0–99 + 阶段摘要；submit：提交完整交付并释放 Lease，任务进入 review（不是直接完成）；fail：报告明确失败原因，系统按 maxAttempts 回池或 failed；plan（有效主控；无 lead 且允许全员规划的组内任一成员）：仅在真实用户明确要求开始/分配/拆任务/执行后，原子创建 1–30 条带依赖与目标 AgentSlot 的可验收任务，之后由拾光自动分派。所有动作重试安全。',
       inputSchema: z.object(channelSchema).extend({
         action: z.enum(['claim', 'start', 'renew', 'progress', 'submit', 'fail', 'plan']),
         taskId: taskIdSchema,

@@ -9,7 +9,7 @@ import { SqliteTeamMemoryRepository } from '../infrastructure/team-memory/sqlite
 import { TeamMemoryAgentService } from '../application/team-memory-agent-service'
 import { SqliteChannelMessageRepository } from '../infrastructure/channel-messages/sqlite-channel-message-repository'
 import { ChannelMessageService } from '../application/channel-message-service'
-import { buildTeamRoleBriefing, effectiveGroupLeadSlotId } from '../domain/team-control'
+import { buildTeamRoleBriefing, effectiveGroupLeadSlotId, groupMembersMayPlan } from '../domain/team-control'
 import { TaskPoolError } from '../domain/task-pool'
 import { isPresenceOnline, resolveKeepaliveTimeoutMs } from '../domain/channel-message'
 import { createUnifiedChannelServer } from './unified-channel-server'
@@ -122,7 +122,8 @@ async function serveUnified(databasePath: string): Promise<void> {
           name: group.name,
           goal: group.goal,
           leadLabel: leadSlot ? `${leadRole?.name ?? '主控'} · CH-${leadBinding?.channelId ?? leadSlot.channelId ?? '?'}` : undefined,
-          memberCount: members.length
+          memberCount: members.length,
+          membersMayPlan: groupMembersMayPlan(group)
         }
       })
     }
