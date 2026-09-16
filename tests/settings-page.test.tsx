@@ -310,7 +310,7 @@ describe('SettingsPage', () => {
         }
       })
     })} />)
-    expect(html).toMatch(/第 2 步：奥仔处理，进行中[\s\S]*?automation-run__handover is-preparing/)
+    expect(html).toMatch(/第 2 步：奥仔处理，进行中[\s\S]*?第 4 步：收尾，等待[\s\S]*?automation-run__handover is-preparing/)
     expect(html).toContain('<strong>spare@example.com</strong>')
     expect(html).toContain('<em>准备中</em>')
     expect(html).toContain('title="票据已就绪，等待退款完成"')
@@ -444,15 +444,19 @@ describe('SettingsPage', () => {
     expect(html).toContain('automation-run__badge is-running">进行中')
     expect(html).toContain('aria-label="第 1 步：准备，进行中"')
     expect(html).toContain('aria-current="step"')
-    expect(html).toContain('aria-label="倒计时 7 秒"')
-    expect(html).toContain('<b>7</b><span>秒</span>')
-    expect(html).toContain('7 秒后开始处理当前账号')
+    // 倒计时 = 当前节点上的进度环 + 说明行里的整秒读数；旧的 6.5 / 6.5s 与「（可取消）」不再出现
+    expect(html).toMatch(/automation-run__node is-running has-countdown"[\s\S]*?class="automation-run__ring"/)
+    expect(html).toMatch(/automation-run__stage-detail" aria-live="polite">7 秒后开始处理当前账号</)
     expect(html).not.toContain('6.5s')
     expect(html).not.toContain('6.5 秒')
     expect(html).not.toContain('（可取消）')
     expect(html).toMatch(/automation-run__head[\s\S]*?class="secondary-button automation-run__cancel"[^>]*>取消<\/button>/)
-    // 单次运行只有一个倒计时读数、一条状态文字
-    expect(html.match(/automation-run__countdown/g)).toHaveLength(1)
+    // 单次运行只有一个进度环、一条读数
+    expect(html.match(/has-countdown/g)).toHaveLength(1)
+    expect(html.match(/秒后开始处理当前账号/g)).toHaveLength(1)
+    // 节点不再是序号 / 旋转弧
+    expect(html).not.toContain('flow-status-icon')
+    expect(html).not.toContain('<b>02</b>')
   })
 
   it('倒计时归零后的复核窗口：不再显示读数，也不再提供无效的取消', () => {
@@ -463,7 +467,7 @@ describe('SettingsPage', () => {
       />
     )
     expect(html).toContain('倒计时结束，正在复核会话')
-    expect(html).not.toContain('automation-run__countdown')
+    expect(html).not.toContain('has-countdown')
     expect(html).not.toContain('automation-run__cancel')
   })
 

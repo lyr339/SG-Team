@@ -625,129 +625,151 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
   font-variant-numeric: tabular-nums;
 }
 
-/* 纵向时间线：节点列 + 文字列；节点之间用 hairline 竖线相连，完成段染绿。 */
+/* 横向四阶段轨道：每列 = 节点 + 标题 + 一行说明，左对齐；节点之间 hairline 相连，完成段染绿。 */
 .automation-run__stages {
   display: grid;
-  gap: 2px;
-  margin: 0;
-  padding: 10px 14px 12px;
-  list-style: none;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  column-gap: 16px;
+  row-gap: 6px;
+  padding: 14px 14px 13px;
 }
 
 .automation-run__stage {
   position: relative;
   min-width: 0;
   display: grid;
-  grid-template-columns: 22px minmax(0, 1fr) auto;
-  grid-template-areas:
-    'node title aside'
-    'node detail detail'
-    'node branch branch';
-  column-gap: 12px;
-  row-gap: 2px;
-  padding: 5px 0 9px;
+  grid-template-rows: 22px auto auto;
+  row-gap: 3px;
+  justify-items: start;
+  align-content: start;
 }
 
-.automation-run__stage::before {
+.automation-run__stage::after {
   content: '';
   position: absolute;
-  top: 29px;
-  bottom: -3px;
-  left: 10.5px;
-  width: 1px;
+  top: 10.5px;
+  left: 30px;
+  right: -8px;
+  height: 1px;
   background: var(--line);
   transition: background 300ms ease;
 }
 
-.automation-run__stage:last-child::before { display: none; }
-.automation-run__stage.is-done::before { background: var(--color-border-success); }
-
-.automation-run__stage > .flow-status-icon {
-  grid-area: node;
-  margin-top: 1px;
-  box-shadow: 0 0 0 3px var(--surface);
-  transition: color 200ms ease, background 200ms ease, border-color 200ms ease;
-}
+.automation-run__stage:last-child::after { display: none; }
+.automation-run__stage.is-done::after { background: var(--color-border-success); }
 
 .automation-run__stage-title {
-  grid-area: title;
-  align-self: center;
+  margin-top: 5px;
   color: var(--muted);
   font-size: var(--fs-11);
   font-weight: 600;
-  line-height: 24px;
+  line-height: 1.35;
   transition: color 200ms ease;
 }
 
 .automation-run__stage-detail {
-  grid-area: detail;
   min-width: 0;
   color: var(--muted);
   font-size: var(--fs-10);
   line-height: 1.5;
   overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
   transition: color 200ms ease;
 }
 
 .automation-run__stage.is-done .automation-run__stage-title { color: var(--text-soft); }
-.automation-run__stage.is-running .automation-run__stage-title { color: var(--text); }
-.automation-run__stage.is-running .automation-run__stage-detail { color: var(--text-soft); }
+.automation-run__stage.is-running .automation-run__stage-title,
+.automation-run__stage.is-running .automation-run__stage-detail { color: var(--text); }
 .automation-run__stage.is-failed .automation-run__stage-title,
 .automation-run__stage.is-failed .automation-run__stage-detail { color: var(--red); }
 .automation-run__stage.is-cancelled .automation-run__stage-title { color: var(--text-soft); }
 .automation-run__stage.is-skipped .automation-run__stage-title,
 .automation-run__stage.is-skipped .automation-run__stage-detail { color: var(--faint); }
 
-/* 倒计时：进度环随剩余时间线性排空（每个 0.5s tick 之间连续过渡），读数整秒、等宽。 */
-.automation-run__countdown {
-  grid-area: aside;
-  align-self: center;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--blue);
+/* 节点：22px 圆位。等待 = 细描空环；进行中 = 实心信息蓝 + 白芯 + 呼吸光晕；
+   倒计时期间光晕换成随剩余时间线性排空的进度环（tick 之间连续过渡）；终态 = 实心色块 + 勾 / 叉 / 横。 */
+.automation-run__node {
+  position: relative;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  transition: background 200ms ease, color 200ms ease;
 }
 
-.automation-run__countdown svg {
-  width: 18px;
-  height: 18px;
+.automation-run__node > svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* 勾 / 叉 / 横：14px 字形居中；进度环另有 22px 满位规则。 */
+.automation-run__node > svg:not(.automation-run__ring) {
+  width: 14px;
+  height: 14px;
+  stroke-width: 1.9;
+}
+
+.automation-run__node.is-waiting::before,
+.automation-run__node.is-skipped::before {
+  content: '';
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid var(--line-strong);
+  border-radius: 50%;
+}
+
+.automation-run__node.is-skipped::before { border-color: var(--line); border-style: dashed; }
+
+.automation-run__node.is-running {
+  color: #fff;
+  background: var(--blue);
+  animation: automation-node-pulse 1.8s ease-out infinite;
+}
+
+.automation-run__node.is-running::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  background: currentColor;
+  border-radius: 50%;
+}
+
+.automation-run__node.is-running.has-countdown {
+  color: var(--blue);
+  background: transparent;
+  animation: none;
+}
+
+.automation-run__ring {
+  position: absolute;
+  inset: 0;
+  width: 22px;
+  height: 22px;
   transform: rotate(-90deg);
 }
 
-.automation-run__countdown circle {
-  fill: none;
-  stroke: var(--blue-border);
-  stroke-width: 2;
-  opacity: 0.45;
+.automation-run__ring circle { stroke-width: 2; stroke: var(--blue-border); opacity: 0.45; }
+.automation-run__ring circle + circle { stroke: var(--blue); stroke-linecap: round; opacity: 1; transition: stroke-dashoffset 500ms linear; }
+
+.automation-run__node.is-done { color: #fff; background: var(--color-text-success); }
+.automation-run__node.is-failed { color: #fff; background: var(--red); }
+.automation-run__node.is-cancelled { color: var(--muted); background: var(--surface-soft); box-shadow: inset 0 0 0 1px var(--line); }
+
+@keyframes automation-node-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--blue) 32%, transparent); }
+  70%, 100% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--blue) 0%, transparent); }
 }
 
-.automation-run__countdown circle + circle {
-  stroke: var(--blue);
-  stroke-linecap: round;
-  opacity: 1;
-  transition: stroke-dashoffset 500ms linear;
-}
-
-.automation-run__countdown b {
-  min-width: 2ch;
-  font: 650 var(--fs-12)/1 var(--mono);
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-}
-
-.automation-run__countdown > span {
-  color: var(--text-soft);
-  font-size: var(--fs-10);
-}
-
-/* 无感切换：奥仔处理步下的并行分支，一行「接手账号 · 状态」。 */
+/* 无感切换：与主链并行的分支，从奥仔处理列起横跨到末列，一行「接手账号 · 状态」。 */
 .automation-run__handover {
-  grid-area: branch;
+  grid-column: 2 / -1;
   min-width: 0;
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-top: 4px;
   color: var(--muted);
   font-size: var(--fs-10);
   line-height: 1.5;
@@ -759,7 +781,7 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
   flex: 0 0 auto;
   width: 8px;
   height: 8px;
-  margin: -6px 2px 0 1px;
+  margin: -6px 2px 0 6px;
   border-left: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
   border-radius: 0 0 0 4px;
@@ -966,11 +988,13 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
   .automation-run__handover { animation: none; }
 
   .automation-run__badge,
-  .automation-run__stage::before,
-  .automation-run__stage > .flow-status-icon,
+  .automation-run__stage::after,
+  .automation-run__node,
   .automation-run__stage-title,
   .automation-run__stage-detail,
-  .automation-run__countdown circle + circle { transition: none; }
+  .automation-run__ring circle + circle { transition: none; }
+
+  .automation-run__node.is-running { animation: none; }
 
   .settings-nav__dot.is-running { animation: none; }
 }
