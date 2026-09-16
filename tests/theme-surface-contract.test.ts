@@ -88,9 +88,13 @@ describe('theme surface contracts', () => {
   })
 
   it('keeps the session roster on the inspector language: one frame, hairlines, accent only for selection', () => {
-    // 行不再自带边框 / 阴影；选中态 = 左缘 2px 信号橙 + 底色；状态色只在 --rail-state 驱动的状态点上。
+    // 行不再自带边框 / 阴影；选中态 = 左缘光刃（亮→深渐变 + --accent-glow 余晖）+ 自左缘晕开的淡橙；
+    // 状态色只在 --rail-state 驱动的状态点上；选中底色与 hover 的中性灰不再共享（区分度的根因约束）。
     expect(styles).toMatch(/\.session-row\s*\{[^}]*background:\s*transparent;\s*border:\s*0;/s)
-    expect(styles).toMatch(/\.session-row::before\s*\{[^}]*width:\s*2px;[^}]*background:\s*var\(--accent\)/s)
+    expect(styles).toMatch(/\.session-row::before\s*\{[^}]*width:\s*3px;[^}]*background:\s*linear-gradient\(to bottom, var\(--accent-bright\), var\(--accent-deep\)\)[^}]*box-shadow:[^}]*var\(--accent-glow\)/s)
+    expect(styles).toMatch(/\.session-row\.is-selected\s*\{\s*background:\s*linear-gradient\(to right, color-mix\(in srgb, var\(--accent\) 7%, transparent\), transparent\)/)
+    expect(styles).not.toMatch(/\.session-row\.is-selected\s*\{[^}]*var\(--surface-soft\)/)
+    expect(styles).toContain('--accent-glow: light-dark(')
     expect(styles).toMatch(/\.session-row\.is-waiting\s*\{\s*--rail-state:\s*var\(--color-text-success\)/)
     expect(styles).toMatch(/\.session-row\.is-active\s*\{\s*--rail-state:\s*var\(--color-text-info\)/)
     expect(styles).toMatch(/\.session-row\.is-attention\s*\{\s*--rail-state:\s*var\(--color-text-warning\)/)
@@ -99,9 +103,10 @@ describe('theme surface contracts', () => {
     expect(styles).toMatch(/\.session-pane\s*\{[^}]*--rail-reading-opacity:\s*max\(0\.92, var\(--card-opacity\)\)/s)
     expect(styles).toMatch(/\.session-list\s*\{[^}]*var\(--rail-reading-opacity\)/s)
     expect(styles).toMatch(/\.session-group__header\s*\{[^}]*position:\s*sticky[^}]*background:\s*var\(--surface-solid\)/s)
-    // 上下文光环：三档天色；reduced-motion 下脉冲与弧长过渡都关闭。
+    // 上下文光环：三档天色；reduced-motion 下脉冲与弧长过渡都关闭，光刃的生长过渡也直接落位。
     expect(styles).toMatch(/\.session-row__ring\.is-dusk \.session-row__ring-arc\s*\{\s*stroke:\s*var\(--sky-dusk\)/)
     expect(styles).toMatch(/@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\.session-row\.is-active \.session-row__state > i\s*\{\s*animation:\s*none/)
+    expect(styles).toMatch(/@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\.session-row::before[^{]*\{\s*transition:\s*none/)
     expect(styles).not.toContain('.rail-session-card')
     expect(styles).not.toContain('.session-filters')
   })

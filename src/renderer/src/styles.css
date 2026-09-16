@@ -36,6 +36,8 @@
   --accent: var(--anthropic-orange);
   --accent-deep: light-dark(#dc4718, #ff8a61);
   --accent-bright: light-dark(#ff6b35, #ff8056);
+  /* 光刃余晖：仅名册选中态的左缘脊线使用；暗色降一档，是余晖不是霓虹。 */
+  --accent-glow: light-dark(color-mix(in srgb, var(--accent-bright) 32%, transparent), color-mix(in srgb, var(--accent-bright) 20%, transparent));
   --accent-soft: color-mix(in srgb, var(--anthropic-orange) 16%, var(--color-background-primary));
   --accent-wash: color-mix(in srgb, var(--anthropic-orange) 7%, var(--color-background-primary));
   /* 用量四桶里 Output 的数据分类色：固定出厂橙、不随主题色——否则黛蓝下与 Input（信息蓝）、
@@ -744,10 +746,13 @@ body.is-resizing-columns .resizable-columns { transition: none; }
 }
 .session-row:hover { background: var(--surface-soft); }
 .session-row:focus-visible { outline: 2px solid var(--color-ring-primary); outline-offset: -2px; }
-/* 选中：左缘一道信号橙 + 底色。整条侧栏里橙色只出现在这里——它的意思是「你在这」。 */
-.session-row::before { content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: 2px; background: var(--accent); border-radius: 0 2px 2px 0; opacity: 0; transition: opacity 160ms ease; }
-.session-row.is-selected { background: var(--surface-soft); }
-.session-row.is-selected::before { opacity: 1; }
+/* 选中：左缘一道光刃（亮→深纵向渐变 + 一圈余晖），并自左缘向右晕开一层淡橙。
+   整条侧栏里橙色只出现在这里——它的意思是「你在这」。光刃在选中切换时从中点生长一次，随后绝对静止；
+   hover 保持中性灰（surface-soft），与选中不再共享底色——一眼可辨，而不是靠一道细线硬扛。 */
+.session-row::before { content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; background: linear-gradient(to bottom, var(--accent-bright), var(--accent-deep)); border-radius: 0 var(--border-radius-full) var(--border-radius-full) 0; box-shadow: 0 0 7px var(--accent-glow); opacity: 0; transform: scaleY(.3); transition: opacity 160ms ease, transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+/* 晕染一直铺到右缘才归零：线性渐变在中途归零会留下一道肉眼可辨的马赫带（暗色下尤甚），铺满则终点藏进卡片边界。 */
+.session-row.is-selected { background: linear-gradient(to right, color-mix(in srgb, var(--accent) 7%, transparent), transparent); }
+.session-row.is-selected::before { opacity: 1; transform: scaleY(1); }
 .session-row.is-waiting { --rail-state: var(--color-text-success); }
 .session-row.is-active { --rail-state: var(--color-text-info); }
 .session-row.is-attention { --rail-state: var(--color-text-warning); }
