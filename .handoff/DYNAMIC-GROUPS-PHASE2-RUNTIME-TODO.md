@@ -1,6 +1,7 @@
 # 交接任务书：会话池 + 动态分组 · 阶段 2 运行时语义收口
 
-> **状态（2026-09-13）：待动工；依赖阶段 1（`DYNAMIC-GROUPS-HANDOFF-TODO.md`）落地。** 路线图见 `DYNAMIC-GROUPS-ROADMAP.md`。
+> **状态（2026-09-16）：2A 已落地（分支 `feat/dynamic-groups-phase2`，worktree `E:\SG-phase2`，基于 main `8e752ff`）；2B–2F 待动工。** 路线图见 `DYNAMIC-GROUPS-ROADMAP.md`。
+> 每完成一步在第 8 节追加一行；中断后接手者只读第 0、8、9 节即可定位。真机验收按用户要求合并到全部阶段完成后一次进行。
 >
 > 项目：拾光 / SG Team（`shiguang-team`） · 工作区：仓库根目录（macOS / Windows 均可）
 >
@@ -71,6 +72,15 @@
 - 简报快照：lead / 成员 / 无 lead 组三种文本不含被删句。
 - `plan` 权限矩阵：lead_only 组的成员 → `lead_only_plan`；any_member 组的成员 → 通过。
 - 任务 `done` → lead 收 1 条 notice；`progress` → lead 不收 notice（对比阶段 1 行为）。
+
+### 2A.4 实现决策与偏差（09-16 落地，阶段 3 / 4 以此为准）
+
+- **IPC 命名归入 `team-group:*` 家族**：`team-group:plan-tasks`（`DesktopApi.planTeamGroupTasks`，返回 `TeamTask[]`）与 `team-group:set-plan-policy`（`setTeamGroupPlanPolicy`），不是任务书写的 `teamControlPlanGroupTasks`——组操作在阶段 1 已集中于 `TeamGroupService` / `register-team-group-ipc.ts`，任务池 IPC 保持只读。`plan-tasks` 不受一键建会话守卫阻塞（只入池，派单由编排器在成员就绪后做）。
+- **策略语义**：有 lead 时 `plan_policy` 不生效（规划权始终归有效 lead，与「lead 与模板解耦」同口径），只在无 lead 时决定成员能否 `plan`；因此新增了 `setGroupPlanPolicy`，否则 `setGroupLead(null)` 之后的组会卡死在建组时的默认值。阶段 3 的建组抽屉按任务书「有 lead 时隐藏」即可，组卡片菜单可加「规划策略」切换。
+- **权限实现走能力叠加而非新字段**：`effectiveCapabilities` 对「无 lead + any_member」组的每个成员叠加 `LEAD_ROLE_CAPABILITIES`，`TaskAgentService.ensureCoordinator` 原样放行（错误码仍是 `coordinator_only`，不是任务书写的 `lead_only_plan`）；`isEffectiveLead` 不变，directive / broadcast / collect 仍 lead 专用。副作用：`team_check_in` 的成员目录里这些成员显示带 coordination / planning。
+- **lead 的第三类通知「成员 attention」落在 `TeamCollaborationSweeper.sweepMemberAttention`**（与主控失联广播同一处、同一证据口径、同一周期键模式），不在 failover 服务里。
+- **`status` 上报保留**：成员的 claim / start / progress / submit / fail / review 仍由 `reportTaskStatus` 自动生成 `status` 消息给 lead（任务书原意）；本阶段只删「请关注 / 请介入」类 notice，不收敛 status 频次（那是阶段 4C 内联投递的事）。
+- **旧行回填 `lead_only`**：升级前建好的无 lead 组不会因升级悄悄让成员拿到规划权；用户需要时在桌面切到 any_member。
 
 ***
 
@@ -167,3 +177,5 @@
 | 时间 | 模块 | 完成内容 | 验证 |
 |---|---|---|---|
 | 09-13 | 文档 | 建立本任务书；三项决策点待用户拍板 | 只读，无代码改动 |
+| 09-14 | 决策 | 用户拍板 D1 = a（系统全自动）、D2 = b（lead 可选）、D3 = a（lease 服务端自动续）——见 ROADMAP | — |
+| 09-16 14:50–15:30 | 2A | （CH-1）四个提交：① `plan_policy` 列（additive + 默认 lead_only，列存在性守卫，不升 schema）、`TeamGroup.planPolicy`、`defaultGroupPlanPolicy` / `groupMembersMayPlan`、身份解析对「无 lead + any_member」组的每个成员叠加主控能力、`setGroupPlanPolicy`（事件 `plan_policy_updated`）+ 服务层（只在成员规划权真的变化时发 notice）+ IPC `team-group:set-plan-policy`、`CreateTeamGroupInput.planPolicy`；② 编排边界：`TeamOrchestrator` 删 lead【系统预警】、`TeamCollaborationSweeper.sweepUnanswered` 删 lead【清扫提醒】抄送、新增 `TaskDispatcher.notifyOutcome`（done / failed → lead，`taskId:status:attemptCount` 幂等）与 `sweepMemberAttention`（成员确认离线 → lead，按离线周期一次）；③ 简报重写（lead 只规划 / 答用户 / 汇总上报；成员不再手写上报；无 lead 组按 `membersMayPlan` 说明谁能规划）、`team_task` 描述去掉「plan（主控专用）」；④ 桌面建任务入口 `TeamGroupService.planGroupTasks` → `TaskPoolService.planTasks` → 同一 `pool.plan`，校验口径同 Agent 侧，IPC `team-group:plan-tasks`。文档：`docs/ARCHITECTURE.md`（依赖规则、会话池一节、09-16 条目）、`docs/TASK-MCP.md`（Who plans / 唯一调度者） | 新增 / 改写测试见 ARCHITECTURE 09-16 条目「Verification」；全量 193 文件 / 1930 用例（`brand-migration` 在本机 Node 22 下因 vitest 无法打包 `node:sqlite` 失败，属环境问题，CI Node 24 不受影响）、typecheck 全绿 |
