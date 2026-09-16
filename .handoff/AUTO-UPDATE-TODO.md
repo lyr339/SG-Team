@@ -602,6 +602,7 @@ tests/mac-app-replacer.test.ts · tests/update-backup.test.ts · tests/register-
 | 09-16 下午–晚 | Windows 全链 | domain / service / port / IPC / 渲染层（SettingsUpdate + UpdateReminder）/ `SG_TEAM_APP_VERSION` / `release.yml` + `build.publish` / 测试 + 预览截图 | typecheck · knip · 1970 tests · build · smoke:channel |
 | 09-16 晚 | 文档 | `docs/ARCHITECTURE.md` Self-update boundary + 日期条目；`docs/TASK-MCP.md` env；本文 §0.5–§0.7 · §12 | 与代码同步 |
 | 09-16 21:10–21:40 | 接手复核 + 提交 | （CH-1 接 CH-2 中断处）复跑五步验证全绿；读代码发现一处缺陷并修：`SettingsUpdate` 用 `download` IPC 的 promise 占住 `busyAction`，而该 IPC 直到下载结束才返回 → 整个下载期间「取消下载」不可点。改为下载不占 busy、进度与终态由推送驱动；补一条「下载 IPC 挂起时取消仍可点」的用例（改前失败、改后通过）。提交到 `feat/app-auto-update` 并 rebase 到 main 最新（仅 `docs/ARCHITECTURE.md` 尾部追加冲突，两边保留） | typecheck · knip · 1972 tests（rebase 后含 main 新用例）· build · smoke:channel |
+| 09-16 21:27 | 合回 + 发版 | 用户拍板「先合、可先发版、不影响当前使用」：`main` fast-forward 到 `92f05c4`；版本 0.3.2 → 0.3.3，发布说明补「界面」与「移除轮换」两条；`57bf8cd` + tag `v0.3.3` 推到 `lyr339/SG-Team`。Release 工作流 mac / windows / publish 三步全绿（约 2.5 分钟）；Release 资产 4 个：`ShiGuang-Setup-0.3.3.exe`（117,596,850 B）、`.exe.blockmap`、`latest.yml`（version 0.3.3、path 与 size 与 exe 一致、sha512、releaseDate）、mac zip。**这是第一个带更新 feed 的版本；本机仍是 0.3.2，未安装** | GitHub API + `releases/download/v0.3.3/latest.yml` 实取 |
 | — | 真机验收 | §0.6.4：发带 feed 的 tag → 应用内升一级 → 观察 MCP 重载。**不发版也能验**：`pack:win` 打两个本地版本（0.3.3 / 0.3.4），装 0.3.3，把 `release/` 用本机静态 HTTP 服务起来，在 设置 › 软件更新 › 自定义更新源 填该目录 URL → 检查 → 下载 → 安装；安装会杀掉 Cursor 托管的 MCP（在线席位瞬断） | **待用户** |
 
 ***
