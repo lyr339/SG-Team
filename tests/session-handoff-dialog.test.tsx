@@ -48,7 +48,7 @@ describe('SessionHandoffDialog', () => {
     expect(html.indexOf('独立席 2 · CH-2')).toBeLessThan(html.indexOf('独立席 3 · CH-3'))
     // displayName 已含通道号时不重复拼接
     expect(html).not.toContain('CH-1 · CH-1')
-    expect(html).toContain('运行中：排在当前任务之后')
+    expect(html).toContain('干活中：排在当前任务之后')
     expect(html).toContain('离线：消息会留在它的队列，恢复后送达')
     expect(html).toContain('交接说明')
     expect(html).toContain('随消息一并送达')

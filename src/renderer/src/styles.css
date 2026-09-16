@@ -49,6 +49,9 @@
   --amber-soft: var(--color-background-warning);
   --red: var(--color-text-danger);
   --red-soft: var(--color-background-danger);
+  /* 名册状态灯的「干活」琥珀：文本级 warning 在浅色下是棕（#925d14），做 7px 灯芯不亮；
+     这里取灯用的饱和琥珀（色相 ≈35°），与主题橙（≈18°）拉开，也不随主题色预设漂移。 */
+  --signal-busy: light-dark(#e08e1b, #f0b64d);
   --purple: var(--color-text-info);
   --purple-soft: var(--color-background-info);
 
@@ -687,11 +690,11 @@ body.is-resizing-columns .resizable-columns { transition: none; }
    曾试过胶囊标签（状态点 + 组名 + 计数收进圆角胶囊）：像徽章不像分栏，同日改为书签。 */
 .session-group { flex: 0 0 auto; }
 .session-group + .session-group { margin-top: 6px; }
-/* 与名册行同一套状态色：只落在书签左脊上。 */
+/* 与名册行同一套四色状态灯（定义见名册行）：只落在书签左脊上。 */
 .session-group.is-waiting { --rail-state: var(--color-text-success); }
-.session-group.is-active { --rail-state: var(--color-text-info); }
-.session-group.is-attention { --rail-state: var(--color-text-warning); }
-.session-group.is-offline { --rail-state: var(--color-border-primary); }
+.session-group.is-active { --rail-state: var(--signal-busy); }
+.session-group.is-attention { --rail-state: var(--color-text-info); }
+.session-group.is-offline { --rail-state: var(--color-text-danger); }
 .session-group__header {
   position: sticky; top: 0; z-index: 1;
   width: 100%; height: 32px; display: flex; align-items: center; gap: 8px;
@@ -753,10 +756,14 @@ body.is-resizing-columns .resizable-columns { transition: none; }
 /* 晕染一直铺到右缘才归零：线性渐变在中途归零会留下一道肉眼可辨的马赫带（暗色下尤甚），铺满则终点藏进卡片边界。 */
 .session-row.is-selected { background: linear-gradient(to right, color-mix(in srgb, var(--accent) 7%, transparent), transparent); }
 .session-row.is-selected::before { opacity: 1; transform: scaleY(1); }
+/* 四色状态灯：待命绿（在长轮询里等消息）· 干活琥珀（已取走消息在处理，唯一会呼吸的灯）·
+   需关注蓝（等你拍板 / 验收 / 回答）· 离线红（空心环）。语义色只落在这枚 7px 灯、需关注行的状态词
+   和分组书签的 3px 脊上。琥珀是独立信号色而不是主题橙——橙在侧栏里只表示「你在这」（选中）。
+   曾是 待命绿 · 干活蓝 · 需关注琥珀 · 离线灰：蓝灯呼吸看不出「在干活」，灰环看不出「掉线了」（2026-09-16 用户反馈）。 */
 .session-row.is-waiting { --rail-state: var(--color-text-success); }
-.session-row.is-active { --rail-state: var(--color-text-info); }
-.session-row.is-attention { --rail-state: var(--color-text-warning); }
-.session-row.is-offline { --rail-state: var(--color-border-primary); }
+.session-row.is-active { --rail-state: var(--signal-busy); }
+.session-row.is-attention { --rail-state: var(--color-text-info); }
+.session-row.is-offline { --rail-state: var(--color-text-danger); }
 
 /* 头像 + 上下文光环：环绕头像的一圈弧，弧长即上下文占用；晴 → 午后 → 日暮三档色。 */
 .session-row__avatar { position: relative; width: 42px; height: 42px; display: grid; place-items: center; }
@@ -780,11 +787,16 @@ body.is-resizing-columns .resizable-columns { transition: none; }
 .session-row__channel { flex: 0 0 auto; color: var(--muted); font: 600 var(--fs-10)/1 var(--font-numeric); letter-spacing: .02em; }
 .session-row__state { flex: 0 0 auto; margin-left: auto; display: inline-flex; align-items: center; gap: 6px; color: var(--text-soft); font-size: var(--fs-11); font-style: normal; font-weight: 500; white-space: nowrap; }
 .session-row__state > i { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--rail-state); box-shadow: 0 0 0 2px color-mix(in srgb, var(--rail-state) 16%, transparent); }
-.session-row.is-active .session-row__state > i { animation: rail-pulse 1.6s ease-in-out infinite; }
-.session-row.is-attention .session-row__state { color: var(--color-text-warning); }
+/* 干活呼吸灯：灯芯常亮（它确实在干活，不该忽明忽暗），呼吸的是光晕——2 → 4px、16% → 32% 呼出再收回。
+   曾是灯芯 opacity 1 → .35 的闪烁，读作「在眨眼」而不是「在呼吸」。 */
+.session-row.is-active .session-row__state > i { animation: rail-pulse 1.8s ease-in-out infinite; }
+.session-row.is-attention .session-row__state { color: var(--rail-state); }
 .session-row.is-offline .session-row__state > i { background: transparent; box-shadow: inset 0 0 0 1.5px var(--rail-state); }
 .session-row.is-offline .session-row__state, .session-row.is-offline .session-row__name { color: var(--muted); }
-@keyframes rail-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@keyframes rail-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--rail-state) 16%, transparent); }
+  50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--rail-state) 32%, transparent); }
+}
 
 /* 行高 15px = Anthropic Sans 12px 的字形包围盒（升 12 + 降 3）：模型名 span 带 overflow:hidden 做省略号，
    行高 1 时盒子只有 12px，g/p 这类降部会被切平（"gpt-…" 一类模型名踩中）。 */

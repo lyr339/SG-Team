@@ -95,9 +95,19 @@ describe('theme surface contracts', () => {
     expect(styles).toMatch(/\.session-row\.is-selected\s*\{\s*background:\s*linear-gradient\(to right, color-mix\(in srgb, var\(--accent\) 7%, transparent\), transparent\)/)
     expect(styles).not.toMatch(/\.session-row\.is-selected\s*\{[^}]*var\(--surface-soft\)/)
     expect(styles).toContain('--accent-glow: light-dark(')
-    expect(styles).toMatch(/\.session-row\.is-waiting\s*\{\s*--rail-state:\s*var\(--color-text-success\)/)
-    expect(styles).toMatch(/\.session-row\.is-active\s*\{\s*--rail-state:\s*var\(--color-text-info\)/)
-    expect(styles).toMatch(/\.session-row\.is-attention\s*\{\s*--rail-state:\s*var\(--color-text-warning\)/)
+    // 四色状态灯：待命绿 · 干活琥珀（独立信号色，不是主题橙）· 需关注蓝 · 离线红；分组书签脊同一映射。
+    for (const scope of ['session-row', 'session-group']) {
+      expect(styles).toMatch(new RegExp(`\\.${scope}\\.is-waiting\\s*\\{\\s*--rail-state:\\s*var\\(--color-text-success\\)`))
+      expect(styles).toMatch(new RegExp(`\\.${scope}\\.is-active\\s*\\{\\s*--rail-state:\\s*var\\(--signal-busy\\)`))
+      expect(styles).toMatch(new RegExp(`\\.${scope}\\.is-attention\\s*\\{\\s*--rail-state:\\s*var\\(--color-text-info\\)`))
+      expect(styles).toMatch(new RegExp(`\\.${scope}\\.is-offline\\s*\\{\\s*--rail-state:\\s*var\\(--color-text-danger\\)`))
+    }
+    expect(styles).toContain('--signal-busy: light-dark(')
+    expect(styles).not.toMatch(/--signal-busy:[^;]*var\(--accent/)
+    // 呼吸灯呼吸的是光晕（box-shadow 2 → 4px），灯芯不闪（块内不得出现 opacity）。
+    const pulse = /@keyframes rail-pulse \{([\s\S]*?)\n\}/.exec(styles)?.[1] ?? ''
+    expect(pulse).toContain('box-shadow: 0 0 0 4px')
+    expect(pulse).not.toContain('opacity')
     expect(styles).toMatch(/\.session-list__slot \+ \.session-list__slot\s*\{[^}]*border-top:\s*1px solid var\(--color-border-tertiary\)/)
     // 名册正文有阅读面下限（透明卡片模式下仍可读）；吸顶分组标题实底，滚过的行不会透出来。
     expect(styles).toMatch(/\.session-pane\s*\{[^}]*--rail-reading-opacity:\s*max\(0\.92, var\(--card-opacity\)\)/s)

@@ -59,7 +59,7 @@ describe('SessionRailCard（名册行）', () => {
     expect(standby).toContain('session-row__activity is-thinking is-live')
     expect(standby).toContain('<strong>Thinking</strong>')
   })
-  it('离线行：灰色空心状态点、「已离线」、最近活性时间、排队徽记；上下文未知时只画光环轨道', () => {
+  it('离线行：红色空心状态点、「已离线」、最近活性时间、排队徽记；上下文未知时只画光环轨道', () => {
     const html = renderToStaticMarkup(
       <SessionRailCard
         session={{ ...session, lastSeenAt: NOW - 42 * 60_000 }}
@@ -101,7 +101,7 @@ describe('SessionRailCard（名册行）', () => {
       />
     )
     expect(html).toContain('session-row is-active')
-    expect(html).toContain('运行中')
+    expect(html).toContain('干活中')
     expect(html).toContain('session-row__ring is-afternoon')
     expect(html).toContain('stroke-dasharray="72 100"')
     expect(html).not.toContain('session-row__context')
@@ -179,9 +179,9 @@ describe('SessionRailCard（名册行）', () => {
     expect(html).toContain('后端实现（临时主控）')
     expect(html).toContain('aria-label="主控"')
     expect(html).toContain('session-row is-attention')
-    expect(html).toContain('等待拍板')
+    expect(html).toContain('待拍板')
     // 状态行常驻：没有任何 Cursor 侧事实的在岗席位读作 Planning next moves，并进入 aria-label。
-    expect(html).toContain('aria-label="后端实现（临时主控） CH-2，等待拍板，Planning next moves，上下文 58%，排队 1"')
+    expect(html).toContain('aria-label="后端实现（临时主控） CH-2，待拍板，Planning next moves，上下文 58%，排队 1"')
   })
 
   it('侧栏行不重复渲染 token / 费用；用量只放在工作台顶部', () => {

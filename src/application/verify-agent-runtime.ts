@@ -64,6 +64,28 @@ function unverifiedSession(session: AgentSession, detail: string): AgentSession 
 }
 
 /**
+ * Cursor 侧的正面生存证据（持久状态 isGenerating / 转录在长 / 长任务宽限）只回答「活着吗」，
+ * 不回答「在干活还是在待命」。会话池里的席位常驻 check_messages 长轮询：Cursor 回合永不结束、
+ * isGenerating 恒真，转录也只在回合结束时落盘（实机：CH-2 的转录停在 19:40 的两行，此后处理了
+ * 11 条消息）。忙 / 闲只有协议相位知道——presence.waiting / connectionPhase 由 MCP server 在
+ * 取消息、投递、record_reply 每一步实时写入，relay 已据此投影 status。所以生存证据只做一件事：
+ * 把传输层判死的会话拉回在线（此时它必然在干活——待命中的席位每秒都在刷心跳，不会被判死）；
+ * 传输层本就在线时，status / waiting 原样保留。
+ */
+function aliveSession(session: AgentSession, detail: string): AgentSession {
+  const transport = transportAlive(session)
+  return {
+    ...session,
+    status: transport ? session.status : 'running',
+    online: true,
+    connected: true,
+    runtimeEvidence: 'active',
+    waiting: transport ? session.waiting : false,
+    healthEvidence: [...session.healthEvidence, detail]
+  }
+}
+
+/**
  * Verifies SG Team transport state against the exact bound Cursor Composer.
  * A live MCP process is not sufficient evidence that its Cursor Agent still
  * exists; this is the single projection used by both Team and Session views.
@@ -143,15 +165,7 @@ export function verifyAgentRuntime(
       // 唯一能区分「长命令」与「死亡」的活证据是通道心跳仍在刷新。
       if (activity?.workInProgress) {
         if (transportAlive(session)) {
-          return {
-            ...session,
-            status: 'running',
-            online: true,
-            connected: true,
-            runtimeEvidence: 'active',
-            waiting: false,
-            healthEvidence: [...session.healthEvidence, `${activity.detail}；MCP 心跳新鲜，宽限期内保持在线（未验证）`]
-          }
+          return aliveSession(session, `${activity.detail}；MCP 心跳新鲜，宽限期内保持在线（未验证）`)
         }
         return stoppedSession(session, `${activity.detail}；MCP 心跳已过期，宽限不再保持在线`, 'suspected')
       }
@@ -187,19 +201,13 @@ export function verifyAgentRuntime(
         healthEvidence: [...session.healthEvidence, activity.detail]
       }
     }
-    // active：遥测已给出正面活性证据（转录增长/有效租约）。
+    // active：遥测已给出正面活性证据（持久状态生成中 / 转录增长 / 有效租约）。
     // 干活时插件传输租约陈旧断开属正常，正面生存证据优先——否则「一干活就离线」；
-    // 死亡判定由 activity 的 stopped / unknown（宽限耗尽）分支承担
-    const transport = session.online && session.connected
+    // 死亡判定由 activity 的 stopped / unknown（宽限耗尽）分支承担。忙闲不由这里改判（见 aliveSession）。
+    const transport = transportAlive(session)
     return {
-      ...session,
-      status: 'running',
-      online: true,
-      connected: true,
-      runtimeEvidence: 'active',
-      waiting: false,
-      lastAgentActivityAt: activity.observedAt ?? session.lastAgentActivityAt,
-      healthEvidence: [...session.healthEvidence, transport ? activity.detail : `${activity.detail}（通道租约陈旧，按会话活性证据保持在线）`]
+      ...aliveSession(session, transport ? activity.detail : `${activity.detail}（通道租约陈旧，按会话活性证据保持在线）`),
+      lastAgentActivityAt: activity.observedAt ?? session.lastAgentActivityAt
     }
   })
 
