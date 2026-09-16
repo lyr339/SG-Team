@@ -3454,7 +3454,7 @@ describe('ask_question 等待用户决策', () => {
   })
 })
 
-describe('Composer 气泡数事实（席位自动轮换的阈值）', () => {
+describe('Composer 气泡数事实（名册悬停详情的会话体积）', () => {
   it('hook 帧与 inspect 同源写入，按观测时刻取新，随会话投影；未观测到时缺省', async () => {
     const active = teamSnapshot('composer-alpha-123')
     active.runs = [{
@@ -3499,63 +3499,6 @@ describe('Composer 气泡数事实（席位自动轮换的阈值）', () => {
       }
       service.notifyComposerWriteSignal('composer-alpha-123')
       await vi.waitFor(() => expect(service.getSnapshot().sessions[0]?.composerBubbleCount).toBe(413))
-    } finally {
-      service.dispose()
-    }
-  })
-
-  it('席位自动轮换结果投影到会话（noteSeatRotation）：同值不重建视图，清除即消失，run 切换清空', async () => {
-    const active = teamSnapshot('composer-alpha-123')
-    active.runs = [{
-      id: 'run-a', workspaceId: 'workspace-a', name: 'run', goal: 'goal', templateId: 'default',
-      status: 'running', createdAt: 1, updatedAt: 1
-    }]
-    active.activeRun = active.runs[0]
-    const team = new FakeTeam(active)
-    const service = new DesktopSessionService(new FakeBridge(), team, { readWorkspace: () => telemetry() })
-    try {
-      service.refreshTelemetry()
-      expect(service.getSnapshot().sessions[0]?.seatRotation).toBeUndefined()
-      await new Promise((resolve) => setTimeout(resolve, 0))
-      const pushes: number[] = []
-      const unsubscribe = service.subscribe(() => pushes.push(1))
-
-      service.noteSeatRotation('1', { status: 'rotating', bubbleCount: 412, at: 5_000, message: '正在换新 Composer…' })
-      const first = service.getSnapshot().sessions[0]
-      expect(first?.seatRotation).toEqual({ status: 'rotating', bubbleCount: 412, at: 5_000, message: '正在换新 Composer…' })
-      await vi.waitFor(() => expect(pushes.length).toBeGreaterThanOrEqual(1))
-      // 同值再写：视图引用不变（指纹命中），也不再推送
-      const pushed = pushes.length
-      service.noteSeatRotation('1', { status: 'rotating', bubbleCount: 412, at: 5_000, message: '正在换新 Composer…' })
-      await new Promise((resolve) => setTimeout(resolve, 0))
-      expect(pushes).toHaveLength(pushed)
-      expect(service.getSnapshot().sessions[0]).toBe(first)
-
-      service.noteSeatRotation('1', { status: 'done', bubbleCount: 412, at: 5_000, message: '已自动轮换' })
-      expect(service.getSnapshot().sessions[0]?.seatRotation?.status).toBe('done')
-      expect(service.getSnapshot().sessions[0]).not.toBe(first)
-
-      service.noteSeatRotation('1', undefined)
-      expect(service.getSnapshot().sessions[0]?.seatRotation).toBeUndefined()
-      // 不存在时清除是空操作（不推送）
-      await new Promise((resolve) => setTimeout(resolve, 0))
-      const settled = pushes.length
-      service.noteSeatRotation('1', undefined)
-      await new Promise((resolve) => setTimeout(resolve, 0))
-      expect(pushes).toHaveLength(settled)
-
-      // run 切换清空
-      service.noteSeatRotation('1', { status: 'failed', bubbleCount: 412, at: 6_000, message: '失败' })
-      expect(service.getSnapshot().sessions[0]?.seatRotation?.status).toBe('failed')
-      const next = teamSnapshot('composer-alpha-123')
-      next.runs = [{
-        id: 'run-b', workspaceId: 'workspace-a', name: 'run', goal: 'goal', templateId: 'default',
-        status: 'running', createdAt: 2, updatedAt: 2
-      }]
-      next.activeRun = next.runs[0]
-      team.replace(next)
-      expect(service.getSnapshot().sessions[0]?.seatRotation).toBeUndefined()
-      unsubscribe()
     } finally {
       service.dispose()
     }

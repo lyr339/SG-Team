@@ -17,7 +17,6 @@ import type { AozaiCardStatus, AozaiProcessResult, AozaiProgressEvent } from '..
 import type { AgentLaunchPlan, AgentLaunchRequest } from '../domain/agent-launch'
 import type { SessionWarmupRun } from '../domain/session-warmup'
 import type { CdpAutoHealEvent, CursorCdpSettings } from '../domain/cursor-cdp'
-import type { SeatRotationSettings } from '../domain/seat-rotation'
 import type { AccountAutomationRun, AccountAutomationSettings } from '../domain/account-automation'
 import type { CursorSwitchPumpOutcome, CursorSwitchPumpStatus } from '../domain/cursor-switch-pump'
 import type { CursorUpdatePreferences, CursorUpdateWriteResult } from '../domain/cursor-update'
@@ -403,9 +402,6 @@ export interface SgDesktopApi {
   enableCursorCdp(): Promise<{ ok: boolean; message: string; suggestAutoHeal?: boolean }>
   getCursorCdpSettings(): Promise<CursorCdpSettings>
   saveCursorCdpSettings(settings: CursorCdpSettings): Promise<CursorCdpSettings>
-  /** 席位自动轮换（独立席位到气泡阈值换新 Composer）：开关与阈值。结果经会话快照 `seatRotation` 呈现。 */
-  getSeatRotationSettings(): Promise<SeatRotationSettings>
-  saveSeatRotationSettings(settings: SeatRotationSettings): Promise<SeatRotationSettings>
   getCursorUpdatePreferences(): Promise<CursorUpdatePreferences>
   setCursorAutoUpdateDisabled(disabled: boolean): Promise<CursorUpdateWriteResult>
   /** Cursor 本机存储盘点（只读）；对话历史阈值缺省 90 天。 */
@@ -552,8 +548,6 @@ export const IPC = {
   sessionWarmupProgress: 'session-warmup:progress',
   cursorCdpGetSettings: 'cursor-cdp:get-settings',
   cursorCdpSaveSettings: 'cursor-cdp:save-settings',
-  seatRotationGetSettings: 'seat-rotation:get-settings',
-  seatRotationSaveSettings: 'seat-rotation:save-settings',
   cursorUpdateGetPreferences: 'cursor-update:get-preferences',
   cursorUpdateSetAutoUpdateDisabled: 'cursor-update:set-auto-update-disabled',
   cursorStorageScan: 'cursor-storage:scan',

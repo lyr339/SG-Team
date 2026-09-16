@@ -388,29 +388,6 @@ describe('AgentSessionLauncher', () => {
     expect(fired).toHaveLength(1)
   })
 
-  it('席位自动轮换发起的创建带 origin 标记：计划与 onAllTriggered 回调都能看到，装配层据此不触发账号自动化', async () => {
-    const fired: AgentLaunchPlan[] = []
-    const progress: AgentLaunchPlan[] = []
-    const { launcher, state } = createHarness(
-      [{ channelId: '1', online: true, waiting: true, composerId: 'composer-old' }],
-      { bindingKeys: { '1': 'rotated-key' }, onAllTriggered: (plan) => fired.push(plan) }
-    )
-    const pending = launcher.launch(['1'], (plan) => progress.push(plan), { origin: 'seat-rotation' })
-    for (let i = 0; i < 50 && !fired.length; i += 1) await Promise.resolve()
-    expect(fired[0]?.origin).toBe('seat-rotation')
-    expect(launcher.getPlan()?.origin).toBe('seat-rotation')
-    readyComposer(state, '1', 'composer-1')
-    await Promise.resolve()
-    readyWaiting(state, '1', 'composer-1')
-    const plan = await pending
-    expect(plan).toMatchObject({ state: 'done', origin: 'seat-rotation' })
-    expect(progress.every((item) => item.origin === 'seat-rotation')).toBe(true)
-    // 手动创建不带该字段
-    const manual = createHarness([{ channelId: '2', online: true, waiting: true, composerId: 'composer-live' }])
-    const manualPlan = await manual.launcher.launch(['2'])
-    expect(manualPlan.origin).toBeUndefined()
-  })
-
   it('有通道在 trigger 级失败时不触发 onAllTriggered', async () => {
     const fired: AgentLaunchPlan[] = []
     const { launcher, state } = createHarness(

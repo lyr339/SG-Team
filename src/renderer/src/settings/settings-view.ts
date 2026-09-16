@@ -10,7 +10,6 @@ import type {
 } from '../../../domain/account-automation'
 import type { CursorUpdatePreferences } from '../../../domain/cursor-update'
 import type { CursorSwitchPumpStatus } from '../../../domain/cursor-switch-pump'
-import type { SeatRotationSettings } from '../../../domain/seat-rotation'
 import type {
   CursorStorageCleanupRequest,
   CursorStorageCleanupResult,
@@ -209,9 +208,6 @@ export interface SettingsPageProps {
   onSetModelDataPolicyAutoAcknowledge?: (enabled: boolean) => Promise<{ message: string }>
   onSaveAutomationSettings?: (settings: AccountAutomationSettings) => void
   onCancelAutomation?: () => void
-  /** 席位自动轮换（独立席位到气泡阈值换新 Composer）：开关 + 阈值；缺省时区块不渲染。 */
-  seatRotationSettings?: SeatRotationSettings
-  onSaveSeatRotationSettings?: (settings: SeatRotationSettings) => void
   /** 无感换号（热切）：不重启 Cursor 直接把运行态切到指定账号；结果经账号区消息条呈现。 */
   onSwitchLiveAccount?: (accountId: string) => Promise<void>
   /** 切号补丁状态卡（维护页）：只读检测 + 一键安装/卸载。 */

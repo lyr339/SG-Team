@@ -8,7 +8,6 @@ import {
   type CursorTelemetrySnapshot
 } from '../domain/cursor-telemetry'
 import type { RuntimeBinding, TeamControlSnapshot, TeamRunStatus } from '../domain/team-control'
-import type { SeatRotationNotice } from '../domain/seat-rotation'
 import type {
   DesktopSnapshot,
   LiveAgentResponseState,
@@ -392,12 +391,10 @@ export class DesktopSessionService implements DesktopSessionBridge {
   private cursorModelsRevision?: { models: readonly CursorModelOption[]; revision: number }
   private sectionRevisionSeed = 0
   /**
-   * 每个 Composer 的气泡数（hook 帧与 inspect 同源，按观测时刻取新）。它是席位自动轮换的
-   * 阈值事实，随会话投影给渲染层；不进运行时证据指纹（自己有变化判定），不落库。
+   * 每个 Composer 的气泡数（hook 帧与 inspect 同源，按观测时刻取新）。会话体积事实，
+   * 随会话投影给渲染层（名册悬停详情）；不进运行时证据指纹（自己有变化判定），不落库。
    */
   private readonly composerBubbleCounts = new Map<string, { count: number; observedAt: number }>()
-  /** 席位自动轮换的最近结果（按通道）；由 SeatRotationService 写入，随 run 切换清空。 */
-  private readonly seatRotations = new Map<string, SeatRotationNotice>()
   private readonly durationBySession = new Map<string, {
     accumulatedMs: number
     onlineSince?: number
@@ -449,11 +446,9 @@ export class DesktopSessionService implements DesktopSessionBridge {
         this.pendingNativeProcessByComposer.clear()
         this.contextUsageByComposer.clear()
         this.composerBubbleCounts.clear()
-        this.seatRotations.clear()
         this.refreshTelemetry()
       }
       if (runChanged && !workspaceChanged) {
-        this.seatRotations.clear()
         this.durationBySession.clear()
         this.liveAgentResponses.clear()
         this.finalizedLiveResponseIds.clear()
@@ -495,7 +490,6 @@ export class DesktopSessionService implements DesktopSessionBridge {
         const contextUsage = session.contextUsage ?? this.contextUsageByComposer.get(key)
         const activeDurationMs = this.trackActiveDuration(key, session)
         const composerBubbleCount = session.composerId ? this.composerBubbleCounts.get(session.composerId)?.count : undefined
-        const seatRotation = this.seatRotations.get(session.channelId)
         // 增量缓存：值指纹命中即复用上轮视图引用。时长按分钟桶参与指纹
         //（与显示精度一致：分钟翻转才重建），其余字段逐值比较。
         const fingerprint = [
@@ -535,8 +529,7 @@ export class DesktopSessionService implements DesktopSessionBridge {
           session.healthEvidence.length,
           session.healthEvidence.at(-1) ?? '',
           activeDurationMs === undefined ? '' : Math.floor(activeDurationMs / 60_000),
-          composerBubbleCount ?? '',
-          seatRotation ? `${seatRotation.status}:${seatRotation.at}:${seatRotation.bubbleCount}:${seatRotation.message}` : ''
+          composerBubbleCount ?? ''
         ].join('|')
         const cached = this.sessionViewCache.get(session.id)
         if (cached?.fingerprint === fingerprint) return cached.view
@@ -545,8 +538,7 @@ export class DesktopSessionService implements DesktopSessionBridge {
           awaitingUser,
           contextUsage,
           activeDurationMs,
-          ...(composerBubbleCount === undefined ? {} : { composerBubbleCount }),
-          ...(seatRotation ? { seatRotation } : {})
+          ...(composerBubbleCount === undefined ? {} : { composerBubbleCount })
         }
         this.sessionViewCache.set(session.id, { fingerprint, view })
         return view
@@ -652,24 +644,6 @@ export class DesktopSessionService implements DesktopSessionBridge {
     if (previous && previous.observedAt > evidence.observedAt) return false
     this.composerBubbleCounts.set(evidence.composerId, { count: evidence.bubbleCount, observedAt: evidence.observedAt })
     return previous?.count !== evidence.bubbleCount
-  }
-
-  /**
-   * 席位自动轮换结果（SeatRotationService 写入）：进入会话视图供名册提示；传 undefined 清除。
-   * 与 run 生命周期一致——run 切换即清空，不落库。
-   */
-  noteSeatRotation(channelId: string, notice: SeatRotationNotice | undefined): void {
-    const key = String(channelId).trim()
-    const previous = this.seatRotations.get(key)
-    if (notice === undefined) {
-      if (!previous) return
-      this.seatRotations.delete(key)
-    } else {
-      if (previous && previous.status === notice.status && previous.at === notice.at
-        && previous.bubbleCount === notice.bubbleCount && previous.message === notice.message) return
-      this.seatRotations.set(key, { ...notice })
-    }
-    this.emit()
   }
 
   setNativeProcessStreamStatus(status: NativeProcessStreamStatus): void {

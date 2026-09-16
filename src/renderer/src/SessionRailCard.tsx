@@ -1,7 +1,6 @@
 import { memo, useMemo } from 'react'
 import type { DragEvent } from 'react'
 import type { AgentSession } from '../../domain/agent-session'
-import { isSeatRotationNoticeVisible, seatRotationNoticeLabel } from '../../domain/seat-rotation'
 import type { LiveAgentResponseState, LiveProcessState, LiveStatusLineState } from '../../shared/desktop-api'
 import {
   contextTone,
@@ -83,8 +82,6 @@ function SessionRailCardView({
   const end = offline && session.disconnectedAt && Number.isFinite(session.disconnectedAt) && session.disconnectedAt > 0
     ? session.disconnectedAt : undefined
   const nowMs = now ?? Date.now()
-  // 席位自动轮换提示：进行中 / 失败 / 已停用一直显示；成功提示只在冷却期（10 分钟）内显示。
-  const rotation = isSeatRotationNoticeVisible(session.seatRotation, nowMs) ? session.seatRotation : undefined
   const today = new Date(nowMs)
   const timeLabel = (timestamp: number): string => {
     const date = new Date(timestamp)
@@ -152,11 +149,6 @@ function SessionRailCardView({
             ) : null}
             {session.queueDepth > 0 ? (
               <span className="session-row__queue" title="排队等待 Agent 处理的消息">排队 {session.queueDepth}</span>
-            ) : null}
-            {rotation ? (
-              <span className={`session-row__rotation is-${rotation.status}`} title={rotation.message}>
-                {seatRotationNoticeLabel(rotation)}
-              </span>
             ) : null}
           </span>
           <span className="session-row__time">

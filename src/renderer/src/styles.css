@@ -706,13 +706,6 @@ body.is-resizing-columns .resizable-columns { transition: none; }
 .session-row__changes > em { color: var(--color-text-danger); font-style: normal; font-weight: 600; }
 .session-row__time { flex: 0 0 auto; margin-left: auto; color: var(--muted); font: 500 11px/14px var(--font-numeric); white-space: nowrap; }
 .session-row__queue { display: inline-flex; align-items: center; padding: 2px 6px; color: var(--color-text-warning); background: var(--color-background-warning); border-radius: var(--border-radius-full); font-size: var(--fs-10); font-weight: 600; line-height: 1; }
-/* 席位自动轮换提示：与排队胶囊同一形制；进行中蓝、已轮换绿、未交接上下文橙、失败红、已停用灰——状态色只表状态。 */
-.session-row__rotation { display: inline-flex; align-items: center; padding: 2px 6px; border-radius: var(--border-radius-full); font-size: var(--fs-10); font-weight: 600; line-height: 1; white-space: nowrap; }
-.session-row__rotation.is-rotating { color: var(--color-text-info); background: var(--color-background-info); }
-.session-row__rotation.is-done { color: var(--color-text-success); background: var(--color-background-success); }
-.session-row__rotation.is-partial { color: var(--color-text-warning); background: var(--color-background-warning); }
-.session-row__rotation.is-failed { color: var(--color-text-danger); background: var(--color-background-danger); }
-.session-row__rotation.is-disabled { color: var(--muted); background: var(--surface-soft); }
 .session-row.is-offline .session-row__model { color: var(--muted); }
 
 /* 状态行是卡片的底行：横跨头像列与文字列（头像左沿 → 卡片右沿），每行等宽，
@@ -1477,14 +1470,6 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 .menu-select__check { flex: none; color: var(--model-provider-fg, var(--accent)); font-style: normal; }
 .menu-select__check svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .menu-select__empty { padding: 10px; color: var(--faint); font-size: var(--fs-10); text-align: center; }
-
-.range-field { flex: 1 1 130px; min-width: 0; display: inline-flex; align-items: center; gap: 8px; }
-.range-field input[type="range"] { -webkit-appearance: none; appearance: none; flex: 1 1 auto; min-width: 0; height: 4px; margin: 0; background: linear-gradient(to right, var(--accent) var(--range-fill, 0%), var(--line) var(--range-fill, 0%)); border-radius: var(--border-radius-full); outline: none; cursor: pointer; }
-.range-field input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 14px; height: 14px; background: var(--color-background-primary); border: 2px solid var(--accent); border-radius: 50%; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); transition: transform 120ms ease; }
-.range-field input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
-.range-field input[type="range"]:disabled { opacity: 0.5; cursor: not-allowed; }
-.range-field__value { flex: none; min-width: 46px; color: var(--text); font: 600 var(--fs-10)/1 var(--mono); font-variant-numeric: tabular-nums; text-align: right; }
-.range-field__value i { color: var(--muted); font-style: normal; font-weight: 400; }
 
 /* 数值步进输入：− / 数字框 / + 一体的胶囊控件（倒计时等「确切数值」场景替代滑杆）。 */
 .stepper-field { flex: none; display: inline-flex; align-items: stretch; background: var(--canvas); border: var(--border-width-regular) solid var(--line); border-radius: 8px; overflow: hidden; transition: border-color 120ms ease, box-shadow 120ms ease; }

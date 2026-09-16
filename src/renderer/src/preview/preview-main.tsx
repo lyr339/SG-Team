@@ -866,8 +866,6 @@ const api: SgDesktopApi = {
   enableCursorCdp: async () => ({ ok: true, message: 'Cursor 已重启并启用会话创建端口（9333）' }),
   getCursorCdpSettings: async () => ({ autoHealEnabled: false }),
   saveCursorCdpSettings: async (settings) => settings,
-  getSeatRotationSettings: async () => ({ enabled: true, bubbleThreshold: 400 }),
-  saveSeatRotationSettings: async (settings) => settings,
   getCursorUpdatePreferences: async () => ({
     settingsPath: '/Users/demo/Library/Application Support/Cursor/User/settings.json',
     updateMode: undefined,

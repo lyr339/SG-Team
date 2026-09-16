@@ -717,7 +717,6 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
 .settings-row--sub .settings-row__label { font-size: var(--fs-10); font-weight: 600; }
 
 /* 子组控件：固定紧凑宽度，全部右缘对齐。 */
-.settings-row--sub .range-field { flex: none; width: 216px; }
 .settings-row--sub .menu-select { width: 216px; justify-self: end; }
 .settings-row--sub .menu-select__button { min-height: 29px; background: var(--surface-pure); box-shadow: none; }
 
@@ -749,21 +748,6 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
 }
 
 .settings-collapse.is-open > .settings-collapse__inner { transform: none; }
-
-/* 数值读出：pill 化，与滑杆同一视觉件。 */
-.settings-automation .range-field__value {
-  min-width: 48px;
-  padding: 3px 6px;
-  background: var(--surface-soft);
-  border: 1px solid var(--line-faint);
-  border-radius: 6px;
-  text-align: center;
-}
-
-.settings-automation .range-field input[type="range"]:active::-webkit-slider-thumb {
-  transform: scale(1.05);
-  box-shadow: 0 2px 6px rgba(24, 35, 52, 0.28);
-}
 
 /* 执行浏览器：卡片 footer，hairline 之上的一行只读信息。 */
 .settings-automation .account-automation__follow {
@@ -842,7 +826,6 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
   /* 窄屏：子组行纵向堆叠，控件拉满整行。 */
   .settings-row { gap: 12px; }
   .settings-row--sub { grid-template-columns: minmax(0, 1fr); gap: 6px; }
-  .settings-row--sub .range-field,
   .settings-row--sub .menu-select { width: 100%; justify-self: stretch; }
 }
 

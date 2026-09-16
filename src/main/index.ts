@@ -89,9 +89,6 @@ import { createTeamAgentLaunchPromptPort } from '../application/team-agent-launc
 import { WorkspaceReviewReader } from '../infrastructure/git/workspace-review-reader'
 import { registerWorkspaceReviewIpc } from './register-workspace-review-ipc'
 import { SessionHandoffService } from '../application/session-handoff-service'
-import { SeatRotationService } from '../application/seat-rotation-service'
-import { SeatRotationSettingsStore } from '../application/seat-rotation-settings-store'
-import { registerSeatRotationIpc } from './register-seat-rotation-ipc'
 import { RevealPathPolicy } from '../application/reveal-path-policy'
 import { registerSessionHandoffIpc } from './register-session-handoff-ipc'
 import { installLocalImageProtocol, registerLocalImageScheme } from './local-image-protocol'
@@ -123,8 +120,6 @@ let disposeCursorStorageIpc: (() => void) | undefined
 let disposeWindowChromeIpc: (() => void) | undefined
 let disposeWorkspaceReviewIpc: (() => void) | undefined
 let disposeSessionHandoffIpc: (() => void) | undefined
-let disposeSeatRotationIpc: (() => void) | undefined
-let seatRotationService: SeatRotationService | undefined
 let disposeCursorQuestionIpc: (() => void) | undefined
 let cursorCdpKeeperRef: CursorCdpKeeper | undefined
 /** 退出前清理账号自动化浏览器宿主（按当前设置解析：指纹=关窗断连；外部=noop）。 */
@@ -573,11 +568,7 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     },
     desktopSessionService,
     {
-      // 席位自动轮换也走这条创建链，但账号自动化（奥仔处理 / 加固 / 换号，不可撤销）
-      // 只跟随用户手动的批量创建。
-      onAllTriggered: (plan) => {
-        if (plan.origin !== 'seat-rotation') accountAutomationService.onAllSessionsTriggered(plan.id)
-      },
+      onAllTriggered: (plan) => accountAutomationService.onAllSessionsTriggered(plan.id),
       onFinished: (plan) => teamControlService?.settleAgentSessionLaunch(plan)
     }
   )
@@ -820,30 +811,6 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     () => mainWindow,
     { downloadsPath: () => app.getPath('downloads') }
   )
-  // 席位自动轮换：独立席位的 Composer 到气泡阈值且连续待命时，交接上下文 → 轮换令牌 →
-  // 走同一条一键建会话链换新 Composer（持续会话的 Cursor 回合永不结束，只能靠换会话压体积）。
-  const seatRotationSettingsStore = new SeatRotationSettingsStore(join(app.getPath('userData'), 'seat-rotation.json'))
-  const seatRotationTeam = teamControlService
-  seatRotationService = new SeatRotationService({
-    sessions: desktopSessionService,
-    team: {
-      getSnapshot: () => seatRotationTeam.getSnapshot(),
-      prepareComposerRelaunch: (channelId, options) => seatRotationTeam.prepareComposerRelaunch(channelId, options)
-    },
-    handoff: sessionHandoffService,
-    launcher: agentSessionLauncher,
-    conversationsOf: (channelId) => channelMessageRelay?.conversationsOf(channelId),
-    settings: () => seatRotationSettingsStore.load(),
-    // 与手动一键建会话同一条进度推送：运行页照常显示三级证据进度。
-    onLaunchProgress: (plan) => {
-      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.agentLaunchProgress, plan)
-    },
-    onerror: (error) => process.stderr.write(`[seat-rotation] ${error instanceof Error ? error.message : String(error)}\n`)
-  })
-  seatRotationService.start()
-  disposeSeatRotationIpc = registerSeatRotationIpc(seatRotationSettingsStore, () => mainWindow, {
-    onSettingsSaved: () => seatRotationService?.refreshSettings()
-  })
   // 拾光内回答 Cursor 原生 ask_question：与会话创建/过程观察共用同一 Cursor 窗口解析。
   disposeCursorQuestionIpc = registerCursorQuestionIpc(
     new CursorQuestionService({
@@ -988,8 +955,6 @@ app.on('before-quit', () => {
   disposeWindowChromeIpc?.()
   disposeWorkspaceReviewIpc?.()
   disposeSessionHandoffIpc?.()
-  seatRotationService?.stop()
-  disposeSeatRotationIpc?.()
   disposeCursorQuestionIpc?.()
   cursorCdpKeeperRef?.stop()
   teamControlService?.dispose()

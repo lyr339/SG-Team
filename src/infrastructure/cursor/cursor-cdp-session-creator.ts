@@ -161,7 +161,7 @@ export interface CursorComposerRuntimeEvidence {
   composerStatus?: string
   /** Cursor 会话列表副标题（观察器离线时的 inspect 兜底；与写后 hook 同一算法）。 */
   statusLine?: CursorStatusLine
-  /** 整个 composer 的气泡数（席位自动轮换的阈值事实；hook 帧与 inspect 同源）。 */
+  /** 整个 composer 的气泡数（会话体积事实，名册悬停详情；hook 帧与 inspect 同源）。 */
   bubbleCount?: number
   responseId?: string
   responseText?: string

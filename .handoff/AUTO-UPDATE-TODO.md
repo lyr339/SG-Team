@@ -92,8 +92,8 @@
 | MCP 服务器路径 `Contents/Resources/mcp/index.mjs`（asar 外） | `main/task-mcp-runtime.ts` | 旧 MCP 进程已把整包 `index.mjs` 加载进内存，`mv` 走旧包不影响它 |
 | 单实例锁 | `main/index.ts:154` | 辅助脚本 `open` 新版前旧实例必须已退出（`app.relaunch` 保证） |
 | 设置页分组静态表 `GROUPS` + `SettingsGroupId` 联合类型 | `settings/SettingsPage.tsx:21-38` | 新增分组只改这两处 + 新组件文件 |
-| 设置项存储惯例：`userData/<name>.json`，`{ version: 1, settings }`，临时文件 + `rename` 原子写，0o600 | `application/seat-rotation-settings-store.ts` | `AppUpdateSettingsStore` 照抄 |
-| IPC 惯例：`ipcMain.handle` + `assertTrustedSender` + 返回 dispose；键名 `'<模块>:<动作>'` | `main/register-seat-rotation-ipc.ts`、`main/ipc-security.ts` | `register-app-update-ipc.ts` 照抄 |
+| 设置项存储惯例：`userData/<name>.json`，`{ version: 1, settings }`，临时文件 + `rename` 原子写，0o600 | `application/cursor-cdp-settings-store.ts` | `AppUpdateSettingsStore` 照抄 |
+| IPC 惯例：`ipcMain.handle` + `assertTrustedSender` + 返回 dispose；键名 `'<模块>:<动作>'` | `main/register-cdp-keeper-ipc.ts`、`main/ipc-security.ts` | `register-app-update-ipc.ts` 照抄 |
 | 渲染层经 `window.sgDesktop`（`SgDesktopApi`）调用；推送通道用 `ipcRenderer.on` | `preload/index.ts:179`、`renderer/src/env.d.ts` | 新组件自取 `window.sgDesktop`，不经 `App.tsx` 传 props |
 | 会话在线判定：`desktopSessionService.getSnapshot().sessions[].online`；一键建会话在途：`isSessionLaunchRunning()` | `application/desktop-session-service.ts`、`register-team-group-ipc.ts:56` | 门禁输入（§5.4） |
 | README / 发布说明写着「app 位置固定后不要再移动」 | `.github/release-notes.md` | 替换保持同一路径，mcp.json 路径不失效 |
@@ -370,7 +370,7 @@ export type UpdateGate =
 
 ### 7.2 `apply` 前的备份（主进程内完成，失败 → `failed(backup)`，不退出）
 
-按 §6.6：`VACUUM INTO` 库副本 → 复制 `~/.cursor/mcp.json`、userData 根 `*.json`（`cursor-accounts.json`、`account-automation.json`、`aozai-card.json`、`browser-profiles.json`、`seat-rotation.json`、`app-update.json` 等）→ 写 `backup.json`。
+按 §6.6：`VACUUM INTO` 库副本 → 复制 `~/.cursor/mcp.json`、userData 根 `*.json`（`cursor-accounts.json`、`account-automation.json`、`aozai-card.json`、`browser-profiles.json`、`cursor-cdp.json`、`app-update.json` 等）→ 写 `backup.json`。
 备份目录 `userData/updates/backup/<oldVersion>-<ts>/`，app 本体稍后由脚本 `mv` 进同一目录。
 
 ### 7.3 辅助脚本（`/bin/sh`，由 `buildApplyScript` 生成到 `userData/updates/apply-<ts>.sh`）
@@ -485,9 +485,9 @@ tests/mac-app-replacer.test.ts · tests/update-backup.test.ts · tests/register-
 
 | 文件 | 触碰 | 备注 |
 |---|---|---|
-| ⚠ `src/main/index.ts` | import ×3、装配 `AppUpdateSettingsStore` / `AppUpdateService` / `registerAppUpdateIpc`（紧跟 `registerSeatRotationIpc` 之后）、`before-quit` 两行、`reconcileGlobalChannelServers` 传 `appVersion` | 各自独立 hunk，避开 tray 以外的区域 |
-| ⚠ `src/shared/desktop-api.ts` | `IPC` 加 13 个 invoke 键 + 1 个推送键；`SgDesktopApi` 加对应方法与 `onAppUpdateEvent` | 追加在 `seatRotation*` 之后 |
-| ⚠ `src/preload/index.ts` | 转发 13 个方法 + 一个 `ipcRenderer.on` 订阅 | 追加在 seat rotation 之后 |
+| ⚠ `src/main/index.ts` | import ×3、装配 `AppUpdateSettingsStore` / `AppUpdateService` / `registerAppUpdateIpc`（紧跟 `registerSessionHandoffIpc` 之后）、`before-quit` 两行、`reconcileGlobalChannelServers` 传 `appVersion` | 各自独立 hunk，避开 tray 以外的区域 |
+| ⚠ `src/shared/desktop-api.ts` | `IPC` 加 13 个 invoke 键 + 1 个推送键；`SgDesktopApi` 加对应方法与 `onAppUpdateEvent` | 追加在 `cursorCdp*` 之后 |
+| ⚠ `src/preload/index.ts` | 转发 13 个方法 + 一个 `ipcRenderer.on` 订阅 | 追加在 `saveCursorCdpSettings` 之后 |
 | `src/infrastructure/cursor/global-mcp-registrar.ts` | `appVersion` 入参 + `SG_TEAM_APP_VERSION` | 干净文件 |
 | `src/renderer/src/settings/SettingsPage.tsx`、`icons.tsx` | 加分组、加图标 | 干净文件 |
 | `.github/workflows/release.yml` | publish job 加「生成更新清单」步骤 | 干净文件 |
@@ -515,7 +515,7 @@ tests/mac-app-replacer.test.ts · tests/update-backup.test.ts · tests/register-
 - `update-downloader.test.ts`：本地服务器给 100 KB 随机体：完整下载 + 哈希；中途断开一次后重试成功；`Range` 续传（服务器支持时）；取消删 `.part`；磁盘检查用注入的 `statfs`。
 - `mac-app-replacer.test.ts`：`buildApplyScript` 对含空格 / 中文 / 单引号的路径正确转义（对生成文本 `sh -n` 语法检查）；**在临时目录真跑脚本**：PATH 前置 stub 的 `open` / `codesign` / `xattr`（记录调用参数），构造假 bundle 目录 → 正常路径：新在原位、旧在备份、`pending-result.json` 为 `applied`、`open` 被调一次；`codesign` stub 返回非零 → 旧包换回、结果 `apply_failed:codesign_failed`；`NEW` 不存在 → `staged_missing`；PID 不退出 → 超时分支（PID 用一个 `sleep` 子进程，超时阈值注入缩短）。`buildRollbackScript` 同样两条路径。
 - `update-backup.test.ts`：对临时 SQLite（含 WAL 模式、几行数据）`VACUUM INTO` 后副本可独立打开且行数一致；目标已存在时报错不覆盖；`backup.json` 内容；只保留最近一份。
-- `register-app-update-ipc.test.ts`：照 `register-seat-rotation-ipc.test.ts` 的 `vi.mock('electron')` 模式：每个键路由到服务方法、`assertTrustedSender` 被调、dispose 撤销全部处理器、推送在 `onChange` 时调用 `webContents.send`。
+- `register-app-update-ipc.test.ts`：照 `register-cursor-storage-ipc.test.ts` 的 `vi.mock('electron')` 模式：每个键路由到服务方法、`assertTrustedSender` 被调、dispose 撤销全部处理器、推送在 `onChange` 时调用 `webContents.send`。
 - `update-manifest-script.test.ts`：临时 `artifacts/` 放 3 个文件（正确 mac zip、正确 win exe、上一版残留 zip）→ 清单只含前两个且 sha512 / size 正确；版本名不匹配时残留文件被忽略；无 mac 产物时退出非零。
 - `global-mcp-registrar.test.ts`：补版本 env 三例（§6.8）。
 - `settings-update.test.tsx`：`renderToStaticMarkup` 每个 phase 的文案与按钮集合（§8 表）；位置为 `build-output` 时按钮是「下载」而非「下载并安装」；`confirm` 门禁文案含在线席位数。

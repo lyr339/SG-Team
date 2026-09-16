@@ -751,7 +751,7 @@ describe('TeamControlService', () => {
     }
   })
 
-  it('prepareComposerRelaunch：默认只放行离线席位；allowIdleOnline 放行「在线且待命」，在途 / 排队 / 待回复 / 等用户一律拒绝', () => {
+  it('prepareComposerRelaunch：只放行离线席位；在线（待命 / keepalive 间隙 / 处理中）与离线但在途的席位一律拒绝', () => {
     const { repository, bridge, service } = fixture(true)
     try {
       const before = service.getSnapshot()
@@ -765,9 +765,6 @@ describe('TeamControlService', () => {
       const oldToken = bound.sessionToken
       expect(oldToken).toBeTruthy()
 
-      // 在线待命：默认拒绝（换席重建只对离线席位开放）
-      expect(service.prepareComposerRelaunch('1')).toBeUndefined()
-      // 不在待命（keepalive 间隙 / 处理中 / 有排队 / 待同步回复 / 等用户）：即便 allowIdleOnline 也拒绝
       const withSession = (patch: Partial<DesktopSnapshot['sessions'][number]>): void => {
         const snapshot = bridge.getSnapshot()
         bridge['snapshot'] = {
@@ -777,21 +774,20 @@ describe('TeamControlService', () => {
         }
         for (const listener of bridge['listeners']) listener(bridge.getSnapshot())
       }
+      // 在线：待命中、keepalive 间隙、处理中——换席重建只对离线席位开放
+      expect(service.prepareComposerRelaunch('1')).toBeUndefined()
       withSession({ waiting: false, connectionPhase: 'keepalive' })
-      expect(service.prepareComposerRelaunch('1', { allowIdleOnline: true })).toBeUndefined()
+      expect(service.prepareComposerRelaunch('1')).toBeUndefined()
       withSession({ waiting: false, connectionPhase: 'processing' })
-      expect(service.prepareComposerRelaunch('1', { allowIdleOnline: true })).toBeUndefined()
-      withSession({ waiting: true, connectionPhase: 'waiting', queueDepth: 1 })
-      expect(service.prepareComposerRelaunch('1', { allowIdleOnline: true })).toBeUndefined()
-      withSession({ waiting: true, connectionPhase: 'waiting', queueDepth: 0, pendingOutboundId: 'out-1', pendingReplySyncSince: Date.now() })
-      expect(service.prepareComposerRelaunch('1', { allowIdleOnline: true })).toBeUndefined()
-      withSession({ waiting: true, connectionPhase: 'waiting', queueDepth: 0, pendingOutboundId: undefined, pendingReplySyncSince: undefined, awaitingUser: true })
-      expect(service.prepareComposerRelaunch('1', { allowIdleOnline: true })).toBeUndefined()
+      expect(service.prepareComposerRelaunch('1')).toBeUndefined()
+      // 离线但仍持有在途执行（processing 相位）：同样拒绝
+      withSession({ online: false, connected: false, waiting: false, status: 'offline', connectionPhase: 'processing' })
+      expect(service.prepareComposerRelaunch('1')).toBeUndefined()
       expect(service.getSnapshot().bindings.find((candidate) => candidate.channelId === '1')?.composerId).toBe('composer-1')
 
-      // 在线且待命 + allowIdleOnline：原子轮换绑定键与会话令牌，清空 composer 绑定
-      withSession({ waiting: true, connectionPhase: 'waiting', queueDepth: 0, awaitingUser: false })
-      const key = service.prepareComposerRelaunch('1', { allowIdleOnline: true })
+      // 离线且无在途：原子轮换绑定键与会话令牌，清空 composer 绑定
+      withSession({ online: false, connected: false, waiting: false, status: 'offline', connectionPhase: 'offline' })
+      const key = service.prepareComposerRelaunch('1')
       expect(key).toMatch(/^[0-9a-f-]{36}$/)
       const rotated = service.getSnapshot().bindings.find((candidate) => candidate.channelId === '1')!
       expect(rotated.composerBindingKey).toBe(key)

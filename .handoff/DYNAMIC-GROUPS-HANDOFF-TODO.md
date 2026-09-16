@@ -465,7 +465,7 @@ interface TeamControlSnapshot { …; groups: TeamGroupView[] }   // 只含 activ
 1. 基线与工作树：见文首。
 2. 阶段 4 §0.2 / §0.5 按 keepalive 60s 估算——09-13 已改为 5 分钟（`CHANNEL_KEEPALIVE_TIMEOUT_MS`），4C 收益要重算。
 3. 运行库里有 11 个 09-03 遗留 `running` 独立 run（两个工作区，从未 complete）。无害（`activeRun` 取最新），但阶段 2B 的 v9 归档迁移应加「非最新的 running 独立 run → completed」。
-4. 席位自动轮换 v1 只覆盖 `slot.solo`：入组后席位不轮换，Composer 无界增长。阶段 2C「重建后自动补入组通知」是解决前提，应把「组成员轮换」列为 2C 子项。
+4. ~~席位自动轮换 v1 只覆盖 `slot.solo`：入组后席位不轮换，Composer 无界增长。阶段 2C「重建后自动补入组通知」是解决前提，应把「组成员轮换」列为 2C 子项。~~ **已作废（09-16）**：席位自动轮换整体移除（用户拍板；见 `docs/ARCHITECTURE.md` 同日条目），2C 不再有此子项；Composer 体积只靠用户显式的交接 / 重建控制。
 5. `resolveChannelSessionOwner().solo` 在入组后翻为 false（围栏 JOIN 不改，只是派生值变化）；已核对 `evaluateSessionFence` 与 `channel-communication-tools.ts` 都不读该字段，无逻辑依赖。
 6. §9 最小 UI 挂在 `RunIndependentPanel`，阶段 3 整体替换——范围压到「能跑通 §11 验收脚本」为止。另：`run-view.ts` 独立模式只渲染 `solo === true` 的席位，**入组席位会从运行页消失**，切片⑤ 必须同时改这里。
 7. `TeamHandoffService.manual` 原只拦 solo，入组席位会成为合法交接源并 `rebindSlotFromMember`——池模型下等于互换两条会话的身份。已在切片① 对池 run 整体拒绝（`handoff_pool_run`）。

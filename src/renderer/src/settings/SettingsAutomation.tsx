@@ -6,17 +6,11 @@ import {
   type AccountAutomationPhase
 } from '../../../domain/account-automation'
 import {
-  SEAT_ROTATION_THRESHOLD_MAX,
-  SEAT_ROTATION_THRESHOLD_MIN,
-  SEAT_ROTATION_THRESHOLD_STEP
-} from '../../../domain/seat-rotation'
-import {
   DEFAULT_CURSOR_CHECKOUT_PROFILE,
   cursorCheckoutProfileIssue,
   type CursorCheckoutProfile
 } from '../../../domain/cursor-checkout-profile'
 import { ToggleSwitch } from '../lobby/ToggleSwitch'
-import { RangeField } from '../lobby/RangeField'
 import { NumberStepperField } from '../lobby/NumberStepperField'
 import { FlowStatusIcon } from '../lobby/FlowStatusIcon'
 import { MenuSelect } from '../lobby/MenuSelect'
@@ -37,7 +31,6 @@ import { SettingsSection } from './SettingsSection'
 type AutomationProps = Pick<SettingsPageProps,
   | 'accounts' | 'automationSettings' | 'automationRun' | 'aozaiStatus'
   | 'aozaiBusy' | 'onSaveAutomationSettings' | 'onCancelAutomation' | 'bitProfiles'
-  | 'seatRotationSettings' | 'onSaveSeatRotationSettings'
 >
 
 const TRACKER_STEPS: readonly AccountFlowStepKey[] = ['acquire', 'countdown', 'processing', 'deleting', 'finish']
@@ -56,9 +49,7 @@ export function SettingsAutomation({
   aozaiBusy = false,
   onSaveAutomationSettings,
   onCancelAutomation,
-  bitProfiles,
-  seatRotationSettings,
-  onSaveSeatRotationSettings
+  bitProfiles
 }: AutomationProps): React.JSX.Element {
   const aozaiReady = Boolean(aozaiStatus?.saved)
   const automationEnabled = Boolean(automationSettings?.enabled)
@@ -410,48 +401,6 @@ export function SettingsAutomation({
             ) : (
               <p className="settings-add-form__ok settings-checkout-form__wide">资料完整，可在账号卡片发起「升级 Pro」</p>
             )}
-          </div>
-        </SettingsSection>
-      ) : null}
-
-      {seatRotationSettings && onSaveSeatRotationSettings ? (
-        <SettingsSection
-          title="席位自动轮换"
-          description="独立席位的 Cursor 会话到体积阈值且连续待命后，自动交接上下文并换一个新 Composer；通道历史与任务不变。"
-        >
-          <div className="settings-automation">
-            <div className="settings-row">
-              <div className="settings-row__copy">
-                <span className="settings-row__label">到阈值自动换新会话</span>
-                <span className="settings-row__hint">持续会话的 Cursor 回合永不结束，气泡越多每次写入越慢；只在席位连续待命 5 分钟且 10 分钟内没有消息往来时轮换，同一席位 10 分钟内最多一次，相邻两次轮换至少间隔 2 分钟</span>
-              </div>
-              <ToggleSwitch
-                checked={seatRotationSettings.enabled}
-                label="到阈值自动换新会话"
-                onChange={(enabled) => onSaveSeatRotationSettings({ ...seatRotationSettings, enabled })}
-              />
-            </div>
-            <div className={`settings-collapse${seatRotationSettings.enabled ? ' is-open' : ''}`}>
-              <div className="settings-collapse__inner">
-                <div className="settings-subgroup">
-                  <div className="settings-row settings-row--sub">
-                    <div className="settings-row__copy">
-                      <span className="settings-row__label">触发阈值</span>
-                      <span className="settings-row__hint">会话气泡数（Cursor 原生回合体积）；活跃席位约 20–30 分钟到 400，纯待命席位慢得多</span>
-                    </div>
-                    <RangeField
-                      value={seatRotationSettings.bubbleThreshold}
-                      min={SEAT_ROTATION_THRESHOLD_MIN}
-                      max={SEAT_ROTATION_THRESHOLD_MAX}
-                      step={SEAT_ROTATION_THRESHOLD_STEP}
-                      unit="气泡"
-                      label="席位自动轮换的气泡数阈值"
-                      onChange={(bubbleThreshold) => onSaveSeatRotationSettings({ ...seatRotationSettings, bubbleThreshold })}
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
           </div>
         </SettingsSection>
       ) : null}

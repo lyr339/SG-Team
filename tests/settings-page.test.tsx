@@ -743,38 +743,6 @@ describe('SettingsPage', () => {
     expect(html).toContain('6192****eada')
   })
 
-  it('席位自动轮换区块：有设置才渲染；开关状态决定阈值滑杆是否展开；阈值以气泡数读出', () => {
-    const absent = renderToStaticMarkup(<SettingsPage {...propsFor()} />)
-    expect(absent).not.toContain('席位自动轮换')
-
-    const enabled = renderToStaticMarkup(
-      <SettingsPage {...propsFor({ seatRotationSettings: { enabled: true, bubbleThreshold: 450 }, onSaveSeatRotationSettings: () => {} })} />
-    )
-    const toggleInput = (html: string): string => html.match(/<input[^>]*aria-label="到阈值自动换新会话"[^>]*>/)?.[0] ?? ''
-    expect(enabled).toContain('席位自动轮换')
-    expect(enabled).toContain('到阈值自动换新会话')
-    expect(toggleInput(enabled)).toContain('checked=""')
-    expect(enabled).toContain('触发阈值')
-    expect(enabled).toContain('450')
-    expect(enabled).toContain('气泡')
-    // 账号自动化那一段仍在，且不受奥仔卡密门禁影响
-    expect(enabled).toContain('会话创建后自动处理账号')
-
-    const disabled = renderToStaticMarkup(
-      <SettingsPage {...propsFor({
-        aozaiStatus: { saved: false },
-        seatRotationSettings: { enabled: false, bubbleThreshold: 400 },
-        onSaveSeatRotationSettings: () => {}
-      })} />
-    )
-    expect(disabled).toContain('席位自动轮换')
-    expect(toggleInput(disabled)).not.toContain('checked=""')
-    // 关闭时参数区折叠（settings-collapse 不带 is-open）
-    const section = disabled.slice(disabled.indexOf('席位自动轮换'))
-    expect(section).toContain('class="settings-collapse"')
-    expect(section).not.toContain('settings-collapse is-open')
-  })
-
   it('奥仔手动处理区：有卡密且有回调才渲染；无卡密或无回调时隐藏', () => {
     const withCard = renderToStaticMarkup(<SettingsPage {...propsFor()} />)
     expect(withCard).toContain('手动处理')

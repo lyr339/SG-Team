@@ -111,8 +111,7 @@ export class AgentSessionLauncher {
 
   async launch(
     requests: Array<string | AgentLaunchRequest>,
-    onProgress?: (plan: AgentLaunchPlan) => void,
-    options: { origin?: AgentLaunchPlan['origin'] } = {}
+    onProgress?: (plan: AgentLaunchPlan) => void
   ): Promise<AgentLaunchPlan> {
     if (this.current?.state === 'running') throw new Error('已有会话创建任务进行中')
     const unique = new Map<string, CursorModelSelection | undefined>()
@@ -132,8 +131,7 @@ export class AgentSessionLauncher {
         stage: 'trigger' as const,
         message: modelSelection ? `等待触发 · ${modelSelection.displayName}` : '等待触发 · Cursor 当前模型'
       })),
-      startedAt: this.now(),
-      ...(options.origin ? { origin: options.origin } : {})
+      startedAt: this.now()
     }
     this.current = plan
     let allTriggeredFired = false

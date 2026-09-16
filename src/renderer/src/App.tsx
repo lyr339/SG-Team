@@ -33,7 +33,6 @@ import type { AgentLaunchPlan, AgentLaunchRequest } from '../../domain/agent-lau
 import type { SessionWarmupRun } from '../../domain/session-warmup'
 import type { AccountAutomationRun, AccountAutomationSettings } from '../../domain/account-automation'
 import type { CdpAutoHealEvent } from '../../domain/cursor-cdp'
-import { DEFAULT_SEAT_ROTATION_SETTINGS, type SeatRotationSettings } from '../../domain/seat-rotation'
 import type { MessageAttachment } from '../../domain/conversation-entry'
 import { mergeDesktopSnapshot, snapshotGaps } from './snapshot-sharing'
 import { userFacingErrorMessage } from './error-message'
@@ -172,8 +171,6 @@ export function App(): React.JSX.Element {
   const [sessionWarmupEnabled, setSessionWarmupEnabled] = useState<boolean>(() => readSessionWarmupEnabled())
   const [accountAutomationSettings, setAccountAutomationSettings] = useState<AccountAutomationSettings>({ enabled: false, delaySec: 30, postProcessDelaySec: 30 })
   const [accountAutomationRun, setAccountAutomationRun] = useState<AccountAutomationRun | undefined>(undefined)
-  // 席位自动轮换设置（结果不在这里：轮换进度与结论投影在会话快照 seatRotation 上）。
-  const [seatRotationSettings, setSeatRotationSettings] = useState<SeatRotationSettings>({ ...DEFAULT_SEAT_ROTATION_SETTINGS })
   // 指纹浏览器窗口列表（账号自动化链的浏览器宿主；用户按当次网络选「代理/直连」窗口。
   // 提供方恒 RoxyBrowser，与平台无关）
   const [bitProfiles, setBitProfiles] = useState<Array<{ id: string; name: string; seq?: number }>>([])
@@ -366,9 +363,6 @@ export function App(): React.JSX.Element {
       .catch(() => {})
     void window.sgDesktop.getAccountAutomationSettings()
       .then(setAccountAutomationSettings)
-      .catch(() => {})
-    void window.sgDesktop.getSeatRotationSettings()
-      .then(setSeatRotationSettings)
       .catch(() => {})
     void window.sgDesktop.getAccountAutomationRun()
       .then((run) => { if (run.phase !== 'idle') setAccountAutomationRun(run) })
@@ -1338,14 +1332,6 @@ export function App(): React.JSX.Element {
     },
     onCancelAutomation: () => {
       void window.sgDesktop.cancelAccountAutomation().catch(() => {})
-    },
-    seatRotationSettings,
-    onSaveSeatRotationSettings: (settings) => {
-      // 乐观更新：滑杆拖动即时反馈；主进程归一化后的值回写覆盖。
-      setSeatRotationSettings(settings)
-      void window.sgDesktop.saveSeatRotationSettings(settings)
-        .then(setSeatRotationSettings)
-        .catch((reason: unknown) => setTeamNotice(`席位自动轮换设置未保存：${userFacingErrorMessage(reason)}`))
     }
   }
 
