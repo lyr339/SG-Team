@@ -657,6 +657,59 @@ describe('CursorComposerTelemetryReader', () => {
     expect(composer.lastAssistantProcess).toBeUndefined()
   })
 
+  it('treats mid-turn tool preambles as process, never as the final reply (2026-09-16 duplicate incident)', () => {
+    // 进行中回合的转录尾部：text 前导语与业务工具调用同条目。Cursor 原生把同一句
+    // 归为 thinking 气泡（过程卡 Thought）；转录兜底若再把它当完整回复，同一句会
+    // 在过程卡与正文气泡双份渲染（2026-09-16 截图事故）。
+    const data = fixture()
+    const composerId = 'composer-preamble-tail-123'
+    const runtime = { ...binding('1'), composerId }
+    writeHeaders(data.globalStateDatabase, [header({ composerId, workspace: data.workspace })])
+    const preamble = 'I made an error using a replace expression there—I should use the plain string instead.'
+    const lines = [
+      { role: 'user', message: { content: [{ type: 'text', text: '补上更新清单的错误分支测试' }] } },
+      { role: 'assistant', message: { content: [
+        { type: 'text', text: preamble },
+        { type: 'tool_use', name: 'StrReplace', input: { path: 'tests/github-manifest-feed.test.ts' } }
+      ] } },
+      { role: 'assistant', message: { content: [
+        { type: 'tool_use', name: 'Write', input: { path: 'tests/update-downloader.test.ts' } }
+      ] } }
+    ]
+    writeTranscript(data.projectsRoot, data.workspace, composerId, `${lines.map((line) => JSON.stringify(line)).join('\n')}\n`)
+    const composer = data.reader.readWorkspace(data.workspace, [runtime]).composers[0]!
+    expect(composer.lastAssistantResponse).toBeUndefined()
+    expect(composer.lastAssistantProcess?.blocks.some((block) => (
+      block.kind === 'thinking' && block.text === preamble
+    ))).toBe(true)
+  })
+
+  it('keeps the reply sharing an entry with record_reply as the final reply, skipping keepalive narration', () => {
+    // 回复正文常与 record_reply 调用同条目（含被门禁拒绝的调用）——它仍是最终回复，
+    // 且不得再进过程块；其后只挂 check_messages 的文本是协议相位思考，不是新回复。
+    const data = fixture()
+    const composerId = 'composer-reply-with-sync-123'
+    const runtime = { ...binding('1'), composerId }
+    writeHeaders(data.globalStateDatabase, [header({ composerId, workspace: data.workspace })])
+    const lines = [
+      { role: 'user', message: { content: [{ type: 'text', text: '现在进度如何？' }] } },
+      { role: 'assistant', message: { content: [
+        { type: 'text', text: '进度正常：测试已补齐，准备提交。' },
+        { type: 'tool_use', name: 'CallDynamicTool', input: { namespace: 'user-SG Team', toolName: 'record_reply', arguments: { channel_id: '1' } } }
+      ] } },
+      { role: 'assistant', message: { content: [
+        { type: 'text', text: '继续待命，有新消息随时处理。' },
+        { type: 'tool_use', name: 'CallDynamicTool', input: { namespace: 'user-SG Team', toolName: 'check_messages', arguments: { channel_id: '1' } } }
+      ] } }
+    ]
+    writeTranscript(data.projectsRoot, data.workspace, composerId, `${lines.map((line) => JSON.stringify(line)).join('\n')}\n`)
+    const composer = data.reader.readWorkspace(data.workspace, [runtime]).composers[0]!
+    expect(composer.lastAssistantResponse?.text).toBe('进度正常：测试已补齐，准备提交。')
+    expect(composer.lastAssistantProcess?.blocks.some((block) => (
+      block.kind === 'thinking' && String(block.text).includes('进度正常')
+    ))).toBe(false)
+  })
+
   it('reads Cursor native promptTokenBreakdown for the context hover panel', () => {
     const data = fixture()
     const composerId = 'composer-native-context-breakdown'
