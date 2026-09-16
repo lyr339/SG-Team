@@ -22,7 +22,7 @@ const RING_LENGTH = 2 * Math.PI * RING_RADIUS
 
 /**
  * 阶段节点：等待 = 细描空环；进行中 = 实心信息蓝 + 呼吸光晕，倒计时期间光晕换成随剩余时间
- * 线性排空的进度环；完成 / 失败 / 取消 = 实心色块 + 勾 / 叉 / 横。没有序号、没有旋转弧。
+ * 线性排空的进度环；完成 / 失败 / 取消 = 描边空心环 + 同色勾 / 叉 / 横。没有序号、没有旋转弧。
  */
 function StageNode({ state, countdown }: Pick<AutomationStageView, 'state' | 'countdown'>): React.JSX.Element {
   const fraction = countdown && countdown.totalSec > 0

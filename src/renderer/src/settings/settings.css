@@ -687,7 +687,7 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
 .automation-run__stage.is-skipped .automation-run__stage-detail { color: var(--faint); }
 
 /* 节点：22px 圆位。等待 = 细描空环；进行中 = 实心信息蓝 + 白芯 + 呼吸光晕；
-   倒计时期间光晕换成随剩余时间线性排空的进度环（tick 之间连续过渡）；终态 = 实心色块 + 勾 / 叉 / 横。 */
+   倒计时期间光晕换成随剩余时间线性排空的进度环（tick 之间连续过渡）；终态 = 描边空心环 + 勾 / 叉 / 横。 */
 .automation-run__node {
   position: relative;
   width: 22px;
@@ -754,9 +754,10 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
 .automation-run__ring circle { stroke-width: 2; stroke: var(--blue-border); opacity: 0.45; }
 .automation-run__ring circle + circle { stroke: var(--blue); stroke-linecap: round; opacity: 1; transition: stroke-dashoffset 500ms linear; }
 
-.automation-run__node.is-done { color: #fff; background: var(--color-text-success); }
-.automation-run__node.is-failed { color: #fff; background: var(--red); }
-.automation-run__node.is-cancelled { color: var(--muted); background: var(--surface-soft); box-shadow: inset 0 0 0 1px var(--line); }
+/* 终态是描边空心环 + 同色字形；只有进行中的节点是实心——实心即「当前」。 */
+.automation-run__node.is-done { color: var(--color-text-success); box-shadow: inset 0 0 0 1.5px var(--color-border-success); }
+.automation-run__node.is-failed { color: var(--red); box-shadow: inset 0 0 0 1.5px var(--red-border); }
+.automation-run__node.is-cancelled { color: var(--muted); box-shadow: inset 0 0 0 1.5px var(--line-strong); }
 
 @keyframes automation-node-pulse {
   0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--blue) 32%, transparent); }
