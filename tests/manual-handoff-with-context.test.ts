@@ -27,7 +27,7 @@ function team(): TeamControlSnapshot {
     role: { id: 'role-builder', runId: run.id, key: 'builder', templateKey: 'builder', name: '架构实现', mission: '', instructions: '', capabilities: [], skills: [], accent: 'mint', order: 0 },
     binding: {
       id: 'b-2', workspaceId: 'ws', runId: run.id, slotId: 'slot-builder', channelId: '2', agentSessionId: 'agent-2', generation: 'g1',
-      installedAt: 1, launchStatus: 'acknowledged', launchDetail: '', lastCheckInNote: '', composerBindingKey: 'k2', composerId: 'composer-2'
+      installedAt: 1, launchDetail: '', acknowledgedAt: 1, lastCheckInNote: '', composerBindingKey: 'k2', composerId: 'composer-2'
     },
     readiness: 'offline'
   }

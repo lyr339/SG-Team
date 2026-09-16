@@ -143,7 +143,7 @@ describe('three-channel autonomous team end to end', () => {
     const allOutboxTexts = (): string[] => ['1', '2', '3'].flatMap((channelId) => outboxTexts(channelId))
 
     try {
-      await waitFor(() => team.getSnapshot().preflight.canLaunch)
+      await waitFor(() => team.getSnapshot().preflight.blockers.length === 0)
       const lead = await connectAgent('lead')
       const builder = await connectAgent('builder')
       const reviewer = await connectAgent('reviewer')

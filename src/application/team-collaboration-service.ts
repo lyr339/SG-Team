@@ -23,9 +23,7 @@ export interface SendOperatorTeamMessageInput {
 type Listener = (snapshot: TeamCollaborationSnapshot) => void
 
 function assertCollaborationWritable(status: TeamRun['status']): void {
-  if (status === 'draft' || status === 'ready') throw new Error('本轮团队尚未启动，当前不能发送协作消息')
   if (status === 'completed') throw new Error('本轮团队已经结束，请开始新一轮')
-  if (status === 'paused') throw new Error('本轮团队已暂停，当前不能发送协作消息')
 }
 
 export class TeamCollaborationService {

@@ -4,24 +4,18 @@ import type { TeamRun } from '../../../domain/team-control'
 
 type ActiveRunForCollaboration = Pick<TeamRun, 'id' | 'status'> | undefined
 
-const COLLABORATION_VISIBLE_STATUSES = new Set<TeamRun['status']>([
-  'launching',
-  'running',
-  'attention',
-  'paused'
-])
-
 export interface TeamCollaborationSummary {
   operatorUnread: number
   pendingAgentReplies: number
   threadCount: number
 }
 
+/** 协作消息只在当前 running 的池内可见：已结束的 run 与上一轮的残留都不再显示、不再计数。 */
 export function shouldShowCollaborationForRun(
   collaboration: TeamCollaborationSnapshot,
   activeRun: ActiveRunForCollaboration
 ): boolean {
-  return Boolean(activeRun && COLLABORATION_VISIBLE_STATUSES.has(activeRun.status) && collaboration.runId === activeRun.id)
+  return Boolean(activeRun && activeRun.status === 'running' && collaboration.runId === activeRun.id)
 }
 
 export function visibleTeamCollaborationSnapshot(

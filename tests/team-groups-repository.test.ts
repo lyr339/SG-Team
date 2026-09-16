@@ -337,7 +337,7 @@ describe('SqliteTeamControlRepository 协作组', () => {
       expect(repository.listGroupEvents(group.id).at(-1)).toMatchObject({
         type: 'member_checked_in', slotId: a.id, channelId: '1', actor: `agent:${a.id}`, detail: 'join-ok'
       })
-      expect(repository.loadTeamControl().bindings.find((binding) => binding.slotId === a.id)?.launchStatus).toBe('acknowledged')
+      expect(repository.loadTeamControl().bindings.find((binding) => binding.slotId === a.id)?.acknowledgedAt).toBeTypeOf('number')
       expect(repository.loadTeamControl().runs.find((run) => run.id === pool.run.id)?.status).toBe('running')
     } finally {
       repository.close()

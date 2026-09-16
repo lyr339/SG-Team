@@ -78,13 +78,13 @@ export function verifyAgentRuntime(
   team: TeamRuntimeContext,
   telemetry: CursorTelemetrySnapshot
 ): DesktopSnapshot {
+  // run 只有 running / completed 两态（阶段 2 · 2B），没有「尚未启动、不需要 Cursor 证据」的阶段：
+  // 只要有活动 run 和绑定，每个绑定通道都按 Cursor 证据校验。
   const run = activeRun(team)
   const bindings = activeBindings(team)
   if (!run || bindings.length === 0) return snapshot
-  const requiresCursorEvidence = ['running', 'attention', 'paused', 'completed'].includes(run.status)
   const bindingByChannel = new Map(bindings.map((binding) => [binding.channelId, binding]))
   if (telemetry.availability !== 'available') {
-    if (!requiresCursorEvidence) return snapshot
     return {
       ...snapshot,
       sessions: snapshot.sessions.map((session) => {
@@ -111,7 +111,6 @@ export function verifyAgentRuntime(
           'Cursor 转录活性滞后，但内嵌 MCP 心跳仍新鲜，按实时通道活性保持在线'
         )
       }
-      if (!requiresCursorEvidence) return session
       return transportAlive(session)
         ? unverifiedSession(session, '尚未绑定可验证的 Cursor 会话（传输层活性正常，按通道活性保持在线）')
         : stoppedSession(session, 'TeamRun 已开始，但当前通道尚未绑定可验证的 Cursor 会话', 'suspected')
@@ -130,14 +129,12 @@ export function verifyAgentRuntime(
           'Cursor 转录活性滞后，但内嵌 MCP 心跳仍新鲜，按实时通道活性保持在线'
         )
       }
-      if (!requiresCursorEvidence) return session
       return transportAlive(session)
         ? unverifiedSession(session, '已绑定 Cursor 会话暂未出现在本机遥测（传输层活性正常，按通道活性保持在线）')
         : stoppedSession(session, '已绑定 Cursor 会话暂未出现在本机遥测，且传输层活性缺失', 'suspected')
     }
     const activity = composer?.activity
     if (!activity || activity.state === 'unknown') {
-      if (!requiresCursorEvidence) return session
       // 长任务宽限必须以 MCP 心跳新鲜为前提（S3 遥测诚实化）：
       // 死亡 Agent（Cursor 连接错误/配额耗尽）的转录同样暂停增长，
       // 唯一能区分「长命令」与「死亡」的活证据是通道心跳仍在刷新。

@@ -76,7 +76,8 @@ const previewWarmupRun: import('../../../domain/session-warmup').SessionWarmupRu
   failed: { phase: 'failed' as const, message: '预热响应超时（30s 内 GPT-5.6 Luna 未产出回复）——账号可能已不可用，已中止批量发起', modelLabel: 'GPT-5.6 Luna', startedAt: previewNow - 30_000, finishedAt: previewNow - 1_000 },
   'no-model': { phase: 'failed' as const, message: '未在 Cursor 模型目录中找到可用的低成本模型（GPT-5.6 Luna 等）；已中止预热，绝不静默切换贵模型', startedAt: previewNow - 500, finishedAt: previewNow }
 } as const)[warmupScene] : undefined
-const previewRunStatus = (['draft', 'ready', 'launching', 'running', 'attention', 'paused', 'completed'] as TeamRunStatus[])
+// run 只有 running / completed 两态（阶段 2 · 2B）：`?runStatus=completed` 走查已结束的运行。
+const previewRunStatus = (['running', 'completed'] as TeamRunStatus[])
   .find((status) => status === requestedRunStatus)
 // 右栏「变更」面板走查：?review=clean|not_git|error|many（缺省为两文件就绪态）。
 const reviewScene = (['clean', 'not_git', 'error', 'many'] as const).find((scene) => scene === previewParameters.get('review'))
@@ -95,9 +96,7 @@ if (activeExecutingMode && initialTeam.activeRun) {
   }))
   initialTeam.preflight = {
     ...initialTeam.preflight,
-    agentsWaiting: false,
-    canLaunch: false,
-    blockers: ['并非所有 Agent 通道都已在线待命', '团队已经运行']
+    blockers: ['团队已经运行']
   }
 }
 if (previewRunStatus && initialTeam.activeRun) {
@@ -105,20 +104,7 @@ if (previewRunStatus && initialTeam.activeRun) {
   initialTeam.runs = initialTeam.runs.map((run) => (
     run.id === initialTeam.activeRun?.id ? { ...run, status: previewRunStatus } : run
   ))
-  if (previewRunStatus === 'launching') {
-    initialTeam.bindings = initialTeam.bindings.map((binding, index) => ({
-      ...binding,
-      launchStatus: index === 0 ? 'acknowledged' as const : 'delivered' as const
-    }))
-    initialTeam.members = initialTeam.members.map((member, index) => ({
-      ...member,
-      binding: member.binding ? {
-        ...member.binding,
-        launchStatus: index === 0 ? 'acknowledged' as const : 'delivered' as const
-      } : member.binding,
-      readiness: index === 0 ? 'active' as const : 'launching' as const
-    }))
-  } else if (previewRunStatus === 'completed') {
+  if (previewRunStatus === 'completed') {
     initialTeam.members = initialTeam.members.map((member) => ({
       ...member,
       runtime: member.runtime ? { ...member.runtime, online: false, waiting: false } : member.runtime,
@@ -140,9 +126,7 @@ if (previewRunStatus && initialTeam.activeRun) {
   initialTeam.preflight = {
     ...initialTeam.preflight,
     mcpInstalled: false,
-    agentsWaiting: false,
-    canLaunch: false,
-    blockers: ['Agent MCP 尚未接入全部本轮通道', '并非所有 Agent 通道都已在线待命']
+    blockers: ['Agent MCP 尚未接入全部本轮通道']
   }
 }
 // 运行页独立批次走查：?independent=live|mixed|ended|groups
@@ -215,9 +199,8 @@ if (independentScene && initialTeam.activeRun) {
     ]
   }
 }
+// `?handoff=1`：CH-1 离线、其余待命——run 状态不变（离线只是席位 / 组的事实，run 没有 attention 态）。
 if (manualHandoffMode && initialTeam.activeRun) {
-  initialTeam.activeRun = { ...initialTeam.activeRun, status: 'attention' }
-  initialTeam.runs = initialTeam.runs.map((run) => run.id === initialTeam.activeRun?.id ? { ...run, status: 'attention' } : run)
   initialTeam.members = initialTeam.members.map((member, index) => ({
     ...member,
     runtime: member.runtime ? {
@@ -1095,7 +1078,7 @@ const api: SgDesktopApi = {
     const bindings = configured.slots.map((slot) => ({
       id: `preview-independent-binding-${slot.channelId}`, workspaceId: configured.workspace.id, runId: configured.run.id,
       slotId: slot.id, channelId: slot.channelId!, agentSessionId: `preview-independent:ch-${slot.channelId}:g1`,
-      generation: 'g1', installedAt: Date.now(), launchStatus: 'not_started' as const,
+      generation: 'g1', installedAt: Date.now(),
       launchDetail: '', lastCheckInNote: '', composerBindingKey: `preview-independent-${slot.channelId}`
     }))
     const members = configured.slots.map((slot, index) => ({
@@ -1114,10 +1097,7 @@ const api: SgDesktopApi = {
         online: false, waiting: false, queueDepth: 0, registered: true, assignedSlotId: binding.slotId,
         agentSessionId: binding.agentSessionId, generation: binding.generation
       })),
-      preflight: {
-        bridgeConnected: true, workspaceBound: true, goalDefined: false, mcpInstalled: true,
-        agentsWaiting: false, canLaunch: false, blockers: []
-      },
+      preflight: { bridgeConnected: true, workspaceBound: true, mcpInstalled: true, blockers: [] },
       updatedAt: Date.now()
     }
     pushTeam()
@@ -1222,20 +1202,21 @@ const api: SgDesktopApi = {
     const sourceChannel = sourceBinding.channelId
     const replacementChannelId = donor?.binding?.channelId ?? standby!.channelId
     const replacementAgentSessionIdResolved = donor?.binding?.agentSessionId ?? standby!.agentSessionId!
+    // 接手方的新绑定尚未签到（acknowledged_at 清空）：就绪度回到 ready，直到它 team_check_in。
     source.binding = {
       ...sourceBinding,
       channelId: replacementChannelId,
       agentSessionId: replacementAgentSessionIdResolved,
       slotId: source.slot.id,
-      launchStatus: 'sending'
+      acknowledgedAt: undefined
     }
     source.slot = { ...source.slot, channelId: replacementChannelId, avatarId: donor?.slot.avatarId ?? source.slot.avatarId }
     source.runtime = donor?.runtime
       ? { ...donor.runtime, channelId: replacementChannelId }
       : { channelId: replacementChannelId, status: 'waiting', online: true, waiting: true, queueDepth: 0, lastSeenAt: Date.now(), healthEvidence: ['备用 Agent 已接管'], workingFiles: [] }
-    source.readiness = 'launching'
+    source.readiness = 'ready'
     if (donor?.binding) {
-      donor.binding = { ...sourceBinding, slotId: donor.slot.id, launchStatus: 'failed' }
+      donor.binding = { ...sourceBinding, slotId: donor.slot.id, acknowledgedAt: undefined }
       donor.slot = { ...donor.slot, channelId: sourceChannel }
       donor.runtime = donor.runtime ? { ...donor.runtime, channelId: sourceChannel, online: false, waiting: false, status: 'offline' } : donor.runtime
       donor.readiness = 'offline'
@@ -1251,7 +1232,6 @@ const api: SgDesktopApi = {
     state.team = {
       ...state.team,
       revision: state.team.revision + 1,
-      activeRun: state.team.activeRun ? { ...state.team.activeRun, status: 'attention' } : undefined,
       standbyChannels: standby ? state.team.standbyChannels.filter((channel) => channel.agentSessionId !== replacementAgentSessionId) : state.team.standbyChannels,
       failovers: [failover, ...state.team.failovers]
     }

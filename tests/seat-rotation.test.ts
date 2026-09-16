@@ -224,7 +224,7 @@ function member(channelId: string, solo: boolean): TeamMemberView {
     role: { id: 'role', runId: 'run-1', key: 'solo', templateKey: 'solo', name: '独立执行', mission: '', instructions: '', capabilities: [], skills: [], accent: 'mint', order: 0 },
     binding: {
       id: `b-${channelId}`, workspaceId: 'ws', runId: 'run-1', slotId: `slot-${channelId}`, channelId, agentSessionId: `a-${channelId}`, generation: 'g',
-      installedAt: 1, launchStatus: 'acknowledged', launchDetail: '', lastCheckInNote: '', composerBindingKey: 'k', composerId: 'composer-old', sessionToken: `token-${channelId}`
+      installedAt: 1, launchDetail: '', acknowledgedAt: 1, lastCheckInNote: '', composerBindingKey: 'k', composerId: 'composer-old', sessionToken: `token-${channelId}`
     },
     readiness: 'active'
   }
@@ -644,7 +644,7 @@ describe('SeatRotationService', () => {
     expect(h.calls.relaunch).toHaveLength(0)
 
     const g = harness()
-    g.state.runStatus = 'attention'
+    g.state.runStatus = 'completed'
     g.evaluate()
     g.state.now = T0 + SEAT_ROTATION_IDLE_MS
     g.evaluate()

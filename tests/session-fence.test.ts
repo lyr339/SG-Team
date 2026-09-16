@@ -52,12 +52,10 @@ describe('session fence（会话围栏领域规则）', () => {
       .toEqual({ status: 'retired', reason: 'token_mismatch' })
   })
 
-  it('passes the current seat token (whitespace tolerant) across run statuses that still run', () => {
+  it('passes the current seat token (whitespace tolerant) while the run is running', () => {
     expect(evaluateSessionFence(ownership(), TOKEN)).toEqual({ status: 'ok' })
     expect(evaluateSessionFence(ownership(), `  ${TOKEN}  `)).toEqual({ status: 'ok' })
-    for (const runStatus of ['launching', 'attention', 'paused', 'ready', 'draft'] as const) {
-      expect(evaluateSessionFence(ownership({ runStatus }), TOKEN)).toEqual({ status: 'ok' })
-    }
+    expect(evaluateSessionFence(ownership({ runStatus: 'running' }), TOKEN)).toEqual({ status: 'ok' })
   })
 
   it('renders the retired instruction as an explicit server-side stop with the concrete cause', () => {

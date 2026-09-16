@@ -385,9 +385,9 @@ describe('team_run start（阶段 2 · 2B：启动状态机已退役）', () => 
         expect(JSON.stringify(result.structuredContent)).toContain('没有「启动」这一步')
       }
       const after = data.team.loadTeamControl()
-      expect(after.runs.find((run) => run.id === data.bundle.run.id)).toMatchObject({ status: 'running', launchedAt: undefined })
-      expect(after.bindings.map((binding) => [binding.slotId, binding.launchStatus, binding.composerBindingKey]))
-        .toEqual(before.bindings.map((binding) => [binding.slotId, binding.launchStatus, binding.composerBindingKey]))
+      expect(after.runs.find((run) => run.id === data.bundle.run.id)).toMatchObject({ status: 'running' })
+      expect(after.bindings.map((binding) => [binding.slotId, binding.launchDetail, binding.composerBindingKey]))
+        .toEqual(before.bindings.map((binding) => [binding.slotId, binding.launchDetail, binding.composerBindingKey]))
     } finally {
       await lead.client.close()
       await builder.client.close()

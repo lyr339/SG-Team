@@ -179,10 +179,10 @@ describe('V3 native-turn accounting', () => {
     } finally { vi.useRealTimers() }
   })
 
-  it('只有新 run 清零，同 run 状态变化不清账', () => {
+  it('只有新 run 清零，同 run 状态变化不清账；只有 running 在采集', () => {
     expect(cursorUsageRunDecision({ runId: 'a', status: 'running' }, { runId: 'b', status: 'running' }).reset).toBe(true)
-    expect(cursorUsageRunDecision({ runId: 'a', status: 'completed' }, { runId: 'a', status: 'launching' }).reset).toBe(false)
-    expect(cursorUsageRunDecision({ runId: 'a', status: 'running' }, { runId: 'a', status: 'attention' }).reset).toBe(false)
+    expect(cursorUsageRunDecision({ runId: 'a', status: 'running' }, { runId: 'a', status: 'completed' })).toEqual({ reset: false, collecting: false })
+    expect(cursorUsageRunDecision({ runId: 'a', status: 'completed' }, { runId: 'a', status: 'running' })).toEqual({ reset: false, collecting: true })
   })
 
   it('按用户图表比例拆分四类 token，费用使用固定牌价；不是复制图中费用', () => {

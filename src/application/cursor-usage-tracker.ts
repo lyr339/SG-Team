@@ -12,9 +12,9 @@ export function cursorUsageRunDecision(
 ): { reset: boolean; collecting: boolean } {
   const runChanged = previous.runId !== next.runId
   return {
-    // 新批次有新 runId → 切换账本归属（旧 run 冻结归档，不清空）；同 run 的 attention/launching 抖动不动账。
+    // 新批次有新 runId → 切换账本归属（旧 run 冻结归档，不清空）；run 只有 running / completed 两态（阶段 2 · 2B）。
     reset: runChanged,
-    collecting: next.status === 'launching' || next.status === 'running' || next.status === 'attention'
+    collecting: next.status === 'running'
   }
 }
 

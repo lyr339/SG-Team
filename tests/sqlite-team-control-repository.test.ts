@@ -214,8 +214,7 @@ describe('SqliteTeamControlRepository', () => {
 
       let state = repository.loadTeamControl()
       expect(state.runs[0]?.status).toBe('running')
-      expect(state.runs[0]?.launchedAt).toBeUndefined()
-      expect(state.bindings.every((binding) => binding.launchStatus === 'not_started')).toBe(true)
+      expect(state.bindings.every((binding) => binding.acknowledgedAt === undefined)).toBe(true)
 
       const first = state.bindings[0]!
       const receipt = repository.recordAgentCheckIn({
@@ -226,10 +225,20 @@ describe('SqliteTeamControlRepository', () => {
       expect(receipt).toMatchObject({ runId: team.run.id, slotId: first.slotId })
       state = repository.loadTeamControl()
       expect(state.runs[0]?.status).toBe('running')
-      expect(state.bindings.find((binding) => binding.id === first.id)).toMatchObject({
-        launchStatus: 'acknowledged', lastCheckInNote: '已读取角色边界'
-      })
-      expect(state.bindings.find((binding) => binding.id !== first.id)?.launchStatus).toBe('not_started')
+      const acknowledged = state.bindings.find((binding) => binding.id === first.id)!
+      expect(acknowledged).toMatchObject({ acknowledgedAt: receipt.acknowledgedAt, lastCheckInNote: '已读取角色边界' })
+      expect(state.bindings.find((binding) => binding.id !== first.id)?.acknowledgedAt).toBeUndefined()
+
+      // 再次签到（刷新上下文）只刷 last_check_in_*：acknowledged_at 保留首次值，会话开始时间不漂移。
+      const again = repository.recordAgentCheckIn({
+        agentSessionId: first.agentSessionId,
+        runId: first.runId,
+        capabilities: []
+      }, '入组后刷新简报')
+      const refreshed = repository.loadTeamControl().bindings.find((binding) => binding.id === first.id)!
+      expect(refreshed.acknowledgedAt).toBe(acknowledged.acknowledgedAt)
+      expect(refreshed.lastCheckInAt).toBe(again.acknowledgedAt)
+      expect(refreshed.lastCheckInNote).toBe('入组后刷新简报')
     } finally {
       repository.close()
     }
@@ -247,7 +256,7 @@ describe('SqliteTeamControlRepository', () => {
         runId: team.run.id,
         capabilities: ['coordination', 'planning']
       }, '迟到的签到')).toThrowError(expect.objectContaining({ code: 'run_completed' }))
-      expect(repository.loadTeamControl().bindings[0]).toMatchObject({ launchStatus: 'failed', lastCheckInNote: '' })
+      expect(repository.loadTeamControl().bindings[0]).toMatchObject({ launchDetail: '本轮运行已结束', lastCheckInNote: '' })
       expect(() => repository.recordAgentCheckIn({
         agentSessionId: 'alpha:ch-9:unknown',
         runId: team.run.id,
@@ -272,7 +281,7 @@ describe('SqliteTeamControlRepository', () => {
       const state = repository.loadTeamControl()
       expect(state.runs[0]?.status).toBe('running')
       expect(state.bindings.every((binding) => binding.generation === 'generation123')).toBe(true)
-      expect(state.bindings.find((binding) => binding.id === first.id)?.launchStatus).toBe('acknowledged')
+      expect(state.bindings.find((binding) => binding.id === first.id)?.acknowledgedAt).toBeDefined()
 
       const receipt = repository.recordAgentCheckIn({
         agentSessionId: first.agentSessionId,
@@ -313,8 +322,7 @@ describe('SqliteTeamControlRepository', () => {
       expect(second.bindings[0]).toMatchObject({
         generation: 'generation123',
         agentSessionId: 'alpha:ch-1:generation123',
-        slotId: first.slots[0]?.id,
-        launchStatus: 'not_started'
+        slotId: first.slots[0]?.id
       })
     } finally {
       repository.close()
@@ -481,11 +489,9 @@ describe('SqliteTeamControlRepository', () => {
         runId: team.run.id, slotId: first!.slotId, bindingKey: 'launch-attempt-2'
       })).toBe(true)
       const rotated = repository.loadTeamControl().bindings.find((value) => value.slotId === first!.slotId)!
-      expect(rotated).toMatchObject({
-        composerBindingKey: 'launch-attempt-2',
-        launchStatus: 'not_started'
-      })
+      expect(rotated).toMatchObject({ composerBindingKey: 'launch-attempt-2' })
       expect(rotated.composerId).toBeUndefined()
+      expect(rotated.acknowledgedAt).toBeUndefined()
       expect(repository.recordComposerBinding({
         runId: first!.runId,
         slotId: first!.slotId,
@@ -530,8 +536,9 @@ describe('SqliteTeamControlRepository', () => {
         runId: binding.runId, slotId: binding.slotId, bindingKey: 'relaunch-key-2'
       })).toBe(true)
       const rotated = repository.loadTeamControl().bindings[0]!
-      expect(rotated).toMatchObject({ composerBindingKey: 'relaunch-key-2', launchStatus: 'not_started' })
+      expect(rotated).toMatchObject({ composerBindingKey: 'relaunch-key-2' })
       expect(rotated.composerId).toBeUndefined()
+      expect(rotated.acknowledgedAt).toBeUndefined()
       expect(repository.recordComposerBinding({
         runId: binding.runId, slotId: binding.slotId, generation: binding.generation,
         bindingKey: 'relaunch-key-2', composerId: 'composer-new-123', method: 'launch_marker', at: 200
@@ -723,6 +730,10 @@ describe('SqliteTeamControlRepository', () => {
     const old = new DatabaseSync(path)
     old.prepare("UPDATE team_runs SET status = 'launching', launched_at = 120 WHERE id = ?").run(launching.run.id)
     old.prepare("UPDATE team_runs SET status = 'draft' WHERE id = ?").run(draft.run.id)
+    // v8 的启动状态机留下的值：签到过的绑定 acknowledged、另一个 delivered + 启动指令 id。
+    old.prepare("UPDATE runtime_bindings SET launch_status = 'acknowledged' WHERE agent_session_id = ?").run(launchingBinding.agentSessionId)
+    old.prepare("UPDATE runtime_bindings SET launch_status = 'delivered', launch_command_id = 'cmd-1' WHERE run_id = ? AND agent_session_id <> ?")
+      .run(launching.run.id, launchingBinding.agentSessionId)
     old.prepare('UPDATE team_control_meta SET schema_version = 8 WHERE id = 1').run()
     old.close()
 
@@ -739,15 +750,17 @@ describe('SqliteTeamControlRepository', () => {
       expect(state.runs.every((run) => run.status === 'running' || run.status === 'completed')).toBe(true)
 
       const bindingsOf = (runId: string) => state.bindings.filter((binding) => binding.runId === runId)
-      // 归档的团队 run：绑定标 failed 并写明是升级归档，不是「全员离线」。
+      // 归档 = completeRun 的语义：绑定备注写明是升级归档（不是「全员离线」），该 run 的 agent 注册全部撤销。
       expect(bindingsOf(launching.run.id)).toHaveLength(2)
-      expect(bindingsOf(launching.run.id).every((binding) => binding.launchStatus === 'failed')).toBe(true)
-      expect(bindingsOf(launching.run.id)[0]?.launchDetail).toContain('archived: legacy team run')
-      // 之前就 completed 的 run 不被覆盖。
+      expect(bindingsOf(launching.run.id).every((binding) => binding.launchDetail.includes('archived: legacy team run'))).toBe(true)
+      expect(migrated.listAgentRegistrations(launching.run.id)).toEqual([])
+      expect(bindingsOf(stalePool.run.id)[0]?.launchDetail).toContain('archived: superseded pool run')
+      expect(migrated.listAgentRegistrations(stalePool.run.id)).toEqual([])
+      // 之前就 completed 的 run 不被覆盖；活动池的绑定、注册与签到证据原样保留。
       expect(bindingsOf(done.run.id)[0]?.launchDetail).toBe('用户已结束本轮运行')
-      // 活动池的绑定原样保留；被取代的旧池只改 run 状态。
-      expect(bindingsOf(activePool.run.id)[0]).toMatchObject({ launchStatus: 'not_started' })
-      expect(bindingsOf(stalePool.run.id)[0]).toMatchObject({ launchStatus: 'not_started' })
+      expect(bindingsOf(activePool.run.id)[0]).toMatchObject({ launchDetail: '', generation: 'generationnew' })
+      expect(migrated.listAgentRegistrations(activePool.run.id)).toHaveLength(1)
+      expect(bindingsOf(launching.run.id).find((binding) => binding.agentSessionId === launchingBinding.agentSessionId)?.acknowledgedAt).toBeDefined()
       // 会话围栏据此把仍持旧团队令牌的会话判为 run_completed；活动池的通道照常。
       migrated.setActiveWorkspace('legacy')
       expect(migrated.resolveChannelSessionOwner('1')).toMatchObject({ runId: draft.run.id, runStatus: 'completed' })
@@ -759,6 +772,15 @@ describe('SqliteTeamControlRepository', () => {
       }, '升级后签到')).toThrowError(expect.objectContaining({ code: 'run_completed' }))
     } finally {
       migrated.close()
+    }
+    // 启动状态机退役：列保留，但存量行全部归位（恒 not_started / NULL），此后没有代码再写别的值。
+    const columns = new DatabaseSync(path, { readOnly: true })
+    try {
+      const rows = columns.prepare('SELECT launch_status, launch_command_id FROM runtime_bindings').all() as { launch_status: string; launch_command_id: string | null }[]
+      expect(rows.length).toBeGreaterThan(0)
+      expect(rows.every((row) => row.launch_status === 'not_started' && row.launch_command_id === null)).toBe(true)
+    } finally {
+      columns.close()
     }
 
     // 幂等：再开一次库不再改任何行（活动池仍 running，revision 不变）。
@@ -897,7 +919,6 @@ describe('SqliteTeamControlRepository 会话围栏令牌', () => {
       expect(repository.completeRun(team.run.id, 400, '用户已结束本轮运行')).toBe(true)
       expect(repository.resolveChannelSessionOwner('1')).toMatchObject({ runId: team.run.id, runStatus: 'completed', bound: true })
       const binding = repository.loadTeamControl().bindings.find((candidate) => candidate.runId === team.run.id)!
-      expect(binding.launchStatus).toBe('failed')
       expect(binding.launchDetail).toBe('用户已结束本轮运行')
       // 已结束的 run 不能再收尾一次（returns false，不改动绑定文案）。
       expect(repository.completeRun(team.run.id, 500)).toBe(false)

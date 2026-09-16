@@ -837,7 +837,6 @@ export function App(): React.JSX.Element {
           roleTemplateKey: member.role.templateKey,
           isEffectiveLead,
           avatarId: member.slot.avatarId,
-          status: member.readiness === 'launching' ? 'reviving' as const : withUsage.status,
           currentTask: task?.title ?? ''
         }
       })

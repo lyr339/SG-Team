@@ -83,7 +83,11 @@ describe('Team message end-to-end local delivery', () => {
       channelRepository.listPendingOutbound(channelId).map((message) => message.text)
 
     try {
-      await waitFor(() => team.getSnapshot().preflight.agentsWaiting)
+      // 两个席位都已在岗待命（presence 经 relay 投影进 members.runtime）。
+      await waitFor(() => {
+        const members = team.getSnapshot().members
+        return members.length === 2 && members.every((member) => member.runtime?.online && member.runtime.waiting)
+      })
       const lead = agent('lead')
       const builder = agent('builder')
       const directive = lead.sendMessage({

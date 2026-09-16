@@ -61,6 +61,8 @@ const COMPOSER_BINDING_METHODS = new Set<ComposerBindingMethod>(['launch_marker'
 const RUN_COMPLETED_DEFAULT_DETAIL = '本轮运行已结束'
 /** v9 迁移把一次性团队 run 归档时写进各绑定 launch_detail 的说明。 */
 const RUN_ARCHIVED_LEGACY_TEAM_DETAIL = 'archived: legacy team run（升级归档，团队 run 已退役）'
+/** v9 迁移把同工作区内被更新 run 取代、却仍标 running 的旧独立 run 归档时的说明。 */
+const RUN_ARCHIVED_STALE_POOL_DETAIL = 'archived: superseded pool run（升级归档，已被更新的运行取代）'
 
 function optionalNumber(value: unknown): number | undefined {
   return value === null || value === undefined ? undefined : numberOf(value)
@@ -342,7 +344,6 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
       status: String(row.status) as TeamRunStatus,
       createdAt: numberOf(row.created_at),
       updatedAt: numberOf(row.updated_at),
-      launchedAt: optionalNumber(row.launched_at),
       actingLeadSlotId: optionalString(row.acting_lead_slot_id)
     }))
 
@@ -403,8 +404,6 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
       agentSessionId: String(row.agent_session_id),
       generation: String(row.generation),
       installedAt: numberOf(row.installed_at),
-      launchStatus: String(row.launch_status) as RuntimeBinding['launchStatus'],
-      launchCommandId: optionalString(row.launch_command_id),
       launchDetail: String(row.launch_detail),
       acknowledgedAt: optionalNumber(row.acknowledged_at),
       lastCheckInAt: optionalNumber(row.last_check_in_at),
@@ -494,8 +493,8 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
       `).run(workspace.id, workspace.name, workspace.path, workspace.createdAt, workspace.updatedAt)
       this.database.prepare(`
         INSERT OR IGNORE INTO team_runs (
-          id, workspace_id, name, goal, template_id, status, created_at, updated_at, launched_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
+          id, workspace_id, name, goal, template_id, status, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         run.id,
         run.workspaceId,
@@ -540,11 +539,10 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
       }
 
       if (topologyChanged) {
+        // 拓扑变了：旧绑定与注册作废（席位要重新安装 MCP），run 状态不变——没有 draft 可以退回去。
         this.database.prepare('DELETE FROM runtime_bindings WHERE run_id = ?').run(run.id)
         revokeWorkspaceAgentRegistrations(this.database, workspace.id)
-        this.database.prepare(`
-          UPDATE team_runs SET status = 'draft', launched_at = NULL, updated_at = ? WHERE id = ?
-        `).run(Date.now(), run.id)
+        this.database.prepare('UPDATE team_runs SET updated_at = ? WHERE id = ?').run(Date.now(), run.id)
       }
 
       const slotIds = bundle.slots.map((slot) => slot.id)
@@ -693,13 +691,8 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
           }, installedAt)
         }
         // 相同拓扑重复安装必须是幂等刷新：保留 runtime_bindings 的 generation、
-        // launch_status、composer 绑定和 check_in 证据，避免把仍在轮询的 Cursor 会话误杀。
-        this.database.prepare(`
-          UPDATE team_runs
-          SET status = CASE WHEN length(trim(goal)) > 0 THEN 'ready' ELSE 'draft' END,
-              updated_at = ?, launched_at = NULL
-          WHERE id = ? AND status IN ('draft', 'ready')
-        `).run(installedAt, runId)
+        // composer 绑定、会话令牌和 check_in 证据，避免把仍在轮询的 Cursor 会话误杀。run 状态不变。
+        this.database.prepare('UPDATE team_runs SET updated_at = ? WHERE id = ?').run(installedAt, runId)
         this.bumpRevision(workspaceId)
         this.database.exec('COMMIT')
         return
@@ -731,15 +724,8 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
           newSessionToken()
         )
       }
-      // 安装批次只把「尚未启动」的 run 归位到 ready/draft；launching/running 等
-      // 已启动状态必须保留——否则启动标记被抹掉后 team_check_in 永久拒绝（白名单
-      // 不含 ready），而消息通道不校验 run 状态照常工作，形成状态撕裂。
-      this.database.prepare(`
-        UPDATE team_runs
-        SET status = CASE WHEN length(trim(goal)) > 0 THEN 'ready' ELSE 'draft' END,
-            updated_at = ?, launched_at = NULL
-        WHERE id = ? AND status IN ('draft', 'ready')
-      `).run(installedAt, runId)
+      // 安装不改 run 状态：run 一建即 running，没有 draft / ready 可以归位。
+      this.database.prepare('UPDATE team_runs SET updated_at = ? WHERE id = ?').run(installedAt, runId)
       this.bumpRevision(workspaceId)
       this.database.exec('COMMIT')
     } catch (error) {
@@ -834,8 +820,7 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
       const result = this.database.prepare(`
         UPDATE runtime_bindings
         SET composer_binding_key = ?, composer_id = NULL, composer_bound_at = NULL,
-            composer_binding_method = NULL, launch_status = 'not_started',
-            launch_command_id = NULL, launch_detail = '', acknowledged_at = NULL,
+            composer_binding_method = NULL, launch_detail = '', acknowledged_at = NULL,
             last_check_in_at = NULL, last_check_in_note = '', session_token = ?
         WHERE run_id = ? AND slot_id = ?
       `).run(bindingKey, newSessionToken(), input.runId.trim(), input.slotId.trim())
@@ -1044,7 +1029,6 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
       const updated = this.database.prepare(`
         UPDATE runtime_bindings
         SET id = ?, channel_id = ?, agent_session_id = ?, generation = ?, installed_at = ?,
-            launch_status = 'sending', launch_command_id = NULL,
             launch_detail = '备用 Agent 正在接替职责', acknowledged_at = NULL,
             last_check_in_at = NULL, last_check_in_note = '', composer_binding_key = ?,
             composer_id = NULL, composer_bound_at = NULL, composer_binding_method = NULL,
@@ -1173,7 +1157,6 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
       this.database.prepare(`
         UPDATE runtime_bindings
         SET id = ?, channel_id = ?, agent_session_id = ?, generation = ?, installed_at = ?,
-            launch_status = 'failed', launch_command_id = NULL,
             launch_detail = '原运行时已离线；在线 Agent 已迁移到其他职责',
             acknowledged_at = NULL, last_check_in_at = NULL, last_check_in_note = '',
             composer_binding_key = ?, composer_id = NULL, composer_bound_at = NULL,
@@ -1187,7 +1170,6 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
       this.database.prepare(`
         UPDATE runtime_bindings
         SET id = ?, channel_id = ?, agent_session_id = ?, generation = ?, installed_at = ?,
-            launch_status = 'sending', launch_command_id = NULL,
             launch_detail = '用户手动交接，等待新角色确认', acknowledged_at = NULL,
             last_check_in_at = NULL, last_check_in_note = '', composer_binding_key = ?,
             composer_id = NULL, composer_bound_at = NULL, composer_binding_method = NULL,
@@ -1336,10 +1318,9 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
           UPDATE agent_registrations SET revoked_at = ?
           WHERE run_id = ? AND revoked_at IS NULL
         `).run(at, normalizedRunId)
+        // 收尾原因写进绑定备注；launch_status 列不再表达状态（阶段 2 · 2B）。
         this.database.prepare(`
-          UPDATE runtime_bindings
-          SET launch_status = 'failed', launch_detail = ?
-          WHERE run_id = ?
+          UPDATE runtime_bindings SET launch_detail = ? WHERE run_id = ?
         `).run(normalizedNote(detail), normalizedRunId)
         this.bumpRevision()
       }
@@ -1405,9 +1386,10 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
         throw new TaskPoolError('run_completed', '当前运行已经结束，不能再登记在岗')
       }
 
+      // acknowledged_at 只写首次（就绪度 active 的唯一依据）；重复签到只刷 last_check_in_*。
       const updated = this.database.prepare(`
         UPDATE runtime_bindings
-        SET launch_status = 'acknowledged', acknowledged_at = ?, last_check_in_at = ?, last_check_in_note = ?
+        SET acknowledged_at = COALESCE(acknowledged_at, ?), last_check_in_at = ?, last_check_in_note = ?
         WHERE agent_session_id = ? AND run_id = ?
       `).run(at, at, normalizedNote(note), identity.agentSessionId, identity.runId)
       if (numberOf(updated.changes) !== 1) {
@@ -2188,21 +2170,31 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
             && String(run.status) !== 'completed'
             && newestPoolByWorkspace.get(String(run.workspace_id)) !== String(run.id))
           .map((run) => String(run.id))
+        // 归档 = completeRun 的三件事（run 置 completed、撤销该 run 的 agent 注册、收尾原因写进绑定备注），
+        // 只是 detail 标明是升级归档；注册按 run 撤销，同工作区更新的池 run 不受影响。
         const archiveRun = this.database.prepare("UPDATE team_runs SET status = 'completed', updated_at = ? WHERE id = ?")
-        const failBindings = this.database.prepare(`
-          UPDATE runtime_bindings SET launch_status = 'failed', launch_detail = ?
-          WHERE run_id = ? AND launch_status <> 'failed'
-        `)
+        const revokeRegistrations = this.database.prepare(
+          'UPDATE agent_registrations SET revoked_at = ? WHERE run_id = ? AND revoked_at IS NULL'
+        )
+        const noteBindings = this.database.prepare('UPDATE runtime_bindings SET launch_detail = ? WHERE run_id = ?')
         for (const runId of legacyTeamRunIds) {
           archiveRun.run(now, runId)
-          failBindings.run(RUN_ARCHIVED_LEGACY_TEAM_DETAIL, runId)
+          revokeRegistrations.run(now, runId)
+          noteBindings.run(RUN_ARCHIVED_LEGACY_TEAM_DETAIL, runId)
         }
-        for (const runId of stalePoolIds) archiveRun.run(now, runId)
+        for (const runId of stalePoolIds) {
+          archiveRun.run(now, runId)
+          revokeRegistrations.run(now, runId)
+          noteBindings.run(RUN_ARCHIVED_STALE_POOL_DETAIL, runId)
+        }
         // 兜底：任何仍带旧状态值的行（理论上上面两步已覆盖）一律归档，保证此后 status 只有两种取值。
         this.database.prepare(`
           UPDATE team_runs SET status = 'completed', updated_at = ?
           WHERE status IN ('draft', 'ready', 'launching', 'attention', 'paused')
         `).run(now)
+        // 启动状态机退役：launch_status 列保留（不重建表）但此后恒为 not_started，存量行一并归位；
+        // launch_command_id 同理清空。就绪度改由 acknowledged_at 表达。
+        this.database.exec("UPDATE runtime_bindings SET launch_status = 'not_started', launch_command_id = NULL")
         this.database.prepare(
           'UPDATE team_control_meta SET schema_version = ?, revision = revision + 1, updated_at = ? WHERE id = 1'
         ).run(9, now)

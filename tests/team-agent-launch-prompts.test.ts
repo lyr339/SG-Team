@@ -35,10 +35,7 @@ function snapshotOf(bundle: WorkspaceTeamBundle, bindings: RuntimeBinding[]): Te
     preflight: {
       bridgeConnected: true,
       workspaceBound: true,
-      goalDefined: false,
       mcpInstalled: bindings.length > 0,
-      agentsWaiting: false,
-      canLaunch: bindings.length > 0,
       blockers: []
     }
   }
@@ -55,7 +52,6 @@ function bindingFor(bundle: WorkspaceTeamBundle, channelId: string, sessionToken
     agentSessionId: `${bundle.workspace.id}:ch-${channelId}:generation1`,
     generation: 'generation1',
     installedAt: 100,
-    launchStatus: 'not_started',
     launchDetail: '',
     lastCheckInNote: '',
     composerBindingKey: 'generation1',

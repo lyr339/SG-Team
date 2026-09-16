@@ -25,9 +25,8 @@ export function resolveHandoffEntry(input: {
   if (run.status === 'completed') return { kind: 'disabled', title: '当前运行已结束，无法交接' }
   if (!member) return { kind: 'disabled', title: '该通道不是本轮运行的席位，无法交接' }
   if (member.role.templateKey === 'solo') return { kind: 'context', title: CONTEXT_HANDOFF_TITLE_SOLO }
-  const offlineInLiveRun = Boolean(member.binding)
-    && !member.runtime?.online
-    && (run.status === 'running' || run.status === 'attention')
+  // 走到这里 run 一定是 running（两态之一）：有绑定且离线的团队席位走职责迁移。
+  const offlineInLiveRun = Boolean(member.binding) && !member.runtime?.online
   if (offlineInLiveRun) return { kind: 'roles', slotId: member.slot.id, title: ROLES_HANDOFF_TITLE }
   return { kind: 'context', title: CONTEXT_HANDOFF_TITLE_TEAM }
 }

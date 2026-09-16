@@ -260,9 +260,7 @@ export class TaskPoolService {
 
   private requireMutableRunId(): string {
     const runId = this.requireActiveRunId()
-    const status = this.runProvider.getActiveRunStatus?.()
-    if (status === 'completed') throw new Error('本轮团队已经结束，请开始新一轮')
-    if (status === 'paused') throw new Error('本轮团队已暂停，当前不能修改任务')
+    if (this.runProvider.getActiveRunStatus?.() === 'completed') throw new Error('本轮团队已经结束，请开始新一轮')
     return runId
   }
 

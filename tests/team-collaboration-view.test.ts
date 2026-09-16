@@ -66,28 +66,28 @@ describe('team collaboration view state', () => {
       message({ id: 'm2', runId: 'run:old', recipient: { type: 'operator' } })
     ])
 
-    expect(summarizeTeamCollaborationForRun(previous, run('run:new', 'draft'))).toEqual({
+    expect(summarizeTeamCollaborationForRun(previous, run('run:new'))).toEqual({
       operatorUnread: 0,
       pendingAgentReplies: 0,
       threadCount: 0
     })
-    expect(visibleTeamCollaborationSnapshot(previous, run('run:new', 'draft'))).toMatchObject({
+    expect(visibleTeamCollaborationSnapshot(previous, run('run:new'))).toMatchObject({
       runId: 'run:new',
       messageOrder: []
     })
   })
 
-  it.each(['draft', 'ready'] as const)('hides same-run collaboration while %s', (status) => {
+  it('hides everything when there is no active run', () => {
     const current = collaboration('run:1', [
       message({ id: 'm1', runId: 'run:1', recipient: { type: 'operator' } })
     ])
 
-    expect(summarizeTeamCollaborationForRun(current, run('run:1', status))).toEqual({
+    expect(summarizeTeamCollaborationForRun(current, undefined)).toEqual({
       operatorUnread: 0,
       pendingAgentReplies: 0,
       threadCount: 0
     })
-    expect(visibleTeamCollaborationSnapshot(current, run('run:1', status)).messageOrder).toEqual([])
+    expect(visibleTeamCollaborationSnapshot(current, undefined).messageOrder).toEqual([])
   })
 
   it('clears current-run notification counters after completion', () => {

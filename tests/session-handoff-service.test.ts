@@ -51,7 +51,7 @@ function team(sessionToken?: string): TeamControlSnapshot {
     activeRun: run,
     bindings: [{
       id: 'b1', workspaceId: 'ws', runId: run.id, slotId: 's1', channelId: '1', agentSessionId: 'a1', generation: 'g1',
-      installedAt: 1, launchStatus: 'delivered', launchDetail: '', lastCheckInNote: '', composerBindingKey: 'g1',
+      installedAt: 1, launchDetail: '', lastCheckInNote: '', composerBindingKey: 'g1',
       composerId: COMPOSER, sessionToken
     }]
   }
@@ -107,7 +107,7 @@ function teamHarness() {
   }
   const binding = (channelId: string, slotId: string, composerId?: string): RuntimeBinding => ({
     id: `b-${channelId}`, workspaceId: 'ws', runId: run.id, slotId, channelId, agentSessionId: `agent-${channelId}`, generation: 'g1',
-    installedAt: 1, launchStatus: 'acknowledged', launchDetail: '', lastCheckInNote: '', composerBindingKey: `key-${channelId}`,
+    installedAt: 1, launchDetail: '', acknowledgedAt: 1, lastCheckInNote: '', composerBindingKey: `key-${channelId}`,
     composerId, sessionToken: `token-${channelId}`
   })
   const member = (channelId: string, slotId: string, templateKey: string, roleName: string, slotName: string, composerId?: string): TeamMemberView => ({

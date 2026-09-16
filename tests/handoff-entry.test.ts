@@ -12,7 +12,7 @@ function member(templateKey: string, options: { online?: boolean; bound?: boolea
   const role = { id: `role-${templateKey}`, runId: 'run', key: templateKey, templateKey, name: '角色', mission: '', instructions: '', capabilities: [], skills: [], accent: 'mint' as const, order: 0 }
   const binding = options.bound === false ? undefined : {
     id: 'b', workspaceId: 'ws', runId: 'run', slotId: slot.id, channelId: '2', agentSessionId: 'a', generation: 'g',
-    installedAt: 1, launchStatus: 'acknowledged' as const, launchDetail: '', lastCheckInNote: '', composerBindingKey: 'k'
+    installedAt: 1, launchDetail: '', acknowledgedAt: 1, lastCheckInNote: '', composerBindingKey: 'k'
   }
   const online = options.online ?? true
   const runtime = { channelId: '2', status: online ? 'waiting' as const : 'offline' as const, online, waiting: online, queueDepth: 0, healthEvidence: [], workingFiles: [] }
@@ -31,12 +31,9 @@ describe('resolveHandoffEntry（会话页「交接」按钮三态）', () => {
   it('routes an offline team seat in a live run to the role migration, and every other team seat to the context handoff', () => {
     expect(resolveHandoffEntry({ member: member('builder', { online: false }), run: run('running') }))
       .toEqual({ kind: 'roles', slotId: 'slot-builder', title: ROLES_HANDOFF_TITLE })
-    expect(resolveHandoffEntry({ member: member('lead', { online: false }), run: run('attention') })).toMatchObject({ kind: 'roles', slotId: 'slot-lead' })
+    expect(resolveHandoffEntry({ member: member('lead', { online: false }), run: run('running') })).toMatchObject({ kind: 'roles', slotId: 'slot-lead' })
     // 在线团队席位：上下文交接
     expect(resolveHandoffEntry({ member: member('builder'), run: run('running') })).toEqual({ kind: 'context', title: CONTEXT_HANDOFF_TITLE_TEAM })
-    // 尚未 launch（draft / ready）：会话已一键创建、转录已存在，同样开放上下文交接；离线也不走职责迁移
-    expect(resolveHandoffEntry({ member: member('builder', { online: false }), run: run('ready') })).toEqual({ kind: 'context', title: CONTEXT_HANDOFF_TITLE_TEAM })
-    expect(resolveHandoffEntry({ member: member('reviewer'), run: run('draft') })).toEqual({ kind: 'context', title: CONTEXT_HANDOFF_TITLE_TEAM })
     // 没有运行绑定的离线席位无法迁移职责，退回上下文交接
     expect(resolveHandoffEntry({ member: member('builder', { online: false, bound: false }), run: run('running') })).toEqual({ kind: 'context', title: CONTEXT_HANDOFF_TITLE_TEAM })
   })

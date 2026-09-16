@@ -29,7 +29,7 @@ function bridgeSnapshot(): DesktopSnapshot {
   }
 }
 
-function team(status: TeamControlState['runs'][number]['status'] = 'ready'): TeamControlState {
+function team(status: TeamControlState['runs'][number]['status'] = 'running'): TeamControlState {
   return {
     schemaVersion: 9,
     revision: 1,
@@ -63,8 +63,8 @@ function team(status: TeamControlState['runs'][number]['status'] = 'ready'): Tea
       generation: 'generation-a',
       composerBindingKey: 'generation-a',
       installedAt: 1,
-      launchStatus: 'acknowledged',
       launchDetail: '',
+      acknowledgedAt: 1,
       lastCheckInNote: '',
       composerId: 'composer-alpha-123'
     }],

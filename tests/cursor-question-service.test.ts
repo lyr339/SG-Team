@@ -24,7 +24,7 @@ function team(composerId?: string): TeamControlSnapshot {
   snapshot.bindings = [{
     id: 'binding-1', workspaceId: 'workspace-a', runId: 'run-a', slotId: 'slot-1', channelId: '2',
     agentSessionId: 'agent-2', generation: 'gen', composerBindingKey: 'gen', installedAt: 1,
-    launchStatus: 'delivered', launchDetail: '', lastCheckInNote: '', composerId
+    launchDetail: '', lastCheckInNote: '', composerId
   }]
   return snapshot
 }

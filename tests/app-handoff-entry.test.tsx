@@ -42,7 +42,7 @@ function member(channelId: string, templateKey: string, roleName: string, slotNa
     role: { id: `role-${templateKey}`, runId: RUN.id, key: templateKey, templateKey, name: roleName, mission: '', instructions: '', capabilities: [], skills: [], accent: 'mint', order: 0 },
     binding: {
       id: `b-${channelId}`, workspaceId: 'ws', runId: RUN.id, slotId, channelId, agentSessionId: `agent-${channelId}`, generation: 'g1',
-      installedAt: 1, launchStatus: 'acknowledged', launchDetail: '', lastCheckInNote: '', composerBindingKey: `k-${channelId}`, composerId: `composer-${channelId}`
+      installedAt: 1, launchDetail: '', acknowledgedAt: 1, lastCheckInNote: '', composerBindingKey: `k-${channelId}`, composerId: `composer-${channelId}`
     },
     runtime: { channelId, status: online ? 'waiting' : 'offline', online, waiting: online, queueDepth: 0, healthEvidence: [], workingFiles: [] },
     readiness: online ? 'active' : 'offline'

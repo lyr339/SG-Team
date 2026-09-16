@@ -195,7 +195,6 @@ describe('TeamControlService · 会话池', () => {
       expect(snapshot.runs.find((run) => run.id === previous.id)?.status).toBe('completed')
       const retired = data.repository.loadTeamControl().bindings.filter((binding) => binding.runId === previous.id)
       expect(retired).toHaveLength(2)
-      expect(retired.every((binding) => binding.launchStatus === 'failed')).toBe(true)
       expect(retired[0]?.launchDetail).toContain('已被新的运行替换')
       expect(retired[0]?.launchDetail).toContain('会话围栏')
       expect(data.bridge.conversationScopes.at(-1)?.runId).toBe(snapshot.activeRun?.id)
@@ -244,12 +243,12 @@ describe('TeamControlService · 会话池', () => {
     const data = poolFixture({ installed: false })
     try {
       const before = data.service.getSnapshot().preflight
-      expect(before).toMatchObject({ bridgeConnected: true, workspaceBound: true, mcpInstalled: false, canLaunch: false })
+      expect(before).toMatchObject({ bridgeConnected: true, workspaceBound: true, mcpInstalled: false })
       expect(before.blockers).toEqual(['Agent MCP 尚未接入全部本轮通道'])
 
       install(data.service)
       const installed = data.service.getSnapshot()
-      expect(installed.preflight).toMatchObject({ mcpInstalled: true, canLaunch: true, blockers: [] })
+      expect(installed.preflight).toMatchObject({ mcpInstalled: true, blockers: [] })
       expect(installed.members.every((member) => member.readiness === 'ready')).toBe(true)
 
       // 局外通道（未加入池的待机运行时）出现在 runtimeChannels，但不拦截。
@@ -377,7 +376,6 @@ describe('TeamControlService · 会话池', () => {
       expect(rotated.composerId).toBeUndefined()
       expect(rotated.sessionToken).toBeTruthy()
       expect(rotated.sessionToken).not.toBe(oldToken)
-      expect(rotated.launchStatus).toBe('not_started')
 
       // 离线席位：默认放行
       bridge.patchSession('2', { online: false, connected: false, waiting: false, status: 'offline', connectionPhase: 'offline' })

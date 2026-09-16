@@ -1,15 +1,13 @@
 import type { TeamControlRepository } from './team-control-repository'
-import { isSessionPoolRun, type TeamControlSnapshot, type TeamRuntimeChannelView } from '../domain/team-control'
+import type { TeamControlSnapshot } from '../domain/team-control'
 import type { TeamCollaborationRepository } from './team-collaboration-repository'
 import type { TeamContinuityService } from './team-continuity-service'
 import type { TaskPoolService } from './task-pool-service'
 import { TeamHandoffService } from './team-handoff-service'
 import type { ManualTeamHandoffInput, ManualTeamHandoffResult, TeamHandoffOptions } from '../domain/team-handoff'
-import { hasConfirmedRuntimeStop, hasInFlightExecution, hasOpenReplySync } from '../domain/channel-message'
 
-const DEFAULT_OFFLINE_GRACE_MS = 15_000
-const DEFAULT_ALL_OFFLINE_GRACE_MS = 20_000
-const DEFAULT_RECONCILE_INTERVAL_MS = 1_000
+/** 活动 run 结束后取消其未完成任务时写入的原因（池由用户结束 / 被新池替换 / 升级归档）。 */
+export const RUN_CLOSED_TASK_REASON = '会话池已结束，未完成任务自动取消'
 
 interface TeamSource {
   getSnapshot(): TeamControlSnapshot
@@ -18,39 +16,35 @@ interface TeamSource {
 
 export interface TeamFailoverServiceOptions {
   now?: () => number
-  offlineGraceMs?: number
-  allOfflineGraceMs?: number
-  reconcileIntervalMs?: number
   onerror?: (error: unknown) => void
 }
 
+/**
+ * 运行收尾与手动交接的主进程入口。
+ *
+ * 阶段 2 · 2B 起每个 `running` run 都是会话池（legacy 团队 run 由 v9 迁移归档为 completed），池的生命周期只由
+ * 用户的 endActiveRun / createSessionPool 决定。因此这里不再有「全员离线 → completeRun」、standby 自动接替、
+ * lead 自动转移与接替回执核对——它们都以一次性团队 run 与 launching 状态机为前提。入组成员离线只在其协作组上
+ * 表现为 attention（`TeamGroupView.attention`、`TeamCollaborationSweeper.sweepMemberAttention`），由用户决定移出 / 交接。
+ *
+ * 剩下两件事：
+ * 1. 活动 run 变为 completed 后，把它的未完成任务取消一次（含重启后补做）；
+ * 2. 手动交接的门面（`TeamHandoffService`）——阶段 2 · 2C 改为组成员身份迁移。
+ */
 export class TeamFailoverService {
-  private readonly suspectedSince = new Map<string, number>()
-  private readonly unrecoverableBindings = new Set<string>()
-  private readonly now: () => number
-  private readonly offlineGraceMs: number
-  private readonly allOfflineGraceMs: number
-  private readonly reconcileIntervalMs: number
   private readonly onerror: (error: unknown) => void
-  private unsubscribe?: () => void
-  private timer?: ReturnType<typeof setInterval>
-  private reconciling = false
-  private allOfflineSince?: number
   private readonly closedRuns = new Set<string>()
   private readonly handoffs: TeamHandoffService
+  private unsubscribe?: () => void
 
   constructor(
-    private readonly repository: TeamControlRepository,
+    repository: TeamControlRepository,
     private readonly team: TeamSource,
     private readonly tasks: TaskPoolService,
-    private readonly collaboration: TeamCollaborationRepository,
-    private readonly continuity: TeamContinuityService,
+    collaboration: TeamCollaborationRepository,
+    continuity: TeamContinuityService,
     options: TeamFailoverServiceOptions = {}
   ) {
-    this.now = options.now ?? Date.now
-    this.offlineGraceMs = Math.max(0, options.offlineGraceMs ?? DEFAULT_OFFLINE_GRACE_MS)
-    this.allOfflineGraceMs = Math.max(0, options.allOfflineGraceMs ?? DEFAULT_ALL_OFFLINE_GRACE_MS)
-    this.reconcileIntervalMs = Math.max(250, options.reconcileIntervalMs ?? DEFAULT_RECONCILE_INTERVAL_MS)
     this.onerror = options.onerror ?? (() => undefined)
     this.handoffs = new TeamHandoffService(
       repository,
@@ -58,7 +52,7 @@ export class TeamFailoverService {
       tasks,
       collaboration,
       continuity,
-      this.now
+      options.now ?? Date.now
     )
   }
 
@@ -67,314 +61,29 @@ export class TeamFailoverService {
   }
 
   manualHandoff(input: ManualTeamHandoffInput): ManualTeamHandoffResult {
-    const result = this.handoffs.manual(input)
-    if (result.failover) this.unrecoverableBindings.delete(result.failover.fromAgentSessionId)
-    this.suspectedSince.delete(input.sourceSlotId)
-    return result
+    return this.handoffs.manual(input)
   }
 
+  /** 订阅团队快照（订阅即回放当前快照，所以启动时残留的已结束 run 会被立刻收尾）。 */
   start(): void {
     if (this.unsubscribe) return
-    this.unsubscribe = this.team.subscribe(() => this.reconcile())
-    this.timer = setInterval(() => this.reconcile(), this.reconcileIntervalMs)
-    this.timer.unref?.()
-    this.reconcile()
+    this.unsubscribe = this.team.subscribe((snapshot) => this.reconcile(snapshot))
   }
 
   stop(): void {
     this.unsubscribe?.()
     this.unsubscribe = undefined
-    if (this.timer) clearInterval(this.timer)
-    this.timer = undefined
-    this.suspectedSince.clear()
-    this.allOfflineSince = undefined
     this.closedRuns.clear()
   }
 
-  reconcile(): void {
-    if (this.reconciling) return
-    this.reconciling = true
+  reconcile(snapshot: TeamControlSnapshot = this.team.getSnapshot()): void {
     try {
-      const snapshot = this.team.getSnapshot()
       const run = snapshot.activeRun
-      if (run?.status === 'completed') {
-        this.closeRunTasks(run.id)
-        this.resetTransientState()
-        return
-      }
-      if (!run || !['launching', 'running', 'attention'].includes(run.status)) {
-        this.resetTransientState()
-        return
-      }
-      this.reconcileAcknowledgements(snapshot)
-      this.recoverIncompleteFailover(snapshot)
-      if (isSessionPoolRun(run)) {
-        // 会话池是长生命周期容器，不是一次性团队会话：成员（入组席位）离线只在其所在组上
-        // 表现为 attention（由投影给出，由用户决定移出 / 交接），绝不能触发「全体离线 → completeRun」
-        // 把整个池连同无关的独立会话一起收尾；池内每个注册通道都有自己的席位，也没有 standby
-        // 可以自动接替。run 级 lead 故障转移同样不适用——lead 是组内概念。
-        this.resetTransientState()
-        return
-      }
-      this.reconcileLeadFailover(snapshot)
-      if (!snapshot.preflight.bridgeConnected) return
-
-      const teamMembers = snapshot.members.filter((member) => member.slot.solo !== true)
-      const teamChannelIds = new Set(teamMembers.flatMap((member) => {
-        const channelId = member.binding?.channelId ?? member.slot.channelId
-        return channelId ? [channelId] : []
-      }))
-      const inFlightChannels = new Set(teamMembers.flatMap((member) => {
-        const channelId = member.binding?.channelId ?? member.slot.channelId
-        return channelId && hasInFlightExecution(member.runtime) ? [channelId] : []
-      }))
-      // processing/need_reply_sync 是已取走消息后的执行租约。长任务期间 MCP
-      // 心跳陈旧属正常，不能因此把整轮判成“全部离线”并结束。
-      const liveRegisteredChannels = snapshot.runtimeChannels.filter((channel) => (
-        teamChannelIds.has(channel.channelId)
-        && channel.registered
-        && (channel.online || inFlightChannels.has(channel.channelId))
-      ))
-      if (liveRegisteredChannels.length === 0) {
-        const hadActivatedSession = teamMembers.some((member) => (
-          member.binding?.acknowledgedAt !== undefined || member.binding?.lastCheckInAt !== undefined
-        ))
-        // 尚未有任何 Agent 签到时属于首次启动/创建失败，不是“一次性会话已用完”。
-        // 保留 launching/attention 让用户修复或重试，避免 20s 内误收尾新团队。
-        if (!hadActivatedSession) {
-          this.allOfflineSince = undefined
-          return
-        }
-        // 已投递待回复（回复契约开放）期间不进入 all-offline 完成计时：Agent 可能
-        // 正在生成最终回复，此刻收尾即使守门保留也会让会话过早失去执行上下文。
-        // 超过回复同步宽限（CHANNEL_REPLY_SYNC_STALE_MS）仍未 record_reply 的
-        // 守门视为已放弃，放行收尾——死亡 Agent 不得把一次性会话变成僵尸 run。
-        if (teamMembers.some((member) => hasOpenReplySync(member.runtime, this.now()))) {
-          this.allOfflineSince = undefined
-          return
-        }
-        // 团队会话是一次性的：全部注册通道离线且没有 processing / need_reply_sync
-        // 在途租约时，本轮已经结束。普通 suspected 只影响单席自动接替，不应让 0 在线
-        // 的一次性 TeamRun 永久保留 running，更不能继续显示“协作执行中”。
-        const at = this.now()
-        this.allOfflineSince ??= at
-        if (at - this.allOfflineSince >= this.allOfflineGraceMs) {
-          this.repository.completeRun(run.id, at)
-          this.closeRunTasks(run.id)
-          this.resetTransientState()
-        }
-        return
-      }
-      this.allOfflineSince = undefined
-      if (run.status === 'launching') return
-      if (this.selectStandby(snapshot.standbyChannels)) {
-        for (const member of snapshot.members) {
-          if (member.slot.solo === true) continue
-          if (!member.runtime?.online && member.binding) {
-            this.unrecoverableBindings.delete(member.binding.agentSessionId)
-          }
-        }
-      }
-
-      const now = this.now()
-      const activeFailoverSlots = new Set(snapshot.failovers
-        .filter((record) => record.status === 'waiting_for_agent')
-        .map((record) => record.slotId))
-      for (const member of snapshot.members) {
-        if (member.slot.solo === true) continue
-        if (!member.binding) continue
-        // runtime 缺失只是“尚无证据”；执行相位则是明确的在途工作。两者都不能
-        // 进入自动接替计时，避免应用启动抖动或长任务触发错误换席。
-        if (!member.runtime) continue
-        if (member.runtime.online || hasInFlightExecution(member.runtime)) {
-          this.suspectedSince.delete(member.slot.id)
-          this.unrecoverableBindings.delete(member.binding.agentSessionId)
-          continue
-        }
-        if (!hasConfirmedRuntimeStop(member.runtime)) {
-          this.suspectedSince.delete(member.slot.id)
-          continue
-        }
-        if (this.unrecoverableBindings.has(member.binding.agentSessionId)) continue
-        const suspectedAt = this.suspectedSince.get(member.slot.id) ?? now
-        this.suspectedSince.set(member.slot.id, suspectedAt)
-        if (now - suspectedAt < this.offlineGraceMs) continue
-        if (activeFailoverSlots.has(member.slot.id)) continue
-        const standby = this.selectStandby(snapshot.standbyChannels)
-        if (!standby) {
-          this.unrecoverableBindings.add(member.binding.agentSessionId)
-          this.suspectedSince.delete(member.slot.id)
-          continue
-        }
-        this.handoffs.automatic(member, standby, now)
-        this.suspectedSince.delete(member.slot.id)
-        // Re-read the snapshot before assigning another failed slot so the same
-        // standby runtime can never be selected twice in one reconciliation.
-        break
-      }
+      if (run?.status !== 'completed' || this.closedRuns.has(run.id)) return
+      this.tasks.closeRun(run.id, RUN_CLOSED_TASK_REASON)
+      this.closedRuns.add(run.id)
     } catch (error) {
       this.onerror(error)
-    } finally {
-      this.reconciling = false
     }
-  }
-
-  /**
-   * 自动 lead 故障转移（P1）：检测 lead 离线并自动选择最资深在线成员接管。
-   * 策略：优先选择 standby 通道，其次选择其他在线成员（按 channelId 排序）。
-   */
-  private reconcileLeadFailover(snapshot: TeamControlSnapshot): void {
-    const run = snapshot.activeRun
-    if (!run || run.status !== 'running') return
-    const lead = snapshot.members.find((member) => member.role.templateKey === 'lead')
-    if (!lead?.binding) return
-    const actingLeadSlotId = run.actingLeadSlotId
-    const effectiveLeadSlotId = actingLeadSlotId ?? lead.slot.id
-    const effectiveLead = snapshot.members.find((member) => member.slot.id === effectiveLeadSlotId)
-    if (!effectiveLead?.binding || !effectiveLead.runtime) return
-    // 忙碌主控可能数分钟不碰 MCP，也无法及时处理活性验证 ping；只要仍持有执行租约
-    // 且没有 cursor_stopped 正面终止证据，就绝不触发自动主控转移。
-    if (effectiveLead.runtime.online || hasInFlightExecution(effectiveLead.runtime)) {
-      this.suspectedSince.delete(effectiveLead.slot.id)
-      return
-    }
-    if (!hasConfirmedRuntimeStop(effectiveLead.runtime)) {
-      this.suspectedSince.delete(effectiveLead.slot.id)
-      return
-    }
-    const now = this.now()
-    const suspectedAt = this.suspectedSince.get(effectiveLead.slot.id) ?? now
-    this.suspectedSince.set(effectiveLead.slot.id, suspectedAt)
-    if (now - suspectedAt < this.offlineGraceMs) return
-    const standby = this.selectStandby(snapshot.standbyChannels)
-    if (standby?.agentSessionId) {
-      // standby 接管：slot 绑定直接转移，无需 actingLead
-      this.handoffs.automatic(effectiveLead, standby, now)
-      this.suspectedSince.delete(effectiveLead.slot.id)
-      return
-    }
-    const onlineMembers = snapshot.members
-      .filter((member) => member.slot.solo !== true)
-      .filter((member) => member.slot.id !== effectiveLead.slot.id && member.binding && member.runtime?.online)
-      .sort((left, right) => Number(left.binding!.channelId) - Number(right.binding!.channelId))
-    const successor = onlineMembers[0]
-    if (successor?.binding) {
-      // 成员接管：设置 actingLead，保留原 slot 绑定
-      this.repository.setActingLead({ runId: run.id, slotId: successor.slot.id, at: now })
-      const recoveredTaskIds = this.tasks.recoverAgentWork({
-        fromAgentSessionId: effectiveLead.binding.agentSessionId,
-        toAgentSessionId: successor.binding.agentSessionId,
-        targetSlotId: successor.slot.id
-      })
-      this.collaboration.createMessage({
-        runId: run.id,
-        sender: { type: 'operator' },
-        recipient: { type: 'agent', slotId: successor.slot.id },
-        kind: 'notice',
-        subject: '自动接管主控权限',
-        content: `【系统自动】主控 ${effectiveLead.role.name} 已离线超过宽限期，您已被自动指定为临时主控。` +
-          `${recoveredTaskIds.length ? `已迁移/重排任务：${recoveredTaskIds.join('、')}。` : '原主控没有活动任务需要迁移。'}` +
-          '请立即调用 team_check_in 确认并读取上下文，再调用 team_tasks({view:\'board\'}) 核对全局任务，并使用 team_run 的 transfer_lead 或 clear_acting_lead 管理主控权限。',
-        clientMessageId: `auto-lead-failover:${run.id}:${now}`
-      })
-      this.suspectedSince.delete(effectiveLead.slot.id)
-    }
-  }
-
-  private selectStandby(channels: TeamRuntimeChannelView[]): TeamRuntimeChannelView | undefined {
-    return channels
-      .filter((channel) => channel.online && channel.waiting && channel.queueDepth === 0 && channel.agentSessionId)
-      .sort((left, right) => Number(left.channelId) - Number(right.channelId) || left.channelId.localeCompare(right.channelId))[0]
-  }
-
-  private reconcileAcknowledgements(snapshot: TeamControlSnapshot): void {
-    const collaboration = snapshot.activeRun
-      ? this.collaboration.loadRun(snapshot.activeRun.id)
-      : undefined
-    if (!collaboration) return
-    for (const record of snapshot.failovers) {
-      if (record.status !== 'waiting_for_agent' || !record.messageId) continue
-      const message = collaboration.messages[record.messageId]
-      if (!message) continue
-      if (message.receipt.respondedAt !== undefined) {
-        this.repository.updateFailoverStatus({
-          failoverId: record.id,
-          status: 'completed',
-          at: message.receipt.respondedAt
-        })
-      } else if (message.receipt.notificationState === 'failed') {
-        this.repository.updateFailoverStatus({
-          failoverId: record.id,
-          status: 'failed',
-          reason: message.receipt.notificationDetail,
-          at: message.receipt.updatedAt
-        })
-      }
-    }
-  }
-
-  private recoverIncompleteFailover(snapshot: TeamControlSnapshot): void {
-    const record = snapshot.failovers.find((candidate) => (
-      candidate.status === 'waiting_for_agent'
-      && !candidate.messageId
-      && candidate.toAgentSessionId
-      && candidate.toChannelId
-    ))
-    if (!record?.toAgentSessionId || !record.toChannelId) return
-    const member = snapshot.members.find((candidate) => candidate.slot.id === record.slotId)
-    const bindingKey = member?.binding?.composerBindingKey
-    if (!member || !bindingKey) return
-    try {
-      const capsule = this.continuity.createTakeoverCapsule({
-        slotId: record.slotId,
-        failoverId: record.id,
-        previousAgentSessionId: record.fromAgentSessionId,
-        replacementChannelId: record.toChannelId,
-        bindingKey,
-        checkpointId: record.checkpointId,
-        mode: record.id.startsWith('team-handoff:manual:') ? 'manual' : 'automatic'
-      })
-      const transferredTaskIds = this.tasks.transferAgentWork({
-        fromAgentSessionId: record.fromAgentSessionId,
-        toAgentSessionId: record.toAgentSessionId,
-        slotId: record.slotId
-      })
-      const message = this.collaboration.createMessage({
-        runId: record.runId,
-        sender: { type: 'operator' },
-        recipient: { type: 'agent', slotId: record.slotId },
-        kind: 'notice',
-        subject: `自动接替：${record.roleName}`,
-        content: capsule.content,
-        clientMessageId: record.id
-      })
-      this.repository.attachFailoverContext({
-        failoverId: record.id,
-        checkpointId: capsule.checkpointId,
-        messageId: message.id,
-        taskIds: [...new Set([...capsule.taskIds, ...transferredTaskIds])],
-        at: this.now()
-      })
-    } catch (error) {
-      this.repository.updateFailoverStatus({
-        failoverId: record.id,
-        status: 'failed',
-        reason: error instanceof Error ? error.message : String(error),
-        at: this.now()
-      })
-      this.onerror(error)
-    }
-  }
-
-  private resetTransientState(): void {
-    this.suspectedSince.clear()
-    this.unrecoverableBindings.clear()
-    this.allOfflineSince = undefined
-  }
-
-  private closeRunTasks(runId: string): void {
-    if (this.closedRuns.has(runId)) return
-    this.tasks.closeRun(runId, '本轮全部 Agent 已离线，未完成任务自动取消')
-    this.closedRuns.add(runId)
   }
 }

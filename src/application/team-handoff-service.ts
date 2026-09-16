@@ -29,7 +29,7 @@ export class TeamHandoffService {
   options(sourceSlotId: string): TeamHandoffOptions {
     const team = this.team.getSnapshot()
     const run = team.activeRun
-    if (!run || !['running', 'attention'].includes(run.status)) {
+    if (run?.status !== 'running') {
       throw new TaskPoolError('handoff_run_inactive', '只有运行中的团队可以手动交接')
     }
     // 会话池里「通道 = 席位」：角色交接会把席位绑定挪到另一条通道（rebindSlotFromMember /
@@ -65,13 +65,14 @@ export class TeamHandoffService {
       .map((member) => {
         const binding = member.binding!
         const mode = sourceIsEffectiveLead ? 'lead_authority' as const : 'role_rebind' as const
+        // 「已确认」= 该会话签过到（acknowledged_at）；换席重建会清空它。
         const blockers = (sourceIsEffectiveLead ? [
-          binding.launchStatus !== 'acknowledged' ? 'Agent 尚未完成本轮确认' : '',
+          binding.acknowledgedAt === undefined ? 'Agent 尚未完成本轮确认' : '',
           failoverSessions.has(binding.agentSessionId) ? 'Agent 已处于另一场接替中' : ''
         ] : [
           !member.runtime?.waiting ? 'Agent 正在执行，尚未待命' : '',
           member.runtime?.queueDepth ? `通道队列还有 ${member.runtime.queueDepth} 条消息` : '',
-          binding.launchStatus !== 'acknowledged' ? 'Agent 尚未完成本轮确认' : '',
+          binding.acknowledgedAt === undefined ? 'Agent 尚未完成本轮确认' : '',
           busySessions.has(binding.agentSessionId) ? 'Agent 仍持有执行任务或验收' : '',
           failoverSessions.has(binding.agentSessionId) ? 'Agent 已处于另一场接替中' : '',
           member.role.templateKey === 'lead' ? '不能挪走当前唯一主控' : ''
@@ -137,7 +138,7 @@ export class TeamHandoffService {
     const reason = candidate.kind === 'standby'
       ? `用户手动交接：${candidate.roleName} 接替 ${source.role.name}`
       : `用户手动交接：${candidate.roleName} · CH-${candidate.channelId} 迁移为 ${source.role.name}；${candidate.impact}`
-    return this.execute(source, replacement, this.now(), reason, 'manual', candidate.slotId)
+    return this.execute(source, replacement, this.now(), reason, candidate.slotId)
   }
 
   private executeLeadAuthority(
@@ -187,24 +188,17 @@ export class TeamHandoffService {
     }
   }
 
-  automatic(member: TeamMemberView, standby: TeamRuntimeChannelView, detectedAt: number): ManualTeamHandoffResult {
-    const reason = member.runtime?.healthEvidence.at(-1) || `CH-${member.binding?.channelId ?? '—'} 已离线`
-    return this.execute(member, standby, detectedAt, reason, 'automatic')
-  }
-
+  /** 角色交接只剩手动一种（standby 自动接替随一次性团队 run 退役，阶段 2 · 2B）。 */
   private execute(
     member: TeamMemberView,
     replacement: TeamRuntimeChannelView,
     detectedAt: number,
     reason: string,
-    mode: 'automatic' | 'manual',
     donorSlotId?: string
   ): ManualTeamHandoffResult {
     const binding = member.binding
     if (!binding || !replacement.agentSessionId) throw new TaskPoolError('handoff_binding_missing', '交接运行绑定不完整')
-    const failoverId = mode === 'manual'
-      ? `team-handoff:manual:${randomUUID()}`
-      : `team-failover:${randomUUID()}`
+    const failoverId = `team-handoff:manual:${randomUUID()}`
     const bindingKey = randomUUID()
     try {
       const capsule = this.continuity.createTakeoverCapsule({
@@ -213,7 +207,7 @@ export class TeamHandoffService {
         previousAgentSessionId: binding.agentSessionId,
         replacementChannelId: replacement.channelId,
         bindingKey,
-        mode
+        mode: 'manual'
       })
       if (donorSlotId) {
         this.repository.rebindSlotFromMember({
@@ -251,7 +245,7 @@ export class TeamHandoffService {
         sender: { type: 'operator' },
         recipient: { type: 'agent', slotId: member.slot.id },
         kind: 'notice',
-        subject: `${mode === 'manual' ? '手动交接' : '自动接替'}：${member.role.name}`,
+        subject: `手动交接：${member.role.name}`,
         content: capsule.content,
         clientMessageId: failoverId
       })

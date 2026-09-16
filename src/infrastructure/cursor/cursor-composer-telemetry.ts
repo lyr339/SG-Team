@@ -535,7 +535,7 @@ function channelActivitiesFingerprint(activities?: Record<string, CursorChannelA
 
 /**
  * 绑定列表指纹：遥测快照内容依赖 bindings（通道/会话绑定/生成代数），
- * 任一关键字段变化都必须让整轮缓存失效；lastCheckInAt 不参与——签到刷心跳
+ * 任一关键字段变化都必须让整轮缓存失效；lastCheckInAt / acknowledgedAt 不参与——签到
  * 不改变遥测内容，避免无意义的全量重读。
  */
 function bindingsFingerprint(bindings: RuntimeBinding[]): string {
@@ -545,8 +545,7 @@ function bindingsFingerprint(bindings: RuntimeBinding[]): string {
       binding.slotId,
       binding.composerId ?? '',
       binding.generation,
-      binding.installedAt,
-      binding.launchStatus
+      binding.installedAt
     ].join(':'))
     .sort()
     .join('|')

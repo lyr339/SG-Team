@@ -82,10 +82,7 @@ function fixture() {
     preflight: {
       bridgeConnected: true,
       workspaceBound: true,
-      goalDefined: true,
       mcpInstalled: true,
-      agentsWaiting: true,
-      canLaunch: true,
       blockers: []
     }
   }

@@ -85,10 +85,9 @@ function readinessOf(input: {
 }): TeamMemberReadiness {
   const { binding, runtime } = input
   if (!binding) return 'mcp_missing'
-  if (binding.launchStatus === 'failed' || binding.launchStatus === 'uncertain') return 'attention'
   if (!runtime?.online) return 'offline'
-  if (binding.launchStatus === 'acknowledged') return 'active'
-  if (binding.launchStatus === 'sending' || binding.launchStatus === 'delivered') return 'launching'
+  // 已签到（team_check_in 写过 acknowledged_at）= 在岗；换席重建会清空它，新会话重新从 ready 开始。
+  if (binding.acknowledgedAt !== undefined) return 'active'
   // 就绪判定与大厅/launcher 同源：online 之上认协议内相位（含 processing/keepalive），
   // 裸 waiting 会在 Agent 处理消息期间把就绪成员误标 not_waiting。
   if (!isAgentOnDuty(runtime)) return 'not_waiting'
@@ -399,7 +398,6 @@ export class TeamControlService {
 
     const bridgeConnected = bridgeSnapshot.connection.state === 'connected'
     const workspaceBound = Boolean(state.activeWorkspaceId && activeRun)
-    const goalDefined = Boolean(activeRun?.goal.trim())
     const activeMembersInstalled = members.length > 0 && members.every((member) =>
       Boolean(member.binding && member.slot.channelId === member.binding.channelId)
     )
@@ -407,11 +405,6 @@ export class TeamControlService {
       Boolean(member.slot.channelId && registrationByChannel.has(member.slot.channelId))
     )
     const mcpInstalled = activeMembersInstalled && activeMemberChannelsRegistered
-    // 会话池里「非 solo」= 已入组席位（任务书 §5.7）：agentsWaiting 只看入组成员。
-    const teamMembers = members.filter((member) => member.slot.solo !== true)
-    const agentsWaiting = teamMembers.length > 0 && teamMembers.every((member) =>
-      member.runtime?.online && member.runtime.waiting
-    )
     // 池没有「团队目标」与「启动」这两个概念：目标在组上，组即建即用。blockers 只剩接入前提与已结束。
     const blockers: string[] = []
     if (!bridgeConnected) blockers.push('拾光本地通道尚未就绪')
@@ -433,10 +426,7 @@ export class TeamControlService {
       preflight: {
         bridgeConnected,
         workspaceBound,
-        goalDefined,
         mcpInstalled,
-        agentsWaiting,
-        canLaunch: blockers.length === 0,
         blockers
       }
     }

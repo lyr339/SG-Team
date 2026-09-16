@@ -552,8 +552,7 @@ const members: TeamMemberView[] = bundle.slots.map((slot, index) => {
       agentSessionId: session.id,
       generation: 'a1b2c3d4e5f6',
       installedAt: NOW - 30 * 60 * MIN,
-      launchStatus: index === 2 ? 'uncertain' : 'acknowledged',
-      launchDetail: index === 2 ? '通道离线，启动确认超时' : '已确认',
+      launchDetail: '',
       acknowledgedAt: NOW - 25 * 60 * MIN,
       lastCheckInAt: NOW - 10 * MIN,
       lastCheckInNote: '已读取团队目标',
@@ -646,10 +645,7 @@ export const teamControlSnapshot: TeamControlSnapshot = {
   preflight: {
     bridgeConnected: true,
     workspaceBound: true,
-    goalDefined: true,
     mcpInstalled: true,
-    agentsWaiting: true,
-    canLaunch: true,
     blockers: []
   }
 }

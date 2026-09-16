@@ -103,7 +103,7 @@ describe('session pool five-seat end-to-end composition', () => {
       install(service, 'mixed-five')
       const pool = service.getSnapshot()
       expect(pool.members).toHaveLength(5)
-      expect(pool.preflight).toMatchObject({ mcpInstalled: true, canLaunch: true })
+      expect(pool.preflight).toMatchObject({ mcpInstalled: true, blockers: [] })
       const slotOf = (channelId: string) => pool.members.find((member) => member.slot.channelId === channelId)!.slot.id
 
       // 池内建组 = 阶段 1 的成员关系操作：不触碰令牌 / 绑定，run 状态不变，也没有任何「启动」投递。

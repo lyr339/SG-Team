@@ -65,7 +65,6 @@ function teamSnapshot(composerId?: string): TeamControlSnapshot {
       generation: 'generation123',
       composerBindingKey: 'generation123',
       installedAt: 1,
-      launchStatus: 'delivered',
       launchDetail: '',
       lastCheckInNote: '',
       composerId,

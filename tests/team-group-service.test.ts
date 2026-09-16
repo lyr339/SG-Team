@@ -133,9 +133,7 @@ describe('TeamGroupService · 建组与加人', () => {
 
       // 池 run 没有「团队目标」「团队已经运行」两条 blocker（§5.7）：run.goal 为空、入组成员全在线待命也不阻塞。
       expect(snapshot.activeRun?.goal ?? '').toBe('')
-      expect(snapshot.preflight.agentsWaiting).toBe(true)
       expect(snapshot.preflight.blockers).toEqual([])
-      expect(snapshot.preflight.canLaunch).toBe(true)
       expect(data.errors).toEqual([])
     } finally {
       data.close()
