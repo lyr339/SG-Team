@@ -20,19 +20,33 @@ interface SessionUsageStatProps {
   usage?: CursorSessionUsage
 }
 
+interface UsageSegment {
+  key: string
+  label: string
+  tone: string
+  tokens: number
+  /** 该厂商没有这个计费桶：行保留、数值显示 —（不是 0：0 是观测值，「没有桶」不是）。 */
+  unavailable?: boolean
+}
+
+/** 无桶行的悬停说明；弹层文案统一英文。 */
+const CACHE_WRITE_UNAVAILABLE_TITLE = 'This model has no separate cache-write bucket'
+
 /**
  * 用量构成段（互斥分解）：缓存读/写是输入的子集（Cursor 归一口径），
  * 分段条按 Input / Cache Read / Cache Write / Output 四块互斥呈现，总和即总 token。
- * 厂商没有缓存写入桶（Kimi / Gemini / Composer / GPT-5.5 及更早…）时不出 Cache Write 行。
+ * 四行恒定存在，行序恒定——厂商没有缓存写入桶（Kimi / Gemini / Composer / GPT-5.5 及更早…）时
+ * Cache Write 行以 — 占位而不是消失，读者在不同模型的会话之间切换时列表形状不变。
  */
-function usageSegments(usage: CursorSessionUsage): Array<{ key: string; label: string; tone: string; tokens: number }> {
+function usageSegments(usage: CursorSessionUsage): UsageSegment[] {
   const freshInput = Math.max(0, usage.inputTokens - usage.cacheReadTokens - usage.cacheWriteTokens)
+  const cacheWriteBucket = usageHasCacheWriteBucket(usage)
   return [
     { key: 'input', label: 'Input', tone: 'is-input', tokens: freshInput },
     { key: 'output', label: 'Output', tone: 'is-output', tokens: usage.outputTokens },
-    ...(usageHasCacheWriteBucket(usage)
-      ? [{ key: 'cachewrite', label: 'Cache Write', tone: 'is-cachewrite', tokens: usage.cacheWriteTokens }]
-      : []),
+    cacheWriteBucket
+      ? { key: 'cachewrite', label: 'Cache Write', tone: 'is-cachewrite', tokens: usage.cacheWriteTokens }
+      : { key: 'cachewrite', label: 'Cache Write', tone: 'is-cachewrite', tokens: 0, unavailable: true },
     { key: 'cacheread', label: 'Cache Read', tone: 'is-cacheread', tokens: usage.cacheReadTokens }
   ]
 }
@@ -166,10 +180,12 @@ export function SessionUsageStat({ usage }: SessionUsageStatProps): React.JSX.El
               </div>
               <ul className="usage-breakdown-list">
                 {segments.map((segment) => (
-                  <li key={segment.key}>
+                  <li key={segment.key} className={segment.unavailable ? 'is-unavailable' : undefined}>
                     <i className={segment.tone} aria-hidden="true" />
                     <span>{segment.label}</span>
-                    <b title={segment.tokens.toLocaleString('en-US')}>{formatTokenCount(segment.tokens)}</b>
+                    {segment.unavailable
+                      ? <b title={CACHE_WRITE_UNAVAILABLE_TITLE} aria-label="Not applicable">—</b>
+                      : <b title={segment.tokens.toLocaleString('en-US')}>{formatTokenCount(segment.tokens)}</b>}
                   </li>
                 ))}
               </ul>

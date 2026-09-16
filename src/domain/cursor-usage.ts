@@ -103,7 +103,7 @@ function price(label: string, inputPerM: number, outputPerM: number, cacheReadPe
 
 /**
  * 该牌价所属厂商是否存在独立的「缓存写入」桶（写入溢价 > 输入价 ⇔ 有桶）。
- * 无桶厂商的估算不得拆出写入份额，展示层也不应渲染 Cache Write 行。
+ * 无桶厂商的估算不得拆出写入份额，展示层的 Cache Write 行以 — 呈现而不是数字。
  */
 export function hasCacheWriteBucket(price: Pick<ModelTokenPrice, 'inputPerM' | 'cacheWritePerM'>): boolean {
   return price.cacheWritePerM > price.inputPerM
@@ -412,9 +412,9 @@ export function formatCostUsd(costUsd: number): string {
 }
 
 /**
- * 会话用量是否应呈现「Cache Write」桶：账本里任一回合的厂商有写入桶，或数据本身带写入
- * （精确结算以 Cursor 为准）；无账本的旧账按 pricedModel 判断。无桶时展示层不渲染该行，
- * 而不是显示一个会被读成「写了 0 个」的 0。
+ * 会话用量的「Cache Write」桶是否存在：账本里任一回合的厂商有写入桶，或数据本身带写入
+ * （精确结算以 Cursor 为准）；无账本的旧账按 pricedModel 判断。无桶时展示层保留该行但
+ * 写 —（不适用），而不是显示一个会被读成「写了 0 个」的 0；有桶而恰为 0 才写 0。
  */
 export function usageHasCacheWriteBucket(usage: CursorSessionUsage): boolean {
   if (usage.cacheWriteTokens > 0) return true
@@ -422,8 +422,9 @@ export function usageHasCacheWriteBucket(usage: CursorSessionUsage): boolean {
   return hasCacheWriteBucket(priceForModel(usage.pricedModel))
 }
 
+/** 四桶明细的一行文本（无障碍名 / 提示）；与弹层列表同形：四项恒在，无桶写 —。 */
 export function cursorUsageDetail(usage: CursorSessionUsage): string {
   const fresh = Math.max(0, usage.inputTokens - usage.cacheReadTokens - usage.cacheWriteTokens)
-  const cacheWrite = usageHasCacheWriteBucket(usage) ? ` · Cache Write ${formatTokenCount(usage.cacheWriteTokens)}` : ''
-  return `Tokens ${formatTokenCount(totalUsageTokens(usage))} · Cost ${formatCostUsd(usage.estimatedCostUsd)} · Input ${formatTokenCount(fresh)} · Output ${formatTokenCount(usage.outputTokens)}${cacheWrite} · Cache Read ${formatTokenCount(usage.cacheReadTokens)}`
+  const cacheWrite = usageHasCacheWriteBucket(usage) ? formatTokenCount(usage.cacheWriteTokens) : '—'
+  return `Tokens ${formatTokenCount(totalUsageTokens(usage))} · Cost ${formatCostUsd(usage.estimatedCostUsd)} · Input ${formatTokenCount(fresh)} · Output ${formatTokenCount(usage.outputTokens)} · Cache Write ${cacheWrite} · Cache Read ${formatTokenCount(usage.cacheReadTokens)}`
 }

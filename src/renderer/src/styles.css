@@ -802,6 +802,9 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 .usage-breakdown-list li > i.is-output, .usage-breakdown-bar > i.is-output { background: var(--usage-output); }
 .usage-breakdown-list li > i.is-cacheread, .usage-breakdown-bar > i.is-cacheread { background: var(--color-text-tertiary); }
 .usage-breakdown-list li > i.is-cachewrite, .usage-breakdown-bar > i.is-cachewrite { background: var(--color-border-secondary); }
+/* 该模型没有的计费桶：行保留（列表形状不随模型变），标签、色块与 — 一律转弱。 */
+.usage-breakdown-list li.is-unavailable > span, .usage-breakdown-list li.is-unavailable > b { color: var(--muted); }
+.usage-breakdown-list li.is-unavailable > i { opacity: 0.45; }
 .usage-popover footer { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 5px 10px; padding-top: 9px; border-top: var(--border-width-regular) solid var(--line-faint); color: var(--color-text-tertiary); font-size: var(--fs-10); overflow-wrap: anywhere; }
 .usage-popover footer > span:last-child { grid-column: 1 / -1; }
 .usage-popover__empty { margin: 0; color: var(--text-soft); font-size: var(--fs-12); line-height: 1.5; }

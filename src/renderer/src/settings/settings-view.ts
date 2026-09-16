@@ -269,7 +269,10 @@ export const ACTIVE_PHASE_STEP: Partial<Record<AccountAutomationPhase, AccountFl
   cleaning: 'deleting'
 }
 
-export function isActiveAutomationPhase(phase: AccountAutomationPhase): boolean {
+/** 运行中的相位（非空闲、非终态）：期间禁用会改动账号 / 浏览器状态的操作。 */
+export type ActiveAutomationPhase = Exclude<AccountAutomationPhase, 'idle' | 'done' | 'failed' | 'cancelled'>
+
+export function isActiveAutomationPhase(phase: AccountAutomationPhase): phase is ActiveAutomationPhase {
   return phase === 'countdown' || phase === 'processing' || phase === 'hardening-countdown'
     || phase === 'importing' || phase === 'deleting' || phase === 'cleaning'
 }
