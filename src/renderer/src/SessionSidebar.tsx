@@ -247,11 +247,11 @@ export function SessionSidebar({
                 aria-expanded={!collapsed}
                 title={`${group.detail}${collapsed ? '（已折叠，点击展开）' : ''}`}
               >
-                <span className="session-group__chip">
-                  <i className="session-group__dot" aria-hidden="true" />
+                <span className="session-group__tab">
                   <span>{group.label}</span>
                   <b>{group.sessions.length}</b>
                 </span>
+                <i className="session-group__rule" aria-hidden="true" />
                 <svg className="session-group__chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.4" /></svg>
               </button>
               <Collapsible open={!collapsed} keepMounted>

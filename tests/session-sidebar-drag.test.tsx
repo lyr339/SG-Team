@@ -225,12 +225,12 @@ describe('SessionSidebar 拖拽重排', () => {
     expect(header.querySelector('.session-pane__count')?.textContent).toBe('4')
     expect(container.querySelector('.session-filters')).toBeNull()
 
-    // 组条是一枚标签：状态点 + 组名 + 计数收进胶囊，chevron 靠右；标签文本不含多余字符。
+    // 组条是一枚书签：组名 + 计数在旗上，旗尾一条 hairline 横到右缘，chevron 落在线末；文本不含多余字符。
     const activeHeader = headers[0]!
-    expect(activeHeader.querySelector('.session-group__chip .session-group__dot')).not.toBeNull()
-    expect(activeHeader.querySelector('.session-group__chip > span')?.textContent).toBe('执行中')
-    expect(activeHeader.querySelector('.session-group__chip > b')?.textContent).toBe('1')
-    expect(activeHeader.querySelector('svg.session-group__chevron')).not.toBeNull()
+    expect(activeHeader.querySelector('.session-group__tab > span')?.textContent).toBe('执行中')
+    expect(activeHeader.querySelector('.session-group__tab > b')?.textContent).toBe('1')
+    expect(activeHeader.querySelector('.session-group__tab + .session-group__rule + svg.session-group__chevron')).not.toBeNull()
+    expect(activeHeader.querySelector('.session-group__chip')).toBeNull()
 
     const waitingHeader = container.querySelector<HTMLButtonElement>('.session-group.is-waiting .session-group__header')!
     const waitingRow = container.querySelector<HTMLElement>('.session-group.is-waiting .session-row')!
