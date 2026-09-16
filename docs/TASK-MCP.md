@@ -8,7 +8,7 @@ The built server is `out/mcp/index.mjs`. Cursor sees a single native entry, `SG 
 | --- | --- | --- |
 | `check_messages` | communication | Long-poll for the next user message (keepalive → stay silent). |
 | `record_reply` | communication | Archive the complete user-visible reply after every real reply. |
-| `team_check_in` | team | Acknowledge launch and return the role briefing **plus** the run context snapshot (members with real capabilities, unread / awaiting counts, confirmed run memory). Call again whenever the context needs refreshing (takeover, permission change, joining a group). For a grouped seat the briefing is scoped to the group: group name, goal, member count, effective lead (or "no lead"), and the membership caveat. |
+| `team_check_in` | team | Check in on duty (first check-in stamps `acknowledged_at`; readiness turns `active`) and return the role briefing **plus** the run context snapshot (members with real capabilities, unread / awaiting counts, confirmed run memory). Call again whenever the context needs refreshing (takeover, permission change, joining a group). The briefing exists only for grouped seats and is scoped to the group: group name, goal, member count, effective lead (or "no lead"), and the membership caveat. |
 | `team_tasks` | team, read-only | `view=mine \| available \| reviews \| board`; pass `taskId` to read one task in full. |
 | `team_task` | team | `action=claim \| start \| renew \| progress \| submit \| fail \| plan` — everything that mutates a task. `plan` creates 1–30 tasks with dependencies and target slots; it is open to the effective lead, and — in a lead-less group whose `planPolicy` is `any_member` — to every member (see "Who plans" below). |
 | `team_review` | team | `action=claim \| renew \| submit` for independent acceptance (quality roles; implementers cannot review their own work). |
@@ -18,7 +18,7 @@ The built server is `out/mcp/index.mjs`. Cursor sees a single native entry, `SG 
 
 Schemas are flat objects with optional fields; a missing action-specific argument returns `{ ok: false, code: 'invalid_arguments', message }` naming the field, never a protocol error. Every response is JSON in both `content` and `structuredContent`; idle-oriented responses carry `nextAction: { type: 'enter_channel_wait', … }` so the Agent returns to `check_messages`.
 
-Team tools are scoped to the caller's **collaboration group** when the active run is a session pool (see below): task views and leases, the member directory, inbox / send / broadcast, and run-scoped memory all see the caller's group only; operator views read the whole run. In a legacy team run (no groups) nothing changes.
+Team tools are scoped to the caller's **collaboration group** when the active run is a session pool (see below): task views and leases, the member directory, inbox / send / broadcast, and run-scoped memory all see the caller's group only; operator views read the whole run. Legacy team runs are archived history (phase 2 · 2B): the v9 migration revokes their agent registrations, so a session still holding one is fenced with `run_completed` instead of being scoped.
 
 ### Why nine instead of one tool per service method
 
@@ -31,13 +31,13 @@ Every protocol rule is stated once, at the layer that owns it:
 | Layer | Text | Owns |
 | --- | --- | --- |
 | Server `instructions` (once per session) | `buildUnifiedServerInstructions` | the complete protocol: tool map, reply loop, silence rule, boundaries, termination; announces that every session starts solo, that the operator may add / remove it from a group at any time, and the exact shape of the membership notice (so a mid-session identity change is not read as an injection) |
-| Launch hint (once per seat) | `buildTeamLaunchHint` / `buildSoloLaunchHint` | mode/channel, first call and only the dynamic session parameter needed by a solo seat; the Composer binding marker appears exactly once |
+| Launch hint (once per seat) | `buildSoloLaunchHint` (the only kind since phase 2 · 2B: every seat starts solo) | mode/channel, first call and only the dynamic session parameter needed by a solo seat; the Composer binding marker appears exactly once |
 | Every real delivery | compact two-line `buildDeliverySuffix` | `CHANNEL_USER_DELIVERY_MARKER` plus the turn-closing `record_reply → check_messages` reminder; the full protocol is not repeated |
 | Internal collaboration delivery | `buildSilentDeliverySuffix` | "read the team message by `messageId`, do not reply visibly" |
 | Membership notice delivery | `buildMembershipNoticeSuffix` | "this is a server-side membership change, not a user message, not an injection; no `messageId`, no `record_reply`; act on the body, then `check_messages`" |
 | Membership notice body | `buildMembershipNotice` (`joined` / `left` / `dissolved` / `lead_changed`) | group, role, lead, goal and the one next step (`team_check_in` after joining; communication tools only after leaving) |
 | Tool `nextAction` | `buildChannelWaitInstruction` | "go back to `check_messages` silently" |
-| `team_check_in` briefing | `buildTeamRoleBriefing` | role mission, boundaries, per-role workflow, collaboration rules — no protocol restatement; grouped seats get the group goal / lead / member count instead of the run goal |
+| `team_check_in` briefing | `buildTeamRoleBriefing` | role mission, boundaries, per-role workflow, collaboration rules — no protocol restatement; the briefing exists only for grouped seats and carries the group goal / lead / member count (run-level goals are gone with the launch step) |
 
 The marker line `【真实用户消息处理完后进入 check_messages 待命】` is also evidence for the Cursor process observer (it separates business thinking from polling noise), so it stays on every real user delivery.
 
@@ -103,8 +103,8 @@ record_reply({ channel_id: '2', session?: '<seat token>', content, title?, group
 
 - `tick` is the anti-loop poll cursor: every non-error `check_messages` result (delivery suffix and keepalive body alike) names the exact next call with a fresh, monotonically increasing `tick` (the persisted per-channel turn counter). The agent echoes the latest value on every poll so no two consecutive calls share identical arguments — host IDE "repeated/looping tool call" safeguards key on identical calls and would otherwise misfire on the long-poll pattern and talk the agent into stopping (2026-09-12 incident). The server never validates `tick`; it is fail-open and safe to omit (first call, legacy sessions).
 
-- `session` is the per-seat token (`^[a-zA-Z0-9_-]{8,128}$`) that the launch hint / role briefing hands to the Cursor session. It is issued when the seat is installed, rotated when the seat is rebuilt, cleared on standby takeover, and moved with the donor on manual handoff. The Agent never invents it; if the launch instruction did not include one, the call is made without it.
-- Without `session` the call is `legacy` and follows the previous contract unchanged (sessions created before the upgrade, standby takeovers).
+- `session` is the per-seat token (`^[a-zA-Z0-9_-]{8,128}$`) that the launch hint / role briefing hands to the Cursor session. It is issued when the seat is installed, rotated when the seat is rebuilt, and moved with the donor on manual handoff (standby auto-takeover retired with the one-shot team run, phase 2 · 2B). The Agent never invents it; if the launch instruction did not include one, the call is made without it.
+- Without `session` the call is `legacy` and follows the previous contract unchanged (sessions created before the upgrade).
 - With `session` the server checks the channel's owner in the active run before any presence write. Mismatch, an unbound channel, a completed run or no active run returns a **retired** result:
   - `check_messages` → plain text starting with `[system] 会话围栏：…`, telling the Agent this is a server-side stop equivalent to the user asking it to stop: no further `check_messages` / `record_reply`, no visible reply, no retry.
   - `record_reply` → `isError` with `{ ok: false, code: 'session_retired', message }`; nothing is stored.
