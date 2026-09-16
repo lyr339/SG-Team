@@ -1,6 +1,6 @@
 import { ipcMain, type BrowserWindow } from 'electron'
 import type { TeamGroupService } from '../application/team-group-service'
-import { TEAM_ROLE_TEMPLATES } from '../domain/team-control'
+import { TEAM_ROLE_TEMPLATES, type TeamGroupPlanPolicy } from '../domain/team-control'
 import { IPC, type TeamGroupMemberInput } from '../shared/desktop-api'
 import { assertTrustedSender } from './ipc-security'
 
@@ -27,6 +27,16 @@ function optionalText(value: unknown, field: string, maxLength: number): string 
   return value
 }
 
+function optionalPlanPolicy(value: unknown): TeamGroupPlanPolicy | undefined {
+  if (value === undefined || value === null) return undefined
+  return requiredPlanPolicy(value)
+}
+
+function requiredPlanPolicy(value: unknown): TeamGroupPlanPolicy {
+  if (value === 'lead_only' || value === 'any_member') return value
+  throw new Error('规划策略无效')
+}
+
 /** 组内角色模板：只认 TEAM_ROLE_TEMPLATES 里的键；solo 由 domain 再拒（`group_role_solo_forbidden`）。 */
 function membersOf(value: unknown): TeamGroupMemberInput[] {
   if (!Array.isArray(value) || !value.length || value.length > GROUP_MEMBERS_MAX) throw new Error('组成员列表无效')
@@ -44,7 +54,7 @@ export interface TeamGroupIpcOptions {
 }
 
 /**
- * 会话池 · 协作组的 IPC 面（任务书 §5.7）：六个成员关系操作，全部只做形状校验后交给
+ * 会话池 · 协作组的 IPC 面（任务书 §5.7 + 阶段 2 · 2A 的规划策略）：成员关系操作全部只做形状校验后交给
  * TeamGroupService；业务校验（池状态、席位归属、lead 规则）在仓储事务里，以异常传播给渲染层。
  * 快照推送仍走 team-control 的订阅通道（成员关系变化会推进 team-control revision）。
  */
@@ -68,7 +78,8 @@ export function registerTeamGroupIpc(
       members: membersOf(raw.members),
       leadSlotId: raw.leadSlotId === undefined || raw.leadSlotId === null
         ? undefined
-        : requiredString(raw.leadSlotId, 'lead 席位', 240)
+        : requiredString(raw.leadSlotId, 'lead 席位', 240),
+      planPolicy: optionalPlanPolicy(raw.planPolicy)
     })
   })
   ipcMain.handle(IPC.teamGroupAddMembers, (event, value: unknown) => {
@@ -107,6 +118,15 @@ export function registerTeamGroupIpc(
       goal: optionalText(raw.goal, '组目标', GROUP_GOAL_MAX) ?? ''
     })
   })
+  ipcMain.handle(IPC.teamGroupSetPlanPolicy, (event, value: unknown) => {
+    assertTrustedSender(event, getWindow)
+    assertNoSessionLaunch()
+    const raw = objectOf(value, '规划策略参数')
+    return service.setGroupPlanPolicy({
+      groupId: requiredString(raw.groupId, '协作组 id', 240),
+      planPolicy: requiredPlanPolicy(raw.planPolicy)
+    })
+  })
   ipcMain.handle(IPC.teamGroupDissolve, (event, value: unknown) => {
     assertTrustedSender(event, getWindow)
     assertNoSessionLaunch()
@@ -119,6 +139,7 @@ export function registerTeamGroupIpc(
     ipcMain.removeHandler(IPC.teamGroupRemoveMember)
     ipcMain.removeHandler(IPC.teamGroupSetLead)
     ipcMain.removeHandler(IPC.teamGroupUpdateGoal)
+    ipcMain.removeHandler(IPC.teamGroupSetPlanPolicy)
     ipcMain.removeHandler(IPC.teamGroupDissolve)
   }
 }

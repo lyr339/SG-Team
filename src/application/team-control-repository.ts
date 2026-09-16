@@ -5,6 +5,7 @@ import type {
   TeamGroup,
   TeamGroupEvent,
   TeamGroupMemberConfiguration,
+  TeamGroupPlanPolicy,
   TeamLaunchStatus,
   WorkspaceTeamBundle
 } from '../domain/team-control'
@@ -117,13 +118,17 @@ export interface TeamControlRepository extends AgentPresenceStore {
 
   // ---- 协作组（会话池）：每个方法 = 一次事务 + team_group_events 审计行；不触碰令牌 / Composer / 作用域 ----
 
-  /** 在会话池 run 内建组：成员必须是未入组席位；lead 可空（无 lead 组）。 */
+  /**
+   * 在会话池 run 内建组：成员必须是未入组席位；lead 可空（无 lead 组）。
+   * `planPolicy` 省略时按 `defaultGroupPlanPolicy(leadSlotId)`：有 lead → lead_only，无 lead → any_member。
+   */
   createGroup(input: {
     runId: string
     name: string
     goal?: string
     members: TeamGroupMemberConfiguration[]
     leadSlotId?: string
+    planPolicy?: TeamGroupPlanPolicy
     at?: number
   }): TeamGroupMutation
   addGroupMembers(input: { groupId: string; members: TeamGroupMemberConfiguration[]; at?: number }): TeamGroupMutation
@@ -137,6 +142,8 @@ export interface TeamControlRepository extends AgentPresenceStore {
   /** 组内临时主控（lead 离线接管 / team_run transfer_lead）；null = 复位。 */
   setGroupActingLead(input: { groupId: string; slotId: string | null; at?: number }): TeamGroupMutation
   updateGroupGoal(input: { groupId: string; goal: string; at?: number }): TeamGroupMutation
+  /** 改规划策略（谁能 team_task plan）；只对无 lead 的组产生实际效果，有 lead 时规划权始终归有效 lead。 */
+  setGroupPlanPolicy(input: { groupId: string; planPolicy: TeamGroupPlanPolicy; at?: number }): TeamGroupMutation
   /** 解散：全部成员恢复 solo、组角色删除、组置 dissolved；任务 / 消息 / 记忆由调用方按组收尾。 */
   dissolveGroup(input: { groupId: string; at?: number }): TeamGroupMutation
   listGroupEvents(groupId: string, limit?: number): TeamGroupEvent[]

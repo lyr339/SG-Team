@@ -1,7 +1,7 @@
 import type { AgentSession } from '../domain/agent-session'
 import type { ConversationEntry, ProcessBlock } from '../domain/conversation-entry'
 import type { TaskPoolSnapshot } from '../domain/task-pool'
-import type { TeamControlSnapshot } from '../domain/team-control'
+import type { TeamControlSnapshot, TeamGroupPlanPolicy } from '../domain/team-control'
 import type { TeamCollaborationSnapshot } from '../domain/team-collaboration'
 import type { TeamContinuitySnapshot } from '../domain/team-continuity'
 import type { TeamMemorySnapshot } from '../domain/team-memory'
@@ -261,8 +261,15 @@ export interface CreateTeamGroupInput {
   name: string
   goal?: string
   members: TeamGroupMemberInput[]
-  /** 可空：无 lead 的纯协作组（共享目标 + 消息 + 记忆，没有任务板调度）。 */
+  /** 可空：无 lead 的纯协作组（共享目标 + 消息 + 记忆；任务由用户在拾光里创建，或按 planPolicy 由成员规划）。 */
   leadSlotId?: string
+  /** 省略 = 有 lead → lead_only，无 lead → any_member。 */
+  planPolicy?: TeamGroupPlanPolicy
+}
+
+export interface TeamGroupPlanPolicyInput {
+  groupId: string
+  planPolicy: TeamGroupPlanPolicy
 }
 
 export interface TeamGroupMembersInput {
@@ -482,6 +489,8 @@ export interface SgDesktopApi {
   removeTeamGroupMember(input: TeamGroupMemberRef): Promise<TeamControlSnapshot>
   setTeamGroupLead(input: TeamGroupLeadInput): Promise<TeamControlSnapshot>
   updateTeamGroupGoal(input: TeamGroupGoalInput): Promise<TeamControlSnapshot>
+  /** 谁能 team_task plan：只对无 lead 的组产生实际效果（有 lead 时规划权始终归有效 lead）。 */
+  setTeamGroupPlanPolicy(input: TeamGroupPlanPolicyInput): Promise<TeamControlSnapshot>
   dissolveTeamGroup(input: { groupId: string }): Promise<TeamControlSnapshot>
   getTeamCollaborationSnapshot(): Promise<TeamCollaborationSnapshot>
   getManualHandoffOptions(slotId: string): Promise<TeamHandoffOptions>
@@ -613,6 +622,7 @@ export const IPC = {
   teamGroupRemoveMember: 'team-group:remove-member',
   teamGroupSetLead: 'team-group:set-lead',
   teamGroupUpdateGoal: 'team-group:update-goal',
+  teamGroupSetPlanPolicy: 'team-group:set-plan-policy',
   teamGroupDissolve: 'team-group:dissolve',
   teamCollaborationGet: 'team-collaboration:get',
   teamCollaborationSnapshot: 'team-collaboration:snapshot',

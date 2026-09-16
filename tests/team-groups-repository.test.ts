@@ -391,4 +391,79 @@ describe('SqliteTeamControlRepository 协作组', () => {
       migrated.close()
     }
   })
+
+  it('defaults the plan policy from the lead and only opens planning to members in a lead-less any_member group (2A)', () => {
+    const repository = new SqliteTeamControlRepository(databasePath('plan-policy'))
+    try {
+      const pool = installedPool(repository, 'plan', ['1', '2', '3', '4'])
+      const [a, b, c, d] = [slotOf(pool, '1'), slotOf(pool, '2'), slotOf(pool, '3'), slotOf(pool, '4')]
+      const planningCapabilities = (channelId: string) => repository.resolveChannelAgentIdentity(channelId).capabilities
+        .filter((capability) => capability === 'planning' || capability === 'coordination').sort()
+
+      // 有 lead：默认 lead_only；规划能力只在 lead 身上。
+      const led = repository.createGroup({
+        runId: pool.run.id, name: '有 lead', leadSlotId: a.id,
+        members: [{ slotId: a.id, roleTemplateKey: 'specialist' }, { slotId: b.id, roleTemplateKey: 'builder' }]
+      }).group
+      expect(led.planPolicy).toBe('lead_only')
+      expect(planningCapabilities('1')).toEqual(['coordination', 'planning'])
+      expect(planningCapabilities('2')).toEqual([])
+      // 有 lead 的组即使写成 any_member，规划权仍只归有效 lead（策略只是预设）。
+      repository.setGroupPlanPolicy({ groupId: led.id, planPolicy: 'any_member' })
+      expect(planningCapabilities('2')).toEqual([])
+      expect(repository.listGroupEvents(led.id).at(-1)).toMatchObject({ type: 'plan_policy_updated', actor: 'operator', detail: 'lead_only → any_member' })
+
+      // 无 lead：默认 any_member，每个成员都能规划（叠加主控模板能力）；显式 lead_only 则无人能规划。
+      const flat = repository.createGroup({
+        runId: pool.run.id, name: '无 lead', members: [{ slotId: c.id, roleTemplateKey: 'builder' }]
+      }).group
+      expect(flat.planPolicy).toBe('any_member')
+      expect(planningCapabilities('3')).toEqual(['coordination', 'planning'])
+      repository.setGroupPlanPolicy({ groupId: flat.id, planPolicy: 'lead_only' })
+      expect(planningCapabilities('3')).toEqual([])
+      expect(repository.loadTeamControl().groups.find((group) => group.id === flat.id)?.planPolicy).toBe('lead_only')
+
+      const explicit = repository.createGroup({
+        runId: pool.run.id, name: '显式', planPolicy: 'lead_only', members: [{ slotId: d.id, roleTemplateKey: 'reviewer' }]
+      }).group
+      expect(explicit.planPolicy).toBe('lead_only')
+      expect(planningCapabilities('4')).toEqual([])
+      // 后来指定了 lead：规划权归 lead，与策略无关。
+      repository.setGroupLead({ groupId: flat.id, slotId: c.id })
+      expect(planningCapabilities('3')).toEqual(['coordination', 'planning'])
+      expect(code(() => repository.setGroupPlanPolicy({ groupId: flat.id, planPolicy: 'everyone' as never }))).toBe('group_plan_policy_invalid')
+    } finally {
+      repository.close()
+    }
+  })
+
+  it('adds the plan_policy column to a v8 database that predates it, defaulting existing groups to lead_only', () => {
+    const path = databasePath('plan-policy-migrate')
+    const seeded = new SqliteTeamControlRepository(path)
+    const pool = installedPool(seeded, 'ppm', ['1', '2'])
+    const leaderless = seeded.createGroup({ runId: pool.run.id, name: '旧组', members: [{ slotId: slotOf(pool, '1').id, roleTemplateKey: 'builder' }] }).group
+    expect(leaderless.planPolicy).toBe('any_member')
+    seeded.close()
+    // 回到没有 plan_policy 列的 v8 形态（09-15 之前的构建建的库）。
+    const old = new DatabaseSync(path)
+    old.exec('ALTER TABLE team_groups DROP COLUMN plan_policy')
+    old.close()
+
+    const migrated = new SqliteTeamControlRepository(path)
+    const second = new SqliteTeamControlRepository(path)
+    try {
+      for (const repository of [migrated, second]) {
+        expect(repository.loadTeamControl().schemaVersion).toBe(8)
+        // 旧库里已有的无 lead 组按最保守的 lead_only 回填：不会因为升级就悄悄让成员拿到规划权。
+        expect(repository.loadTeamControl().groups.find((group) => group.id === leaderless.id)?.planPolicy).toBe('lead_only')
+      }
+      expect(migrated.resolveChannelAgentIdentity('1').capabilities).not.toContain('planning')
+      const fresh = migrated.createGroup({ runId: pool.run.id, name: '新组', members: [{ slotId: slotOf(pool, '2').id, roleTemplateKey: 'builder' }] }).group
+      expect(fresh.planPolicy).toBe('any_member')
+      expect(second.resolveChannelAgentIdentity('2').capabilities).toContain('planning')
+    } finally {
+      second.close()
+      migrated.close()
+    }
+  })
 })

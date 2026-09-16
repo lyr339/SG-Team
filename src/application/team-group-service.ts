@@ -5,11 +5,13 @@ import type { TeamControlBridge } from './team-control-service'
 import { TaskPoolError } from '../domain/task-pool'
 import {
   buildMembershipNotice,
+  groupMembersMayPlan,
   isSessionPoolRun,
   type MembershipNoticeKind,
   type TeamControlSnapshot,
   type TeamGroup,
   type TeamGroupMemberConfiguration,
+  type TeamGroupPlanPolicy,
   type TeamGroupView,
   type TeamMemberView
 } from '../domain/team-control'
@@ -28,6 +30,8 @@ export interface CreateTeamGroupInput {
   goal?: string
   members: TeamGroupMemberConfiguration[]
   leadSlotId?: string
+  /** 省略 = `defaultGroupPlanPolicy(leadSlotId)`。 */
+  planPolicy?: TeamGroupPlanPolicy
 }
 
 /** 成员出组原因：写进任务 attempt 的 error / 任务 failureReason，与任务书 §7 规则 1 的口径一致。 */
@@ -75,6 +79,7 @@ export class TeamGroupService {
       goal: input.goal,
       members: input.members,
       leadSlotId: input.leadSlotId,
+      planPolicy: input.planPolicy,
       at
     })
     const after = this.team.getSnapshot()
@@ -172,6 +177,35 @@ export class TeamGroupService {
         subject: '协作组目标已更新',
         content: `【系统通知】协作组「${mutation.group.name}」的目标已更新：\n${mutation.group.goal || '（已清空，以用户随后指令为准）'}\n后续工作以新目标为准；如与进行中的任务冲突，向 lead 或用户确认。`,
         clientMessageId: `group-goal:${shortId(mutation.group.id)}:${shortId(member.slot.id)}:${at}`
+      }))
+    }
+    return after
+  }
+
+  /**
+   * 改规划策略。只在策略确实改变了「组内谁能 plan」时通知成员（有 lead 的组：规划权始终归 lead，
+   * 策略只是预设，成员对此无感，不打扰）。
+   */
+  setGroupPlanPolicy(input: { groupId: string; planPolicy: TeamGroupPlanPolicy }): TeamControlSnapshot {
+    const { runId, snapshot: before } = this.requirePool()
+    const at = this.now()
+    const previous = this.viewOf(before, input.groupId)?.group
+    const mutation = this.repository.setGroupPlanPolicy({ groupId: input.groupId, planPolicy: input.planPolicy, at })
+    const after = this.team.getSnapshot()
+    const view = this.viewOf(after, mutation.group.id)
+    if (!view || !previous || groupMembersMayPlan(previous) === groupMembersMayPlan(mutation.group)) return after
+    const opened = groupMembersMayPlan(mutation.group)
+    for (const member of view.members) {
+      this.safely('通知成员规划策略已更新', () => this.collaboration.createMessage({
+        runId,
+        sender: { type: 'operator' },
+        recipient: { type: 'agent', slotId: member.slot.id },
+        kind: 'notice',
+        subject: '协作组规划策略已更新',
+        content: opened
+          ? `【系统通知】协作组「${mutation.group.name}」现在允许全体成员规划任务：收到用户明确要求后可用 team_task({action:'plan', tasks:[...]}) 创建任务，系统会自动分派。先调用 team_check_in 刷新简报。`
+          : `【系统通知】协作组「${mutation.group.name}」不再允许成员规划任务：任务改由用户在拾光里创建并自动分派；已创建的任务不受影响。先调用 team_check_in 刷新简报。`,
+        clientMessageId: `group-plan-policy:${shortId(mutation.group.id)}:${shortId(member.slot.id)}:${at}`
       }))
     }
     return after

@@ -239,7 +239,7 @@ if (independentScene && initialTeam.activeRun) {
     initialTeam.members = members
     initialTeam.roles = [...initialTeam.roles, ...members.slice(0, 4).map((member) => member.role)]
     initialTeam.slots = members.map((member) => member.slot)
-    const groupBase = { runId: run.id, createdAt: previewNow - 30 * 60_000, updatedAt: previewNow - 4 * 60_000 }
+    const groupBase = { runId: run.id, planPolicy: 'lead_only' as const, createdAt: previewNow - 30 * 60_000, updatedAt: previewNow - 4 * 60_000 }
     initialTeam.groups = [
       {
         group: { ...groupBase, id: refactorId, name: '接口重构', goal: '把 TaskAgentService 的查询路径收成一个入口，补齐组作用域测试。', status: 'active', leadSlotId: members[0]!.slot.id },
@@ -1308,6 +1308,7 @@ const api: SgDesktopApi = {
   removeTeamGroupMember: async () => structuredClone(state.team),
   setTeamGroupLead: async () => structuredClone(state.team),
   updateTeamGroupGoal: async () => structuredClone(state.team),
+  setTeamGroupPlanPolicy: async () => structuredClone(state.team),
   dissolveTeamGroup: async () => structuredClone(state.team),
   getTeamCollaborationSnapshot: async () => structuredClone(collaborationSnapshot),
   getManualHandoffOptions: async (slotId) => {

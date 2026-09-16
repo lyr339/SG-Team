@@ -27,6 +27,7 @@ function fakeService() {
     removeGroupMember: record('removeGroupMember'),
     setGroupLead: record('setGroupLead'),
     updateGroupGoal: record('updateGroupGoal'),
+    setGroupPlanPolicy: record('setGroupPlanPolicy'),
     dissolveGroup: record('dissolveGroup')
   } as unknown as TeamGroupService
   return { service, calls, snapshot }
@@ -44,12 +45,16 @@ describe('协作组 IPC', () => {
       members: [{ slotId: ' slot-1 ', roleTemplateKey: 'lead' }, { slotId: 'slot-2', roleTemplateKey: 'builder' }]
     })).toBe(snapshot)
     expect(calls.at(-1)).toEqual(['createGroup', {
-      name: '验收组', goal: '目标', leadSlotId: 'slot-1',
+      name: '验收组', goal: '目标', leadSlotId: 'slot-1', planPolicy: undefined,
       members: [{ slotId: 'slot-1', roleTemplateKey: 'lead' }, { slotId: 'slot-2', roleTemplateKey: 'builder' }]
     }])
-    // lead 可省略 / 为 null；目标可省略。
+    // lead 可省略 / 为 null；目标可省略；规划策略可省略（服务按 lead 取默认）或显式给出。
     invoke(IPC.teamGroupCreate, { name: 'G', members: [{ slotId: 'slot-1', roleTemplateKey: 'specialist' }], leadSlotId: null })
-    expect(calls.at(-1)).toEqual(['createGroup', { name: 'G', goal: undefined, leadSlotId: undefined, members: [{ slotId: 'slot-1', roleTemplateKey: 'specialist' }] }])
+    expect(calls.at(-1)).toEqual(['createGroup', { name: 'G', goal: undefined, leadSlotId: undefined, planPolicy: undefined, members: [{ slotId: 'slot-1', roleTemplateKey: 'specialist' }] }])
+    invoke(IPC.teamGroupCreate, { name: 'G', members: [{ slotId: 'slot-1', roleTemplateKey: 'specialist' }], planPolicy: 'lead_only' })
+    expect(calls.at(-1)?.[1]).toMatchObject({ planPolicy: 'lead_only' })
+    invoke(IPC.teamGroupSetPlanPolicy, { groupId: 'g-1', planPolicy: 'any_member' })
+    expect(calls.at(-1)).toEqual(['setGroupPlanPolicy', { groupId: 'g-1', planPolicy: 'any_member' }])
 
     invoke(IPC.teamGroupAddMembers, { groupId: 'g-1', members: [{ slotId: 'slot-3', roleTemplateKey: 'reviewer' }] })
     expect(calls.at(-1)).toEqual(['addGroupMembers', { groupId: 'g-1', members: [{ slotId: 'slot-3', roleTemplateKey: 'reviewer' }] }])
@@ -75,12 +80,14 @@ describe('协作组 IPC', () => {
     expect(() => invoke(IPC.teamGroupRemoveMember, { groupId: 'g-1' })).toThrowError(/席位 id无效/)
     expect(() => invoke(IPC.teamGroupSetLead, { groupId: 'g-1', slotId: 42 })).toThrowError(/lead 席位无效/)
     expect(() => invoke(IPC.teamGroupDissolve, {})).toThrowError(/协作组 id无效/)
+    expect(() => invoke(IPC.teamGroupCreate, { name: 'G', members: [{ slotId: 'slot-1', roleTemplateKey: 'lead' }], planPolicy: 'everyone' })).toThrowError(/规划策略无效/)
+    expect(() => invoke(IPC.teamGroupSetPlanPolicy, { groupId: 'g-1' })).toThrowError(/规划策略无效/)
     expect(calls).toHaveLength(before)
 
     dispose()
     for (const channel of [
       IPC.teamGroupCreate, IPC.teamGroupAddMembers, IPC.teamGroupRemoveMember,
-      IPC.teamGroupSetLead, IPC.teamGroupUpdateGoal, IPC.teamGroupDissolve
+      IPC.teamGroupSetLead, IPC.teamGroupUpdateGoal, IPC.teamGroupSetPlanPolicy, IPC.teamGroupDissolve
     ]) expect(handlers.has(channel)).toBe(false)
   })
 
@@ -95,6 +102,7 @@ describe('协作组 IPC', () => {
       [IPC.teamGroupRemoveMember, { groupId: 'g-1', slotId: 'slot-2' }],
       [IPC.teamGroupSetLead, { groupId: 'g-1', slotId: null }],
       [IPC.teamGroupUpdateGoal, { groupId: 'g-1', goal: 'x' }],
+      [IPC.teamGroupSetPlanPolicy, { groupId: 'g-1', planPolicy: 'any_member' }],
       [IPC.teamGroupDissolve, { groupId: 'g-1' }]
     ]
     for (const [channel, payload] of payloads) {

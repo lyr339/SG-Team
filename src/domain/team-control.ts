@@ -124,6 +124,14 @@ export interface AgentSlot {
 export type TeamGroupStatus = 'active' | 'dissolved'
 
 /**
+ * 组内谁能 `team_task plan`（阶段 2 · 2A，决策 D2）：
+ * - `lead_only`：只有有效 lead；组没有 lead 时组内无人能规划，任务由用户在拾光里为该组创建。
+ * - `any_member`：组没有 lead 时任一成员都能规划（扁平协作组）；有 lead 时仍只有 lead。
+ * 用户永远可以在桌面为任一组建任务，该策略只约束 Agent。
+ */
+export type TeamGroupPlanPolicy = 'lead_only' | 'any_member'
+
+/**
  * 协作组：会话池内随时可建可拆的协作上下文（目标、成员、角色、lead、任务、消息、记忆）。
  * 入组 / 出组不触碰会话令牌、Composer 绑定与作用域——那些是池级事实。
  */
@@ -137,9 +145,25 @@ export interface TeamGroup {
   leadSlotId?: string
   /** 临时主控（lead 离线时由系统或用户指定），优先级高于 leadSlotId。 */
   actingLeadSlotId?: string
+  planPolicy: TeamGroupPlanPolicy
   createdAt: number
   updatedAt: number
   dissolvedAt?: number
+}
+
+/** 建组时未显式给出策略：有 lead 的组默认 lead_only；无 lead 的组默认 any_member（任务书 2A「无 lead 时自动 any_member」）。 */
+export function defaultGroupPlanPolicy(leadSlotId: string | undefined): TeamGroupPlanPolicy {
+  return leadSlotId ? 'lead_only' : 'any_member'
+}
+
+/**
+ * 组内除有效 lead 之外的成员是否也能规划任务：只有「没有有效 lead 且策略为 any_member」时成立。
+ * 有 lead 时策略不生效——规划权始终归有效 lead（与 lead 权限和角色模板解耦的口径一致）。
+ */
+export function groupMembersMayPlan(
+  group: Pick<TeamGroup, 'leadSlotId' | 'actingLeadSlotId' | 'planPolicy'>
+): boolean {
+  return effectiveGroupLeadSlotId(group) === undefined && group.planPolicy === 'any_member'
 }
 
 export type TeamGroupEventType =
@@ -150,6 +174,7 @@ export type TeamGroupEventType =
   | 'lead_changed'
   | 'acting_lead_changed'
   | 'goal_updated'
+  | 'plan_policy_updated'
   | 'dissolved'
 
 export interface TeamGroupEvent {

@@ -379,6 +379,55 @@ describe('TeamGroupService · lead、目标与解散', () => {
     }
   })
 
+  it('setGroupPlanPolicy gates team_task plan in a lead-less group and briefs members only when their planning right actually changed (2A)', () => {
+    const data = poolFixture()
+    try {
+      // 无 lead 组默认 any_member：两个成员都能 plan，规划出的任务落在本组。
+      const { groups } = data.service.createGroup({
+        name: '扁平组', members: [{ slotId: data.slotIdOf('1'), roleTemplateKey: 'builder' }, { slotId: data.slotIdOf('2'), roleTemplateKey: 'reviewer' }]
+      })
+      const groupId = groups[0]!.group.id
+      expect(groups[0]!.group.planPolicy).toBe('any_member')
+      const [planned] = data.taskAgent('2').plan([{ key: 'flat-1', title: '扁平组任务' }])
+      expect(planned).toMatchObject({ groupId, status: 'queued' })
+
+      // 收紧为 lead_only：成员失去规划权（coordinator_only），每人一条 notice 说明任务改由用户创建。
+      const tightened = data.service.setGroupPlanPolicy({ groupId, planPolicy: 'lead_only' })
+      expect(tightened.groups[0]!.group.planPolicy).toBe('lead_only')
+      expect(code(() => data.taskAgent('2').plan([{ key: 'flat-2', title: '再规划' }]))).toBe('coordinator_only')
+      for (const channelId of ['1', '2']) {
+        const notices = data.messagesTo(data.slotIdOf(channelId))
+        expect(notices).toHaveLength(1)
+        expect(notices[0]).toMatchObject({ kind: 'notice', sender: { type: 'operator' }, groupId })
+        expect(notices[0]!.content).toContain('不再允许成员规划任务')
+      }
+      expect(data.bridge.sent.filter((message) => message.kind !== 'membership')).toEqual([])
+
+      // 同值重复设置：无变化、不再通知。
+      data.service.setGroupPlanPolicy({ groupId, planPolicy: 'lead_only' })
+      expect(data.messagesTo(data.slotIdOf('1'))).toHaveLength(1)
+
+      // 放开回 any_member：规划权回来，再各收一条「允许全体成员规划」。
+      data.service.setGroupPlanPolicy({ groupId, planPolicy: 'any_member' })
+      expect(data.taskAgent('1').plan([{ key: 'flat-3', title: '放开后规划' }])[0]).toMatchObject({ groupId })
+      expect(data.messagesTo(data.slotIdOf('2')).map((message) => message.content.includes('允许全体成员规划任务'))).toEqual([false, true])
+
+      // 有 lead 的组：策略切换不改变任何人的规划权，成员不被打扰。
+      const led = data.service.createGroup({
+        name: '有 lead', members: [{ slotId: data.slotIdOf('3'), roleTemplateKey: 'lead' }, { slotId: data.slotIdOf('4'), roleTemplateKey: 'builder' }],
+        leadSlotId: data.slotIdOf('3')
+      }).groups.find((view) => view.group.name === '有 lead')!.group
+      expect(led.planPolicy).toBe('lead_only')
+      data.service.setGroupPlanPolicy({ groupId: led.id, planPolicy: 'any_member' })
+      expect(code(() => data.taskAgent('4').plan([{ key: 'led-1', title: '成员规划' }]))).toBe('coordinator_only')
+      expect(data.messagesTo(data.slotIdOf('3'))).toEqual([])
+      expect(data.messagesTo(data.slotIdOf('4'))).toEqual([])
+      expect(data.errors).toEqual([])
+    } finally {
+      data.close()
+    }
+  })
+
   it('dissolveGroup cancels the group\'s open tasks, orphans pending directives, restores every seat and notifies each member (§7 rules 5–7)', () => {
     const data = poolFixture()
     try {

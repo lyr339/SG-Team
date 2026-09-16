@@ -12,7 +12,9 @@ import type { AgentCheckInReceipt } from '../../application/agent-presence'
 import type { TeamControlRepository } from '../../application/team-control-repository'
 import {
   buildGroupRoles,
+  defaultGroupPlanPolicy,
   effectiveGroupLeadSlotId,
+  groupMembersMayPlan,
   isSessionPoolRun,
   LEAD_ROLE_CAPABILITIES,
   type AgentSlot,
@@ -22,6 +24,7 @@ import {
   type TeamGroupEvent,
   type TeamGroupEventType,
   type TeamGroupMemberConfiguration,
+  type TeamGroupPlanPolicy,
   type TeamGroupStatus,
   type TeamRole,
   type TeamRoleAccent,
@@ -93,7 +96,14 @@ function effectiveCapabilities(row: SqliteRow): string[] {
   const templateKey = String(row.template_key ?? '')
   if (optionalString(row.group_id)) {
     const effectiveLead = optionalString(row.group_acting_lead_slot_id) ?? optionalString(row.group_lead_slot_id)
-    if (effectiveLead === slotId) {
+    const membersMayPlan = groupMembersMayPlan({
+      leadSlotId: optionalString(row.group_lead_slot_id),
+      actingLeadSlotId: optionalString(row.group_acting_lead_slot_id),
+      planPolicy: planPolicyOf(row.group_plan_policy)
+    })
+    if (effectiveLead === slotId || membersMayPlan) {
+      // 有效 lead，或无 lead 且允许全员规划的组里的每个成员：叠加主控模板能力（coordination / planning），
+      // 让 TaskAgentService 的 plan / 任务板视图放行；directive / broadcast / collect 仍由 isEffectiveLead 单独把关。
       for (const capability of LEAD_ROLE_CAPABILITIES) base.add(capability)
     } else if (templateKey === 'lead') {
       for (const capability of LEAD_ROLE_CAPABILITIES) base.delete(capability)
@@ -120,7 +130,8 @@ function effectiveCapabilities(row: SqliteRow): string[] {
 const IDENTITY_SELECT = `
   SELECT ar.agent_session_id, ar.run_id, b.slot_id, s.is_solo, s.group_id, r.template_key, r.capabilities_json,
     tr.acting_lead_slot_id, lead.capabilities_json AS lead_capabilities_json,
-    g.lead_slot_id AS group_lead_slot_id, g.acting_lead_slot_id AS group_acting_lead_slot_id
+    g.lead_slot_id AS group_lead_slot_id, g.acting_lead_slot_id AS group_acting_lead_slot_id,
+    g.plan_policy AS group_plan_policy
   FROM agent_registrations ar
   JOIN runtime_bindings b
     ON b.agent_session_id = ar.agent_session_id AND b.run_id = ar.run_id
@@ -155,6 +166,11 @@ function identityFromRow(row: SqliteRow): AgentAuthorizationIdentity {
   }
 }
 
+/** `plan_policy` 列缺失（旧构建写入的行 / 尚未迁移的库）或值非法时按 lead_only 读——最保守的一档。 */
+function planPolicyOf(value: unknown): TeamGroupPlanPolicy {
+  return value === 'any_member' ? 'any_member' : 'lead_only'
+}
+
 function groupFromRow(row: SqliteRow): TeamGroup {
   return {
     id: String(row.id),
@@ -164,6 +180,7 @@ function groupFromRow(row: SqliteRow): TeamGroup {
     status: String(row.status) as TeamGroupStatus,
     leadSlotId: optionalString(row.lead_slot_id),
     actingLeadSlotId: optionalString(row.acting_lead_slot_id),
+    planPolicy: planPolicyOf(row.plan_policy),
     createdAt: numberOf(row.created_at),
     updatedAt: numberOf(row.updated_at),
     dissolvedAt: optionalNumber(row.dissolved_at)
@@ -1591,6 +1608,7 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
     goal?: string
     members: TeamGroupMemberConfiguration[]
     leadSlotId?: string
+    planPolicy?: TeamGroupPlanPolicy
     at?: number
   }): TeamGroupMutation {
     const runId = input.runId.trim()
@@ -1601,6 +1619,7 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
     if (leadSlotId && !input.members.some((member) => member.slotId.trim() === leadSlotId)) {
       throw new TaskPoolError('group_lead_not_member', 'lead 必须是本组成员')
     }
+    const planPolicy = input.planPolicy ?? defaultGroupPlanPolicy(leadSlotId)
     const at = input.at ?? Date.now()
     this.database.exec('BEGIN IMMEDIATE')
     try {
@@ -1608,9 +1627,9 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
       const groupId = `team-group:${run.workspaceId}:${randomUUID()}`
       this.database.prepare(`
         INSERT INTO team_groups (
-          id, run_id, name, goal, status, lead_slot_id, acting_lead_slot_id, created_at, updated_at, dissolved_at
-        ) VALUES (?, ?, ?, ?, 'active', NULL, NULL, ?, ?, NULL)
-      `).run(groupId, runId, name, goal, at, at)
+          id, run_id, name, goal, status, lead_slot_id, acting_lead_slot_id, plan_policy, created_at, updated_at, dissolved_at
+        ) VALUES (?, ?, ?, ?, 'active', NULL, NULL, ?, ?, ?, NULL)
+      `).run(groupId, runId, name, goal, planPolicy, at, at)
       this.appendGroupEvent({ groupId, type: 'created', actor: 'operator', detail: name, at })
       const joined = this.joinMembers(groupId, runId, input.members, at)
       if (leadSlotId) {
@@ -1748,6 +1767,28 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
       this.database.prepare('UPDATE team_groups SET goal = ?, updated_at = ? WHERE id = ?').run(goal, at, group.id)
       this.appendGroupEvent({
         groupId: group.id, type: 'goal_updated', actor: 'operator', detail: goal.slice(0, 200) || undefined, at
+      })
+      this.bumpRevision()
+      this.database.exec('COMMIT')
+      return { group: this.requireGroup(group.id), joined: [], left: [] }
+    } catch (error) {
+      if (this.database.isTransaction) this.database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  setGroupPlanPolicy(input: { groupId: string; planPolicy: TeamGroupPlanPolicy; at?: number }): TeamGroupMutation {
+    if (input.planPolicy !== 'lead_only' && input.planPolicy !== 'any_member') {
+      throw new TaskPoolError('group_plan_policy_invalid', `未知的规划策略：${String(input.planPolicy)}`)
+    }
+    const at = input.at ?? Date.now()
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      const group = this.requireActiveGroup(input.groupId)
+      this.database.prepare('UPDATE team_groups SET plan_policy = ?, updated_at = ? WHERE id = ?')
+        .run(input.planPolicy, at, group.id)
+      this.appendGroupEvent({
+        groupId: group.id, type: 'plan_policy_updated', actor: 'operator', detail: `${group.planPolicy} → ${input.planPolicy}`, at
       })
       this.bumpRevision()
       this.database.exec('COMMIT')
@@ -2007,6 +2048,7 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
         status TEXT NOT NULL,
         lead_slot_id TEXT,
         acting_lead_slot_id TEXT,
+        plan_policy TEXT NOT NULL DEFAULT 'lead_only',
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         dissolved_at INTEGER
@@ -2282,6 +2324,15 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
         this.database.exec('ALTER TABLE runtime_bindings ADD COLUMN session_token TEXT')
       } catch (error) {
         if (!tableHasColumn(this.database, 'runtime_bindings', 'session_token')) throw error
+      }
+    }
+    // 协作组规划策略（阶段 2 · 2A）：同样是纯附加列 + 默认值，不升 schema 版本。v8 建好的组补上默认
+    // lead_only——与建组时「有 lead 默认 lead_only」一致；无 lead 的旧组需要用户显式改策略才开放全员规划。
+    if (!tableHasColumn(this.database, 'team_groups', 'plan_policy')) {
+      try {
+        this.database.exec("ALTER TABLE team_groups ADD COLUMN plan_policy TEXT NOT NULL DEFAULT 'lead_only'")
+      } catch (error) {
+        if (!tableHasColumn(this.database, 'team_groups', 'plan_policy')) throw error
       }
     }
     this.database.exec(`
