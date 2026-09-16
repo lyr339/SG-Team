@@ -148,7 +148,7 @@ describe('编排器 · 按协作组迭代', () => {
     }
   })
 
-  it('reminds the assignee and warns only the task\'s own group lead about stale tasks', () => {
+  it('reminds only the assignee about stale tasks — no lead copy in any group (2A)', () => {
     const data = fixture()
     try {
       const [taskB] = data.taskAgent('4').plan([{ key: 'b-impl', title: 'B 组实现', requiredCapabilities: ['code'] }])
@@ -167,10 +167,55 @@ describe('编排器 · 按协作组迭代', () => {
         Date.now = realNow
       }
       expect(data.messagesTo('5').map((message) => message.content.split('\n')[0])).toEqual(['【系统催办】'])
-      expect(data.messagesTo('4').map((message) => message.content.split('\n')[0])).toEqual(['【系统预警】'])
-      // A 组 lead 与成员没有收到任何 B 组的催办 / 预警。
+      // B 组 lead 不再收到「请关注」预警（催办是编排器的事，lead 只收 done / failed / attention）。
+      expect(data.messagesTo('4')).toEqual([])
+      // A 组 lead 与成员没有收到任何 B 组的催办。
       expect(data.messagesTo('1')).toEqual([])
       expect(data.messagesTo('2')).toEqual([])
+    } finally {
+      data.close()
+    }
+  })
+
+  it('notifies the group lead exactly once when a task ends done or failed, and never for progress (2A)', () => {
+    const data = fixture()
+    try {
+      const dispatcher = new TaskDispatcher(data.tasks, data.team, data.collaboration)
+      const [task] = data.taskAgent('1').plan([{ key: 'a-1', title: 'A 组交付', requiredCapabilities: ['code'], maxAttempts: 1 }])
+      const [doomed] = data.taskAgent('1').plan([{ key: 'a-2', title: 'A 组必败', requiredCapabilities: ['code'], maxAttempts: 1 }])
+      const leadNotices = () => data.messagesTo('1').filter((message) => message.kind === 'notice')
+      const builder = data.taskAgent('2')
+      dispatcher.reconcile()
+      // 领取 / 开始 / 进度：lead 只收到成员自动生成的 status 上报（现状），没有系统 notice。
+      builder.claim(task!.id)
+      builder.start(task!.id)
+      builder.report(task!.id, 40, '一半')
+      dispatcher.reconcile()
+      expect(leadNotices()).toEqual([])
+
+      builder.submit(task!.id, 'diff + tests')
+      dispatcher.reconcile()
+      const reviewer = data.taskAgent('3')
+      reviewer.claimReview(task!.id)
+      reviewer.submitReview(task!.id, 'accept', '复现通过')
+      dispatcher.reconcile()
+      dispatcher.reconcile()
+      expect(leadNotices().map((message) => [message.content.split('\n')[0], message.groupId])).toEqual([['【任务完成】', data.groupA.id]])
+      expect(leadNotices()[0]!.content).toContain(task!.id)
+      expect(leadNotices()[0]!.content).toContain('交付摘要：diff + tests')
+
+      // 用尽重试后 failed：一条【任务失败】带原因；进程重启（新派单器）不重复。
+      builder.claim(doomed!.id)
+      builder.start(doomed!.id)
+      builder.fail(doomed!.id, '依赖库不可用')
+      dispatcher.reconcile()
+      new TaskDispatcher(data.tasks, data.team, data.collaboration).reconcile()
+      const failed = leadNotices().filter((message) => message.content.startsWith('【任务失败】'))
+      expect(failed).toHaveLength(1)
+      expect(failed[0]!.content).toContain('失败原因：依赖库不可用')
+      expect(failed[0]!.content).toContain('已用尽 1 次重试')
+      // B 组 lead 对 A 组的终态一无所知。
+      expect(data.messagesTo('4')).toEqual([])
     } finally {
       data.close()
     }

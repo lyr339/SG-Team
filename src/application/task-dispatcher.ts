@@ -1,8 +1,11 @@
 import type { TaskPoolSnapshot, TaskReview, TeamTask } from '../domain/task-pool'
 import type { TeamControlSnapshot, TeamMemberView } from '../domain/team-control'
-import { groupScopedMembers, selectTaskReviewMember } from '../domain/team-orchestration'
+import { groupScopedLead, groupScopedMembers, selectTaskReviewMember } from '../domain/team-orchestration'
 import type { TeamCollaborationRepository } from './team-collaboration-repository'
 import { orchestratorMessageId, type OrchestrationSource } from './orchestration-source'
+
+/** 终态通知正文里交付 / 失败摘要的长度上限：lead 只需要知道结论，全文在任务详情里。 */
+const OUTCOME_SUMMARY_MAX_LENGTH = 1_200
 
 function runnable(task: TeamTask, pool: TaskPoolSnapshot): boolean {
   return task.status === 'queued' && task.dependsOn.every((id) => pool.tasks[id]?.status === 'done')
@@ -38,9 +41,19 @@ export function executionMember(task: TeamTask, team: TeamControlSnapshot, pool:
   return eligible[0]
 }
 
+/**
+ * 任务派单器：把可执行任务派给组内成员、把待验收任务派给组内质量角色，并在任务到达终态
+ *（done / failed）时通知该组有效 lead——阶段 2 · 2A（决策 D1）之后 lead 只收这三类系统 notice
+ *（第三类「成员 attention」由 TeamCollaborationSweeper 发）；分派、催办、派验收全部由桌面编排器完成。
+ */
 export class TaskDispatcher {
   private unsubscribers: Array<() => void> = []
   private reconciling = false
+  /**
+   * 已通知过的终态键 `taskId:status:attemptCount`。终态任务在池 run 的生命周期里只增不减，
+   * 不能像派单那样每 tick 都去仓储查重；内存集合挡住重复查询，仓储的 clientMessageId 幂等挡住进程重启后的重复投递。
+   */
+  private readonly outcomeNotified = new Set<string>()
 
   constructor(
     private readonly tasks: OrchestrationSource<TaskPoolSnapshot>,
@@ -82,6 +95,7 @@ export class TaskDispatcher {
             const review = pool.reviews[task.currentReviewId]
             if (review?.status === 'queued') this.dispatchReview(task, review, team, pool)
           }
+          if (task.status === 'done' || task.status === 'failed') this.notifyOutcome(task, team, pool)
         } catch (error) {
           this.onerror(error)
         }
@@ -89,6 +103,43 @@ export class TaskDispatcher {
     } finally {
       this.reconciling = false
     }
+  }
+
+  /**
+   * 任务终态 → 组内有效 lead 一条 notice：done 附交付摘要，failed（重试已用尽）附失败原因与下一步选项。
+   * cancelled 不通知（那是用户 / 成员关系变化的结果，用户自己知道）。无 lead 组没有接收者，静默。
+   */
+  private notifyOutcome(task: TeamTask, team: TeamControlSnapshot, pool: TaskPoolSnapshot): void {
+    const key = `${task.id}:${task.status}:${task.attemptCount}`
+    if (this.outcomeNotified.has(key)) return
+    const lead = groupScopedLead(team, task.groupId)
+    if (!lead) return
+    const attempt = task.currentAttemptId ? pool.attempts[task.currentAttemptId] : undefined
+    const summary = (value: string | undefined): string => (value ?? '').trim().slice(0, OUTCOME_SUMMARY_MAX_LENGTH)
+    const done = task.status === 'done'
+    this.collaboration.createMessage({
+      runId: task.runId,
+      sender: { type: 'operator' },
+      recipient: { type: 'agent', slotId: lead.slot.id },
+      kind: 'notice',
+      subject: done ? `任务完成：${task.title}` : `任务失败：${task.title}`,
+      content: [
+        done ? '【任务完成】' : '【任务失败】',
+        `任务 ID：${task.id}`,
+        `标题：${task.title}`,
+        done
+          ? `已通过独立验收（第 ${task.attemptCount} 次执行）。`
+          : `第 ${task.attemptCount} 次执行失败，已用尽 ${task.maxAttempts} 次重试，不会再自动重派。`,
+        done
+          ? summary(task.result ?? attempt?.output) ? `交付摘要：${summary(task.result ?? attempt?.output)}` : ''
+          : `失败原因：${summary(task.failureReason ?? attempt?.error) || '未提供'}`,
+        done
+          ? '依赖它的任务已可分派，系统会自动派单；只在这改变了对用户的结论时，才用 record_reply 向用户同步一句。'
+          : '请决定下一步：需要换一种拆法时用 team_task({action:\'plan\', tasks:[...]}) 重新规划；无法自行推进时向用户说明一次。'
+      ].filter(Boolean).join('\n'),
+      clientMessageId: orchestratorMessageId('task-outcome', task.id, task.status, task.attemptCount)
+    })
+    this.outcomeNotified.add(key)
   }
 
   private dispatchExecution(task: TeamTask, team: TeamControlSnapshot, pool: TaskPoolSnapshot): void {

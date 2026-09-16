@@ -1,6 +1,6 @@
 import type { TaskPoolSnapshot } from '../domain/task-pool'
 import type { TeamControlSnapshot } from '../domain/team-control'
-import { groupScopedLead, groupScopedMembers } from '../domain/team-orchestration'
+import { groupScopedMembers } from '../domain/team-orchestration'
 import type { TeamCollaborationRepository } from './team-collaboration-repository'
 import type { MemoryReviewCoordinator } from './memory-review-coordinator'
 import { orchestratorMessageId, type OrchestrationSource } from './orchestration-source'
@@ -51,8 +51,10 @@ export class TeamOrchestrator {
 
   /**
    * 成员任务长时间无更新催办（S3 团队职责强化）：
-   * leased/running 任务超过宽限仍无 updatedAt 推进时，
-   * 向负责人发催办、向主控发预警；clientMessageId 按时间窗幂等，每窗最多一次。
+   * leased/running 任务超过宽限仍无 updatedAt 推进时向负责人发催办；clientMessageId 按时间窗幂等，每窗最多一次。
+   *
+   * 催办是编排器的职责，不再抄送 lead「请关注」（阶段 2 · 2A，决策 D1）：lead 只在任务 done / failed
+   * 与成员 attention 时收到系统 notice；长期不推进的任务最终会以 lease 过期 → 回队 / failed 的形式进入这三类之一。
    */
   private reconcileStaleTasks(now = Date.now()): void {
     if (this.reconciling) return
@@ -70,41 +72,24 @@ export class TeamOrchestrator {
         const age = now - task.updatedAt
         if (age < STALE_TASK_REMINDER_MS) continue
         const windowIndex = Math.floor(age / STALE_TASK_REMINDER_MS)
-        // 催办与预警都在任务所属组内：负责人限定本组成员，预警发给本组有效 lead（无 lead 组只催办负责人）。
-        const lead = groupScopedLead(team, task.groupId)
+        // 负责人限定任务所属组的成员（任务书 §5.5）。
         const assignee = groupScopedMembers(team, task.groupId).find((member) => (
           member.binding?.agentSessionId === task.assigneeSessionId
         ))
-        if (assignee?.binding) {
-          this.collaboration.createMessage({
-            runId: run.id,
-            sender: { type: 'operator' },
-            recipient: { type: 'agent', slotId: assignee.slot.id },
-            kind: 'question',
-            subject: '任务进度催办',
-            content: [
-              '【系统催办】',
-              `任务「${task.title}」已 ${Math.max(1, Math.round(age / 60_000))} 分钟无进度更新。`,
-              '请立即调用 team_task({action:\'progress\', progress, summary}) 汇报当前进展或阻塞原因；若已完成实现与测试，请 team_task({action:\'submit\', output}) 提交验收。'
-            ].join('\n'),
-            clientMessageId: orchestratorMessageId('stale-reminder', task.id, `w${windowIndex}`)
-          })
-        }
-        if (lead && lead.slot.id !== assignee?.slot.id) {
-          this.collaboration.createMessage({
-            runId: run.id,
-            sender: { type: 'operator' },
-            recipient: { type: 'agent', slotId: lead.slot.id },
-            kind: 'notice',
-            subject: '成员任务长时间无更新',
-            content: [
-              '【系统预警】',
-              `${assignee ? `「${assignee.role.name}」的` : ''}任务「${task.title}」已 ${Math.max(1, Math.round(age / 60_000))} 分钟无进度更新，已向其发送催办。`,
-              '请关注该任务：必要时用 team_message({action:\'send\'}) 询问阻塞，或在其掉线后安排接替。'
-            ].join('\n'),
-            clientMessageId: orchestratorMessageId('stale-lead-notice', task.id, `w${windowIndex}`)
-          })
-        }
+        if (!assignee?.binding) continue
+        this.collaboration.createMessage({
+          runId: run.id,
+          sender: { type: 'operator' },
+          recipient: { type: 'agent', slotId: assignee.slot.id },
+          kind: 'question',
+          subject: '任务进度催办',
+          content: [
+            '【系统催办】',
+            `任务「${task.title}」已 ${Math.max(1, Math.round(age / 60_000))} 分钟无进度更新。`,
+            '请立即调用 team_task({action:\'progress\', progress, summary}) 汇报当前进展或阻塞原因；若已完成实现与测试，请 team_task({action:\'submit\', output}) 提交验收。'
+          ].join('\n'),
+          clientMessageId: orchestratorMessageId('stale-reminder', task.id, `w${windowIndex}`)
+        })
       }
     } catch (error) {
       this.onerror(error)
