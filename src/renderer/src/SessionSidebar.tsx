@@ -17,6 +17,7 @@ import {
   sessionRailSummary,
   type SessionRailGroupId
 } from './session-rail-view'
+import { SESSION_GROUP_COLLAPSE_MS, collapseEasing, collapseScrollTarget } from './session-group-collapse'
 
 interface SessionSidebarProps {
   snapshot: DesktopSnapshot
@@ -62,6 +63,41 @@ function scrollNearEdge(list: HTMLElement, clientY: number): void {
   else if (clientY > rect.bottom - edge) list.scrollTop += 12
 }
 
+function prefersReducedMotion(): boolean {
+  return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
+
+/**
+ * 折叠一组时的滚动锚定：动画开始前算出终态 scrollTop（见 session-group-collapse.ts），
+ * 用与列表收缩同一时长、同一曲线的 rAF 缓动过去。返回取消函数；不需要挪时返回 undefined。
+ */
+function anchorCollapse(list: HTMLElement, section: HTMLElement): (() => void) | undefined {
+  const listBody = section.querySelector<HTMLElement>('.inspector-collapsible')
+  if (!listBody) return undefined
+  const target = collapseScrollTarget({
+    scrollTop: list.scrollTop,
+    scrollHeight: list.scrollHeight,
+    clientHeight: list.clientHeight,
+    sectionTop: section.offsetTop,
+    listHeight: listBody.getBoundingClientRect().height
+  })
+  if (target === undefined) return undefined
+  if (prefersReducedMotion()) {
+    list.scrollTop = target
+    return undefined
+  }
+  const from = list.scrollTop
+  const startedAt = performance.now()
+  let frame = 0
+  const step = (now: number): void => {
+    const progress = Math.min(1, (now - startedAt) / SESSION_GROUP_COLLAPSE_MS)
+    list.scrollTop = from + (target - from) * collapseEasing(progress)
+    if (progress < 1) frame = requestAnimationFrame(step)
+  }
+  frame = requestAnimationFrame(step)
+  return () => cancelAnimationFrame(frame)
+}
+
 /** 方向键在可见行之间漫游；折叠组内的行处于 inert，不在候选里。 */
 function moveRowFocus(list: HTMLElement, current: HTMLElement, key: string): boolean {
   const rows = Array.from(list.querySelectorAll<HTMLButtonElement>('.session-row'))
@@ -95,6 +131,7 @@ export function SessionSidebar({
   const [dragOrigin, setDragOrigin] = useState<{ sessionId: string; groupId: SessionRailGroupId } | null>(null)
   const [insertionIndex, setInsertionIndex] = useState<number | null>(null)
   const listRef = useRef<HTMLElement>(null)
+  const cancelAnchorRef = useRef<(() => void) | undefined>(undefined)
   const now = useNow(60_000)
 
   const orderedSessions = useMemo(
@@ -129,8 +166,14 @@ export function SessionSidebar({
   useEffect(() => {
     if (dragOrigin && draggedCurrentGroupId !== dragOrigin.groupId) resetDrag()
   }, [dragOrigin, draggedCurrentGroupId])
+  useEffect(() => () => cancelAnchorRef.current?.(), [])
 
-  const toggleGroup = (groupId: SessionRailGroupId): void => {
+  const toggleGroup = (groupId: SessionRailGroupId, section: HTMLElement | null): void => {
+    const collapsing = !collapsedGroups.has(groupId)
+    cancelAnchorRef.current?.()
+    cancelAnchorRef.current = undefined
+    // 折叠前量、折叠中缓动：此刻 DOM 还是展开态，列表高度就是内容将减少的高度。
+    if (collapsing && listRef.current && section) cancelAnchorRef.current = anchorCollapse(listRef.current, section)
     setCollapsedGroups((current) => {
       const next = new Set(current)
       if (next.has(groupId)) next.delete(groupId)
@@ -200,15 +243,18 @@ export function SessionSidebar({
               <button
                 type="button"
                 className="session-group__header"
-                onClick={() => toggleGroup(group.id)}
+                onClick={(event) => toggleGroup(group.id, event.currentTarget.closest<HTMLElement>('.session-group'))}
                 aria-expanded={!collapsed}
                 title={`${group.detail}${collapsed ? '（已折叠，点击展开）' : ''}`}
               >
-                <span>{group.label}</span>
-                <b>{group.sessions.length}</b>
-                <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.4" /></svg>
+                <span className="session-group__chip">
+                  <i className="session-group__dot" aria-hidden="true" />
+                  <span>{group.label}</span>
+                  <b>{group.sessions.length}</b>
+                </span>
+                <svg className="session-group__chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.4" /></svg>
               </button>
-              <Collapsible open={!collapsed}>
+              <Collapsible open={!collapsed} keepMounted>
                 <div
                   className="session-group__list"
                   aria-label={`${group.label}会话`}

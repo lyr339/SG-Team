@@ -610,26 +610,50 @@ body.is-resizing-columns .resizable-columns { transition: none; }
 }
 .session-list > .inspector-state { padding-bottom: 18vh; }
 
-/* ---------- 分组：吸顶标题 + 可折叠列表 ---------- */
-.session-group { flex: 0 0 auto; border-bottom: 1px solid var(--color-border-tertiary); }
-.session-group:last-of-type { border-bottom: 0; }
+/* ---------- 分组：标签式组条（吸顶）+ 可折叠列表 ----------
+   组条是一枚标签：状态点 + 组名 + 计数收进一枚 22px 的胶囊，chevron 靠右；整条 32px，几何在折叠 /
+   展开态完全一致——切换时唯一会变高的是下面的列表（0fr ↔ 1fr），组条只转 chevron、换颜色。
+   曾经折叠态把 padding-bottom 从 4 拉到 10 并做过渡：叠在 min-height 34 上，高度前 1/3 不动、后段
+   突然长 2.8px，文字随之重新居中——就是被点的那一行「抽一下」的来源（2026-09-16 实测），不要再加回来。
+   分隔只有两种：组条下缘一条 hairline（吸顶时它就是钉住的边），组与组之间 6px 留白；section 不再带
+   底线，折叠的组条叠在一起时不会出现双线。 */
+.session-group { flex: 0 0 auto; }
+.session-group + .session-group { margin-top: 6px; }
+/* 与名册行同一套状态色：只落在胶囊里的 6px 状态点上。 */
+.session-group.is-waiting { --rail-state: var(--color-text-success); }
+.session-group.is-active { --rail-state: var(--color-text-info); }
+.session-group.is-attention { --rail-state: var(--color-text-warning); }
+.session-group.is-offline { --rail-state: var(--color-border-primary); }
 .session-group__header {
   position: sticky; top: 0; z-index: 1;
-  width: 100%; min-height: 34px; display: flex; align-items: center; gap: 6px;
-  padding: 10px 10px 4px 14px;
+  width: 100%; height: 32px; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin: 0; padding: 0 10px 0 12px;
   color: var(--muted); text-align: left;
-  /* 吸顶时有行从下面滚过：标题必须实底，哪怕名册正文只有 92% 阅读面（差异肉眼不可辨）。 */
+  /* 吸顶时有行从下面滚过：组条必须实底，哪怕名册正文只有 92% 阅读面（差异肉眼不可辨）。
+     下缘 hairline 用内阴影画，不占布局：32px 整像素，胶囊居中落在整数坐标上。 */
   background: var(--surface-solid);
-  border: 0;
-  font-size: var(--fs-11); font-weight: 650; letter-spacing: .02em;
-  transition: color 120ms ease, padding 200ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  border: 0; box-shadow: inset 0 -1px 0 var(--color-border-tertiary);
+  transition: color 120ms ease, background 120ms ease;
 }
-.session-group__header:hover { color: var(--text); }
+.session-group__header:hover { color: var(--text); background: color-mix(in srgb, var(--surface-soft) 60%, var(--surface-solid)); }
 .session-group__header:focus-visible { outline: 2px solid var(--color-ring-primary); outline-offset: -2px; border-radius: 6px; }
-.session-group__header > b { color: var(--text-soft); font: 650 var(--fs-10)/1 var(--font-numeric); }
-.session-group__header > svg { width: 14px; height: 14px; margin-left: auto; color: var(--muted); transition: transform 160ms ease; }
-.session-group.is-collapsed .session-group__header { padding-bottom: 10px; }
-.session-group.is-collapsed .session-group__header > svg { transform: rotate(-90deg); }
+.session-group__chip {
+  min-width: 0; height: 22px; display: inline-flex; align-items: center; gap: 6px;
+  padding: 0 9px 0 8px;
+  background: var(--surface-soft);
+  border: 1px solid var(--color-border-tertiary); border-radius: var(--border-radius-full);
+  font-size: var(--fs-11); font-weight: 650; line-height: 20px; letter-spacing: .02em; white-space: nowrap;
+  transition: border-color 120ms ease;
+}
+.session-group__header:hover .session-group__chip { border-color: var(--color-border-secondary); }
+.session-group__dot { width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: var(--rail-state); box-shadow: 0 0 0 2px color-mix(in srgb, var(--rail-state) 16%, transparent); }
+.session-group.is-offline .session-group__dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--rail-state); }
+.session-group__chip > span { overflow: hidden; text-overflow: ellipsis; }
+.session-group__chip > b { color: var(--text-soft); font: 650 var(--fs-10)/1 var(--font-numeric); font-variant-numeric: lining-nums tabular-nums; }
+/* chevron：展开态只在悬停 / 聚焦时浮现（列表本身已经说明了「开着」），折叠态常显并转向。 */
+.session-group__chevron { width: 14px; height: 14px; flex: 0 0 14px; color: var(--muted); opacity: 0; transition: transform 160ms ease, opacity 120ms ease; }
+.session-group__header:hover .session-group__chevron, .session-group__header:focus-visible .session-group__chevron, .session-group.is-collapsed .session-group__chevron { opacity: 1; }
+.session-group.is-collapsed .session-group__chevron { transform: rotate(-90deg); }
 .session-group__list { min-width: 0; display: grid; }
 
 /* 拖拽重排：源行半透明；插入线覆盖在 N + 1 个边界上，压在行间 hairline 上，不参与布局。 */
@@ -764,7 +788,7 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 
 @media (prefers-reduced-motion: reduce) {
   .session-row.is-active .session-row__state > i { animation: none; }
-  .session-row, .session-row::before, .session-row__ring-arc, .session-group__header, .session-group__header > svg, .session-row.is-offline .agent-avatar img { transition: none; }
+  .session-row, .session-row::before, .session-row__ring-arc, .session-group__header, .session-group__chip, .session-group__chevron, .session-row.is-offline .agent-avatar img { transition: none; }
 }
 /* 会话页头用量度量组（Orbit 静默度量）：排版即界面——小号大写标签压
    齐宽数字，hairline 竖分隔，无底色无描边；冷中性承载内容。 */

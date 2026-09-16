@@ -439,12 +439,64 @@ const scenes = [
   {
     name: 'sessions-rail-collapsing', rail: true, query: 'sessions=many', colorScheme: 'light', storage: railStorage(), clip: null,
     actions: [{
-      label: '分组折叠 grid-template-rows 采样（0/60/120/200/320ms）',
-      probe: `new Promise((done) => {
+      label: '分组折叠：列表 grid-template-rows 采样，组条几何恒定、被点组条原地不动（0/60/120/200/320ms）',
+      probe: `new Promise((done, fail) => {
         const samples = []
-        document.querySelector('.session-group.is-waiting .session-group__header').click()
+        const list = document.querySelector('.session-list')
+        const header = document.querySelector('.session-group.is-waiting .session-group__header')
         const slot = () => document.querySelector('.session-group.is-waiting .inspector-collapsible')
-        for (const at of [0, 60, 120, 200, 320]) setTimeout(() => { samples.push(at + 'ms ' + getComputedStyle(slot()).gridTemplateRows); if (at === 320) done(samples) }, at)
+        const headerTop = () => header.getBoundingClientRect().top - list.getBoundingClientRect().top
+        const top0 = headerTop()
+        header.click()
+        for (const at of [0, 60, 120, 200, 320]) setTimeout(() => {
+          const rect = header.getBoundingClientRect()
+          samples.push(at + 'ms rows=' + getComputedStyle(slot()).gridTemplateRows + ' header=' + rect.height.toFixed(1) + 'px top=' + headerTop().toFixed(1))
+          if (Math.abs(rect.height - 32) > 0.5) return fail(new Error('组条高度在折叠中变化: ' + rect.height))
+          if (Math.abs(headerTop() - top0) > 0.5) return fail(new Error('未滚动时被点的组条不该移动: ' + headerTop() + ' vs ' + top0))
+          if (at === 320) {
+            if (getComputedStyle(slot()).gridTemplateRows !== '0px') return fail(new Error('折叠未收口: ' + getComputedStyle(slot()).gridTemplateRows))
+            if (!slot().querySelector('.session-row')) return fail(new Error('折叠后行被卸载（应 keepMounted）'))
+            done(samples)
+          }
+        }, at)
+      })`
+    }, { wait: 40 }]
+  },
+  {
+    // 滚动后折叠被钉住的组：scrollTop 与列表收缩同步缓动到终态，组条不飞走、不跳格。
+    name: 'sessions-rail-collapse-anchored', rail: true, width: 1180, height: 620, query: 'sessions=many', colorScheme: 'light', storage: railStorage(), clip: null,
+    actions: [{
+      label: '钉住的组条折叠：滚动锚定采样（0/60/120/200/320ms）',
+      probe: `new Promise((done, fail) => {
+        const list = document.querySelector('.session-list')
+        const section = document.querySelector('.session-group.is-attention')
+        const header = section.querySelector('.session-group__header')
+        const body = section.querySelector('.inspector-collapsible')
+        list.scrollTop = section.offsetTop + 60
+        requestAnimationFrame(() => {
+          const start = list.scrollTop
+          if (start <= section.offsetTop) return fail(new Error('场景前提不成立：组条未被钉住 ' + start + ' ≤ ' + section.offsetTop))
+          const nextMax = Math.max(0, list.scrollHeight - body.getBoundingClientRect().height - list.clientHeight)
+          const expected = Math.max(0, Math.min(start, nextMax, section.offsetTop))
+          const headerTop = () => header.getBoundingClientRect().top - list.getBoundingClientRect().top
+          const samples = []
+          let previousTop = headerTop()
+          header.click()
+          for (const at of [0, 60, 120, 200, 320]) setTimeout(() => {
+            const top = headerTop()
+            const rect = header.getBoundingClientRect()
+            samples.push(at + 'ms scrollTop=' + list.scrollTop.toFixed(1) + ' headerTop=' + top.toFixed(1))
+            if (Math.abs(rect.height - 32) > 0.5) return fail(new Error('组条高度变化: ' + rect.height))
+            if (top < -0.5 || rect.bottom > list.getBoundingClientRect().bottom + 0.5) return fail(new Error('被点的组条被推出可视区: top=' + top))
+            if (top < previousTop - 0.5) return fail(new Error('组条反向移动（先下后上 / 先上后下）: ' + previousTop + ' → ' + top))
+            if (top - previousTop > 15) return fail(new Error('组条单帧跳格 ' + (top - previousTop).toFixed(1) + 'px'))
+            previousTop = top
+            if (at === 320) {
+              if (Math.abs(list.scrollTop - expected) > 1) return fail(new Error('终态 scrollTop ' + list.scrollTop + ' ≠ 预期 ' + expected))
+              done(samples)
+            }
+          }, at)
+        })
       })`
     }, { wait: 40 }]
   },

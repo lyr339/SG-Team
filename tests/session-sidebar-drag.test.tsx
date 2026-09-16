@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DesktopSnapshot } from '../src/shared/desktop-api'
 import { SessionSidebar } from '../src/renderer/src/SessionSidebar'
 import {
@@ -206,7 +206,7 @@ describe('SessionSidebar 拖拽重排', () => {
     expect(rows().find((row) => row.textContent?.includes('Thinking'))?.classList.contains('is-offline')).toBe(false)
   })
 
-  it('动态展示四类状态组与头部摘要；折叠状态持久化，折叠内容 inert 且过渡后卸载', async () => {
+  it('动态展示四类状态组与头部摘要；折叠状态持久化，折叠内容 inert 但常驻（不卸载重建）', async () => {
     await renderSnapshot(snapshotWith([
       { id: 'run', displayName: '运行席', status: 'running', waiting: false, connectionPhase: 'processing', queueDepth: 1 },
       { id: 'attention', displayName: '关注席', status: 'blocked', waiting: false, connectionPhase: 'approval' },
@@ -225,7 +225,15 @@ describe('SessionSidebar 拖拽重排', () => {
     expect(header.querySelector('.session-pane__count')?.textContent).toBe('4')
     expect(container.querySelector('.session-filters')).toBeNull()
 
+    // 组条是一枚标签：状态点 + 组名 + 计数收进胶囊，chevron 靠右；标签文本不含多余字符。
+    const activeHeader = headers[0]!
+    expect(activeHeader.querySelector('.session-group__chip .session-group__dot')).not.toBeNull()
+    expect(activeHeader.querySelector('.session-group__chip > span')?.textContent).toBe('执行中')
+    expect(activeHeader.querySelector('.session-group__chip > b')?.textContent).toBe('1')
+    expect(activeHeader.querySelector('svg.session-group__chevron')).not.toBeNull()
+
     const waitingHeader = container.querySelector<HTMLButtonElement>('.session-group.is-waiting .session-group__header')!
+    const waitingRow = container.querySelector<HTMLElement>('.session-group.is-waiting .session-row')!
     await act(async () => waitingHeader.click())
     const collapsible = container.querySelector('.session-group.is-waiting .inspector-collapsible')!
     expect(waitingHeader.getAttribute('aria-expanded')).toBe('false')
@@ -233,9 +241,78 @@ describe('SessionSidebar 拖拽重排', () => {
     expect(collapsible.hasAttribute('inert')).toBe(true)
     expect(JSON.parse(localStorage.getItem('shiguang.sessionGroups.collapsed.v1')!)).toContain('waiting')
     await act(async () => { await new Promise((done) => setTimeout(done, 260)) })
-    expect(container.querySelector('.session-group.is-waiting .session-group__list')).toBeNull()
+    // 折叠只是 inert + 裁切：行留在 DOM 里，同一个节点；展开时第一帧就有内容，头像 / 状态行不重建。
+    expect(container.querySelector('.session-group.is-waiting .session-group__list')).not.toBeNull()
+    expect(container.querySelector('.session-group.is-waiting .session-row')).toBe(waitingRow)
+    expect(waitingRow.closest('[inert]')).toBe(collapsible)
+    await act(async () => waitingHeader.click())
+    expect(collapsible.hasAttribute('inert')).toBe(false)
+    expect(container.querySelector('.session-group.is-waiting .session-row')).toBe(waitingRow)
     // 其余组不受影响。
     expect(container.querySelector('.session-group.is-offline .session-group__list')).not.toBeNull()
+  })
+
+  it('折叠会被夹断或被钉住的组时，scrollTop 用与列表同一时长 / 曲线缓动到终态，而不是让浏览器在某一帧硬夹', async () => {
+    await renderSnapshot(snapshotWith([
+      { id: 'run', displayName: '运行席', status: 'running', waiting: false, connectionPhase: 'processing' },
+      { id: 'waiting', displayName: '待命席' },
+      { id: 'offline', displayName: '离线席', online: false, status: 'offline', waiting: false, connectionPhase: '' }
+    ]))
+    const list = container.querySelector<HTMLElement>('.session-list')!
+    const section = container.querySelector<HTMLElement>('.session-group.is-waiting')!
+    const body = section.querySelector<HTMLElement>('.inspector-collapsible')!
+    // 几何：内容 1000、视口 600、滚到 300；待命组从 250 起、列表 210 高 → 组条已被钉住（300 > 250），
+    // 折叠后最大 scrollTop = 1000 − 210 − 600 = 190 → 终态取 min(300, 190, 250) = 190。
+    let scrollTop = 300
+    Object.defineProperty(list, 'scrollTop', { configurable: true, get: () => scrollTop, set: (value: number) => { scrollTop = value } })
+    Object.defineProperty(list, 'scrollHeight', { configurable: true, value: 1000 })
+    Object.defineProperty(list, 'clientHeight', { configurable: true, value: 600 })
+    Object.defineProperty(section, 'offsetTop', { configurable: true, value: 250 })
+    Object.defineProperty(body, 'getBoundingClientRect', { configurable: true, value: () => rect(0, 210) })
+    const frames: FrameRequestCallback[] = []
+    const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => { frames.push(callback); return frames.length })
+    const clock = vi.spyOn(performance, 'now').mockReturnValue(10_000)
+    try {
+      await act(async () => section.querySelector<HTMLButtonElement>('.session-group__header')!.click())
+      expect(frames).toHaveLength(1)
+      // 中途：单调向终态靠近，且贴着 ease-out 曲线（一半时间已走完约 95%）。
+      frames[0]!(10_100)
+      expect(scrollTop).toBeLessThan(300)
+      expect(scrollTop).toBeGreaterThan(190)
+      expect(scrollTop).toBeCloseTo(300 - 110 * 0.946, 0)
+      expect(frames).toHaveLength(2)
+      frames[1]!(10_200)
+      expect(scrollTop).toBe(190)
+      expect(frames).toHaveLength(2)
+    } finally {
+      raf.mockRestore()
+      clock.mockRestore()
+    }
+  })
+
+  it('折叠不会被夹断、组条也没被钉住时不动 scrollTop（保持不动就是最平滑的）', async () => {
+    await renderSnapshot(snapshotWith([
+      { id: 'run', displayName: '运行席', status: 'running', waiting: false, connectionPhase: 'processing' },
+      { id: 'waiting', displayName: '待命席' },
+      { id: 'offline', displayName: '离线席', online: false, status: 'offline', waiting: false, connectionPhase: '' }
+    ]))
+    const list = container.querySelector<HTMLElement>('.session-list')!
+    const section = container.querySelector<HTMLElement>('.session-group.is-waiting')!
+    const body = section.querySelector<HTMLElement>('.inspector-collapsible')!
+    let scrollTop = 40
+    Object.defineProperty(list, 'scrollTop', { configurable: true, get: () => scrollTop, set: (value: number) => { scrollTop = value } })
+    Object.defineProperty(list, 'scrollHeight', { configurable: true, value: 2000 })
+    Object.defineProperty(list, 'clientHeight', { configurable: true, value: 600 })
+    Object.defineProperty(section, 'offsetTop', { configurable: true, value: 250 })
+    Object.defineProperty(body, 'getBoundingClientRect', { configurable: true, value: () => rect(0, 210) })
+    const raf = vi.spyOn(window, 'requestAnimationFrame')
+    try {
+      await act(async () => section.querySelector<HTMLButtonElement>('.session-group__header')!.click())
+      expect(raf).not.toHaveBeenCalled()
+      expect(scrollTop).toBe(40)
+    } finally {
+      raf.mockRestore()
+    }
   })
 
   it('方向键在可见行之间漫游，Home / End 跳到首尾；折叠组内的行不在候选里；只有选中行进入 Tab 序列', async () => {
