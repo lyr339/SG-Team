@@ -145,23 +145,44 @@ describe('turn-files-view · 投影', () => {
     expect(first).toBe(second)
   })
 
-  it('下一条用户消息被取走即为新回合：上一轮的文件不再出现', () => {
+  it('下一条用户消息被取走即为新回合：Agent 干活中且本轮尚无编辑时保住上一轮（标 previous），第一次编辑后替换', () => {
     const next: ConversationEntry[] = [
       ...entries,
       entry({ id: 'u2', role: 'user', source: 'desktop', timestamp: userAt + 100_000, deliveredAt: userAt + 100_500, text: '下一轮' })
     ]
-    expect(buildTurnFilesView({ entries: next, working: true }).files).toEqual([])
-    // 仍在排队（未投递）的消息不开新回合。
+    // 消息刚被取走、还没有编辑：栏不清零，保住上一轮（只算已落库回复：r1 的封口块 + 续作块）。
+    const held = buildTurnFilesView({ entries: next, summary: summaryReady, working: true })
+    expect(held.scope).toBe('previous')
+    expect(held.files.map((file) => file.path)).toEqual(['src/domain/team-control.ts', 'src/application/team-failover-service.ts'])
+    expect(held.files[0]).toMatchObject({ additions: 18, deletions: 20, source: 'git' })
+    expect(held.working).toBe(true)
+    // 本轮第一次编辑到达：换成本轮自己的文件。
+    const firstEdit: LiveProcessState = { ...live, blocks: [edit('n1', 'src/mcp/index.ts', '+22 −37')] }
+    const replaced = buildTurnFilesView({ entries: next, liveProcess: firstEdit, working: true })
+    expect(replaced.scope).toBe('turn')
+    expect(replaced.files.map((file) => file.path)).toEqual(['src/mcp/index.ts'])
+    // 回复落库后仍没有编辑（Agent 不再处理本轮）：这一轮确实什么都没改，栏消失。
+    const settled = buildTurnFilesView({ entries: next, working: false })
+    expect(settled.files).toEqual([])
+    expect(settled.scope).toBe('turn')
+    // 上一轮本身也没有编辑：没有可保住的东西。
+    const twoEmpty: ConversationEntry[] = [
+      entry({ id: 'a', role: 'user', source: 'desktop', timestamp: 1, deliveredAt: 2, text: 'a' }),
+      entry({ id: 'ra', role: 'assistant', timestamp: 3, replyToEntryId: 'a', processBlocks: [] }),
+      entry({ id: 'b', role: 'user', source: 'desktop', timestamp: 4, deliveredAt: 5, text: 'b' })
+    ]
+    expect(buildTurnFilesView({ entries: twoEmpty, working: true }).files).toEqual([])
+    // 仍在排队（未投递）的消息不开新回合：本轮照常。
     const queued: ConversationEntry[] = [
       ...entries,
       entry({ id: 'u2', role: 'user', source: 'desktop', timestamp: userAt + 100_000, text: '排队中' })
     ]
-    expect(buildTurnFilesView({ entries: queued, working: true }).files.map((file) => file.path)).toEqual([
-      'src/domain/team-control.ts', 'src/application/team-failover-service.ts'
-    ])
+    const current = buildTurnFilesView({ entries: queued, working: true })
+    expect(current.scope).toBe('turn')
+    expect(current.files.map((file) => file.path)).toEqual(['src/domain/team-control.ts', 'src/application/team-failover-service.ts'])
   })
 
-  it('sameTurnFilesView 按内容判等：路径集、顺序、数字、状态、来源与生成态任一不同即不等', () => {
+  it('sameTurnFilesView 按内容判等：路径集、顺序、数字、状态、来源、生成态与范围任一不同即不等', () => {
     const base = buildTurnFilesView({ entries, liveProcess: live, summary: summaryReady, working: true })
     const again = buildTurnFilesView({ entries, liveProcess: live, summary: summaryReady, working: true })
     expect(again).not.toBe(base)
@@ -174,5 +195,6 @@ describe('turn-files-view · 投影', () => {
     expect(sameTurnFilesView(base, buildTurnFilesView({ entries, liveProcess: live, summary: bumped, working: true }))).toBe(false)
     const fewer = buildTurnFilesView({ entries, liveProcess: undefined, summary: summaryReady, working: true })
     expect(sameTurnFilesView(base, fewer)).toBe(false)
+    expect(sameTurnFilesView(fewer, { ...fewer, scope: 'previous' })).toBe(false)
   })
 })

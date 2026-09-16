@@ -32,6 +32,16 @@ function ChevronIcon(): React.JSX.Element {
   )
 }
 
+export const QUEUE_TRAY_COLLAPSED_KEY = 'sg-team.workspace:queue-tray-collapsed'
+
+function readCollapsed(): boolean {
+  try { return localStorage.getItem(QUEUE_TRAY_COLLAPSED_KEY) === '1' } catch { return false }
+}
+
+function storeCollapsed(value: boolean): void {
+  try { localStorage.setItem(QUEUE_TRAY_COLLAPSED_KEY, value ? '1' : '0') } catch { /* 当前窗口仍然生效。 */ }
+}
+
 export function queuePreview(text: string): string {
   const compact = text.replace(/\s+/g, ' ').trim()
   return compact.length > 160 ? `${compact.slice(0, 160)}…` : compact || '（仅附件）'
@@ -54,7 +64,8 @@ export function queueTrayState(session: Pick<AgentSession, 'online' | 'waiting'>
  */
 export function QueuedMessageTray({ session, entries, onWithdraw, onRelease }: QueuedMessageTrayProps): React.JSX.Element | null {
   const listId = useId()
-  const [collapsed, setCollapsed] = useState(false)
+  // 折叠偏好持久化，与下方本轮文件栏同一规则：两条栏叠放时行为一致。
+  const [collapsed, setCollapsed] = useState(readCollapsed)
   const listRef = useRef<HTMLOListElement>(null)
   // 列表超高才可滚动；渐隐遮罩只在对应方向还有内容时出现，滚到边缘即消失。
   const [scrollHint, setScrollHint] = useState<'' | 'up' | 'down' | 'both'>('')
@@ -86,7 +97,10 @@ export function QueuedMessageTray({ session, entries, onWithdraw, onRelease }: Q
         aria-controls={expandable ? listId : undefined}
         disabled={!expandable}
         title={expandable ? (open ? '收起待投递列表' : '展开待投递列表') : undefined}
-        onClick={() => setCollapsed((value) => !value)}
+        onClick={() => setCollapsed((value) => {
+          storeCollapsed(!value)
+          return !value
+        })}
       >
         <span className="queue-tray__icon"><QueueIcon /></span>
         <strong className="queue-tray__title">待投递 <b>{depth}</b></strong>

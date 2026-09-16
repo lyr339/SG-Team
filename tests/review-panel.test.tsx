@@ -244,6 +244,12 @@ describe('ReviewPanel', () => {
     expect(localStorage.getItem('sg-team.inspector:review-scope')).toBe('uncommitted')
     await act(async () => requestReviewFocus())
     expect(localStorage.getItem('sg-team.inspector:review-scope')).toBe('turn')
+
+    // 文件栏处于「上一轮」保持态时请求「未提交」范围（那时右栏的「本轮」是空的）：切过去并定位同一文件。
+    await act(async () => requestReviewFocus({ path: 'src/login.tsx', scope: 'uncommitted' }))
+    expect(localStorage.getItem('sg-team.inspector:review-scope')).toBe('uncommitted')
+    expect(container.querySelector<HTMLButtonElement>('.inspector-review__scope > button[aria-pressed="true"]')!.textContent).toContain('未提交')
+    expect(container.querySelector('.review-file[data-path="src/login.tsx"]')!.className).toContain('is-revealed')
     await act(async () => root.unmount())
   })
 

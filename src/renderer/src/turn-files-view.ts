@@ -1,7 +1,7 @@
 import type { ConversationEntry, ProcessBlock } from '../../domain/conversation-entry'
 import type { WorkspaceReviewFileStatus, WorkspaceReviewSummary } from '../../domain/workspace-review'
 import type { LiveProcessState } from '../../shared/desktop-api'
-import { fileTouchedBy, normalizeReviewPath, processBlockPath, turnMutationBlocks } from './inspector/review-scope'
+import { fileTouchedBy, normalizeReviewPath, previousTurnMutationBlocks, processBlockPath, turnMutationBlocks } from './inspector/review-scope'
 
 /**
  * 输入区上方「本轮文件栏」的视图模型（Cursor 原生输入框上方的 “N Files” 栏）。
@@ -10,6 +10,11 @@ import { fileTouchedBy, normalizeReviewPath, processBlockPath, turnMutationBlock
  * 增删行数优先取 Git 工作树相对 HEAD 的文件级 diff（与右栏审查页同一口径，点「审查」进去
  * 看到的就是同一组数字），Git 不可用（非 git 工程 / 摘要未就绪）时回退到过程块 hint 的逐次
  * 求和并标为估算——同一文件多次编辑会重叠，和不等于净变化。
+ *
+ * 「上一轮」保持：队列传输下消息是被 check_messages 自动取走的，不是用户按发送——新回合开始
+ * 那一刻本轮还没有任何编辑，若栏随之清零，就会在用户没有操作时消失并让输入区跳一截。所以
+ * Agent 正在处理新消息、本轮尚无编辑时，栏保留上一轮的文件并标「上一轮」，直到本轮第一次编辑替换；
+ * 回复落库后仍然没有编辑就正常消失（这一轮确实什么都没改）。
  */
 export interface TurnFileView {
   /** 归一后的仓库相对路径（与右栏审查页同一口径）。 */
@@ -39,9 +44,11 @@ export interface TurnFilesView {
   working: boolean
   /** 任一文件的数字来自过程块估算。 */
   estimated: boolean
+  /** turn = 本轮的文件；previous = 新回合尚无编辑，保住的是上一轮的文件（见文件头注释）。 */
+  scope: 'turn' | 'previous'
 }
 
-const EMPTY_VIEW: TurnFilesView = { files: [], additions: 0, deletions: 0, working: false, estimated: false }
+const EMPTY_VIEW: TurnFilesView = { files: [], additions: 0, deletions: 0, working: false, estimated: false, scope: 'turn' }
 
 /** 扩展名 → 徽标。未列出的取扩展名大写（≤ 4 字符），没有扩展名给 `·`。 */
 const BADGES: Record<string, string> = {
@@ -110,22 +117,38 @@ export interface TurnFilesInput {
   working: boolean
 }
 
-export function buildTurnFilesView(input: TurnFilesInput): TurnFilesView {
+/** 一组改动块 → 首次出现顺序的路径表 + 每个路径的过程块累计增删。 */
+function collectMutations(blocks: readonly ProcessBlock[], workspacePath?: string): { order: string[]; counts: Map<string, { additions: number; deletions: number }> } {
   const order: string[] = []
-  const processCounts = new Map<string, { additions: number; deletions: number }>()
-  for (const block of turnMutationBlocks(input.entries, input.liveProcess)) {
+  const counts = new Map<string, { additions: number; deletions: number }>()
+  for (const block of blocks) {
     const raw = processBlockPath(block)
     if (!raw) continue
-    const path = normalizeReviewPath(raw, input.workspacePath)
+    const path = normalizeReviewPath(raw, workspacePath)
     if (!path) continue
-    const counts = blockCounts(block)
-    const current = processCounts.get(path)
+    const contribution = blockCounts(block)
+    const current = counts.get(path)
     if (!current) {
       order.push(path)
-      processCounts.set(path, counts)
+      counts.set(path, contribution)
     } else {
-      current.additions += counts.additions
-      current.deletions += counts.deletions
+      current.additions += contribution.additions
+      current.deletions += contribution.deletions
+    }
+  }
+  return { order, counts }
+}
+
+export function buildTurnFilesView(input: TurnFilesInput): TurnFilesView {
+  let scope: TurnFilesView['scope'] = 'turn'
+  let { order, counts: processCounts } = collectMutations(turnMutationBlocks(input.entries, input.liveProcess), input.workspacePath)
+  if (!order.length && input.working) {
+    // 新回合刚开始、还没有编辑：保住上一轮的文件（只看已落库回复），标为「上一轮」。
+    const previous = collectMutations(previousTurnMutationBlocks(input.entries), input.workspacePath)
+    if (previous.order.length) {
+      scope = 'previous'
+      order = previous.order
+      processCounts = previous.counts
     }
   }
   // 没有文件就没有栏：常量引用让调用方的 memo 边界在空态下天然稳定，working 此时无人消费。
@@ -154,18 +177,19 @@ export function buildTurnFilesView(input: TurnFilesInput): TurnFilesView {
     additions: files.reduce((total, file) => total + file.additions, 0),
     deletions: files.reduce((total, file) => total + file.deletions, 0),
     working: input.working,
-    estimated: files.some((file) => file.source === 'process')
+    estimated: files.some((file) => file.source === 'process'),
+    scope
   }
 }
 
 /**
- * 两份视图是否等价（路径集、顺序、数字、状态、生成态）。过程流以 ~10Hz 推送，投影结果
+ * 两份视图是否等价（路径集、顺序、数字、状态、生成态、范围）。过程流以 ~10Hz 推送，投影结果
  * 若每帧换新对象，本轮文件栏就会每帧重渲：调用方据此复用上一份对象，让 memo 边界生效。
  */
 export function sameTurnFilesView(left: TurnFilesView | undefined, right: TurnFilesView): boolean {
   if (!left) return false
   if (left === right) return true
-  if (left.working !== right.working || left.estimated !== right.estimated) return false
+  if (left.working !== right.working || left.estimated !== right.estimated || left.scope !== right.scope) return false
   if (left.additions !== right.additions || left.deletions !== right.deletions) return false
   if (left.files.length !== right.files.length) return false
   for (let index = 0; index < left.files.length; index += 1) {

@@ -88,6 +88,22 @@ export function turnMutationBlocks(
   return blocks.filter(isFileMutationBlock)
 }
 
+/**
+ * 上一轮（倒数第二条已投递用户消息之后、最近一条之前）已落库的文件改动块。
+ * 输入区上方的文件栏在新回合尚无编辑时用它保住上一轮的文件列表，避免消息被取走那一刻整栏消失。
+ * 只看已落库的回复：直播中的块一律属于当前回合。
+ */
+export function previousTurnMutationBlocks(entries: readonly ConversationEntry[]): ProcessBlock[] {
+  const end = latestDeliveredUserIndex(entries)
+  if (end <= 0) return []
+  const start = latestDeliveredUserIndex(entries.slice(0, end))
+  const blocks: ProcessBlock[] = []
+  for (const entry of entries.slice(start + 1, end)) {
+    if (entry.role === 'assistant') blocks.push(...conversationEntryProcessBlocks(entry))
+  }
+  return blocks.filter(isFileMutationBlock)
+}
+
 /** 本轮改动过的文件路径（已归一，去重，保持首次出现顺序）。 */
 export function turnMutatedPaths(
   entries: readonly ConversationEntry[],

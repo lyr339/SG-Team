@@ -344,9 +344,10 @@ export function ReviewPanel({ workspaceKey, turnPaths, onQuote, onSummary, pause
     onSummary?.(summary)
   }, [onSummary, summary])
 
-  // 中栏文件栏的「审查」/ 点某一行：范围切到「本轮」，带路径时记下待定位的文件。
+  // 中栏文件栏的「审查」/ 点某一行：范围切到请求的范围（缺省「本轮」；栏显示「上一轮」时是「未提交」），
+  // 带路径时记下待定位的文件。
   useEffect(() => subscribeReviewFocus((request) => {
-    setScope('turn')
+    setScope(request.scope ?? 'turn')
     setFocusPath(request.path ?? '')
   }), [])
 

@@ -218,7 +218,7 @@ const scenes = [
     actions: [{
       label: 'grid-template-columns 采样（页面内计时，0/60/120/180/320ms）',
       probe: `new Promise((done) => {
-        const dock = document.querySelector('.workspace-dock')
+        const dock = document.querySelector('.session-dock')
         const read = () => getComputedStyle(dock).gridTemplateColumns
         const samples = []
         document.querySelector('[aria-label="展开右侧工作区"]').click()
@@ -665,12 +665,17 @@ const scenes = [
           if (!tray || !timeline || !composer) return { found: false }
           const trayBox = tray.getBoundingClientRect()
           const composerBox = composer.getBoundingClientRect()
+          // 基础夹具的实时过程里有两条编辑 → 文件栏同在：外框在停靠区上，托盘自己缩在框内 1px 边框之内。
+          const dock = tray.closest('.session-dock')
+          const frame = dock && dock.querySelector(':scope > .turn-files') ? dock : tray
+          const frameBox = frame.getBoundingClientRect()
           const bubbles = Array.from(document.querySelectorAll('.chat-row--mine')).map((row) => row.textContent ?? '')
           return {
             found: true,
             belowTimeline: trayBox.top >= timeline.getBoundingClientRect().bottom - 1,
             aboveComposer: trayBox.bottom <= composerBox.top + 1,
-            sameWidthAsComposer: Math.abs(trayBox.left - composerBox.left) < 1 && Math.abs(trayBox.right - composerBox.right) < 1,
+            merged: frame !== tray,
+            sameWidthAsComposer: Math.abs(frameBox.left - composerBox.left) < 1 && Math.abs(frameBox.right - composerBox.right) < 1,
             depth: tray.getAttribute('data-queue-depth'),
             items: tray.querySelectorAll('.queue-tray__item').length,
             heldItems: tray.querySelectorAll('.queue-tray__item.is-held').length,
@@ -742,27 +747,95 @@ const scenes = [
       })()`
     }]
   },
-  // 两条栏叠加（托盘 + 文件栏）与窄窗：栏之间不重叠、顺序托盘在上。中栏有 680px 下限，栏最窄 648px，目录列始终保留。
+  // 托盘 + 文件栏同时在场：共用一个实线外框（两段自己的外框归零、中间一条虚线分界）、托盘在上；
+  // 文件栏让位——只留头部（计数 / 合计 / 审查），不转圈。中栏有 680px 下限，栏最窄 648px，目录列始终保留。
   {
     name: 'session-turn-files-with-tray-narrow', width: 980, height: 820, colorScheme: 'dark', query: 'turnfiles=1&queued=1',
-    storage: railStorage({ colorMode: 'dark' }), clip: null,
+    storage: railStorage({ colorMode: 'dark' }), clip: '.session-dock',
     actions: [{ wait: 400 }, {
-      label: '托盘与文件栏叠放',
+      label: '托盘与文件栏合框',
       probe: `(() => {
+        const dock = document.querySelector('.session-dock')
         const tray = document.querySelector('.queue-tray')
         const bar = document.querySelector('.turn-files')
         const composer = document.querySelector('.workspace-composer')
-        if (!tray || !bar || !composer) return { found: false }
+        if (!dock || !tray || !bar || !composer) return { found: false }
         const trayBox = tray.getBoundingClientRect()
         const barBox = bar.getBoundingClientRect()
-        const dirs = Array.from(bar.querySelectorAll('.turn-files__name small')).map((el) => getComputedStyle(el).display)
+        const dockStyle = getComputedStyle(dock)
         return {
           found: true,
           trayAboveBar: trayBox.bottom <= barBox.top + 1,
           barAboveComposer: barBox.bottom <= composer.getBoundingClientRect().top + 1,
+          merged: dockStyle.borderTopStyle === 'solid' && getComputedStyle(tray).borderTopStyle === 'none' && getComputedStyle(bar).borderBottomStyle === 'none',
+          divider: getComputedStyle(bar).borderTopStyle,
+          sameWidthAsComposer: Math.abs(dock.getBoundingClientRect().left - composer.getBoundingClientRect().left) < 1,
+          barYielding: bar.classList.contains('is-yielding') && bar.classList.contains('is-collapsed'),
+          barHeight: Math.round(barBox.height),
+          spinner: Boolean(bar.querySelector('.turn-files__spinner')),
+          headText: bar.querySelector('.turn-files__head')?.textContent ?? '',
           barWidth: Math.round(barBox.width),
-          dirsVisible: dirs.length > 0 && dirs.every((display) => display !== 'none'),
           names: Array.from(bar.querySelectorAll('.turn-files__name strong')).map((el) => el.textContent)
+        }
+      })()`
+    }]
+  },
+  // 窗口下限 1440×680、托盘 3 条 + 文件栏 4 个：时间线保住下限（144px），停靠区收缩而不是时间线；
+  // 文件栏让位后托盘完整可见（列表不用滚）；输入区完整在窗内。再手动展开文件栏：两段分摊剩余空间、各自滚动。
+  {
+    name: 'session-dock-min-height', width: 1440, height: 680, colorScheme: 'light', query: 'turnfiles=1&queued=1',
+    storage: railStorage(), clip: null,
+    actions: [{ wait: 400 }, {
+      label: '窗口下限的纵向预算',
+      probe: `(() => {
+        const h = (sel) => Math.round(document.querySelector(sel)?.getBoundingClientRect().height ?? -1)
+        const trayList = document.querySelector('.queue-tray__list')
+        const composer = document.querySelector('.workspace-composer').getBoundingClientRect()
+        return {
+          timeline: h('.workspace-timeline-wrap'),
+          floorKept: h('.workspace-timeline-wrap') >= 144,
+          dock: h('.session-dock'), tray: h('.queue-tray'), bar: h('.turn-files'),
+          trayListScrolls: trayList ? trayList.scrollHeight > trayList.clientHeight + 1 : null,
+          barCollapsed: document.querySelector('.turn-files').classList.contains('is-collapsed'),
+          composerInsideViewport: composer.bottom <= innerHeight
+        }
+      })()`
+    }, { click: '.turn-files__toggle' }, { wait: 300 }, {
+      label: '手动展开文件栏后',
+      probe: `(() => {
+        const h = (sel) => Math.round(document.querySelector(sel)?.getBoundingClientRect().height ?? -1)
+        const scrolls = (sel) => { const el = document.querySelector(sel); return el ? el.scrollHeight > el.clientHeight + 1 : null }
+        return {
+          timeline: h('.workspace-timeline-wrap'),
+          floorKept: h('.workspace-timeline-wrap') >= 144,
+          tray: h('.queue-tray'), bar: h('.turn-files'),
+          trayListScrolls: scrolls('.queue-tray__list'), barListScrolls: scrolls('.turn-files__list'),
+          trayHeadVisible: h('.queue-tray__head') >= 36, barHeadVisible: h('.turn-files__head') >= 36,
+          composerInsideViewport: document.querySelector('.workspace-composer').getBoundingClientRect().bottom <= innerHeight
+        }
+      })()`
+    }]
+  },
+  // 「上一轮」保持：新消息刚被取走、Agent 还在想：栏保住上一轮的四个文件并标「上一轮」、降色；审查走「未提交」范围。
+  {
+    name: 'session-turn-files-previous', width: 1440, height: 900, colorScheme: 'light', query: 'turnfiles=previous',
+    storage: railStorage(), clip: '.turn-files',
+    actions: [{ wait: 400 }, {
+      label: '上一轮保持态',
+      probe: `(() => {
+        const bar = document.querySelector('.turn-files')
+        if (!bar) return { found: false }
+        return {
+          found: true,
+          scope: bar.getAttribute('data-scope'),
+          previous: bar.classList.contains('is-previous'),
+          label: bar.querySelector('.turn-files__scope')?.textContent ?? '',
+          count: bar.getAttribute('data-file-count'),
+          working: bar.classList.contains('is-working'),
+          listOpacity: getComputedStyle(bar.querySelector('.turn-files__list')).opacity,
+          reviewTitle: bar.querySelector('.turn-files__review')?.getAttribute('title') ?? '',
+          // 时间线：上一轮回复已落库、新消息在下、新回合的思考块在其后。
+          replyBeforeNewMessage: (document.body.textContent ?? '').indexOf('退役完成') < (document.body.textContent ?? '').indexOf('继续：给 handoff')
         }
       })()`
     }]

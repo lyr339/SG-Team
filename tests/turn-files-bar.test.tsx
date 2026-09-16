@@ -16,7 +16,8 @@ const view: TurnFilesView = {
   additions: 49,
   deletions: 87,
   working: true,
-  estimated: true
+  estimated: true,
+  scope: 'turn'
 }
 
 describe('TurnFilesBar（本轮文件栏）', () => {
@@ -35,7 +36,7 @@ describe('TurnFilesBar（本轮文件栏）', () => {
   })
 
   it('renders nothing when the turn has not touched any file', () => {
-    expect(renderToStaticMarkup(<TurnFilesBar view={{ files: [], additions: 0, deletions: 0, working: true, estimated: false }} onReview={() => {}} />)).toBe('')
+    expect(renderToStaticMarkup(<TurnFilesBar view={{ files: [], additions: 0, deletions: 0, working: true, estimated: false, scope: 'turn' }} onReview={() => {}} />)).toBe('')
   })
 
   it('lists one row per file with badge, name, directory, status mark and +/− counts; head carries count, totals, spinner and 审查', () => {
@@ -83,9 +84,9 @@ describe('TurnFilesBar（本轮文件栏）', () => {
     const root = createRoot(container)
     await act(async () => root.render(<TurnFilesBar view={view} onReview={onReview} />))
     await act(async () => container.querySelector<HTMLButtonElement>('.turn-files__review')!.click())
-    expect(onReview).toHaveBeenLastCalledWith()
+    expect(onReview).toHaveBeenLastCalledWith({ scope: 'turn' })
     await act(async () => container.querySelector<HTMLButtonElement>('[data-path="src/mcp/index.ts"] .turn-files__row')!.click())
-    expect(onReview).toHaveBeenLastCalledWith('src/mcp/index.ts')
+    expect(onReview).toHaveBeenLastCalledWith({ path: 'src/mcp/index.ts', scope: 'turn' })
 
     const toggle = container.querySelector<HTMLButtonElement>('.turn-files__toggle')!
     const listwrap = container.querySelector<HTMLElement>('.turn-files__listwrap')!
@@ -104,6 +105,66 @@ describe('TurnFilesBar（本轮文件栏）', () => {
     await act(async () => again.render(<TurnFilesBar view={view} onReview={onReview} />))
     expect(container.querySelector('.turn-files')!.className).toContain('is-collapsed')
     await act(async () => again.unmount())
+  })
+
+  it('yields to the delivery tray: head only (no spinner), a manual expand is one-off, and the stored preference comes back when the tray leaves', async () => {
+    const root = createRoot(container)
+    await act(async () => root.render(<TurnFilesBar view={view} onReview={() => {}} yieldToTray />))
+    const bar = (): HTMLElement => container.querySelector<HTMLElement>('.turn-files')!
+    const listwrap = (): HTMLElement => container.querySelector<HTMLElement>('.turn-files__listwrap')!
+    // 让位：默认收起（列表仍挂载、inert），头部保留计数 / 合计 / 审查；托盘头已经在说「正在处理」，这里不再转圈。
+    expect(bar().className).toContain('is-collapsed')
+    expect(bar().className).toContain('is-yielding')
+    expect(bar().className).not.toContain('is-working')
+    expect(listwrap().hasAttribute('inert')).toBe(true)
+    expect(container.querySelectorAll('.turn-files__item')).toHaveLength(4)
+    expect(container.querySelector('.turn-files__spinner')).toBeNull()
+    expect(container.textContent).toContain('4 个文件')
+    expect(container.textContent).toContain('审查')
+    // 手动展开是一次性的，不写入偏好。
+    await act(async () => container.querySelector<HTMLButtonElement>('.turn-files__toggle')!.click())
+    expect(bar().className).toContain('is-open')
+    expect(listwrap().hasAttribute('inert')).toBe(false)
+    expect(localStorage.getItem(TURN_FILES_COLLAPSED_KEY)).toBeNull()
+    // 托盘走了：回到用户自己的偏好（默认展开）、恢复转圈；托盘再来仍先让位。
+    await act(async () => root.render(<TurnFilesBar view={view} onReview={() => {}} yieldToTray={false} />))
+    expect(bar().className).toContain('is-open')
+    expect(bar().className).toContain('is-working')
+    expect(container.querySelector('.turn-files__spinner')).not.toBeNull()
+    await act(async () => root.render(<TurnFilesBar view={view} onReview={() => {}} yieldToTray />))
+    expect(bar().className).toContain('is-collapsed')
+    await act(async () => root.unmount())
+  })
+
+  it('a stored collapsed preference is honoured once the tray leaves, independent of the one-off expand while yielding', async () => {
+    localStorage.setItem(TURN_FILES_COLLAPSED_KEY, '1')
+    const root = createRoot(container)
+    await act(async () => root.render(<TurnFilesBar view={view} onReview={() => {}} yieldToTray />))
+    await act(async () => container.querySelector<HTMLButtonElement>('.turn-files__toggle')!.click())
+    expect(container.querySelector('.turn-files')!.className).toContain('is-open')
+    await act(async () => root.render(<TurnFilesBar view={view} onReview={() => {}} />))
+    expect(container.querySelector('.turn-files')!.className).toContain('is-collapsed')
+    expect(localStorage.getItem(TURN_FILES_COLLAPSED_KEY)).toBe('1')
+    await act(async () => root.unmount())
+  })
+
+  it('in the 上一轮 hold the head is labelled, the bar is dimmed and 审查 / rows ask for the uncommitted scope', async () => {
+    const onReview = vi.fn()
+    const previous: TurnFilesView = { ...view, scope: 'previous' }
+    const html = renderToStaticMarkup(<TurnFilesBar view={previous} onReview={onReview} />)
+    expect(html).toContain('turn-files is-open is-working is-estimated is-previous')
+    expect(html).toContain('data-scope="previous"')
+    expect(html).toContain('aria-label="上一轮改动的文件"')
+    expect(html).toMatch(/turn-files__scope[^>]*>上一轮</)
+    expect(html).toContain('范围：未提交')
+
+    const root = createRoot(container)
+    await act(async () => root.render(<TurnFilesBar view={previous} onReview={onReview} />))
+    await act(async () => container.querySelector<HTMLButtonElement>('.turn-files__review')!.click())
+    expect(onReview).toHaveBeenLastCalledWith({ scope: 'uncommitted' })
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-path="src/mcp/index.ts"] .turn-files__row')!.click())
+    expect(onReview).toHaveBeenLastCalledWith({ path: 'src/mcp/index.ts', scope: 'uncommitted' })
+    await act(async () => root.unmount())
   })
 
   it('keeps row identity when counts change: the DOM node for a path survives a new view object', async () => {

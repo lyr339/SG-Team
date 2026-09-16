@@ -30,7 +30,7 @@ describe('theme surface contracts', () => {
     // 不抢层级），虚线外框表达「还不是对话记录」，宽度与输入区一致（同 16px 侧边距）。
     expect(styles).not.toContain('.composer-queue-popover')
     expect(styles).not.toContain('.composer-queue-status')
-    expect(styles).toMatch(/\.workspace-main\s*\{[^}]*grid-template-rows:\s*auto auto minmax\(0, 1fr\) auto auto auto;/)
+    expect(styles).toMatch(/\.workspace-main\s*\{[^}]*grid-template-rows:\s*auto auto minmax\(var\(--timeline-floor\), 1fr\) auto auto;/)
     expect(styles).toMatch(/\.queue-tray\s*\{[^}]*border:[^;]*dashed/)
     expect(styles).toMatch(/\.queue-tray\s*\{[^}]*margin:\s*0 16px/)
     expect(styles).not.toMatch(/\.queue-tray\s*\{[^}]*position:\s*absolute/)
@@ -61,6 +61,30 @@ describe('theme surface contracts', () => {
     expect(styles).toMatch(/prefers-reduced-motion: reduce\)\s*\{[^}]*\.turn-files, \.turn-files__item\s*\{\s*animation:\s*none/)
     expect(styles).toMatch(/@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\.turn-files__spinner\s*\{[^}]*animation:\s*none/)
     expect(styles).toMatch(/@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\.turn-files__chevron, \.turn-files__listwrap, \.turn-files__list\s*\{\s*transition:\s*none/)
+    // 「上一轮」保持态：头部标签 + 整栏降色。
+    expect(styles).toMatch(/\.turn-files\.is-previous \.turn-files__list\s*\{\s*opacity:/)
+    expect(styles).toMatch(/\.turn-files__scope\s*\{[^}]*border-radius:\s*999px/)
+  })
+
+  it('gives the timeline a floor and lets the dock (tray + turn-files) shrink and merge instead', () => {
+    // 时间线下限：900 高给 240，680 高（窗口下限）给 144——输入区拖到上限时仍放得下，永不把输入区顶出窗口。
+    expect(styles).toMatch(/\.workspace-main\s*\{[^}]*--timeline-floor:\s*min\(240px, calc\(55vh - 230px\)\)/)
+    // 停靠区与两段都可收缩（min-height: 0），段内列表行 minmax(0, 1fr) 让列表滚动、头部不动。
+    expect(styles).toMatch(/\.session-dock\s*\{[^}]*min-height:\s*0/)
+    expect(styles).toMatch(/\.session-dock > \.queue-tray, \.session-dock > \.turn-files\s*\{\s*min-height:\s*0/)
+    expect(styles).toMatch(/\.queue-tray\s*\{[^}]*grid-template-rows:\s*auto minmax\(0, 1fr\) auto/)
+    expect(styles).toMatch(/\.turn-files\s*\{[^}]*grid-template-rows:\s*auto minmax\(0, 1fr\)/)
+    expect(styles).toMatch(/\.queue-tray__listwrap\s*\{[^}]*min-height:\s*0/)
+    expect(styles).toMatch(/\.turn-files__listwrap\s*\{[^}]*min-height:\s*0/)
+    expect(styles).toMatch(/\.queue-tray__list\s*\{[^}]*overflow-y:\s*auto/)
+    expect(styles).toMatch(/\.turn-files__list\s*\{[^}]*overflow-y:\s*auto/)
+    // 两段同时在场：共用一个实线外框，段自己的外框与边距归零，两段之间一条虚线分界。
+    const merged = String.raw`\.session-dock:has\(> \.queue-tray\):has\(> \.turn-files\)`
+    expect(styles).toMatch(new RegExp(`${merged}\\s*\\{[^}]*margin:\\s*0 16px 8px[^}]*border:[^;]*solid[^}]*border-radius:\\s*12px`))
+    expect(styles).toMatch(new RegExp(`${merged} > \\.queue-tray,\\s*${merged} > \\.turn-files\\s*\\{[^}]*margin:\\s*0;[^}]*border:\\s*0;[^}]*border-radius:\\s*0`))
+    expect(styles).toMatch(new RegExp(`${merged} > \\.turn-files\\s*\\{\\s*border-top:[^;]*dashed`))
+    // 停靠区的进场动画同样尊重减弱动效。
+    expect(styles).toMatch(/prefers-reduced-motion: reduce\)\s*\{[^}]*\.session-dock, \.queue-tray, \.queue-tray__item\s*\{\s*animation:\s*none/)
   })
 
   it('uses the cool Orbit palette instead of the former yellow parchment palette', () => {

@@ -995,9 +995,12 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
    会话工作区
    ============================================================ */
 
-/* 行：页头 / 警示条 / 时间线 / 待投递托盘 / 输入区 */
-/* 六行：页头 / 警示 / 时间线 / 待投递托盘 / 本轮文件栏 / 输入区。托盘与文件栏都是按需出现的 auto 行。 */
-.workspace-main { height: 100%; min-width: 0; min-height: 0; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto auto auto; background: transparent; }
+/* 五行：页头 / 警示 / 时间线 / 停靠区（待投递托盘 + 本轮文件栏）/ 输入区。
+   时间线有下限：停靠区两段各自有列表上限，但同时出现（Agent 干活中、用户继续发消息）时合计可达 ~350px，
+   在 680px 的窗口下限会把时间线挤到 0。下限取 min(240px, 55vh − 230px)：900 高给足 240，
+   680 高给 144——后者正是输入区拖到上限（45vh + 工具条）时仍放得下的最大值，所以永不把输入区顶出窗口。
+   预算不够时收缩的是停靠区（它是 auto 行、段内 min-height: 0、列表自己滚动），不是时间线。 */
+.workspace-main { --timeline-floor: min(240px, calc(55vh - 230px)); height: 100%; min-width: 0; min-height: 0; display: grid; grid-template-rows: auto auto minmax(var(--timeline-floor), 1fr) auto auto; background: transparent; }
 .workspace-header { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 14px; min-height: 78px; padding: 13px 22px; background: transparent; border-bottom: var(--border-width-regular) solid var(--line-faint); }
 .workspace-back { display: none; }
 .workspace-identity { min-width: 0; }
@@ -1188,10 +1191,26 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 .run-seats__footer .toggle-switch__text { color: var(--muted); font-size: var(--fs-11); font-weight: 400; }
 .run-seats__footer .toggle-switch:hover .toggle-switch__text { color: var(--text); }
 
+/* ---------- 停靠区 ----------
+   时间线与输入区之间的一格：待投递托盘在上、本轮文件栏在下。空时 0 高。
+   纵向预算不够时它先于时间线收缩：自身与两段都 min-height: 0，段内列表行 minmax(0, 1fr) 让列表自己滚动。
+   两段同时在场时共用一个实线外框（虚线退为两段之间的分界：上面还没进对话，下面已经发生），
+   消除「两层托盘」的观感；单独在场时各保留自己的外框。 */
+.session-dock { min-width: 0; min-height: 0; display: grid; grid-auto-rows: auto; }
+.session-dock > .queue-tray, .session-dock > .turn-files { min-height: 0; }
+.session-dock:has(> .queue-tray):has(> .turn-files) { margin: 0 16px 8px; background: var(--surface); border: var(--border-width-regular) solid var(--line-strong); border-radius: 12px; animation: queue-tray-in 160ms ease; }
+.session-dock:has(> .queue-tray):has(> .turn-files) > .queue-tray,
+.session-dock:has(> .queue-tray):has(> .turn-files) > .turn-files { margin: 0; background: transparent; border: 0; border-radius: 0; animation: none; }
+.session-dock:has(> .queue-tray):has(> .turn-files) > .turn-files { border-top: var(--border-width-regular) dashed var(--line-strong); }
+.session-dock:has(> .queue-tray):has(> .turn-files) > .queue-tray .queue-tray__head { border-radius: 11px 11px 0 0; }
+.session-dock:has(> .queue-tray):has(> .turn-files) > .turn-files .turn-files__toggle { border-radius: 0 0 0 11px; }
+.session-dock:has(> .queue-tray):has(> .turn-files) > .turn-files.is-open .turn-files__toggle { border-radius: 0; }
+
 /* ---------- 待投递托盘 ----------
    时间线与输入区之间的停泊位：尚未被 check_messages 取走的用户消息在这里等待，
-   取走那一刻移入时间线。虚线外框表达「还不是对话记录」；与输入区同宽同圆角。 */
-.queue-tray { min-width: 0; display: grid; margin: 0 16px 8px; color: var(--text); background: var(--surface); border: var(--border-width-regular) dashed var(--line-strong); border-radius: 12px; animation: queue-tray-in 160ms ease; }
+   取走那一刻移入时间线。虚线外框表达「还不是对话记录」；与输入区同宽同圆角。
+   行：头部 / 列表 / 内部消息注记。列表行 minmax(0, 1fr)：被停靠区压缩时列表滚动、头部不动。 */
+.queue-tray { min-width: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; margin: 0 16px 8px; color: var(--text); background: var(--surface); border: var(--border-width-regular) dashed var(--line-strong); border-radius: 12px; animation: queue-tray-in 160ms ease; }
 .queue-tray__head { width: 100%; min-height: 36px; display: flex; align-items: center; gap: 8px; padding: 6px 10px 6px 9px; color: var(--text-soft); background: transparent; border: 0; border-radius: 11px; font: inherit; text-align: left; cursor: pointer; }
 .queue-tray__head:disabled { cursor: default; }
 .queue-tray__head:not(:disabled):hover, .queue-tray__head:focus-visible { background: var(--accent-wash); }
@@ -1210,7 +1229,7 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 .queue-tray__chevron { width: 18px; height: 18px; display: grid; place-items: center; color: var(--faint); transition: transform 160ms ease; }
 .queue-tray__chevron svg { width: 14px; height: 14px; }
 .queue-tray.is-collapsed .queue-tray__chevron { transform: rotate(-90deg); }
-.queue-tray__listwrap { display: grid; grid-template-rows: 1fr; overflow: hidden; transition: grid-template-rows 180ms ease; }
+.queue-tray__listwrap { min-height: 0; display: grid; grid-template-rows: 1fr; overflow: hidden; transition: grid-template-rows 180ms ease; }
 .queue-tray.is-collapsed .queue-tray__listwrap { grid-template-rows: 0fr; }
 .queue-tray__list { min-height: 0; max-height: 168px; display: grid; margin: 0; padding: 0 6px 6px; overflow-y: auto; list-style: none; transition: padding-block 180ms ease; }
 .queue-tray.is-collapsed .queue-tray__list { padding-block: 0; }
@@ -1234,7 +1253,7 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 .queue-tray__note { margin: 0; padding: 5px 12px 8px; color: var(--muted); font-size: var(--fs-9, 10px); line-height: 1.4; }
 @keyframes queue-tray-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
-  .queue-tray, .queue-tray__item { animation: none; }
+  .session-dock, .queue-tray, .queue-tray__item { animation: none; }
   .queue-tray.is-busy .queue-tray__state i { animation: none; }
   .queue-tray__chevron, .queue-tray__listwrap, .queue-tray__list { transition: none; }
 }
@@ -1242,8 +1261,8 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 /* ---------- 本轮文件栏 ----------
    输入区上方、托盘之下：本轮 Agent 改动过的文件与增删行数（Cursor 原生 “N Files” 栏的拾光版）。
    与托盘同一尺寸语言（36px 头部、圆角 12、与输入区同宽），但边框是实线——虚线在这里专指
-   「还不是对话记录」，而这些文件是已经发生的事实。 */
-.turn-files { min-width: 0; display: grid; margin: 0 16px 8px; color: var(--text); background: var(--surface); border: var(--border-width-regular) solid var(--line-strong); border-radius: 12px; animation: turn-files-in 160ms ease; }
+   「还不是对话记录」，而这些文件是已经发生的事实。行：头部 / 列表（被停靠区压缩时列表滚动、头部不动）。 */
+.turn-files { min-width: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); margin: 0 16px 8px; color: var(--text); background: var(--surface); border: var(--border-width-regular) solid var(--line-strong); border-radius: 12px; animation: turn-files-in 160ms ease; }
 .turn-files__head { display: flex; align-items: center; gap: 8px; min-height: 36px; padding-right: 6px; }
 .turn-files__toggle { min-width: 0; flex: 1 1 auto; display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 6px 8px 6px 9px; color: var(--text-soft); background: transparent; border: 0; border-radius: 11px 0 0 11px; font: inherit; text-align: left; cursor: pointer; }
 .turn-files__toggle:hover, .turn-files__toggle:focus-visible { background: var(--accent-wash); }
@@ -1253,6 +1272,10 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 .turn-files.is-collapsed .turn-files__chevron { transform: rotate(-90deg); }
 .turn-files__title { flex: 0 0 auto; display: inline-flex; align-items: baseline; gap: 4px; color: var(--text); font-size: var(--fs-11); font-weight: 600; white-space: nowrap; }
 .turn-files__title b { font: 700 var(--fs-11)/1 var(--mono); }
+/* 「上一轮」保持态：头部挂标签、整栏降色——它是上一轮的事实，不是这一轮正在发生的。 */
+.turn-files__scope { flex: 0 0 auto; padding: 2px 6px; color: var(--muted); background: var(--surface-soft); border-radius: 999px; font-size: var(--fs-9, 10px); font-style: normal; font-weight: 600; line-height: 1; white-space: nowrap; }
+.turn-files.is-previous .turn-files__title { color: var(--text-soft); }
+.turn-files.is-previous .turn-files__list { opacity: .78; }
 /* 合计与行内增删同一写法：绿 + / 红 −，等宽数字；估算值前置 ≈。 */
 .turn-files__totals, .turn-files__counts { flex: 0 0 auto; display: inline-flex; align-items: baseline; gap: 6px; font: 600 var(--fs-10)/1 var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .turn-files__totals b, .turn-files__counts b { color: var(--color-text-success); font-weight: 600; }
@@ -1266,7 +1289,7 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 .turn-files__review:hover, .turn-files__review:focus-visible { color: var(--color-text-info); border-color: var(--color-border-info); background: var(--color-background-info); }
 .turn-files__review:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* 列表常驻挂载，收起走 grid-rows 过渡（与托盘对称）。 */
-.turn-files__listwrap { display: grid; grid-template-rows: 1fr; overflow: hidden; transition: grid-template-rows 180ms ease; }
+.turn-files__listwrap { min-height: 0; display: grid; grid-template-rows: 1fr; overflow: hidden; transition: grid-template-rows 180ms ease; }
 .turn-files.is-collapsed .turn-files__listwrap { grid-template-rows: 0fr; }
 .turn-files__list { min-height: 0; max-height: 176px; display: grid; margin: 0; padding: 0 6px 6px; overflow-y: auto; list-style: none; transition: padding-block 180ms ease; }
 .turn-files.is-collapsed .turn-files__list { padding-block: 0; }
