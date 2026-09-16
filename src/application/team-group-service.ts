@@ -2,7 +2,7 @@ import type { TeamControlRepository, TeamGroupMutation, GroupMembershipChange } 
 import type { TeamCollaborationRepository } from './team-collaboration-repository'
 import type { TaskPoolService } from './task-pool-service'
 import type { TeamControlBridge } from './team-control-service'
-import { TaskPoolError } from '../domain/task-pool'
+import { TaskPoolError, type PlanTaskInput, type TeamTask } from '../domain/task-pool'
 import {
   buildMembershipNotice,
   groupMembersMayPlan,
@@ -61,7 +61,7 @@ export class TeamGroupService {
   constructor(
     private readonly repository: TeamControlRepository,
     private readonly team: TeamSource,
-    private readonly tasks: Pick<TaskPoolService, 'closeGroup' | 'releaseAgentWork'>,
+    private readonly tasks: Pick<TaskPoolService, 'closeGroup' | 'releaseAgentWork' | 'planTasks'>,
     private readonly collaboration: Pick<TeamCollaborationRepository, 'createMessage' | 'orphanPendingReceipts'>,
     private readonly bridge: Pick<TeamControlBridge, 'sendMessage'>,
     options: TeamGroupServiceOptions = {}
@@ -209,6 +209,33 @@ export class TeamGroupService {
       }))
     }
     return after
+  }
+
+  /**
+   * 用户在拾光里为某个组规划任务（阶段 2 · 2A，决策 D2：无 lead 组的规划权首先归用户；有 lead 的组用户同样可以直接建任务）。
+   * 校验口径与 Agent 侧 `TeamCollaborationAgentService.planTasks` 一致：targetSlotId 必须是本组成员、requiredCapabilities
+   * 至少有一名成员全部具备——否则任务会静默地永远派不出去。创建后 TaskDispatcher 按组自动派单。
+   */
+  planGroupTasks(input: { groupId: string; tasks: PlanTaskInput[] }): TeamTask[] {
+    const { snapshot } = this.requirePool()
+    const view = this.viewOf(snapshot, input.groupId)
+    if (!view) throw new TaskPoolError('group_not_found', '协作组不存在或不属于当前会话池')
+    if (view.group.status !== 'active') throw new TaskPoolError('group_not_active', '协作组已解散，不能再规划任务')
+    const memberBySlot = new Map(view.members.map((member) => [member.slot.id, member]))
+    for (const task of input.tasks) {
+      const required = [...new Set((task.requiredCapabilities ?? []).map((item) => item.trim()).filter(Boolean))]
+      if (task.targetSlotId) {
+        const target = memberBySlot.get(task.targetSlotId.trim())
+        if (!target) throw new TaskPoolError('target_slot_not_found', `指定席位不属于协作组「${view.group.name}」：${task.targetSlotId}`)
+        const missing = required.filter((capability) => !target.role.capabilities.includes(capability))
+        if (missing.length) {
+          throw new TaskPoolError('target_capability_mismatch', `${target.role.name} 不具备能力 ${missing.join('、')}`)
+        }
+      } else if (required.length && !view.members.some((member) => required.every((capability) => member.role.capabilities.includes(capability)))) {
+        throw new TaskPoolError('team_capability_unavailable', `协作组「${view.group.name}」没有成员同时具备能力：${required.join('、')}`)
+      }
+    }
+    return this.tasks.planTasks(view.group.id, input.tasks)
   }
 
   dissolveGroup(input: { groupId: string }): TeamControlSnapshot {

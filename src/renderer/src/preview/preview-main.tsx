@@ -1310,6 +1310,7 @@ const api: SgDesktopApi = {
   updateTeamGroupGoal: async () => structuredClone(state.team),
   setTeamGroupPlanPolicy: async () => structuredClone(state.team),
   dissolveTeamGroup: async () => structuredClone(state.team),
+  planTeamGroupTasks: async () => [],
   getTeamCollaborationSnapshot: async () => structuredClone(collaborationSnapshot),
   getManualHandoffOptions: async (slotId) => {
     const source = state.team.members.find((member) => member.slot.id === slotId)

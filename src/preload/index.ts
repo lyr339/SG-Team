@@ -120,6 +120,7 @@ const api: SgDesktopApi = {
   updateTeamGroupGoal: (input) => ipcRenderer.invoke(IPC.teamGroupUpdateGoal, input),
   setTeamGroupPlanPolicy: (input) => ipcRenderer.invoke(IPC.teamGroupSetPlanPolicy, input),
   dissolveTeamGroup: (input) => ipcRenderer.invoke(IPC.teamGroupDissolve, input),
+  planTeamGroupTasks: (input) => ipcRenderer.invoke(IPC.teamGroupPlanTasks, input),
   getTeamCollaborationSnapshot: () => ipcRenderer.invoke(IPC.teamCollaborationGet),
   setWindowChromeColorMode: (mode) => ipcRenderer.invoke(IPC.windowSetChromeColorMode, mode),
   getManualHandoffOptions: (slotId) => ipcRenderer.invoke(IPC.teamContinuityHandoffOptions, slotId),

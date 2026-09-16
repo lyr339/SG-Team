@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { TaskAgentService } from '../src/application/task-agent-service'
+import { TaskDispatcher } from '../src/application/task-dispatcher'
 import { TaskPoolService } from '../src/application/task-pool-service'
 import { TeamControlService, type TeamControlBridge } from '../src/application/team-control-service'
 import { TeamGroupService } from '../src/application/team-group-service'
@@ -423,6 +424,48 @@ describe('TeamGroupService · lead、目标与解散', () => {
       expect(data.messagesTo(data.slotIdOf('3'))).toEqual([])
       expect(data.messagesTo(data.slotIdOf('4'))).toEqual([])
       expect(data.errors).toEqual([])
+    } finally {
+      data.close()
+    }
+  })
+
+  it('planGroupTasks lets the user plan into a group (lead or not) with the same scope and capability checks as team_task plan, and the dispatcher picks the tasks up (2A)', () => {
+    const data = poolFixture()
+    try {
+      const { groups } = data.service.createGroup({
+        name: '共享组', planPolicy: 'lead_only',
+        members: [{ slotId: data.slotIdOf('1'), roleTemplateKey: 'builder' }, { slotId: data.slotIdOf('2'), roleTemplateKey: 'reviewer' }]
+      })
+      const groupId = groups[0]!.group.id
+      // 无 lead + lead_only：成员不能 plan，但用户可以。
+      expect(code(() => data.taskAgent('1').plan([{ key: 'm', title: '成员规划' }]))).toBe('coordinator_only')
+      const planned = data.service.planGroupTasks({
+        groupId,
+        tasks: [
+          { key: 'impl', title: '实现', requiredCapabilities: ['code'], targetSlotId: data.slotIdOf('1') },
+          { key: 'verify', title: '验证', dependsOn: ['impl'], requiredCapabilities: ['qa'] }
+        ]
+      })
+      expect(planned.map((task) => [task.key, task.status, task.groupId, task.targetSlotId])).toEqual([
+        ['impl', 'queued', groupId, data.slotIdOf('1')],
+        ['verify', 'queued', groupId, undefined]
+      ])
+      // 派单器按组自动派给能力匹配的成员：只有 impl 可执行（verify 依赖它）。
+      new TaskDispatcher(data.tasks, data.control, data.collaboration).reconcile()
+      const directives = data.messagesTo(data.slotIdOf('1')).filter((message) => message.kind === 'directive')
+      expect(directives).toHaveLength(1)
+      expect(directives[0]!.content).toContain(planned[0]!.id)
+      expect(data.messagesTo(data.slotIdOf('2')).filter((message) => message.kind === 'directive')).toEqual([])
+
+      // 校验与 Agent 侧同口径：目标席位必须在组内、能力必须有人具备、key 在 run 内唯一、组必须存在且活跃。
+      expect(code(() => data.service.planGroupTasks({ groupId, tasks: [{ key: 'x', title: 'x', targetSlotId: data.slotIdOf('3') }] }))).toBe('target_slot_not_found')
+      expect(code(() => data.service.planGroupTasks({ groupId, tasks: [{ key: 'x', title: 'x', requiredCapabilities: ['ops'] }] }))).toBe('team_capability_unavailable')
+      expect(code(() => data.service.planGroupTasks({ groupId, tasks: [{ key: 'x', title: 'x', targetSlotId: data.slotIdOf('2'), requiredCapabilities: ['code'] }] }))).toBe('target_capability_mismatch')
+      expect(code(() => data.service.planGroupTasks({ groupId, tasks: [{ key: 'impl', title: '重复 key' }] }))).toBe('duplicate_task_key')
+      expect(code(() => data.service.planGroupTasks({ groupId: 'team-group:nope', tasks: [{ key: 'x', title: 'x' }] }))).toBe('group_not_found')
+      data.service.dissolveGroup({ groupId })
+      expect(code(() => data.service.planGroupTasks({ groupId, tasks: [{ key: 'y', title: 'y' }] }))).toBe('group_not_active')
+      expect(data.tasks.getSnapshot().taskOrder).toHaveLength(2)
     } finally {
       data.close()
     }

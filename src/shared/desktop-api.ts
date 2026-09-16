@@ -1,6 +1,6 @@
 import type { AgentSession } from '../domain/agent-session'
 import type { ConversationEntry, ProcessBlock } from '../domain/conversation-entry'
-import type { TaskPoolSnapshot } from '../domain/task-pool'
+import type { PlanTaskInput, TaskPoolSnapshot, TeamTask } from '../domain/task-pool'
 import type { TeamControlSnapshot, TeamGroupPlanPolicy } from '../domain/team-control'
 import type { TeamCollaborationSnapshot } from '../domain/team-collaboration'
 import type { TeamContinuitySnapshot } from '../domain/team-continuity'
@@ -272,6 +272,12 @@ export interface TeamGroupPlanPolicyInput {
   planPolicy: TeamGroupPlanPolicy
 }
 
+/** 用户为某个协作组一次规划 1–30 条任务；字段与 `team_task plan` 的任务清单一致。 */
+export interface TeamGroupPlanTasksInput {
+  groupId: string
+  tasks: PlanTaskInput[]
+}
+
 export interface TeamGroupMembersInput {
   groupId: string
   members: TeamGroupMemberInput[]
@@ -492,6 +498,11 @@ export interface SgDesktopApi {
   /** 谁能 team_task plan：只对无 lead 的组产生实际效果（有 lead 时规划权始终归有效 lead）。 */
   setTeamGroupPlanPolicy(input: TeamGroupPlanPolicyInput): Promise<TeamControlSnapshot>
   dissolveTeamGroup(input: { groupId: string }): Promise<TeamControlSnapshot>
+  /**
+   * 用户为某个协作组规划任务（桌面侧唯一的任务写入口）：与 `team_task plan` 同一条聚合路径，
+   * 创建后由桌面编排器自动派单；返回新建的任务。
+   */
+  planTeamGroupTasks(input: TeamGroupPlanTasksInput): Promise<TeamTask[]>
   getTeamCollaborationSnapshot(): Promise<TeamCollaborationSnapshot>
   getManualHandoffOptions(slotId: string): Promise<TeamHandoffOptions>
   /**
@@ -624,6 +635,7 @@ export const IPC = {
   teamGroupUpdateGoal: 'team-group:update-goal',
   teamGroupSetPlanPolicy: 'team-group:set-plan-policy',
   teamGroupDissolve: 'team-group:dissolve',
+  teamGroupPlanTasks: 'team-group:plan-tasks',
   teamCollaborationGet: 'team-collaboration:get',
   teamCollaborationSnapshot: 'team-collaboration:snapshot',
   teamContinuityHandoffOptions: 'team-continuity:handoff-options',

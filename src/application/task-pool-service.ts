@@ -94,6 +94,20 @@ export class TaskPoolService {
     return task!
   }
 
+  /**
+   * 操作员为某个协作组一次规划 1–30 条任务（阶段 2 · 2A，决策 D2）：与 `team_task plan` 走同一条聚合路径
+   *（key 唯一、依赖同组、targetSlotId 快照），差别只在没有 Agent 身份——组归属与成员校验由 TeamGroupService 完成。
+   */
+  planTasks(groupId: string, inputs: PlanTaskInput[]): TeamTask[] {
+    const normalizedGroupId = groupId.trim()
+    if (!normalizedGroupId) throw new Error('groupId 不能为空')
+    if (!inputs.length || inputs.length > 30) throw new Error('一次必须规划 1 到 30 条任务')
+    const runId = this.requireMutableRunId()
+    const tasks = transactTaskPool(this.repository, (pool) => pool.plan(runId, inputs, normalizedGroupId))
+    this.emit()
+    return tasks
+  }
+
   cancelTask(taskId: string, reason = '用户取消'): TeamTask {
     const normalizedTaskId = taskId.trim()
     if (!normalizedTaskId) throw new Error('taskId 不能为空')

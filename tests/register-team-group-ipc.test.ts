@@ -28,7 +28,8 @@ function fakeService() {
     setGroupLead: record('setGroupLead'),
     updateGroupGoal: record('updateGroupGoal'),
     setGroupPlanPolicy: record('setGroupPlanPolicy'),
-    dissolveGroup: record('dissolveGroup')
+    dissolveGroup: record('dissolveGroup'),
+    planGroupTasks: record('planGroupTasks')
   } as unknown as TeamGroupService
   return { service, calls, snapshot }
 }
@@ -68,9 +69,29 @@ describe('协作组 IPC', () => {
     expect(calls.at(-1)).toEqual(['updateGroupGoal', { groupId: 'g-1', goal: '' }])
     invoke(IPC.teamGroupDissolve, { groupId: 'g-1' })
     expect(calls.at(-1)).toEqual(['dissolveGroup', { groupId: 'g-1' }])
+    // 规划任务：key / title 必填、其余可选字段按 team_task plan 的界限透传，未给的字段不出现。
+    invoke(IPC.teamGroupPlanTasks, {
+      groupId: 'g-1',
+      tasks: [
+        { key: ' impl ', title: '实现', description: '边界', acceptance: '测试通过', priority: 1, maxAttempts: 2, dependsOn: [], requiredCapabilities: ['code'], targetSlotId: 'slot-2' },
+        { key: 'verify', title: '验证', dependsOn: ['impl'], targetSlotId: null }
+      ]
+    })
+    expect(calls.at(-1)).toEqual(['planGroupTasks', {
+      groupId: 'g-1',
+      tasks: [
+        { key: 'impl', title: '实现', description: '边界', acceptance: '测试通过', priority: 1, maxAttempts: 2, dependsOn: [], requiredCapabilities: ['code'], targetSlotId: 'slot-2' },
+        { key: 'verify', title: '验证', dependsOn: ['impl'] }
+      ]
+    }])
 
     // 形状校验在 IPC 层就拒绝：不到服务。
     const before = calls.length
+    expect(() => invoke(IPC.teamGroupPlanTasks, { groupId: 'g-1', tasks: [] })).toThrowError(/任务清单无效/)
+    expect(() => invoke(IPC.teamGroupPlanTasks, { groupId: 'g-1', tasks: [{ key: 'k' }] })).toThrowError(/任务标题无效/)
+    expect(() => invoke(IPC.teamGroupPlanTasks, { groupId: 'g-1', tasks: [{ key: 'k', title: 't', priority: 9 }] })).toThrowError(/优先级无效/)
+    expect(() => invoke(IPC.teamGroupPlanTasks, { groupId: 'g-1', tasks: [{ key: 'k', title: 't', requiredCapabilities: 'code' }] })).toThrowError(/所需能力无效/)
+    expect(() => invoke(IPC.teamGroupPlanTasks, { groupId: 'g-1', tasks: Array.from({ length: 31 }, (_, index) => ({ key: `k${index}`, title: 't' })) })).toThrowError(/任务清单无效/)
     expect(() => invoke(IPC.teamGroupCreate, 'garbage')).toThrowError(/建组参数无效/)
     expect(() => invoke(IPC.teamGroupCreate, { name: '', members: [{ slotId: 'slot-1', roleTemplateKey: 'lead' }] })).toThrowError(/协作组名称无效/)
     expect(() => invoke(IPC.teamGroupCreate, { name: 'G', members: [] })).toThrowError(/组成员列表无效/)
@@ -87,7 +108,7 @@ describe('协作组 IPC', () => {
     dispose()
     for (const channel of [
       IPC.teamGroupCreate, IPC.teamGroupAddMembers, IPC.teamGroupRemoveMember,
-      IPC.teamGroupSetLead, IPC.teamGroupUpdateGoal, IPC.teamGroupSetPlanPolicy, IPC.teamGroupDissolve
+      IPC.teamGroupSetLead, IPC.teamGroupUpdateGoal, IPC.teamGroupSetPlanPolicy, IPC.teamGroupDissolve, IPC.teamGroupPlanTasks
     ]) expect(handlers.has(channel)).toBe(false)
   })
 
@@ -109,6 +130,9 @@ describe('协作组 IPC', () => {
       expect(() => invoke(channel, payload)).toThrowError(/一键会话创建正在进行/)
     }
     expect(calls).toEqual([])
+    // 规划任务不改成员关系，不受阻塞。
+    invoke(IPC.teamGroupPlanTasks, { groupId: 'g-1', tasks: [{ key: 'k', title: 't' }] })
+    expect(calls).toEqual([['planGroupTasks', { groupId: 'g-1', tasks: [{ key: 'k', title: 't' }] }]])
     dispose()
   })
 })
