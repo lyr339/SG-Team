@@ -1,9 +1,9 @@
-// @vitest-environment jsdom
+// 主进程 / 基础设施侧的品牌迁移，跑在默认 node 环境（仓储依赖 node:sqlite）。
+// 渲染层 localStorage 键迁移需要 jsdom，见 brand-migration-storage-keys.test.ts。
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { SqliteChannelMessageRepository } from '../src/infrastructure/channel-messages/sqlite-channel-message-repository'
 import { legacyUserDataDirectory, resolveUserDataDirectory, USER_DATA_DIRECTORY_NAME } from '../src/main/user-data-directory'
-import { migrateLegacyStorageKeys } from '../src/renderer/src/storage-migration'
 
 describe('brand migration: user data directory', () => {
   const appData = join('/', 'AppData')
@@ -94,28 +94,5 @@ describe('brand migration: persisted attachment paths', () => {
     } finally {
       repository.close()
     }
-  })
-})
-
-describe('brand migration: renderer localStorage keys', () => {
-  afterEach(() => localStorage.clear())
-
-  it('moves legacy-prefixed keys to the current prefix and removes the old ones', () => {
-    localStorage.setItem('qingtian-team.layout:v1:shell.sessions.v2:collapsed', '1')
-    localStorage.setItem('qingtian-team.inspector:active-tab', 'plan')
-    localStorage.setItem('shiguang.appearance.v1', '{"theme":"dark"}')
-    expect(migrateLegacyStorageKeys()).toBe(2)
-    expect(localStorage.getItem('sg-team.layout:v1:shell.sessions.v2:collapsed')).toBe('1')
-    expect(localStorage.getItem('sg-team.inspector:active-tab')).toBe('plan')
-    expect(localStorage.getItem('qingtian-team.inspector:active-tab')).toBeNull()
-    expect(localStorage.getItem('shiguang.appearance.v1')).toBe('{"theme":"dark"}')
-  })
-
-  it('prefers an existing current value over the legacy one', () => {
-    localStorage.setItem('qingtian-team.inspector:active-tab', 'plan')
-    localStorage.setItem('sg-team.inspector:active-tab', 'review')
-    expect(migrateLegacyStorageKeys()).toBe(0)
-    expect(localStorage.getItem('sg-team.inspector:active-tab')).toBe('review')
-    expect(localStorage.getItem('qingtian-team.inspector:active-tab')).toBeNull()
   })
 })
