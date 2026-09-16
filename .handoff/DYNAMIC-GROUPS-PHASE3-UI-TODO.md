@@ -2,6 +2,8 @@
 
 > **状态（2026-09-13）：待动工；依赖阶段 1 的 IPC 与快照（`snapshot.groups`），可与阶段 2 并行。** 路线图见 `DYNAMIC-GROUPS-ROADMAP.md`。
 >
+> **09-16 更新（阶段 2 · 2B-1 已落地，`feat/dynamic-groups-phase2` `7fb9a5f`）**：本书「删除清单」里的 `RunModeSwitch`、`RunTeamPanel`、`TeamSetupPage`、`team-setup.css`、`team-skill-defaults`、`App.tsx` 的 `teamSetup / runStartMode / onReconfigure / onLaunch / onNextRun`、`run-view.ts` 的团队分支与 `run-view.test.ts` 团队用例、`team-setup-page.test.tsx` 都已经不存在；`RunHeader` 已无模式切换（只剩批次概况与结束）。接手时按「已删」处理，`PoolHeader` 从现状 `RunHeader` 改造即可。`preview/mock-data.ts` 的基础快照仍是一个 legacy 团队 run（默认预览落在「旧团队运行已归档」开始页；池场景走 `?independent=`），换成池快照留给本阶段。
+>
 > 项目：拾光 / SG Team（`shiguang-team`） · 工作区：仓库根目录（macOS / Windows 均可）
 >
 > 来源：CH-2 独立席位 2026-09-13 的只读审查（`src/renderer/src/run/*`、`session-rail-view.ts`、`handoff-entry.ts`、`App.tsx` 运行模块分支）。

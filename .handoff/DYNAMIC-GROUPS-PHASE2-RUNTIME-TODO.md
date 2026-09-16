@@ -1,6 +1,6 @@
 # 交接任务书：会话池 + 动态分组 · 阶段 2 运行时语义收口
 
-> **状态（2026-09-16）：2A 已落地（分支 `feat/dynamic-groups-phase2`，worktree `E:\SG-phase2`，基于 main `8e752ff`）；2B–2F 待动工。** 路线图见 `DYNAMIC-GROUPS-ROADMAP.md`。
+> **状态（2026-09-16）：2A、2B-1 已落地（分支 `feat/dynamic-groups-phase2`，worktree `E:\SG-phase2`，基于 main `8e752ff`）；2B-2（状态枚举收敛）与 2C–2F 待动工。** 路线图见 `DYNAMIC-GROUPS-ROADMAP.md`。
 > 每完成一步在第 8 节追加一行；中断后接手者只读第 0、8、9 节即可定位。真机验收按用户要求合并到全部阶段完成后一次进行。
 >
 > 项目：拾光 / SG Team（`shiguang-team`） · 工作区：仓库根目录（macOS / Windows 均可）
@@ -111,6 +111,18 @@
 - `TeamControlService` 公开面快照测试：删除的方法不再导出（knip 同时守护）。
 - `team_run start` → `not_applicable`。
 
+### 3.4 实现决策与偏差（09-16 落地 2B-1；2B-2 以此为准）
+
+2B 拆成两步：**2B-1「创建 / 启动路径退役」**（已提交 `7fb9a5f`）删除一切能*到达*团队 run 状态机的入口；**2B-2「状态枚举收敛」**再删状态机残留的类型与字段。
+
+- **v9 迁移比任务书多做两件事**：① 归档的团队 run 各绑定标 `failed` 并写 `archived: legacy team run（升级归档，团队 run 已退役）`——围栏据此对仍持旧令牌的会话答 `run_completed`，这是升级后唯一能让旧团队会话停下的通道；② 同一工作区内被更新 run 取代的 `running` 独立 run（早期代码脏数据）一并归档。归档走 SQL 而非 `completeRun`，因此**不撤销** `agent_registrations`——旧会话由围栏退役、`team_*` 调用在 `recordAgentCheckIn` / run 状态处被拒；2B-2 若要补撤销，在迁移里对归档 run 调 `revokeWorkspaceAgentRegistrations` 即可。
+- **`recordInstallation` 未拆**：任务书写「删整批重装路径、保留 `registerSeat`」，2B-1 保留了 `recordInstallation`（同拓扑幂等刷新、不轮换令牌、不改 run 状态，测试锁定），拆分留给 2B-2 / 阶段 3 的「不新建批次增删席位」一起做。
+- **`team-failover-service.ts` 未动**：`reconcileAcknowledgements`（依赖 `launching`）与 standby 自动接替仍在，随 2B-2 的 `launchStatus` 退役一起删。
+- **渲染层直接删组件而不是「改为不可达」**：`TeamSetupPage / RunModeSwitch / RunTeamPanel / team-setup.css / team-skill-defaults` 已删除（不可达组件会被 knip 拦），阶段 3 的 UI 任务书里对应的「替换」项按「已不存在」处理。`run-view` 仍保留 `RunView.archivedLegacyTeam`：工作区最新 run 是归档团队 run 时开始页多一句说明。
+- **`createDefaultTeamBundle` 迁入 `tests/legacy-team-fixtures.ts`**：夹具直接写 `running`、可带 `goal`、按通道号升序分配 lead / builder / reviewer / specialist（与旧 domain 版本一致）。legacy 团队 run 的读路径（run 级 lead、无组作用域、归档历史）仍在，这些测试用它作为最省事的「lead + 成员」夹具；2B-2 收敛枚举时不必迁移它们。
+- **`team_run start`** 对任何调用者恒返回 `not_applicable`（`tests/team-claim-lead.test.ts`），阶段 4 再从工具面删除该 action。
+- **2B-2 清单（由本步剩余项组成）**：`TeamRunStatus → 'running' | 'completed'`；删 `TeamLaunchStatus` 类型（列保留）、`TeamMemberReadiness.launching`、`TeamPreflight.goalDefined / agentsWaiting / canLaunch`、`TeamRun.launchedAt`；`src/renderer/src/team/team-dashboard-view.ts`（2B-1 后只剩它自己的测试引用它——整个模块连测试一起删）；`team-failover-service` 的 `reconcileAcknowledgements` 与 standby 接替；`TeamRoleBriefing` 里 legacy run 级目标分支；仓储 `upsertWorkspaceTeam`（拓扑变化时重置为 `draft`）/ `recordInstallation`（`draft ↔ ready` 推进）中写旧状态的残留分支；`solo-routing` / `verify-agent-runtime` 等测试里的旧状态取值。
+
 ***
 
 ## 4. 模块 2C · 席位重建 / 会话交接与组
@@ -179,3 +191,4 @@
 | 09-13 | 文档 | 建立本任务书；三项决策点待用户拍板 | 只读，无代码改动 |
 | 09-14 | 决策 | 用户拍板 D1 = a（系统全自动）、D2 = b（lead 可选）、D3 = a（lease 服务端自动续）——见 ROADMAP | — |
 | 09-16 14:50–15:30 | 2A | （CH-1）四个提交：① `plan_policy` 列（additive + 默认 lead_only，列存在性守卫，不升 schema）、`TeamGroup.planPolicy`、`defaultGroupPlanPolicy` / `groupMembersMayPlan`、身份解析对「无 lead + any_member」组的每个成员叠加主控能力、`setGroupPlanPolicy`（事件 `plan_policy_updated`）+ 服务层（只在成员规划权真的变化时发 notice）+ IPC `team-group:set-plan-policy`、`CreateTeamGroupInput.planPolicy`；② 编排边界：`TeamOrchestrator` 删 lead【系统预警】、`TeamCollaborationSweeper.sweepUnanswered` 删 lead【清扫提醒】抄送、新增 `TaskDispatcher.notifyOutcome`（done / failed → lead，`taskId:status:attemptCount` 幂等）与 `sweepMemberAttention`（成员确认离线 → lead，按离线周期一次）；③ 简报重写（lead 只规划 / 答用户 / 汇总上报；成员不再手写上报；无 lead 组按 `membersMayPlan` 说明谁能规划）、`team_task` 描述去掉「plan（主控专用）」；④ 桌面建任务入口 `TeamGroupService.planGroupTasks` → `TaskPoolService.planTasks` → 同一 `pool.plan`，校验口径同 Agent 侧，IPC `team-group:plan-tasks`。文档：`docs/ARCHITECTURE.md`（依赖规则、会话池一节、09-16 条目）、`docs/TASK-MCP.md`（Who plans / 唯一调度者） | 新增 / 改写测试见 ARCHITECTURE 09-16 条目「Verification」；全量 193 文件 / 1930 用例（`brand-migration` 在本机 Node 22 下因 vitest 无法打包 `node:sqlite` 失败，属环境问题，CI Node 24 不受影响）、typecheck 全绿 |
+| 09-16 16:00–20:50 | 2B-1 | （CH-1 起、CH-3 接手收尾）提交 `7fb9a5f`：团队 run 的创建 / 启动路径退役。① 仓储 schema v8→v9：归档全部未结束的 legacy 团队 run（绑定标 failed + `archived: legacy team run` 文案，围栏据此 `run_completed`）与被取代的旧 running 独立 run，兜底把 `draft / ready / launching / attention / paused` 全部改 completed，幂等；删 `updateRunGoal / beginLaunch / ensureRunLaunching / recordLaunchDelivery`、`migrate()` 末尾 `ready→draft` 修复、`recordAgentCheckIn` 内的自愈 / 全员签到推进（非 running 一律 `run_completed`）；`completeRun / setActingLead` 只作用于 running。② 服务层 `configureIndependentWorkspace → createSessionPool`（替换当前任意 run），删 `ensureWorkspace / configureWorkspace / createNextRun / updateGoal / launch / ensureRunLaunched / settleAgentSessionLaunch / transferLead / clearActingLead` 与启动在途守卫。③ 启动提示只剩 solo 一种（删 `buildTeamLaunchHint`）。④ IPC / API / preload 删 `prepare-detected-workspace / choose-workspace / create-team / next-run / prepare-active-setup / update-goal / launch` 与 `TeamSetupDraft / CreateTeamInput / ChooseTeamWorkspaceResult`；`resolveTeamSetupMembers` 删除。⑤ MCP `team_run start` 恒 `not_applicable`；`transfer_lead` 要求 running。⑥ 渲染层删 `TeamSetupPage / RunModeSwitch / RunTeamPanel / team-setup.css / team-skill-defaults / TeamIcon / SoloIcon`，`run-view / RunPage / RunHeader / RunSeats` 池化（三个 phase，归档团队 run → 开始页 + `.run-start__note`），清理死 CSS；preview 与两份 smoke 改为「池 + 组」。⑦ `createDefaultTeamBundle` 迁入 `tests/legacy-team-fixtures.ts`。偏差与 2B-2 清单见 §3.4。文档：`docs/ARCHITECTURE.md`（运行模式一节、围栏、运行页、09-16 2B-1 条目）、`docs/TASK-MCP.md`（`team_run start`、会话池一节）、ROADMAP 状态 | 全量 190 文件 / 1885 用例（1884 通过 + 1 skipped；`brand-migration` 同上环境问题），typecheck、knip、`npm run build`、`smoke:mcp`（sessionPool / groupScoped / 围栏 / 重启续接全 true）、`smoke:channel`（九工具、回复门、围栏、入组简报全 true）全绿；新增 `team_run start → not_applicable` 测试 |

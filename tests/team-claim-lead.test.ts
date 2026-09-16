@@ -366,3 +366,32 @@ describe('team_run claim_lead（主控离线接管）', () => {
     }
   })
 })
+
+describe('team_run start（阶段 2 · 2B：启动状态机已退役）', () => {
+  it('answers not_applicable for every caller and leaves the run and the bindings untouched', async () => {
+    const data = setup()
+    const lead = await data.connect('lead')
+    const builder = await data.connect('builder')
+    try {
+      const before = data.team.loadTeamControl()
+      for (const [caller, channelId] of [[lead, '1'], [builder, '2']] as const) {
+        const result = await caller.client.callTool({ name: 'team_run', arguments: { channel_id: channelId, action: 'start' } })
+        expect(result.isError).toBeFalsy()
+        expect(result.structuredContent).toMatchObject({
+          runId: data.bundle.run.id,
+          status: 'not_applicable',
+          nextAction: { type: 'enter_channel_wait', channelId }
+        })
+        expect(JSON.stringify(result.structuredContent)).toContain('没有「启动」这一步')
+      }
+      const after = data.team.loadTeamControl()
+      expect(after.runs.find((run) => run.id === data.bundle.run.id)).toMatchObject({ status: 'running', launchedAt: undefined })
+      expect(after.bindings.map((binding) => [binding.slotId, binding.launchStatus, binding.composerBindingKey]))
+        .toEqual(before.bindings.map((binding) => [binding.slotId, binding.launchStatus, binding.composerBindingKey]))
+    } finally {
+      await lead.client.close()
+      await builder.client.close()
+      data.close()
+    }
+  })
+})
