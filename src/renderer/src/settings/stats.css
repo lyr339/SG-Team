@@ -152,10 +152,14 @@
 }
 
 .stats-ledger__sep {
-  align-self: center;
+  /* 行盒被 23px 大数字撑高，align-self: center 会把竖线抬到小字视觉中心之上约 4px。
+     无文本 flex 项的合成基线是盒底边：baseline 对齐让竖线底边落在共享文字基线上，
+     再下沉 1px 贴住小字字面（含 CJK 下伸），与大数字的行高解耦。 */
+  align-self: baseline;
   width: 1px;
-  height: 11px;
+  height: 10px;
   background: var(--line-strong);
+  transform: translateY(1px);
 }
 
 .stats-ledger__cumulative {
