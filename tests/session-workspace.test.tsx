@@ -41,6 +41,8 @@ function renderWorkspace(overrides: {
   liveProcess?: { turn: string; startedAt: number; updatedAt: number; truncatedItemCount?: number; generating?: boolean; blocks: import('../src/domain/conversation-entry').ProcessBlock[] }
   liveAgentResponse?: import('../src/shared/desktop-api').LiveAgentResponseState
   nativeProcessStream?: import('../src/shared/desktop-api').NativeProcessStreamStatus
+  turnFiles?: import('../src/renderer/src/turn-files-view').TurnFilesView
+  onReviewTurnFiles?: (path?: string) => void
 } = {}): string {
   return renderToStaticMarkup(
     <SessionWorkspace
@@ -56,6 +58,8 @@ function renderWorkspace(overrides: {
       liveProcess={overrides.liveProcess}
       liveAgentResponse={overrides.liveAgentResponse}
       nativeProcessStream={overrides.nativeProcessStream}
+      turnFiles={overrides.turnFiles}
+      onReviewTurnFiles={overrides.onReviewTurnFiles}
     />
   )
 }
@@ -307,6 +311,39 @@ describe('SessionWorkspace', () => {
     expect(html).toContain('queue-tray__item is-held')
     expect(html).toContain('1 条等待新会话')
     expect(html).toContain('Agent 正在监听：下一条消息会立即投递')
+  })
+
+  it('本轮文件栏停在托盘之下、输入区之上；空集合或未传入时不渲染', () => {
+    const turnFiles = {
+      files: [
+        { path: 'src/domain/team-control.ts', dir: 'src/domain/', stem: 'team-control', ext: '.ts', badge: 'TS', additions: 18, deletions: 20, status: 'modified' as const, source: 'git' as const },
+        { path: 'src/mcp/index.ts', dir: 'src/mcp/', stem: 'index', ext: '.ts', badge: 'TS', additions: 22, deletions: 37, status: 'modified' as const, source: 'git' as const }
+      ],
+      additions: 40, deletions: 57, working: true, estimated: false
+    }
+    const html = renderWorkspace({
+      session: { status: 'running', waiting: false, connectionPhase: 'processing', deliveryMode: 'queued', queueDepth: 1 },
+      entries: [
+        entry({ id: 'u1', role: 'user', source: 'desktop', text: '第一条', timestamp: 1_000, deliveredAt: 1_050 }),
+        entry({ id: 'u2', role: 'user', source: 'desktop', text: '第二条（排队中）', timestamp: 5_000 })
+      ],
+      turnFiles,
+      onReviewTurnFiles: () => {}
+    })
+    const timeline = html.indexOf('class="workspace-timeline-wrap"')
+    const tray = html.indexOf('class="queue-tray')
+    const bar = html.indexOf('class="turn-files')
+    const composer = html.indexOf('class="workspace-composer')
+    expect(timeline).toBeGreaterThan(-1)
+    expect(tray).toBeGreaterThan(timeline)
+    expect(bar).toBeGreaterThan(tray)
+    expect(composer).toBeGreaterThan(bar)
+    expect(html).toContain('<b>2</b> 个文件')
+    expect(html).toContain('data-path="src/mcp/index.ts"')
+    expect(html).toContain('>审查<')
+
+    expect(renderWorkspace({ turnFiles: { ...turnFiles, files: [] } })).not.toContain('turn-files')
+    expect(renderWorkspace()).not.toContain('turn-files')
   })
 
   it('直连传输没有排队态：未带投递时刻的用户消息照常留在时间线', () => {

@@ -31,12 +31,15 @@ Opened by selecting a session row:
 session list | session header + warning rail
              | transcript / tool timeline / diff
              | delivery tray (messages not yet taken by check_messages)
+             | turn files bar (files the Agent changed in this turn, +/− per file)
              | message composer + handoff + unattended controls
 ```
 
 The reference UI's commerce banner, refund actions and unrelated utilities are intentionally excluded. The useful patterns are persistent session navigation, explicit disconnection messaging, visible recovery, a stable composer and direct handoff.
 
 The timeline shows only what the Agent has actually received. A message sent while the Agent is busy (or offline) is not a timeline row: it waits in the delivery tray docked above the composer — count, presence state, per-message withdraw / release — and moves into the timeline the moment `check_messages` takes it. Screenshot scenes: `session-queue-tray-{light,dark,collapsed}` (`?queued=1`).
+
+Directly above the composer (below the tray) sits the **turn files bar** — the counterpart of Cursor's own "N Files" strip: one row per file the Agent edited or wrote in the current turn (everything after the latest delivered user message, persisted process blocks and the live stream alike), with a language badge, the basename (stem truncates, extension never does), the directory (truncated from the left) and `+N −M`. Counts come from the Git working-tree summary the review panel already holds (so the numbers match what "审查" opens), falling back to the summed edit hints — marked `≈` and dimmed — until Git has seen the file. A spinner marks a turn still in progress; the bar disappears when the set is empty and resets when the next message is taken. The header collapses (persisted), the list stays mounted and `inert`. "审查" and every row raise a `review-focus` request that opens the right pane, switches to 变更 → 本轮 and expands + highlights the file. There is deliberately no Stop: aborting a Cursor turn is not a capability 拾光 has. Screenshot scenes: `session-turn-files-{light,dark,collapsed,with-tray-narrow,narrow-pane,review}` (`?turnfiles=1`, `&deep=1` for a deep path, `&queued=1` to stack with the tray).
 
 Required data before the workspace is enabled:
 

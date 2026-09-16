@@ -996,7 +996,8 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
    ============================================================ */
 
 /* 行：页头 / 警示条 / 时间线 / 待投递托盘 / 输入区 */
-.workspace-main { height: 100%; min-width: 0; min-height: 0; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto auto; background: transparent; }
+/* 六行：页头 / 警示 / 时间线 / 待投递托盘 / 本轮文件栏 / 输入区。托盘与文件栏都是按需出现的 auto 行。 */
+.workspace-main { height: 100%; min-width: 0; min-height: 0; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto auto auto; background: transparent; }
 .workspace-header { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 14px; min-height: 78px; padding: 13px 22px; background: transparent; border-bottom: var(--border-width-regular) solid var(--line-faint); }
 .workspace-back { display: none; }
 .workspace-identity { min-width: 0; }
@@ -1236,6 +1237,64 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
   .queue-tray, .queue-tray__item { animation: none; }
   .queue-tray.is-busy .queue-tray__state i { animation: none; }
   .queue-tray__chevron, .queue-tray__listwrap, .queue-tray__list { transition: none; }
+}
+
+/* ---------- 本轮文件栏 ----------
+   输入区上方、托盘之下：本轮 Agent 改动过的文件与增删行数（Cursor 原生 “N Files” 栏的拾光版）。
+   与托盘同一尺寸语言（36px 头部、圆角 12、与输入区同宽），但边框是实线——虚线在这里专指
+   「还不是对话记录」，而这些文件是已经发生的事实。 */
+.turn-files { min-width: 0; display: grid; margin: 0 16px 8px; color: var(--text); background: var(--surface); border: var(--border-width-regular) solid var(--line-strong); border-radius: 12px; animation: turn-files-in 160ms ease; }
+.turn-files__head { display: flex; align-items: center; gap: 8px; min-height: 36px; padding-right: 6px; }
+.turn-files__toggle { min-width: 0; flex: 1 1 auto; display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 6px 8px 6px 9px; color: var(--text-soft); background: transparent; border: 0; border-radius: 11px 0 0 11px; font: inherit; text-align: left; cursor: pointer; }
+.turn-files__toggle:hover, .turn-files__toggle:focus-visible { background: var(--accent-wash); }
+.turn-files__toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.turn-files__chevron { width: 18px; height: 18px; flex: 0 0 auto; display: grid; place-items: center; color: var(--faint); transition: transform 160ms ease; }
+.turn-files__chevron svg { width: 14px; height: 14px; }
+.turn-files.is-collapsed .turn-files__chevron { transform: rotate(-90deg); }
+.turn-files__title { flex: 0 0 auto; display: inline-flex; align-items: baseline; gap: 4px; color: var(--text); font-size: var(--fs-11); font-weight: 600; white-space: nowrap; }
+.turn-files__title b { font: 700 var(--fs-11)/1 var(--mono); }
+/* 合计与行内增删同一写法：绿 + / 红 −，等宽数字；估算值前置 ≈。 */
+.turn-files__totals, .turn-files__counts { flex: 0 0 auto; display: inline-flex; align-items: baseline; gap: 6px; font: 600 var(--fs-10)/1 var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.turn-files__totals b, .turn-files__counts b { color: var(--color-text-success); font-weight: 600; }
+.turn-files__totals em, .turn-files__counts em { color: var(--red); font-style: normal; }
+.turn-files__totals small, .turn-files__counts small { color: var(--muted); font-size: var(--fs-10); }
+.turn-files__totals small { margin-right: -2px; }
+.turn-files__aside { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; }
+/* 转圈：与名册状态行同一枚 11px 缺角圆环，走强调色；只在 Agent 仍在处理本轮消息时出现。 */
+.turn-files__spinner { box-sizing: border-box; width: 11px; height: 11px; border-radius: 50%; border: 1.5px solid color-mix(in srgb, var(--accent) 28%, transparent); border-top-color: var(--accent); animation: rail-activity-spin 900ms linear infinite; }
+.turn-files__review { min-height: 26px; padding: 0 11px; color: var(--text-soft); background: var(--surface); border: var(--border-width-regular) solid var(--line); border-radius: 7px; font: inherit; font-size: var(--fs-11); font-weight: 600; line-height: 1; cursor: pointer; }
+.turn-files__review:hover, .turn-files__review:focus-visible { color: var(--color-text-info); border-color: var(--color-border-info); background: var(--color-background-info); }
+.turn-files__review:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* 列表常驻挂载，收起走 grid-rows 过渡（与托盘对称）。 */
+.turn-files__listwrap { display: grid; grid-template-rows: 1fr; overflow: hidden; transition: grid-template-rows 180ms ease; }
+.turn-files.is-collapsed .turn-files__listwrap { grid-template-rows: 0fr; }
+.turn-files__list { min-height: 0; max-height: 176px; display: grid; margin: 0; padding: 0 6px 6px; overflow-y: auto; list-style: none; transition: padding-block 180ms ease; }
+.turn-files.is-collapsed .turn-files__list { padding-block: 0; }
+.turn-files__item { border-top: var(--border-width-regular) solid var(--line-faint); animation: turn-files-in 160ms ease; }
+.turn-files__row { width: 100%; min-height: 30px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 9px; padding: 4px 6px 4px 4px; color: var(--text); background: transparent; border: 0; border-radius: 7px; font: inherit; text-align: left; cursor: pointer; }
+.turn-files__row:disabled { cursor: default; }
+.turn-files__row:not(:disabled):hover, .turn-files__row:focus-visible { background: var(--accent-wash); }
+.turn-files__row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* 语言徽标：等宽小字、浅底，不染色相——文件类型不是状态。 */
+.turn-files__badge { width: 30px; height: 20px; display: grid; place-items: center; color: var(--muted); background: var(--surface-soft); border-radius: 5px; font: 700 var(--fs-9, 10px)/1 var(--mono); font-style: normal; letter-spacing: .02em; }
+/* 文件名：主干从尾部截断、扩展名永不截断、目录跟在其后从头部截断（窄栏先牺牲目录）。 */
+.turn-files__name { min-width: 0; display: flex; align-items: baseline; gap: 7px; overflow: hidden; }
+.turn-files__name strong { min-width: 0; flex: 0 1 auto; display: inline-flex; overflow: hidden; color: var(--text); font-size: var(--fs-11); font-weight: 600; white-space: nowrap; }
+.turn-files__name strong > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.turn-files__name strong > b { flex: 0 0 auto; font-weight: 600; }
+.turn-files__name small { min-width: 0; flex: 1 1 auto; overflow: hidden; direction: rtl; color: var(--muted); font: 500 var(--fs-10)/1 var(--mono); text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.turn-files__name small bdi { unicode-bidi: plaintext; }
+.turn-files__status { padding: 1px 5px; color: var(--muted); background: var(--surface-soft); border-radius: 4px; font: 700 var(--fs-9, 10px)/1 var(--mono); font-style: normal; }
+.turn-files__item.is-deleted .turn-files__status { color: var(--red); background: var(--red-soft); }
+.turn-files__item.is-added .turn-files__status, .turn-files__item.is-untracked .turn-files__status { color: var(--color-text-success); background: var(--color-background-success); }
+.turn-files__item.is-deleted .turn-files__name strong { color: var(--text-soft); text-decoration: line-through; }
+.turn-files__item.is-estimated .turn-files__counts { opacity: .72; }
+/* 中栏有 680px 下限（SESSION_CONTENT_MIN_WIDTH），栏最窄 648px：目录列用 rtl 省略号从头截断即可，不需要按宽度整列收起。 */
+@keyframes turn-files-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .turn-files, .turn-files__item { animation: none; }
+  .turn-files__spinner { animation: none; border-top-color: color-mix(in srgb, var(--accent) 28%, transparent); border-right-color: var(--accent); }
+  .turn-files__chevron, .turn-files__listwrap, .turn-files__list { transition: none; }
 }
 
 /* ---------- 消息工作台 ---------- */
@@ -1760,7 +1819,7 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
   .workspace-composer { margin: 0 10px 10px; }
   .composer-topbar { gap: 8px; padding-inline: 9px; }
   .composer-agent-chip { max-width: min(230px, 58vw); }
-  .queue-tray { margin-inline: 10px; }
+  .queue-tray, .turn-files { margin-inline: 10px; }
   .composer-duration { padding-inline: 8px; }
   .workspace-composer textarea { padding: 10px 12px 7px; }
   .composer-controls { gap: 7px; padding: 5px 8px 7px; }

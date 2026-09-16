@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { AgentSession } from '../../domain/agent-session'
 import type { ConversationEntry } from '../../domain/conversation-entry'
 import type { WorkspaceReviewSummary } from '../../domain/workspace-review'
@@ -11,6 +11,7 @@ import { ActivityIcon, ArtifactIcon, DiffIcon, PlanIcon } from './inspector/Insp
 import { InspectorPanel, InspectorShell, readStoredInspectorTab, type InspectorTabId, type InspectorTabSpec } from './inspector/InspectorShell'
 import { currentCursorTodos, PlanPanel } from './inspector/PlanPanel'
 import { ReviewPanel } from './inspector/ReviewPanel'
+import { subscribeReviewFocus } from './inspector/review-focus-bus'
 import { turnMutatedPaths } from './inspector/review-scope'
 import { todoTone } from './TodoIndicator'
 
@@ -28,6 +29,8 @@ interface WorkspaceInspectorProps {
   onQuoteToComposer?: (text: string) => void
   /** 右栏已收起但仍挂载：面板保留状态，暂停轮询等后台工作，重新展开时补拉一次。 */
   hidden?: boolean
+  /** 工作区变更摘要的镜像（输入区上方的本轮文件栏用它取增删行数，不重复拉取）。 */
+  onReviewSummary?: (summary: WorkspaceReviewSummary | undefined) => void
   onClose: () => void
 }
 
@@ -46,6 +49,7 @@ export function WorkspaceInspector({
   workspacePath,
   onQuoteToComposer,
   hidden = false,
+  onReviewSummary,
   onClose
 }: WorkspaceInspectorProps): React.JSX.Element {
   const [activeTab, setActiveTab] = useState<InspectorTabId>(readStoredInspectorTab)
@@ -55,7 +59,15 @@ export function WorkspaceInspector({
   const activity = useMemo(() => projectActivity(entries, liveProcess, workspacePath), [entries, liveProcess, workspacePath])
   const artifacts = useMemo(() => projectArtifacts(entries, reviewSummary, workspacePath), [entries, reviewSummary, workspacePath])
   const turnPaths = useMemo(() => turnMutatedPaths(entries, liveProcess, workspacePath), [entries, liveProcess, workspacePath])
-  const onSummary = useCallback((summary: WorkspaceReviewSummary | undefined) => setReviewSummary(summary), [])
+  const onSummary = useCallback((summary: WorkspaceReviewSummary | undefined) => {
+    setReviewSummary(summary)
+    onReviewSummary?.(summary)
+  }, [onReviewSummary])
+  // 中栏文件栏的「审查」：切到变更标签（开右栏由 DesktopShell 处理，切范围与定位由 ReviewPanel 处理）。
+  useEffect(() => subscribeReviewFocus(() => setActiveTab('review')), [])
+  // 右栏收起时暂停变更摘要的轮询——除非本轮有改动过的文件：那时输入区上方的文件栏正在
+  // 消费这份摘要的增删行数，它有可见的消费者，不能停在旧数字上。
+  const reviewPaused = hidden && turnPaths.length === 0
 
   const liveActivity = Boolean(liveProcess?.generating || liveProcess?.blocks.some((block) => block.status === 'running'))
   const runningTodos = todos.items.some((todo) => todoTone(todo.status) === 'in_progress')
@@ -70,7 +82,7 @@ export function WorkspaceInspector({
   return (
     <InspectorShell tabs={tabs} activeTab={activeTab} onTabChange={setActiveTab} onClose={onClose}>
       <InspectorPanel tab="review">
-        <ReviewPanel workspaceKey={workspaceKey} turnPaths={turnPaths} paused={hidden} onQuote={onQuoteToComposer} onSummary={onSummary} />
+        <ReviewPanel workspaceKey={workspaceKey} turnPaths={turnPaths} paused={reviewPaused} onQuote={onQuoteToComposer} onSummary={onSummary} />
       </InspectorPanel>
       <InspectorPanel tab="plan">
         <PlanPanel todos={todos} onOpenTab={setActiveTab} />

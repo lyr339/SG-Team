@@ -71,21 +71,31 @@ export function latestDeliveredUserIndex(entries: readonly ConversationEntry[]):
   return -1
 }
 
-/** 本轮（最近一条已投递用户消息之后）改动过的文件路径（已归一，去重，保持首次出现顺序）。 */
-export function turnMutatedPaths(
+/**
+ * 本轮（最近一条已投递用户消息之后）的全部文件改动块：已落库回复的过程 + 续作 + 直播中的过程，
+ * 按时间先后。「本轮改动过的文件」与输入区上方的本轮文件栏都从这一份块集合投影。
+ */
+export function turnMutationBlocks(
   entries: readonly ConversationEntry[],
-  liveProcess: LiveProcessState | undefined,
-  workspacePath?: string
-): string[] {
+  liveProcess: LiveProcessState | undefined
+): ProcessBlock[] {
   const start = latestDeliveredUserIndex(entries)
   const blocks: ProcessBlock[] = []
   for (const entry of entries.slice(start + 1)) {
     if (entry.role === 'assistant') blocks.push(...conversationEntryProcessBlocks(entry))
   }
   if (liveProcess) blocks.push(...liveProcess.blocks)
+  return blocks.filter(isFileMutationBlock)
+}
+
+/** 本轮改动过的文件路径（已归一，去重，保持首次出现顺序）。 */
+export function turnMutatedPaths(
+  entries: readonly ConversationEntry[],
+  liveProcess: LiveProcessState | undefined,
+  workspacePath?: string
+): string[] {
   const paths: string[] = []
-  for (const block of blocks) {
-    if (!isFileMutationBlock(block)) continue
+  for (const block of turnMutationBlocks(entries, liveProcess)) {
     const raw = processBlockPath(block)
     if (!raw) continue
     const normalized = normalizeReviewPath(raw, workspacePath)

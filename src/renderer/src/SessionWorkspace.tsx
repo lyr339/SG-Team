@@ -10,6 +10,8 @@ import { ClampedMessage } from './ClampedMessage'
 import { ProcessTurnCard } from './ProcessTurnCard'
 import type { QuestionActions } from './QuestionCard'
 import { QueuedMessageTray } from './QueuedMessageTray'
+import { TurnFilesBar } from './TurnFilesBar'
+import type { TurnFilesView } from './turn-files-view'
 import { TurnResponseText } from './TurnResponseText'
 import { SessionUsageStat } from './SessionUsageStat'
 import { suggestedActionsFromText } from './process-turn-view'
@@ -41,6 +43,10 @@ interface SessionWorkspaceProps {
   nativeProcessStream?: NativeProcessStreamStatus
   /** 过程卡里 ask_question 的回答 / 跳过动作（绑定到本通道）。 */
   questionActions?: QuestionActions
+  /** 本轮改动文件栏（贴在输入区上方）；缺省或空集合不渲染。 */
+  turnFiles?: TurnFilesView
+  /** 文件栏的「审查」：打开右栏审查页并切到「本轮」，带路径时定位到该文件。 */
+  onReviewTurnFiles?: (path?: string) => void
 }
 
 /** 同角色且间隔小于该值的连续消息合并成一组（只显示一次头像与名称）。 */
@@ -156,7 +162,9 @@ export function SessionWorkspace({
   liveProcess,
   liveAgentResponse,
   nativeProcessStream,
-  questionActions
+  questionActions,
+  turnFiles,
+  onReviewTurnFiles
 }: SessionWorkspaceProps): React.JSX.Element {
   const [sendError, setSendError] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -799,6 +807,9 @@ export function SessionWorkspace({
           })
         } : undefined}
       />
+
+      {/* 本轮文件栏：Agent 这一轮改动过的文件与增删行数，紧贴输入区之上；右栏审查页「本轮」范围的同一份数据。 */}
+      {turnFiles ? <TurnFilesBar view={turnFiles} onReview={onReviewTurnFiles} /> : null}
 
       <ComposerWorkbench
         session={session}

@@ -686,6 +686,135 @@ const scenes = [
     name: 'session-queue-tray-collapsed', width: 1440, height: 900, colorScheme: 'light', query: 'queued=1', storage: railStorage(), clip: '.queue-tray',
     actions: [{ click: '.queue-tray__head' }, { wait: 200 }]
   },
+  // 本轮文件栏：Agent 改了三个文件（Git 已看到）、正在写第四个（按过程块估算），与本轮无关的未提交文件不出现。
+  // 探针核对：栏在时间线之下、输入区之上、与输入区同宽；四行、合计、估算标记、转圈、审查入口；无关文件缺席。
+  ...['light', 'dark'].map((colorMode) => ({
+    name: `session-turn-files-${colorMode}`, width: 1440, height: 900, colorScheme: colorMode, query: 'turnfiles=1',
+    storage: railStorage({ colorMode }), clip: null,
+    actions: [
+      { wait: 400 },
+      {
+        label: '文件栏结构',
+        probe: `(() => {
+          const bar = document.querySelector('.turn-files')
+          const timeline = document.querySelector('.workspace-timeline-wrap')
+          const composer = document.querySelector('.workspace-composer')
+          if (!bar || !timeline || !composer) return { found: false }
+          const barBox = bar.getBoundingClientRect()
+          const composerBox = composer.getBoundingClientRect()
+          const rows = Array.from(bar.querySelectorAll('.turn-files__item')).map((row) => ({
+            path: row.getAttribute('data-path'),
+            counts: row.querySelector('.turn-files__counts')?.textContent ?? '',
+            estimated: row.classList.contains('is-estimated')
+          }))
+          return {
+            found: true,
+            belowTimeline: barBox.top >= timeline.getBoundingClientRect().bottom - 1,
+            aboveComposer: barBox.bottom <= composerBox.top + 1,
+            sameWidthAsComposer: Math.abs(barBox.left - composerBox.left) < 1 && Math.abs(barBox.right - composerBox.right) < 1,
+            headHeight: Math.round(bar.querySelector('.turn-files__head').getBoundingClientRect().height),
+            count: bar.getAttribute('data-file-count'),
+            title: bar.querySelector('.turn-files__title')?.textContent ?? '',
+            totals: bar.querySelector('.turn-files__totals')?.textContent ?? '',
+            spinner: Boolean(bar.querySelector('.turn-files__spinner')),
+            review: bar.querySelector('.turn-files__review')?.textContent ?? '',
+            rows,
+            unrelatedAbsent: !rows.some((row) => row.path.endsWith('App.tsx')),
+            noStop: !/Stop|中止/.test(bar.textContent ?? '')
+          }
+        })()`
+      }
+    ]
+  })),
+  {
+    name: 'session-turn-files-collapsed', width: 1440, height: 900, colorScheme: 'light', query: 'turnfiles=1', storage: railStorage(), clip: '.turn-files',
+    actions: [{ wait: 300 }, { click: '.turn-files__toggle' }, { wait: 220 }, {
+      label: '折叠后列表仍挂载且 inert',
+      probe: `(() => {
+        const bar = document.querySelector('.turn-files')
+        return {
+          collapsed: bar.classList.contains('is-collapsed'),
+          inert: bar.querySelector('.turn-files__listwrap').hasAttribute('inert'),
+          rowsMounted: bar.querySelectorAll('.turn-files__item').length,
+          listHeight: Math.round(bar.querySelector('.turn-files__listwrap').getBoundingClientRect().height),
+          headHeight: Math.round(bar.querySelector('.turn-files__head').getBoundingClientRect().height)
+        }
+      })()`
+    }]
+  },
+  // 两条栏叠加（托盘 + 文件栏）与窄窗：栏之间不重叠、顺序托盘在上。中栏有 680px 下限，栏最窄 648px，目录列始终保留。
+  {
+    name: 'session-turn-files-with-tray-narrow', width: 980, height: 820, colorScheme: 'dark', query: 'turnfiles=1&queued=1',
+    storage: railStorage({ colorMode: 'dark' }), clip: null,
+    actions: [{ wait: 400 }, {
+      label: '托盘与文件栏叠放',
+      probe: `(() => {
+        const tray = document.querySelector('.queue-tray')
+        const bar = document.querySelector('.turn-files')
+        const composer = document.querySelector('.workspace-composer')
+        if (!tray || !bar || !composer) return { found: false }
+        const trayBox = tray.getBoundingClientRect()
+        const barBox = bar.getBoundingClientRect()
+        const dirs = Array.from(bar.querySelectorAll('.turn-files__name small')).map((el) => getComputedStyle(el).display)
+        return {
+          found: true,
+          trayAboveBar: trayBox.bottom <= barBox.top + 1,
+          barAboveComposer: barBox.bottom <= composer.getBoundingClientRect().top + 1,
+          barWidth: Math.round(barBox.width),
+          dirsVisible: dirs.length > 0 && dirs.every((display) => display !== 'none'),
+          names: Array.from(bar.querySelectorAll('.turn-files__name strong')).map((el) => el.textContent)
+        }
+      })()`
+    }]
+  },
+  // 最窄中栏（名册 + 右栏都展开、窗口 1440 下限）：栏 648px；深路径的目录列从头截断、文件名扩展名不截断、行不横向溢出。
+  {
+    name: 'session-turn-files-narrow-pane', width: 1440, height: 820, colorScheme: 'dark', query: 'turnfiles=1&deep=1',
+    storage: { ...baseStorage({ colorMode: 'dark', tab: 'plan' }), [SESSION_RAIL_WIDTH_KEY]: JSON.stringify([400]) }, clip: '.turn-files',
+    actions: [{ wait: 400 }, {
+      label: '窄栏深路径截断',
+      probe: `(() => {
+        const bar = document.querySelector('.turn-files')
+        if (!bar) return { found: false }
+        const rows = Array.from(bar.querySelectorAll('.turn-files__row'))
+        const deep = rows.find((row) => (row.getAttribute('title') ?? '').includes('very-long-feature-module-name'))
+        const dir = deep?.querySelector('.turn-files__name small')
+        const ext = deep?.querySelector('.turn-files__name strong > b')
+        return {
+          found: true,
+          barWidth: Math.round(bar.getBoundingClientRect().width),
+          deepRow: Boolean(deep),
+          dirTruncated: dir ? dir.scrollWidth > dir.clientWidth + 1 : null,
+          extVisible: ext ? ext.getBoundingClientRect().right <= bar.getBoundingClientRect().right : null,
+          extText: ext?.textContent ?? '',
+          noOverflow: rows.every((row) => row.scrollWidth <= row.clientWidth + 1),
+          counts: Array.from(bar.querySelectorAll('.turn-files__counts')).map((el) => el.textContent)
+        }
+      })()`
+    }]
+  },
+  // 点「审查」：右栏展开并切到「变更」标签、范围切到「本轮」；点某一行：该文件在右栏被展开高亮。
+  {
+    name: 'session-turn-files-review', width: 1440, height: 900, colorScheme: 'light', query: 'turnfiles=1',
+    storage: { ...railStorage(), 'sg-team.layout:v1:workspace-inspector:open': '0', 'sg-team.inspector:active-tab': 'plan', 'sg-team.inspector:review-scope': 'uncommitted' },
+    clip: null,
+    actions: [{ wait: 400 }, { click: '[data-path="src/mcp/index.ts"] .turn-files__row' }, { wait: 500 }, {
+      label: '右栏定位',
+      probe: `(() => {
+        const inspector = document.querySelector('.workspace-inspector-pane')
+        const active = document.querySelector('.inspector-tab.is-active')
+        const scope = document.querySelector('.inspector-review__scope > button[aria-pressed="true"]')
+        const file = document.querySelector('.review-file[data-path="src/mcp/index.ts"]')
+        return {
+          inspectorVisible: inspector ? !inspector.hasAttribute('inert') : false,
+          activeTab: active?.textContent ?? '',
+          scope: scope?.textContent ?? '',
+          fileOpen: file?.classList.contains('is-open') ?? false,
+          listedFiles: Array.from(document.querySelectorAll('.review-file')).map((el) => el.getAttribute('data-path'))
+        }
+      })()`
+    }]
+  },
   {
     name: 'session-process-group-expanded', width: 1440, height: 1200, colorScheme: 'light', storage: railStorage(), clip: '.chat-row--process:has(.cursor-native-group)',
     actions: [

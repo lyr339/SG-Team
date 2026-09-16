@@ -482,6 +482,61 @@ if (previewParameters.get('queued') === '1') {
     ? { ...session, status: 'running', connectionPhase: 'processing', waiting: false, online: true, deliveryMode: 'queued', queueDepth: 3 }
     : session)
 }
+// 本轮文件栏走查：?turnfiles=1 —— Agent 正在处理一条消息，已经改了三个文件（Git 已看到）、正在写第四个
+//（Git 还没看到 → 按过程块估算），另有一个与本轮无关的未提交文件不该出现在栏里。可与 ?queued=1 叠加看两条栏。
+const turnFilesScene = previewParameters.get('turnfiles') === '1'
+if (turnFilesScene) {
+  const askedAt = previewNow - 4 * 60_000
+  // 过程块按「最近一条已投递用户消息」归属回合：基础夹具里最近 5 分钟的历史（e7–e11，含一条
+  // 与本轮提问同一分钟投递的用户消息）会抢走块的锚点，让本轮只剩打字占位。这一场景只保留提问
+  // 一分钟之前的历史；?queued=1 追加在提问之后的未投递消息照常保留（它们本就不进时间线）。
+  const history = (state.desktop.conversations['2'] ?? []).filter((entry) => (
+    entry.timestamp < askedAt - 60_000 || (entry.role === 'user' && entry.deliveredAt === undefined && entry.timestamp > askedAt)
+  ))
+  state.desktop.conversations = {
+    ...state.desktop.conversations,
+    '2': [
+      ...history.map((entry) => (
+        entry.role === 'user' && entry.deliveredAt === undefined && entry.timestamp < askedAt
+          ? { ...entry, deliveredAt: entry.timestamp + 1_000 }
+          : entry
+      )),
+      {
+        id: 'outbox:turnfiles-1', channelId: '2', role: 'user', source: 'desktop', status: 'complete',
+        timestamp: askedAt, deliveredAt: askedAt + 800,
+        text: '把团队 run 的创建 / 启动路径退役掉：failover 不再接管席位，handoff 在会话池里拒绝角色迁移。'
+      }
+    ]
+  }
+  state.desktop.liveProcess = {
+    ...(state.desktop.liveProcess ?? {}),
+    '2': {
+      turn: 'cursor:preview-turnfiles-turn',
+      startedAt: askedAt + 2_000,
+      updatedAt: previewNow - 600,
+      generating: true,
+      blocks: [
+        { kind: 'thinking', id: 'tf-think', text: '先收 domain 的状态枚举，再删 failover 的接管分支，最后让 handoff 在池 run 里直接拒绝。', status: 'done', durationMs: 6_200, startedAt: askedAt + 2_000 },
+        { kind: 'tool', id: 'tf-edit-1', toolName: 'edit_file_v2', toolKind: 'edit', toolCase: 'editToolCall', summary: 'src/domain/team-control.ts', hint: '+18 −20', status: 'done', startedAt: askedAt + 30_000 },
+        { kind: 'tool', id: 'tf-edit-2', toolName: 'edit_file_v2', toolKind: 'edit', toolCase: 'editToolCall', summary: 'src/mcp/index.ts', hint: '+22 −37', status: 'done', startedAt: askedAt + 70_000 },
+        { kind: 'tool', id: 'tf-edit-3', toolName: 'edit_file_v2', toolKind: 'edit', toolCase: 'editToolCall', summary: 'src/application/team-failover-service.ts', hint: '+27 −318', status: 'done', startedAt: askedAt + 120_000 },
+        // &deep=1：再加一条深路径 + 长文件名（新建文件，Git 摘要里是 untracked），走查目录列从头截断、扩展名不截断。
+        ...(previewParameters.get('deep') === '1'
+          ? [{
+              kind: 'tool' as const, id: 'tf-edit-deep', toolName: 'write_file_v2', toolKind: 'write' as const, toolCase: 'writeToolCall',
+              summary: 'src/renderer/src/features/very-long-feature-module-name/components/nested/deeper/TurnFilesBarAccessibilityRegressionHarness.test.tsx',
+              hint: '+164 −0', status: 'done' as const, startedAt: askedAt + 150_000
+            }]
+          : []),
+        { kind: 'tool', id: 'tf-edit-4', toolName: 'edit_file_v2', toolKind: 'edit', toolCase: 'editToolCall', summary: 'src/application/team-handoff-service.ts', hint: '+9 −15', status: 'running', startedAt: previewNow - 9_000 }
+      ]
+    }
+  }
+  state.desktop.liveAgentResponses = undefined
+  state.desktop.sessions = state.desktop.sessions.map((session) => session.channelId === '2'
+    ? { ...session, status: 'running', connectionPhase: 'processing', waiting: false, online: true, deliveryMode: 'queued', queueDepth: previewParameters.get('queued') === '1' ? 3 : 0 }
+    : session)
+}
 // 计划页长清单走查：?plan=long —— 真实颗粒度的 10 项技术任务：多行长文本、路径 token、
 // 完成 / 进行中 / 待办 / 取消四态齐全，检验单行收拢、mono 渲染、分段进度与当前项示位。
 if (previewParameters.get('plan') === 'long') {
@@ -1588,6 +1643,25 @@ const api: SgDesktopApi = {
     }
     if (reviewScene === 'error') {
       return { ...base, state: 'error', additions: 0, deletions: 0, files: [], liveUpdates: false, detail: 'git status 退出码 128：fatal: not a git repository (or any of the parent directories)' }
+    }
+    if (turnFilesScene) {
+      // 前三个是本轮改过且 Git 已看到的；App.tsx 是与本轮无关的未提交改动（栏里不该出现）；
+      // 正在写的 team-handoff-service.ts 故意不在这里 → 栏上那一行回退到过程块估算。
+      const files: WorkspaceReviewSummary['files'] = [
+        { path: 'src/domain/team-control.ts', status: 'modified', staged: false, unstaged: true, additions: 18, deletions: 20 },
+        { path: 'src/mcp/index.ts', status: 'modified', staged: false, unstaged: true, additions: 22, deletions: 37 },
+        { path: 'src/application/team-failover-service.ts', status: 'modified', staged: false, unstaged: true, additions: 27, deletions: 318 },
+        ...(previewParameters.get('deep') === '1'
+          ? [{ path: 'src/renderer/src/features/very-long-feature-module-name/components/nested/deeper/TurnFilesBarAccessibilityRegressionHarness.test.tsx', status: 'untracked' as const, staged: false, unstaged: true, additions: 164, deletions: 0 }]
+          : []),
+        { path: 'src/renderer/src/App.tsx', status: 'modified', staged: false, unstaged: true, additions: 3, deletions: 1 }
+      ]
+      return {
+        ...base, state: 'ready',
+        additions: files.reduce((total, file) => total + (file.additions ?? 0), 0),
+        deletions: files.reduce((total, file) => total + (file.deletions ?? 0), 0),
+        files
+      }
     }
     if (reviewScene === 'many') {
       const files: WorkspaceReviewSummary['files'] = [

@@ -15,6 +15,8 @@ import { inspectorDesktopApi } from './desktop-api'
 import { hunkInlineSegments, type InlineSegment } from './inline-diff'
 import { ChevronIcon, CollapseAllIcon, CopyIcon, DiffIcon, ExpandAllIcon, FolderIcon, OpenExternalIcon, QuoteIcon, RevertIcon, StageIcon, UnstageIcon } from './InspectorIcons'
 import { InspectorSkeleton, InspectorState, InspectorToast, useTransientFeedback } from './InspectorState'
+import { cssEscape } from './reveal-bus'
+import { subscribeReviewFocus } from './review-focus-bus'
 import { fileTouchedBy, filterSummaryToPaths, REVIEW_SCOPE_LABELS, type ReviewScopeId } from './review-scope'
 import { useWorkspaceFileActions } from './use-workspace-file-actions'
 
@@ -219,6 +221,14 @@ export function ReviewPanel({ workspaceKey, turnPaths, onQuote, onSummary, pause
   const [diffs, setDiffs] = useState<Record<string, WorkspaceReviewFileDiff | 'loading'>>({})
   const [confirm, setConfirm] = useState<PendingConfirm>()
   const [busyPath, setBusyPath] = useState('')
+  /** 中栏文件栏点进来要定位的文件；摘要里出现它时展开并滚到它，随后清空。 */
+  const [focusPath, setFocusPath] = useState('')
+  /** 定位后短暂高亮的文件：走 React 状态而不是直接改 class——同一提交里 className 会被重新赋值，手改的类名会被冲掉。 */
+  const [revealedPath, setRevealedPath] = useState('')
+  const revealTimer = useRef<number | undefined>(undefined)
+  useEffect(() => () => {
+    if (revealTimer.current) window.clearTimeout(revealTimer.current)
+  }, [])
   const [feedback, flash] = useTransientFeedback()
   const fileActions = useWorkspaceFileActions(flash)
   const requestId = useRef(0)
@@ -334,6 +344,12 @@ export function ReviewPanel({ workspaceKey, turnPaths, onQuote, onSummary, pause
     onSummary?.(summary)
   }, [onSummary, summary])
 
+  // 中栏文件栏的「审查」/ 点某一行：范围切到「本轮」，带路径时记下待定位的文件。
+  useEffect(() => subscribeReviewFocus((request) => {
+    setScope('turn')
+    setFocusPath(request.path ?? '')
+  }), [])
+
   // revision 变化 → 已展开文件的差异就地重拉（旧差异保留到新差异到达），
   // 不再出现在摘要里的文件才丢缓存；首次加载默认展开第一个文件。
   useEffect(() => {
@@ -358,6 +374,23 @@ export function ReviewPanel({ workspaceKey, turnPaths, onQuote, onSummary, pause
       if (open.has(file.path)) void loadDiff(file.path, visible.revision, { keepStale: true })
     }
   }, [expanded, loadDiff, visible, workspaceKey])
+
+  // 待定位的文件出现在可见摘要里：展开、读差异、滚到它并短暂高亮；文件不在摘要里
+  //（Git 尚未看到改动、非 git 工程）就保持「本轮」范围，不做别的。
+  // 放在上面的首载效果之后：首载会整份重设展开集合，这里用函数式更新叠加在它之上。
+  useEffect(() => {
+    if (!focusPath || visible?.state !== 'ready') return
+    const file = visible.files.find((candidate) => fileTouchedBy(candidate, [focusPath]))
+    if (!file) return
+    setFocusPath('')
+    setExpanded((current) => current.has(file.path) ? current : new Set([...current, file.path]))
+    if (diffs[file.path] === undefined) void loadDiff(file.path, visible.revision)
+    setRevealedPath(file.path)
+    if (revealTimer.current) window.clearTimeout(revealTimer.current)
+    revealTimer.current = window.setTimeout(() => setRevealedPath(''), 1_400)
+    const target = listRef.current?.querySelector<HTMLElement>(`.review-file[data-path="${cssEscape(file.path)}"]`)
+    if (target && typeof target.scrollIntoView === 'function') target.scrollIntoView({ block: 'start' })
+  }, [diffs, focusPath, loadDiff, visible])
 
   const ensureDiff = (path: string): void => {
     if (visible && diffs[path] === undefined) void loadDiff(path, visible.revision)
@@ -544,7 +577,7 @@ export function ReviewPanel({ workspaceKey, turnPaths, onQuote, onSummary, pause
               stateLabel
             ].filter(Boolean).join(' · ')
             return (
-              <article className={`review-file is-${file.status}${open ? ' is-open' : ''}${busy ? ' is-busy' : ''}${confirming ? ' is-confirming' : ''}${touchedThisTurn ? ' is-turn' : ''}`} key={file.path}>
+              <article className={`review-file is-${file.status}${open ? ' is-open' : ''}${busy ? ' is-busy' : ''}${confirming ? ' is-confirming' : ''}${touchedThisTurn ? ' is-turn' : ''}${revealedPath === file.path ? ' is-revealed' : ''}`} key={file.path} data-path={file.path}>
                 <div className="review-file__row">
                   <button className="review-file__head" type="button" onClick={() => toggleFile(file)} aria-expanded={open} title={headTitle}>
                     <i title={STATUS_TITLES[file.status]}>{STATUS_LABELS[file.status]}</i>

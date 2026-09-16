@@ -30,7 +30,7 @@ describe('theme surface contracts', () => {
     // 不抢层级），虚线外框表达「还不是对话记录」，宽度与输入区一致（同 16px 侧边距）。
     expect(styles).not.toContain('.composer-queue-popover')
     expect(styles).not.toContain('.composer-queue-status')
-    expect(styles).toMatch(/\.workspace-main\s*\{[^}]*grid-template-rows:\s*auto auto minmax\(0, 1fr\) auto auto/)
+    expect(styles).toMatch(/\.workspace-main\s*\{[^}]*grid-template-rows:\s*auto auto minmax\(0, 1fr\) auto auto auto;/)
     expect(styles).toMatch(/\.queue-tray\s*\{[^}]*border:[^;]*dashed/)
     expect(styles).toMatch(/\.queue-tray\s*\{[^}]*margin:\s*0 16px/)
     expect(styles).not.toMatch(/\.queue-tray\s*\{[^}]*position:\s*absolute/)
@@ -39,6 +39,28 @@ describe('theme surface contracts', () => {
     expect(styles).not.toContain('.chat-state.is-queued')
     // 动效尊重系统减弱设置。
     expect(styles).toMatch(/prefers-reduced-motion: reduce\)\s*\{[^}]*\.queue-tray, \.queue-tray__item\s*\{\s*animation:\s*none/)
+  })
+
+  it('docks the turn-files bar under the tray and above the composer as a plain in-flow block with a solid frame', () => {
+    // 与托盘同一尺寸语言（同侧边距、同圆角、流内块），但实线边框：这些文件是已经发生的事实，不是「尚未进入对话」。
+    expect(styles).toMatch(/\.turn-files\s*\{[^}]*margin:\s*0 16px/)
+    expect(styles).toMatch(/\.turn-files\s*\{[^}]*border:[^;]*solid/)
+    expect(styles).toMatch(/\.turn-files\s*\{[^}]*border-radius:\s*12px/)
+    expect(styles).not.toMatch(/\.turn-files\s*\{[^}]*position:\s*absolute/)
+    expect(styles).not.toMatch(/\.turn-files\s*\{[^}]*z-index/)
+    // 增删数：绿 + / 红 −，等宽数字；折叠走 grid-rows 过渡。
+    expect(styles).toMatch(/\.turn-files__totals b, \.turn-files__counts b\s*\{[^}]*color:\s*var\(--color-text-success\)/)
+    expect(styles).toMatch(/\.turn-files__totals em, \.turn-files__counts em\s*\{[^}]*color:\s*var\(--red\)/)
+    expect(styles).toMatch(/\.turn-files\.is-collapsed \.turn-files__listwrap\s*\{\s*grid-template-rows:\s*0fr/)
+    // 窄栏与托盘同步收边距。
+    expect(styles).toMatch(/\.queue-tray, \.turn-files\s*\{\s*margin-inline:\s*10px/)
+    // 目录列从头截断（rtl + 省略号），文件名主干截断而扩展名不截断：中栏有 680px 下限，不按宽度整列收起。
+    expect(styles).toMatch(/\.turn-files__name small\s*\{[^}]*direction:\s*rtl[^}]*text-overflow:\s*ellipsis/)
+    expect(styles).toMatch(/\.turn-files__name strong > b\s*\{[^}]*flex:\s*0 0 auto/)
+    // reduced-motion：进场动画、转圈与折叠过渡全部关闭。
+    expect(styles).toMatch(/prefers-reduced-motion: reduce\)\s*\{[^}]*\.turn-files, \.turn-files__item\s*\{\s*animation:\s*none/)
+    expect(styles).toMatch(/@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\.turn-files__spinner\s*\{[^}]*animation:\s*none/)
+    expect(styles).toMatch(/@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\.turn-files__chevron, \.turn-files__listwrap, \.turn-files__list\s*\{\s*transition:\s*none/)
   })
 
   it('uses the cool Orbit palette instead of the former yellow parchment palette', () => {

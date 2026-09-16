@@ -15,6 +15,7 @@ import { ResizableColumns, useCompactLayout } from './ResizableColumns'
 import { AppearanceSettings } from './AppearanceSettings'
 import { WorkspaceMenu } from './WorkspaceMenu'
 import { UpdateReminder, useAppUpdateStatus } from './UpdateReminder'
+import { subscribeReviewFocus } from './inspector/review-focus-bus'
 
 /** 会话（工作区）/ 运行（团队或独立批次的控制）/ 账号与 Cursor（右上角设置入口，不在主导航里）。 */
 export type AppModule = 'sessions' | 'run' | 'account'
@@ -155,6 +156,17 @@ export function DesktopShell({
     setSessionSidebarCollapsed(!value)
     try { localStorage.setItem(SESSION_SIDEBAR_COLLAPSED_KEY, value ? '0' : '1') } catch { /* 当前窗口仍然生效。 */ }
   }
+
+  // 中栏本轮文件栏的「审查」：右栏收着就展开（标签与范围的切换由右栏自己订阅同一信号处理）。
+  // rightPanel 是每次渲染新建的 render prop，订阅只跟随「有没有右栏」这个布尔。
+  const hasRightPanel = Boolean(rightPanel)
+  useEffect(() => {
+    if (!hasRightPanel) return undefined
+    return subscribeReviewFocus(() => {
+      setShowInspector(true)
+      try { localStorage.setItem(INSPECTOR_OPEN_KEY, '1') } catch { /* 当前窗口仍然生效。 */ }
+    })
+  }, [hasRightPanel])
 
   useEffect(() => {
     const handler = (event: KeyboardEvent): void => {

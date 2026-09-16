@@ -34,6 +34,9 @@ import type { SessionWarmupRun } from '../../domain/session-warmup'
 import type { AccountAutomationRun, AccountAutomationSettings } from '../../domain/account-automation'
 import type { CdpAutoHealEvent } from '../../domain/cursor-cdp'
 import type { MessageAttachment } from '../../domain/conversation-entry'
+import type { WorkspaceReviewSummary } from '../../domain/workspace-review'
+import { requestReviewFocus } from './inspector/review-focus-bus'
+import { buildTurnFilesView, sameTurnFilesView, type TurnFilesView } from './turn-files-view'
 import { mergeDesktopSnapshot, snapshotGaps } from './snapshot-sharing'
 import { userFacingErrorMessage } from './error-message'
 import { resolveRuntimeLaunchGate } from './lobby/runtime-account-gate'
@@ -881,6 +884,27 @@ export function App(): React.JSX.Element {
       return { ...current, [workspaceChannelId]: existing ? `${existing}\n\n${text}` : text }
     })
   }, [workspaceChannelId])
+  // 输入区上方的本轮文件栏：右栏审查页已经在算的「本轮」范围 + 它读到的 Git 摘要，投影成一份视图。
+  // 摘要由右栏镜像过来（不重复拉取）；过程流 ~10Hz 推送时按内容等价复用上一份对象，让栏的 memo 边界生效。
+  const [workspaceReviewSummary, setWorkspaceReviewSummary] = useState<WorkspaceReviewSummary>()
+  const workspaceEntries = workspaceChannelId ? snapshot.conversations[workspaceChannelId] : undefined
+  const workspaceLiveProcess = workspaceChannelId ? snapshot.liveProcess?.[workspaceChannelId] : undefined
+  const workspaceWorking = selectedSession?.status === 'running'
+  const turnFilesRef = useRef<TurnFilesView | undefined>(undefined)
+  const workspaceTurnFiles = useMemo(() => {
+    if (!workspaceEntries) return undefined
+    const next = buildTurnFilesView({
+      entries: workspaceEntries,
+      liveProcess: workspaceLiveProcess,
+      summary: workspaceReviewSummary,
+      workspacePath: activeWorkspace?.path,
+      working: workspaceWorking
+    })
+    const reused = sameTurnFilesView(turnFilesRef.current, next) ? turnFilesRef.current! : next
+    turnFilesRef.current = reused
+    return reused
+  }, [activeWorkspace?.path, workspaceEntries, workspaceLiveProcess, workspaceReviewSummary, workspaceWorking])
+  const handleReviewTurnFiles = useCallback((path?: string): void => requestReviewFocus({ path }), [])
   // 「交接」三态：离线团队席位 → 职责迁移（可附带上下文）；其余在运行中的席位（独立或团队、
   // 在线或离线）→ 上下文交接；运行已结束 / 非本轮席位 → 禁用并说明原因。
   const handoffEntry = resolveHandoffEntry({ member: selectedMember, run: teamControl.activeRun })
@@ -1358,6 +1382,7 @@ export function App(): React.JSX.Element {
           workspacePath={activeWorkspace?.path}
           hidden={!visible}
           onQuoteToComposer={handleWorkspaceQuote}
+          onReviewSummary={setWorkspaceReviewSummary}
           onClose={close}
         />
       ) : undefined}
@@ -1542,6 +1567,8 @@ export function App(): React.JSX.Element {
           liveAgentResponse={snapshot.liveAgentResponses?.[selectedSession.channelId]}
           nativeProcessStream={snapshot.nativeProcessStream}
           questionActions={workspaceQuestionActions}
+          turnFiles={workspaceTurnFiles}
+          onReviewTurnFiles={handleReviewTurnFiles}
           onSend={handleWorkspaceSend}
         />
       ) : (
