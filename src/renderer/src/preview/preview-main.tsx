@@ -45,8 +45,8 @@ const manualHandoffMode = previewParameters.get('handoff') === '1'
 const offlineSessionsPreviewMode = previewParameters.get('offlineSessions') === '1'
 const messageFormatPreviewMode = previewParameters.get('messageFormat') === '1'
 const requestedRunStatus = previewParameters.get('runStatus')
-// 账号自动化走查场景：?automation=countdown|processing|importing|deleting|done|failed|cancelled
-const automationScene = (['countdown', 'processing', 'importing', 'deleting', 'done', 'failed', 'cancelled'] as const)
+// 账号自动化走查场景：?automation=countdown|processing|hardening-countdown|importing|deleting|cleaning|done|failed|cancelled
+const automationScene = (['countdown', 'processing', 'hardening-countdown', 'importing', 'deleting', 'cleaning', 'done', 'failed', 'cancelled'] as const)
   .find((phase) => phase === previewParameters.get('automation'))
 const previewNow = Date.now()
 const automationSceneRun: AccountAutomationRun | undefined = automationScene ? ({
@@ -55,10 +55,18 @@ const automationSceneRun: AccountAutomationRun | undefined = automationScene ? (
     phase: 'processing', message: '奥仔：正在提交 Session Token 处理…', planId: 'preview-plan', startedAt: previewNow - 12_000,
     handover: { accountId: 'preview-acc-2', label: 'spare@example.com', status: 'preparing', message: '票据已就绪，等待退款完成', startedAt: previewNow - 10_000 }
   },
+  'hardening-countdown': {
+    phase: 'hardening-countdown', message: '奥仔已完成，将在 4s 后加固当前账号（可取消）', remainingSec: 4, planId: 'preview-plan', startedAt: previewNow - 24_000,
+    handover: { accountId: 'preview-acc-2', label: 'spare@example.com', status: 'preparing', message: '票据已就绪，3.5s 后切换', startedAt: previewNow - 10_000 }
+  },
   importing: { phase: 'importing', message: '会话已失效，正在刷新浏览器会话获取新 Token…', planId: 'preview-plan', startedAt: previewNow - 26_000 },
   deleting: {
     phase: 'deleting', message: '奥仔已完成，正在刷新浏览器会话并秒级加固账号…', planId: 'preview-plan', startedAt: previewNow - 31_000,
     handover: { accountId: 'preview-acc-2', label: 'spare@example.com', status: 'switching', message: '等待 Cursor 接收并确认', startedAt: previewNow - 8_000 }
+  },
+  cleaning: {
+    phase: 'cleaning', message: '账号已加固，正在清理浏览器环境并轮换指纹…', planId: 'preview-plan', startedAt: previewNow - 40_000,
+    handover: { accountId: 'preview-acc-2', label: 'spare@example.com', status: 'done', message: 'Cursor 已完成接手', startedAt: previewNow - 12_000, finishedAt: previewNow - 10_000 }
   },
   done: {
     phase: 'done', message: '自动化完成：已处理、账号已加固（浏览器会话内秒级执行）、本地记录已移除', planId: 'preview-plan', startedAt: previewNow - 47_000, finishedAt: previewNow - 5_000,

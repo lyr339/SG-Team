@@ -301,6 +301,13 @@ const scenes = [
       width: 1440, height: 900, colorScheme, storage: baseStorage({ colorMode: colorScheme }), clip: null
     }))
   ),
+  // 自动化运行卡：每个相位一张整页 + 一张卡片特写（空闲态已在 settings-automation-* 覆盖）。
+  ...['countdown', 'processing', 'hardening-countdown', 'importing', 'deleting', 'cleaning', 'done', 'failed', 'cancelled'].flatMap(phase =>
+    ['light', 'dark'].map(colorScheme => ({
+      name: `settings-automation-run-${phase}-${colorScheme}`, hash: 'account:automation', query: `automation=${phase}`,
+      width: 1440, height: 900, colorScheme, storage: baseStorage({ colorMode: colorScheme }), clip: '.automation-run'
+    }))
+  ),
   ...['light', 'dark'].flatMap(colorMode => [1180, 1440, 380].map(width => ({
     name: `settings-roxy-key-${width}-${colorMode}`, hash: 'account:import',
     width: Math.max(1180, width), height: 900, colorScheme: colorMode,

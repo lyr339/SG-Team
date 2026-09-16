@@ -196,87 +196,12 @@
   font-style: normal;
 }
 
-/* 设置页沿用的流程反馈与倒计时叶子样式。 */
+/* 设置页沿用的流程提示叶子样式（无奥仔卡密等前置未就绪时的一行说明）。 */
 .flow-step__hint {
   margin: 0;
   color: var(--faint);
   font-size: var(--fs-10);
   line-height: 1.5;
-}
-
-.flow-step__live {
-  margin: 0;
-  display: flex;
-  align-items: baseline;
-  gap: 7px;
-  color: var(--blue);
-  font-size: var(--fs-10);
-  line-height: 1.55;
-  overflow-wrap: anywhere;
-}
-
-.flow-step__live::before {
-  content: '';
-  width: 5px;
-  height: 5px;
-  flex: 0 0 auto;
-  align-self: center;
-  background: currentColor;
-  border-radius: 50%;
-  animation: lobby-flow-live-dot 1.8s ease-in-out infinite;
-}
-
-.flow-step__live.is-done { color: var(--color-text-success); font-weight: 600; }
-.flow-step__live.is-done::before,
-.flow-step__live.is-failed::before,
-.flow-step__live.is-cancelled::before { animation: none; }
-.flow-step__live.is-failed { color: var(--red); }
-.flow-step__live.is-cancelled { color: var(--muted); }
-
-.flow-step__countdown {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  column-gap: 10px;
-  padding: 9px 10px;
-  background: var(--blue-soft);
-  border: var(--border-width-regular) solid var(--blue-border);
-  border-radius: 8px;
-}
-
-.flow-step__countdown b {
-  min-width: 2ch;
-  color: var(--blue);
-  font-family: var(--mono);
-  font-size: var(--fs-17);
-  font-weight: 700;
-  line-height: 1;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-
-.flow-step__countdown > span {
-  min-width: 0;
-  color: var(--text-soft);
-  font-size: var(--fs-10);
-  line-height: 1.4;
-}
-
-.flow-step__cancel {
-  min-height: 26px;
-  padding: 0 10px;
-  color: var(--red);
-  background: var(--color-background-primary);
-  border: var(--border-width-regular) solid var(--red-border);
-  border-radius: 6px;
-  font-size: var(--fs-10);
-  font-weight: 600;
-  transition: background 140ms ease, border-color 140ms ease;
-}
-
-.flow-step__cancel:hover:not(:disabled) {
-  background: var(--red-soft);
-  border-color: var(--red);
 }
 
 .lobby-account__list {
@@ -648,11 +573,6 @@
   padding: 2px 6px;
 }
 
-@keyframes lobby-flow-live-dot {
-  0%, 100% { opacity: 0.35; }
-  50% { opacity: 1; }
-}
-
 @keyframes lobby-status-orbit { to { transform: rotate(360deg); } }
 @keyframes lobby-flow-signal { to { background-position: -180% 0; } }
 
@@ -676,10 +596,6 @@
   .lobby-tile,
   .lobby-account__list > article > button:first-child {
     transition: none;
-  }
-
-  .flow-step__live::before {
-    animation: none;
   }
 
   .flow-status-icon svg path { animation: none !important; }

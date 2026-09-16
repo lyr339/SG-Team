@@ -47,7 +47,7 @@ function initialGroup(): SettingsGroupId {
 /**
  * 设置页（方案 A）：左侧分组导航 + 右侧内容面板。
  * 整包接收 accountPanel props（App.tsx 组装逻辑零变更），组内自取所需字段。
- * 运行态只在两处留下痕迹：自动化导航项的状态圆点、自动化组顶部的实时横幅。
+ * 运行态只在两处留下痕迹：自动化导航项的状态圆点、自动化组顶部的运行卡（AutomationRunCard）。
  */
 export function SettingsPage(props: SettingsPageProps): React.JSX.Element {
   const [group, setGroup] = useState<SettingsGroupId>(initialGroup)
