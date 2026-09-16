@@ -7,12 +7,12 @@ import { TaskAgentService } from '../src/application/task-agent-service'
 import { TeamCollaborationAgentService } from '../src/application/team-collaboration-agent-service'
 import { transactTaskPool } from '../src/application/task-pool-transaction'
 import { ChannelMessageService } from '../src/application/channel-message-service'
-import { createDefaultTeamBundle } from '../src/domain/team-control'
 import { SqliteTaskPoolRepository } from '../src/infrastructure/task-pool/sqlite-task-pool-repository'
 import { SqliteTeamCollaborationRepository } from '../src/infrastructure/team-collaboration/sqlite-team-collaboration-repository'
 import { SqliteTeamControlRepository } from '../src/infrastructure/team-control/sqlite-team-control-repository'
 import { SqliteChannelMessageRepository } from '../src/infrastructure/channel-messages/sqlite-channel-message-repository'
 import { createUnifiedChannelServer } from '../src/mcp/unified-channel-server'
+import { createDefaultTeamBundle } from './legacy-team-fixtures'
 
 function setup() {
   const path = join(mkdtempSync(join(tmpdir(), 'sg-claim-lead-')), 'team.sqlite3')
@@ -22,7 +22,8 @@ function setup() {
     workspaceName: 'alpha',
     workspacePath: '/workspace/alpha',
     channelIds: ['1', '2'],
-    now: 100
+    now: 100,
+    goal: '完成本轮接口重构'
   })
   team.upsertWorkspaceTeam(bundle)
   team.recordInstallation({
@@ -38,8 +39,6 @@ function setup() {
       capabilities: bundle.roles.find((role) => role.id === slot.roleId)!.capabilities
     }))
   })
-  team.updateRunGoal(bundle.run.id, '完成本轮接口重构')
-  team.beginLaunch(bundle.run.id, Date.now(), 'binding-key-claim-1')
   const tasks = new SqliteTaskPoolRepository(path)
   const collaboration = new SqliteTeamCollaborationRepository(path)
   const channels = new SqliteChannelMessageRepository(path)

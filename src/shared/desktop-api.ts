@@ -5,8 +5,6 @@ import type { TeamControlSnapshot, TeamGroupPlanPolicy } from '../domain/team-co
 import type { TeamCollaborationSnapshot } from '../domain/team-collaboration'
 import type { TeamContinuitySnapshot } from '../domain/team-continuity'
 import type { TeamMemorySnapshot } from '../domain/team-memory'
-import type { AgentSkillCatalogEntry } from '../domain/agent-skill'
-import type { TeamRoleTemplate } from '../domain/team-control'
 import type { CursorAccountMetadata, CursorRuntimeAccountMatch } from '../domain/cursor-account'
 import type { CursorProUpgradeResult } from '../domain/cursor-checkout-profile'
 import type { CursorMembershipStatus } from '../domain/cursor-membership'
@@ -203,43 +201,6 @@ export type CursorQuestionActionResult =
   | { ok: true; status: 'submitted' | 'cancelled' }
   | { ok: false; code: CursorQuestionFailureCode; message: string }
 
-export interface TeamSetupChannel {
-  channelId: string
-  displayName: string
-  status: AgentSession['status']
-  online: boolean
-  waiting: boolean
-  queueDepth: number
-}
-
-export interface TeamSetupDraft {
-  draftId: string
-  workspaceId: string
-  workspaceName: string
-  workspacePath: string
-  channels: TeamSetupChannel[]
-  roleTemplates: TeamRoleTemplate[]
-  avatarIds: string[]
-  skills: AgentSkillCatalogEntry[]
-  cursorModels?: CursorModelOption[]
-  initialMembers?: CreateTeamMemberInput[]
-}
-
-export interface CreateTeamMemberInput {
-  channelId: string
-  roleTemplateKey: string
-  avatarId: string
-  skillIds: string[]
-  modelSelection?: CursorModelSelection
-  /** 独立席位：不入队，仅保留单聊与批量会话创建。 */
-  solo?: boolean
-}
-
-export interface CreateTeamInput {
-  draftId: string
-  members: CreateTeamMemberInput[]
-}
-
 export interface CreateIndependentSessionsInput {
   workspacePath: string
   sessions: Array<{ modelSelection?: CursorModelSelection }>
@@ -298,11 +259,6 @@ export interface TeamGroupGoalInput {
   groupId: string
   goal: string
 }
-
-export type ChooseTeamWorkspaceResult =
-  | { cancelled: true }
-  | { kind: 'existing'; snapshot: TeamControlSnapshot }
-  | { kind: 'setup'; draft: TeamSetupDraft }
 
 /** 团队 MCP 接入结果：登记 Agent 注册身份并接管内嵌通道；失败以 IPC 异常传播。 */
 export interface McpInstallationResult {
@@ -470,20 +426,14 @@ export interface SgDesktopApi {
   installTaskMcp(): Promise<McpInstallationResult>
   getTeamControlSnapshot(): Promise<TeamControlSnapshot>
   detectCursorWorkspace(): Promise<CursorWorkspaceDetection>
-  prepareDetectedTeamWorkspace(): Promise<ChooseTeamWorkspaceResult>
-  chooseTeamWorkspace(): Promise<ChooseTeamWorkspaceResult>
-  createTeam(input: CreateTeamInput): Promise<TeamControlSnapshot>
+  /** 新建会话池（独立批次）：替换当前活动 run；每个会话一个独立席位，入组是之后的操作员动作。 */
   createIndependentSessions(input: CreateIndependentSessionsInput): Promise<TeamControlSnapshot>
   chooseIndependentWorkspace(): Promise<IndependentWorkspaceSelection | undefined>
-  createNextTeamRun(): Promise<TeamControlSnapshot>
   /**
-   * 显式结束当前运行（团队或独立批次）：run 进入 completed，本轮排队消息归档；
+   * 显式结束当前会话池：run 进入 completed，本轮排队消息归档；
    * 携带会话令牌的旧 Cursor 会话在下一次轮询收到围栏终止指令并自行退出。
    */
   endActiveRun(): Promise<TeamControlSnapshot>
-  prepareActiveTeamSetup(): Promise<TeamSetupDraft>
-  updateTeamGoal(goal: string): Promise<TeamControlSnapshot>
-  launchTeam(): Promise<TeamControlSnapshot>
   setSlotModelSelection(channelId: string, selection: CursorModelSelection): Promise<TeamControlSnapshot>
   /**
    * 会话池 · 协作组（只在独立批次 run 内可用）。成员关系变化落库后，拾光向相关席位投递
@@ -616,16 +566,9 @@ export const IPC = {
   taskMcpInstall: 'task-mcp:install',
   teamControlGet: 'team-control:get',
   teamControlDetectWorkspace: 'team-control:detect-workspace',
-  teamControlPrepareDetectedWorkspace: 'team-control:prepare-detected-workspace',
-  teamControlChooseWorkspace: 'team-control:choose-workspace',
-  teamControlCreateTeam: 'team-control:create-team',
   teamControlCreateIndependent: 'team-control:create-independent',
   teamControlChooseIndependentWorkspace: 'team-control:choose-independent-workspace',
-  teamControlNextRun: 'team-control:next-run',
   teamControlEndRun: 'team-control:end-run',
-  teamControlPrepareActiveSetup: 'team-control:prepare-active-setup',
-  teamControlUpdateGoal: 'team-control:update-goal',
-  teamControlLaunch: 'team-control:launch',
   teamControlSetSlotModelSelection: 'team-control:set-slot-model-selection',
   teamControlSnapshot: 'team-control:snapshot',
   teamGroupCreate: 'team-group:create',

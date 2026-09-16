@@ -146,13 +146,13 @@ describe('theme surface contracts', () => {
     expect(styles).not.toContain('margin: 0 calc(var(--window-control-safe-right) / 2)')
   })
 
-  it('uses segmented run-page step connectors and honours reduced motion', () => {
-    // 四步流程：连接线从节点右侧起、到下一节点前止，最后一步没有连接线。
-    expect(run).toMatch(/\.run-steps li::before\s*\{[^}]*left:\s*calc\(50% \+ 14px\)/s)
-    expect(run).toContain('.run-steps li:last-child::before { display: none; }')
-    // 模式分段控件：指示块用 transform 位移，reduced-motion 下不做过渡。
-    expect(run).toMatch(/\.run-mode-switch__indicator\s*\{[^}]*transition:\s*transform/s)
-    expect(run).toMatch(/@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\.run-mode-switch__indicator[^{]*\{\s*transition:\s*none/)
+  it('keeps the run page pool-only and honours reduced motion', () => {
+    // 阶段 2 · 2B：团队流程的四步条、模式分段控件、目标 / 待处理区随组件一起退役，样式不留残余。
+    for (const retired of ['.run-steps', '.run-mode-switch', '.run-goal', '.run-gates', '.run-start__team', '.run-primary']) {
+      expect(run).not.toContain(retired)
+    }
+    // 归档的旧团队 run 在开始页只留一句说明。
+    expect(run).toMatch(/\.run-start__intro \.run-start__note\s*\{[^}]*color:\s*var\(--faint\)/s)
     // 可折叠插槽（确认面 / 提示条）靠 grid-template-rows 过渡展开，reduced-motion 下同样直接落位。
     expect(run).toMatch(/\.run-slot\s*\{[^}]*transition:\s*grid-template-rows/s)
     expect(run).toMatch(/@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\.run-slot[^{]*\{\s*transition:\s*none/)

@@ -367,7 +367,7 @@ describe('SqliteTeamControlRepository 协作组', () => {
     try {
       for (const repository of [migrated, second]) {
         const state = repository.loadTeamControl()
-        expect(state.schemaVersion).toBe(8)
+        expect(state.schemaVersion).toBe(9)
         expect(state.groups).toEqual([])
         expect(state.slots.filter((slot) => slot.runId === pool.run.id).every((slot) => slot.solo && slot.groupId === undefined)).toBe(true)
       }
@@ -453,7 +453,7 @@ describe('SqliteTeamControlRepository 协作组', () => {
     const second = new SqliteTeamControlRepository(path)
     try {
       for (const repository of [migrated, second]) {
-        expect(repository.loadTeamControl().schemaVersion).toBe(8)
+        expect(repository.loadTeamControl().schemaVersion).toBe(9)
         // 旧库里已有的无 lead 组按最保守的 lead_only 回填：不会因为升级就悄悄让成员拿到规划权。
         expect(repository.loadTeamControl().groups.find((group) => group.id === leaderless.id)?.planPolicy).toBe('lead_only')
       }

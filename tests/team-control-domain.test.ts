@@ -3,10 +3,10 @@ import {
   buildSoloLaunchHint,
   buildTeamRoleBriefing,
   createConfiguredTeamBundle,
-  createDefaultTeamBundle,
   workspaceRunMode,
   type RuntimeBinding
 } from '../src/domain/team-control'
+import { createDefaultTeamBundle } from './legacy-team-fixtures'
 
 describe('team control domain', () => {
   it('creates explicit durable roles and slots for the discovered channels', () => {

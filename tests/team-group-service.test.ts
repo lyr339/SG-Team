@@ -14,6 +14,7 @@ import { SqliteTaskPoolRepository } from '../src/infrastructure/task-pool/sqlite
 import { SqliteTeamCollaborationRepository } from '../src/infrastructure/team-collaboration/sqlite-team-collaboration-repository'
 import { SqliteTeamControlRepository } from '../src/infrastructure/team-control/sqlite-team-control-repository'
 import type { DesktopSnapshot, SendMessageInput } from '../src/shared/desktop-api'
+import { createDefaultTeamBundle } from './legacy-team-fixtures'
 
 /**
  * TeamGroupService（任务书 §5.2「事务外」列 + §7 拆组 / 移出规则）：仓储事务是真相源，
@@ -71,7 +72,7 @@ function poolFixture() {
   const channelIds = ['1', '2', '3', '4']
   const bridge = new RecordingBridge(desktopSnapshot(channelIds))
   const control = new TeamControlService(controlRepository, bridge)
-  const selected = control.configureIndependentWorkspace({
+  const selected = control.createSessionPool({
     workspaceId: 'alpha', workspaceName: 'alpha', workspacePath: '/workspace/alpha',
     members: channelIds.map((channelId) => ({ channelId, roleTemplateKey: 'solo', avatarId: 'researcher', skills: [], solo: true }))
   })
@@ -167,14 +168,12 @@ describe('TeamGroupService · 建组与加人', () => {
   it('refuses to create groups outside a session pool with no side effect', () => {
     const data = poolFixture()
     try {
-      data.control.configureWorkspace({
-        workspaceId: 'alpha', workspaceName: 'alpha', workspacePath: '/workspace/alpha',
-        members: [
-          { channelId: '1', roleTemplateKey: 'lead', avatarId: 'lead', skills: [] },
-          { channelId: '2', roleTemplateKey: 'builder', avatarId: 'architect', skills: [] }
-        ]
-      })
+      // 阶段 2 · 2B 起产品里建不出团队 run；这里直接落一条更新的 legacy 团队 run 作为活动 run（只读归档路径）。
+      data.controlRepository.upsertWorkspaceTeam(createDefaultTeamBundle({
+        workspaceId: 'alpha', workspaceName: 'alpha', workspacePath: '/workspace/alpha', channelIds: ['1', '2'], now: Date.now() + 60_000
+      }))
       const legacy = data.control.getSnapshot()
+      expect(legacy.activeRun?.id).not.toBe(data.runId)
       expect(code(() => data.service.createGroup({
         name: 'G', members: [{ slotId: legacy.members[0]!.slot.id, roleTemplateKey: 'builder' }]
       }))).toBe('group_requires_pool_run')

@@ -11,7 +11,7 @@ import { TeamMemoryService } from '../src/application/team-memory-service'
 import { TaskAgentService } from '../src/application/task-agent-service'
 import { TaskPoolService } from '../src/application/task-pool-service'
 import { transactTaskPool } from '../src/application/task-pool-transaction'
-import { ALL_TEAM_CAPABILITIES } from '../src/domain/team-control'
+import { ALL_TEAM_CAPABILITIES, createConfiguredTeamBundle } from '../src/domain/team-control'
 import { SqliteTaskPoolRepository } from '../src/infrastructure/task-pool/sqlite-task-pool-repository'
 import { SqliteTeamCollaborationRepository } from '../src/infrastructure/team-collaboration/sqlite-team-collaboration-repository'
 import { SqliteTeamContinuityRepository } from '../src/infrastructure/team-continuity/sqlite-team-continuity-repository'
@@ -20,6 +20,7 @@ import { SqliteTeamMemoryRepository } from '../src/infrastructure/team-memory/sq
 import type { CursorComposerTelemetrySource } from '../src/infrastructure/cursor/cursor-composer-telemetry'
 import type { RuntimeBinding } from '../src/domain/team-control'
 import type { DesktopSnapshot, SendMessageInput } from '../src/shared/desktop-api'
+import { createDefaultTeamBundle } from './legacy-team-fixtures'
 
 /** 按生产路径（recordComposerBinding）给指定通道补齐 composer 绑定。 */
 function bindComposer(control: TeamControlService, runId: string, channelId: string, composerId: string): void {
@@ -201,21 +202,25 @@ function fixture(
   const standbyChannelId = withSolo ? '4' : '3'
   const memberChannelIds = withSolo ? ['1', '2', '3'] : ['1', '2']
   const bridge = new MutableBridge(desktopSnapshot(withStandby ? [...memberChannelIds, standbyChannelId] : memberChannelIds))
-  const control = new TeamControlService(controlRepository, bridge, undefined, telemetrySource)
-  const selected = withSolo
-    ? control.configureWorkspace({
-        workspaceId: 'alpha', workspaceName: 'alpha', workspacePath: '/workspace/alpha',
+  // legacy 团队 run（阶段 2 · 2B 起产品里建不出来，失效接管的团队分支只剩这条读路径）：直接落库，一建即 running。
+  const bundle = withSolo
+    ? createConfiguredTeamBundle({
+        workspaceId: 'alpha', workspaceName: 'alpha', workspacePath: '/workspace/alpha', now: 100,
         members: [
           { channelId: '1', roleTemplateKey: 'lead', avatarId: 'lead', skills: [] },
           { channelId: '2', roleTemplateKey: 'builder', avatarId: 'architect', skills: [] },
           { channelId: '3', roleTemplateKey: 'solo', avatarId: 'researcher', skills: [], solo: true }
         ]
       })
-    : control.ensureWorkspace({
-        workspaceId: 'alpha', workspaceName: 'alpha', workspacePath: '/workspace/alpha', channelIds: ['1', '2']
+    : createDefaultTeamBundle({
+        workspaceId: 'alpha', workspaceName: 'alpha', workspacePath: '/workspace/alpha', channelIds: ['1', '2'], now: 100
       })
+  bundle.run.status = 'running'
+  bundle.run.goal = '完成本轮接口重构'
+  controlRepository.upsertWorkspaceTeam(bundle)
+  const control = new TeamControlService(controlRepository, bridge, telemetrySource)
+  const selected = control.getSnapshot()
   const runId = selected.activeRun!.id
-  control.updateGoal('完成本轮接口重构')
   const memberByChannel = new Map(selected.members.map((member) => [member.slot.channelId!, member]))
   control.recordInstallation({
     workspaceId: 'alpha',
@@ -233,7 +238,6 @@ function fixture(
       }
     })
   })
-  controlRepository.beginLaunch(runId, 100, 'binding-key-123')
   for (const member of control.getSnapshot().members.filter((candidate) => candidate.slot.solo !== true)) {
     controlRepository.recordAgentCheckIn({
       agentSessionId: member.binding!.agentSessionId,
@@ -653,7 +657,8 @@ describe('TeamFailoverService', () => {
       )
       expect(preTransferBuilderIdentity.capabilities).not.toContain('coordination')
 
-      data.control.transferLead({ targetSlotId: builder.slot.id, reason: '主控暂时离线' })
+      // team_run transfer_lead 在 legacy 团队 run 上落到 setActingLead（阶段 2 · 2B 起服务层不再有 transferLead）。
+      data.controlRepository.setActingLead({ runId: data.runId, slotId: builder.slot.id, at: Date.now() })
       const team = data.control.getSnapshot()
       expect(team.activeRun?.actingLeadSlotId).toBe(builder.slot.id)
 
@@ -827,10 +832,10 @@ describe('TeamFailoverService', () => {
   it('clears acting lead and restores original lead permissions', () => {
     const data = fixture(true)
     try {
-      data.control.transferLead({ targetSlotId: data.builder.slot.id })
+      data.controlRepository.setActingLead({ runId: data.runId, slotId: data.builder.slot.id, at: Date.now() })
       expect(data.control.getSnapshot().activeRun?.actingLeadSlotId).toBe(data.builder.slot.id)
 
-      data.control.clearActingLead()
+      data.controlRepository.setActingLead({ runId: data.runId, slotId: null, at: Date.now() })
       expect(data.control.getSnapshot().activeRun?.actingLeadSlotId).toBeUndefined()
 
       const leadIdentity = data.controlRepository.resolveAgentRuntimeIdentity(
@@ -974,7 +979,7 @@ function poolFixture() {
   const channelIds = ['1', '2', '3']
   const bridge = new MutableBridge(desktopSnapshot(channelIds))
   const control = new TeamControlService(controlRepository, bridge)
-  const selected = control.configureIndependentWorkspace({
+  const selected = control.createSessionPool({
     workspaceId: 'alpha', workspaceName: 'alpha', workspacePath: '/workspace/alpha',
     members: channelIds.map((channelId) => ({
       channelId, roleTemplateKey: 'solo', avatarId: 'researcher', skills: [], solo: true

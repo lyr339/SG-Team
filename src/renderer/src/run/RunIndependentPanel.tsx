@@ -7,7 +7,7 @@ export const INDEPENDENT_MAX_SESSIONS = 16
 
 interface RunIndependentPanelProps {
   view: RunView
-  /** 正在配置新批次（无运行 / 新建批次 / 从团队切换过来）。 */
+  /** 正在配置新批次（无运行 / 新建批次）。 */
   composing: boolean
   /** 新批次的目标工程。 */
   targetWorkspace?: { name: string; path: string }
@@ -21,8 +21,8 @@ interface RunIndependentPanelProps {
 }
 
 /**
- * 独立模式专属区。配置中：目标工程 + 会话数量；运行中：批次概况 + 新建批次。
- * 创建按钮在席位区底部（与团队模式的「一键创建会话」同一位置）。
+ * 会话池区。配置中：目标工程 + 会话数量；运行中：批次概况 + 协作组 + 新建批次。
+ * 创建按钮在席位区底部。
  */
 export function RunIndependentPanel({
   view,
@@ -44,7 +44,7 @@ export function RunIndependentPanel({
       <section className="run-panel run-panel--independent" aria-label="独立批次配置">
         <header className="run-section-head">
           <strong>新批次</strong>
-          <span>每个会话只处理自己的用户消息，不加入团队任务板</span>
+          <span>每个会话先作为独立席位待命；运行中可随时选几个会话建组协作</span>
         </header>
 
         <div className="run-field">

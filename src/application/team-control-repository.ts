@@ -6,7 +6,6 @@ import type {
   TeamGroupEvent,
   TeamGroupMemberConfiguration,
   TeamGroupPlanPolicy,
-  TeamLaunchStatus,
   WorkspaceTeamBundle
 } from '../domain/team-control'
 import type { ComposerBindingMethod } from '../domain/cursor-telemetry'
@@ -38,18 +37,7 @@ export interface TeamControlRepository extends AgentPresenceStore {
   /** 单槽模型选定持久化（lobby 逐会话配置保存出口）。 */
   setSlotModelSelection(slotId: string, selection: CursorModelSelection, updatedAt?: number): void
   setActiveWorkspace(workspaceId: string): void
-  updateRunGoal(runId: string, goal: string): void
   recordInstallation(batch: AgentRegistrationBatch): void
-  beginLaunch(runId: string, at: number, bindingKey: string): void
-  /** 幂等推进 run 到 launching（仅状态，不重置 bindings）；未达可启动条件时为空操作。 */
-  ensureRunLaunching(runId: string, at: number): void
-  recordLaunchDelivery(input: {
-    runId: string
-    slotId: string
-    status: Extract<TeamLaunchStatus, 'sending' | 'delivered' | 'uncertain' | 'failed'>
-    commandId?: string
-    detail: string
-  }): void
   recordComposerBinding(input: {
     runId: string
     slotId: string
@@ -104,9 +92,8 @@ export interface TeamControlRepository extends AgentPresenceStore {
   }): void
   listFailovers(runId: string): TeamFailoverRecord[]
   /**
-   * 把 launching/running/attention/paused 的 run 收尾为 completed（撤销注册、
-   * 绑定标 failed）。`detail` 写入各绑定的 launch_detail，说明收尾原因（自动
-   * 离线收尾 / 用户显式结束 / 被新运行替换）；draft/ready 不适用，返回 false。
+   * 把 running 的 run 收尾为 completed（撤销注册、绑定标 failed）。`detail` 写入各绑定的
+   * launch_detail，说明收尾原因（用户显式结束 / 被新运行替换）；已结束的 run 返回 false。
    */
   completeRun(runId: string, at: number, detail?: string): boolean
   recordAgentCheckIn(

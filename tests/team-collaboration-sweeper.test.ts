@@ -5,7 +5,6 @@ import { describe, expect, it } from 'vitest'
 import { TeamCollaborationSweeper, type TeamCollaborationSweeperOptions } from '../src/application/team-collaboration-sweeper'
 import {
   createConfiguredTeamBundle,
-  createDefaultTeamBundle,
   projectGroups,
   type TeamControlSnapshot,
   type TeamMemberRuntime,
@@ -14,6 +13,7 @@ import {
 import type { TeamControlRepository } from '../src/application/team-control-repository'
 import { SqliteTeamCollaborationRepository } from '../src/infrastructure/team-collaboration/sqlite-team-collaboration-repository'
 import { SqliteTeamControlRepository } from '../src/infrastructure/team-control/sqlite-team-control-repository'
+import { createDefaultTeamBundle } from './legacy-team-fixtures'
 
 interface RuntimeOverride {
   online: boolean
@@ -89,7 +89,7 @@ function snapshotProvider(
   }
 }
 
-function setup(options: Omit<TeamCollaborationSweeperOptions, 'now'> = {}, launch = true) {
+function setup(options: Omit<TeamCollaborationSweeperOptions, 'now'> = {}, running = true) {
   const path = join(mkdtempSync(join(tmpdir(), 'sg-sweeper-')), 'team.sqlite3')
   const control = new SqliteTeamControlRepository(path)
   const bundle = createDefaultTeamBundle({
@@ -97,7 +97,8 @@ function setup(options: Omit<TeamCollaborationSweeperOptions, 'now'> = {}, launc
     workspaceName: 'alpha',
     workspacePath: '/workspace/alpha',
     channelIds: ['1', '2', '3'],
-    now: 100
+    now: 100,
+    goal: '完成本轮协作清扫'
   })
   control.upsertWorkspaceTeam(bundle)
   control.recordInstallation({
@@ -113,10 +114,7 @@ function setup(options: Omit<TeamCollaborationSweeperOptions, 'now'> = {}, launc
       capabilities: bundle.roles.find((role) => role.id === slot.roleId)!.capabilities
     }))
   })
-  if (launch) {
-    control.updateRunGoal(bundle.run.id, '完成本轮协作清扫')
-    control.beginLaunch(bundle.run.id, Date.now(), 'binding-key-sweeper')
-  }
+  if (!running) control.completeRun(bundle.run.id, 200)
   const collaboration = new SqliteTeamCollaborationRepository(path)
   const slot = (key: string) => {
     const role = bundle.roles.find((candidate) => candidate.key === key)!
@@ -150,7 +148,7 @@ function setup(options: Omit<TeamCollaborationSweeperOptions, 'now'> = {}, launc
 const unansweredOnly = {}
 
 describe('TeamCollaborationSweeper · TeamRun 生命周期边界', () => {
-  it('draft 团队尚未启动时不生成主控失联或未回应提醒', () => {
+  it('已结束的 run 不生成主控失联或未回应提醒', () => {
     const data = setup({}, false)
     try {
       const lead = data.slot('lead')

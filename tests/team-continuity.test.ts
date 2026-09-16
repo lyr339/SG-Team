@@ -5,13 +5,14 @@ import { describe, expect, it } from 'vitest'
 import { TeamContinuityService } from '../src/application/team-continuity-service'
 import { transactTaskPool } from '../src/application/task-pool-transaction'
 import { emptyTaskPoolState, type TaskPoolState } from '../src/domain/task-pool'
-import { createDefaultTeamBundle, type TeamControlSnapshot } from '../src/domain/team-control'
+import type { TeamControlSnapshot } from '../src/domain/team-control'
 import { emptyTeamMemorySnapshot, type TeamMemorySnapshot } from '../src/domain/team-memory'
 import type { TeamCollaborationSnapshot } from '../src/domain/team-collaboration'
 import { SqliteTaskPoolRepository } from '../src/infrastructure/task-pool/sqlite-task-pool-repository'
 import { SqliteTeamCollaborationRepository } from '../src/infrastructure/team-collaboration/sqlite-team-collaboration-repository'
 import { SqliteTeamContinuityRepository } from '../src/infrastructure/team-continuity/sqlite-team-continuity-repository'
 import { SqliteTeamControlRepository } from '../src/infrastructure/team-control/sqlite-team-control-repository'
+import { createDefaultTeamBundle } from './legacy-team-fixtures'
 
 class MutableSource<T> {
   private readonly listeners = new Set<(snapshot: T) => void>()
@@ -36,10 +37,10 @@ function fixture() {
     workspaceName: 'alpha',
     workspacePath: '/workspace/alpha',
     channelIds: ['1', '2'],
-    now: 100
+    now: 100,
+    goal: '恢复团队并继续接口重构'
   })
   teamRepository.upsertWorkspaceTeam(bundle)
-  teamRepository.updateRunGoal(bundle.run.id, '恢复团队并继续接口重构')
   teamRepository.recordInstallation({
     workspaceId: 'alpha',
     runId: bundle.run.id,

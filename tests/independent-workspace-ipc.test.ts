@@ -15,14 +15,14 @@ vi.mock('electron', () => ({ ipcMain: {
 }, dialog: {} }))
 vi.mock('../src/main/ipc-security', () => ({ assertTrustedSender: vi.fn() }))
 
-it('创建前确认 Cursor 工程：旧路径不签发身份，新路径传入 configureIndependentWorkspace', async () => {
+it('创建前确认 Cursor 工程：旧路径不签发身份，新路径传入 createSessionPool', async () => {
   const root = mkdtempSync(join(tmpdir(), 'sg-independent-ipc-'))
   mkdirSync(join(root, 'A')); mkdirSync(join(root, 'B'))
   const a = workspaceIdentityOf(join(root, 'A'))
   const b = workspaceIdentityOf(join(root, 'B'))
   const configure = vi.fn(() => ({ activeWorkspaceId: b.id }))
   const dispose = registerTeamControlIpc(
-    { subscribe: () => () => {}, configureIndependentWorkspace: configure } as unknown as Parameters<typeof registerTeamControlIpc>[0],
+    { subscribe: () => () => {}, createSessionPool: configure } as unknown as Parameters<typeof registerTeamControlIpc>[0],
     { getSnapshot: () => ({ cursorModels: [] }) } as unknown as Parameters<typeof registerTeamControlIpc>[1],
     () => undefined,
     { detectCurrentWorkspace: async () => ({ state: 'detected', workspace: b, candidates: [], detail: 'IDE', observedAt: 1 }) }

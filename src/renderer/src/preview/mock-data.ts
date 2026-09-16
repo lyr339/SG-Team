@@ -599,7 +599,7 @@ const previewStandbyChannels = [
 ]
 
 export const teamControlSnapshot: TeamControlSnapshot = {
-  schemaVersion: 8,
+  schemaVersion: 9,
   revision: 42,
   activeWorkspaceId: bundle.workspace.id,
   workspaces: [bundle.workspace],

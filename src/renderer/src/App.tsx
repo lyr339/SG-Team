@@ -1,14 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { QuestionActions } from './QuestionCard'
 import type {
-  ChooseTeamWorkspaceResult,
   CreateIndependentSessionsInput,
-  DesktopSnapshot,
-  TeamSetupDraft
+  DesktopSnapshot
 } from '../../shared/desktop-api'
 import { emptyTaskPoolSnapshot, newestTaskPoolSnapshot } from '../../domain/task-pool'
 import { usageBelongsToRun, type CursorUsageSnapshot } from '../../domain/cursor-usage'
-import { emptyTeamControlSnapshot, type TeamRunStatus, type WorkspaceRunMode } from '../../domain/team-control'
+import { emptyTeamControlSnapshot, type TeamRunStatus } from '../../domain/team-control'
 import { emptyTeamCollaborationSnapshot } from '../../domain/team-collaboration'
 import { DesktopShell, type AppModule } from './DesktopShell'
 import { SessionOverview } from './SessionOverview'
@@ -18,7 +16,6 @@ import { WorkspaceInspector } from './WorkspaceInspector'
 import { RunPage } from './run/RunPage'
 import { SettingsPage } from './settings/SettingsPage'
 import type { SettingsPageProps } from './settings/settings-view'
-import { TeamSetupPage } from './team/TeamSetupPage'
 import { ManualHandoffDialog } from './team/ManualHandoffDialog'
 import { SessionHandoffDialog } from './SessionHandoffDialog'
 import { resolveHandoffEntry } from './handoff-entry'
@@ -125,7 +122,6 @@ export function App(): React.JSX.Element {
   const [cursorUsage, setCursorUsage] = useState<CursorUsageSnapshot>({})
   const [teamControl, setTeamControl] = useState(emptyTeamControlSnapshot())
   const [collaboration, setCollaboration] = useState(emptyTeamCollaborationSnapshot())
-  const [teamSetup, setTeamSetup] = useState<TeamSetupDraft>()
   // URL hash 深链接优先；日常启动默认直达会话工作区。`lobby` / `config` 是运行页的旧别名。
   const [activeModule, setActiveModule] = useState<AppModule>(() => {
     const [module] = window.location.hash.slice(1).split(':')
@@ -136,8 +132,6 @@ export function App(): React.JSX.Element {
     const [module, channel] = window.location.hash.slice(1).split(':')
     return module === 'sessions' && channel ? channel : readLastSessionChannel()
   })
-  /** 运行页无活跃运行时预选的模式（会话总览的「创建独立会话」直达独立配置）。 */
-  const [runStartMode, setRunStartMode] = useState<WorkspaceRunMode>('team')
   const [sessionListRequested, setSessionListRequested] = useState(false)
   const [teamNotice, setTeamNotice] = useState('')
   const [handoffOptions, setHandoffOptions] = useState<TeamHandoffOptions>()
@@ -972,37 +966,6 @@ export function App(): React.JSX.Element {
     }
   }, [acceptCollaboration, acceptSnapshot, acceptTaskPool, acceptTeamControl, handoffOptions])
 
-  const applyWorkspaceSelection = useCallback(async (
-    result: ChooseTeamWorkspaceResult,
-    detected: boolean
-  ): Promise<void> => {
-    if ('cancelled' in result) return
-    setActiveModule('run')
-    setSelectedChannelId(undefined)
-    if (result.kind === 'setup') {
-      setTeamSetup(result.draft)
-      setTeamNotice(detected ? `已自动识别 Cursor 当前工程：${result.draft.workspaceName}` : '')
-      return
-    }
-    setTeamSetup(undefined)
-    acceptTeamControl(result.snapshot)
-    const [tasks, messages, desktop] = await Promise.all([
-      window.sgDesktop.getTaskPoolSnapshot(),
-      window.sgDesktop.getTeamCollaborationSnapshot(),
-      window.sgDesktop.getSnapshot()
-    ])
-    acceptTaskPool(tasks)
-    acceptCollaboration(messages)
-    acceptSnapshot(desktop)
-    const workspace = result.snapshot.workspaces.find((item) => item.id === result.snapshot.activeWorkspaceId)
-    setTeamNotice(workspace ? `${detected ? '已切换到 Cursor 当前工程' : '已切换工程'}：${workspace.name}` : '')
-  }, [acceptCollaboration, acceptSnapshot, acceptTaskPool, acceptTeamControl])
-
-  const chooseWorkspace = useCallback(async (): Promise<void> => {
-    await applyWorkspaceSelection(await window.sgDesktop.chooseTeamWorkspace(), false)
-  }, [applyWorkspaceSelection])
-
-
   const accountPanel: SettingsPageProps = {
     accounts: cursorAccounts,
     busy: cursorAccountBusy,
@@ -1390,64 +1353,11 @@ export function App(): React.JSX.Element {
     >
       {activeModule === 'account' ? (
         <SettingsPage {...accountPanel} />
-      ) : activeModule === 'run' && teamSetup ? (
-        <TeamSetupPage
-          key={teamSetup.draftId}
-          draft={teamSetup}
-          onCancel={() => {
-            setTeamSetup(undefined)
-            setTeamNotice('')
-          }}
-          onCreate={async (input) => {
-            const result = await window.sgDesktop.createTeam(input)
-            acceptTeamControl(result)
-            mcpReconcileRunRef.current = reconcileKeyOf(result)
-            try {
-              await window.sgDesktop.installTaskMcp()
-              setTeamNotice('团队与 SG Team MCP 已就绪。请在 Cursor 手动启动 Agent 会话，拾光会自动接管。')
-            } catch (reason) {
-              setTeamNotice(`团队已创建；MCP 自动接入失败：${reason instanceof Error ? reason.message : String(reason)}`)
-            }
-            const [desktop, latestTeam, tasks, messages] = await Promise.all([
-              window.sgDesktop.getSnapshot(),
-              window.sgDesktop.getTeamControlSnapshot(),
-              window.sgDesktop.getTaskPoolSnapshot(),
-              window.sgDesktop.getTeamCollaborationSnapshot()
-            ])
-            acceptSnapshot(desktop)
-            acceptTeamControl(latestTeam)
-            acceptTaskPool(tasks)
-            acceptCollaboration(messages)
-            setTeamSetup(undefined)
-          }}
-        />
       ) : activeModule === 'run' ? (
         <RunPage
           team={teamControl}
           detectedWorkspace={cursorWorkspace?.workspace}
           externalNotice={teamNotice}
-          startMode={runStartMode}
-          onStartModeChange={setRunStartMode}
-          onChooseWorkspace={chooseWorkspace}
-          onReconfigure={async () => {
-            setTeamSetup(await window.sgDesktop.prepareActiveTeamSetup())
-          }}
-          onUpdateGoal={async (goal) => {
-            const result = await window.sgDesktop.updateTeamGoal(goal)
-            acceptTeamControl(result)
-            return result
-          }}
-          onInstallMcp={async () => {
-            await window.sgDesktop.installTaskMcp()
-            const snapshot = await window.sgDesktop.getTeamControlSnapshot()
-            acceptTeamControl(snapshot)
-            return snapshot
-          }}
-          onLaunch={async () => {
-            const result = await window.sgDesktop.launchTeam()
-            acceptTeamControl(result)
-            return result
-          }}
           agentLaunchPlan={agentLaunchPlan}
           cursorModels={visibleSnapshot.cursorModels ?? []}
           sessionWarmupRun={sessionWarmupRun}
@@ -1486,30 +1396,6 @@ export function App(): React.JSX.Element {
           }}
           onCancelCdpAutoHealCountdown={async () => {
             await window.sgDesktop.cancelCdpAutoHealCountdown()
-          }}
-          onCreateNextRun={async () => {
-            const created = await window.sgDesktop.createNextTeamRun()
-            acceptTeamControl(created)
-            acceptCollaboration(emptyTeamCollaborationSnapshot(created.activeRun?.id))
-            mcpReconcileRunRef.current = reconcileKeyOf(created)
-            let issue: string | undefined
-            try {
-              await window.sgDesktop.installTaskMcp()
-            } catch (reason) {
-              issue = `MCP 自动接入失败：${reason instanceof Error ? reason.message : String(reason)}`
-            }
-            const [snapshot, desktop, messages] = await Promise.all([
-              window.sgDesktop.getTeamControlSnapshot(),
-              window.sgDesktop.getSnapshot(),
-              window.sgDesktop.getTeamCollaborationSnapshot()
-            ])
-            acceptTeamControl(snapshot)
-            acceptSnapshot(desktop)
-            acceptCollaboration(messages)
-            setTeamNotice(issue
-              ? `新一轮已建立；${issue}`
-              : '新一轮已建立；请填写目标，并在 Cursor 手动启动 Agent 会话。')
-            return { snapshot, issue }
           }}
         />
       ) : selectedSession ? (
@@ -1560,10 +1446,7 @@ export function App(): React.JSX.Element {
         <SessionOverview
           snapshot={visibleSnapshot}
           onOpenConfiguration={() => setActiveModule('run')}
-          onCreateIndependentSessions={() => {
-            setRunStartMode('independent')
-            setActiveModule('run')
-          }}
+          onCreateIndependentSessions={() => setActiveModule('run')}
         />
       )}
     </DesktopShell>

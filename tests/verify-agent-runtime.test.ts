@@ -31,7 +31,7 @@ function bridgeSnapshot(): DesktopSnapshot {
 
 function team(status: TeamControlState['runs'][number]['status'] = 'ready'): TeamControlState {
   return {
-    schemaVersion: 8,
+    schemaVersion: 9,
     revision: 1,
     activeWorkspaceId: 'workspace-a',
     workspaces: [{

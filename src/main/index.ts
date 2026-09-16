@@ -354,7 +354,6 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   teamControlService = new TeamControlService(
     teamControlRepository,
     localSessionBridge,
-    undefined,
     cursorTelemetry,
     teamCollaborationRepository
   )
@@ -577,8 +576,7 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
       // 只跟随用户手动的批量创建。
       onAllTriggered: (plan) => {
         if (plan.origin !== 'seat-rotation') accountAutomationService.onAllSessionsTriggered(plan.id)
-      },
-      onFinished: (plan) => teamControlService?.settleAgentSessionLaunch(plan)
+      }
     }
   )
   // 协作通知与用户消息共用同一发送分流（内嵌通道走 SQLite，插件通道走 WS）

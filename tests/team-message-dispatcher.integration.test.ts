@@ -8,11 +8,11 @@ import { TaskAgentService } from '../src/application/task-agent-service'
 import { TeamCollaborationAgentService } from '../src/application/team-collaboration-agent-service'
 import { TeamControlService } from '../src/application/team-control-service'
 import { TeamMessageDispatcher } from '../src/application/team-message-dispatcher'
-import { createDefaultTeamBundle } from '../src/domain/team-control'
 import { SqliteChannelMessageRepository } from '../src/infrastructure/channel-messages/sqlite-channel-message-repository'
 import { SqliteTaskPoolRepository } from '../src/infrastructure/task-pool/sqlite-task-pool-repository'
 import { SqliteTeamCollaborationRepository } from '../src/infrastructure/team-collaboration/sqlite-team-collaboration-repository'
 import { SqliteTeamControlRepository } from '../src/infrastructure/team-control/sqlite-team-control-repository'
+import { createDefaultTeamBundle } from './legacy-team-fixtures'
 
 async function waitFor(predicate: () => boolean, timeoutMs = 3_000): Promise<void> {
   const startedAt = Date.now()

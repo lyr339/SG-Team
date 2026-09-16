@@ -4,24 +4,19 @@ import type { SessionWarmupRun } from '../../../domain/session-warmup'
 import type { CdpAutoHealEvent } from '../../../domain/cursor-cdp'
 import type { CursorModelOption, CursorModelSelection } from '../../../domain/cursor-model'
 import type { DetectedCursorWorkspace } from '../../../domain/cursor-workspace'
-import type { TeamControlSnapshot, WorkspaceRunMode } from '../../../domain/team-control'
+import type { TeamControlSnapshot } from '../../../domain/team-control'
 import type { CreateIndependentSessionsInput, IndependentWorkspaceSelection } from '../../../shared/desktop-api'
 import { BrandMark } from '../BrandMark'
 import { cursorModelSelectionFromOption, normalizeCursorModelSelection } from '../cursor-model-selection'
-import { TeamIcon } from '../UiIcons'
 import { ReplaceRunSheet } from './ReplaceRunSheet'
 import { RunHeader } from './RunHeader'
 import type { RunGroupActions } from './RunGroupsPanel'
 import { RunIndependentPanel } from './RunIndependentPanel'
-import { RunModeSwitch } from './RunModeSwitch'
 import { RunSeats, type RunSeatRow } from './RunSeats'
 import { RunSlot } from './RunSlot'
-import { RunTeamPanel } from './RunTeamPanel'
 import {
   buildRunView,
   replaceRunConsequence,
-  teamFlowSteps,
-  teamPrimaryAction,
   type ReplaceRunAction,
   type ReplaceRunConsequence
 } from './run-view'
@@ -34,16 +29,6 @@ export interface RunPageProps {
   externalNotice?: string
   cdpAutoHealEnabled: boolean
   cdpAutoHealEvent?: CdpAutoHealEvent
-  /** 无活跃运行时预选的模式；由 App 持有，会话总览可直达独立配置。 */
-  startMode?: WorkspaceRunMode
-  onStartModeChange?: (mode: WorkspaceRunMode) => void
-  /** 组建团队 / 切换为团队模式：进入工程选择与组队流程。 */
-  onChooseWorkspace: () => Promise<void>
-  onReconfigure: () => Promise<void>
-  onUpdateGoal: (goal: string) => Promise<TeamControlSnapshot>
-  onInstallMcp: () => Promise<TeamControlSnapshot>
-  onLaunch: () => Promise<TeamControlSnapshot>
-  onCreateNextRun: () => Promise<{ snapshot: TeamControlSnapshot; issue?: string }>
   onLaunchAgentSessions: (requests: AgentLaunchRequest[]) => Promise<AgentLaunchPlan>
   /** 会话预热探针状态与开关（批量发起前自动执行；也可单独手动触发）。 */
   sessionWarmupRun?: SessionWarmupRun
@@ -58,7 +43,7 @@ export interface RunPageProps {
   onEnableCursorCdp?: () => Promise<{ ok: boolean; message: string; suggestAutoHeal?: boolean }>
   onToggleCdpAutoHeal?: (enabled: boolean) => Promise<void>
   onCancelCdpAutoHealCountdown?: () => Promise<void>
-  /** 会话池 · 协作组操作（独立模式）；不提供时运行页不显示协作组区。 */
+  /** 会话池 · 协作组操作；不提供时运行页不显示协作组区。 */
   groupActions?: RunGroupActions
 }
 
@@ -75,9 +60,9 @@ interface ComposeState {
 const DEFAULT_INDEPENDENT_COUNT = 3
 
 /**
- * 「运行」页：一个工程一个活跃运行，团队或独立两种模式。
- * 头部（工程 / 模式 / 状态 / 结束）→ 模式专属区 → 共用席位区；
- * 所有破坏性动作走同一个 ReplaceRunSheet。
+ * 「运行」页：一个工程一个会话池（独立批次），协作在池内以组的形式建拆。
+ * 头部（工程 / 状态 / 结束）→ 批次概况与协作组 → 共用席位区；
+ * 所有破坏性动作走同一个 ReplaceRunSheet。没有运行时直接进入批次配置。
  */
 export function RunPage({
   team,
@@ -87,14 +72,6 @@ export function RunPage({
   externalNotice,
   cdpAutoHealEnabled,
   cdpAutoHealEvent,
-  startMode: startModeProp,
-  onStartModeChange,
-  onChooseWorkspace,
-  onReconfigure,
-  onUpdateGoal,
-  onInstallMcp,
-  onLaunch,
-  onCreateNextRun,
   onLaunchAgentSessions,
   sessionWarmupRun,
   sessionWarmupEnabled = true,
@@ -117,24 +94,15 @@ export function RunPage({
   const [error, setError] = useState('')
   const [sheet, setSheet] = useState<PendingSheet | null>(null)
   const [compose, setCompose] = useState<ComposeState | null>(null)
-  const [localStartMode, setLocalStartMode] = useState<WorkspaceRunMode>('team')
-  const startMode = startModeProp ?? localStartMode
-  const setStartMode = (mode: WorkspaceRunMode): void => {
-    setLocalStartMode(mode)
-    onStartModeChange?.(mode)
-  }
   const [count, setCount] = useState(DEFAULT_INDEPENDENT_COUNT)
   const [draftSelections, setDraftSelections] = useState<{ runId?: string; byChannel: Record<string, CursorModelSelection> }>({ byChannel: {} })
   const [chosenWorkspace, setChosenWorkspace] = useState<{ selection: IndependentWorkspaceSelection; detectedId?: string }>()
-  const [editingGoal, setEditingGoal] = useState(false)
-  const [guideSeats, setGuideSeats] = useState(false)
 
   const runId = view.run?.id
   useEffect(() => {
-    // 运行身份变化（创建 / 替换 / 新一轮）：丢弃针对旧运行的配置、确认与草稿。
+    // 运行身份变化（创建 / 替换）：丢弃针对旧运行的配置、确认与草稿。
     setCompose(null)
     setSheet(null)
-    setEditingGoal(false)
     setDraftSelections({ runId, byChannel: {} })
   }, [runId])
 
@@ -147,10 +115,6 @@ export function RunPage({
     const timer = setTimeout(() => setNotice(''), 6_000)
     return () => clearTimeout(timer)
   }, [notice])
-
-  useEffect(() => {
-    if (!view.pendingSeats.length || view.phase === 'completed') setGuideSeats(false)
-  }, [view.pendingSeats.length, view.phase])
 
   const run = async <Result,>(name: string, action: () => Promise<Result>): Promise<Result | undefined> => {
     // React 的 disabled 要到下一次提交才生效；同一拍重复点击也只执行一次。
@@ -182,7 +146,7 @@ export function RunPage({
   }
 
   // ---------- 独立批次配置 ----------
-  const composingIndependent = compose !== null || (view.phase === 'none' && startMode === 'independent')
+  const composingIndependent = compose !== null || view.phase === 'none'
   const manualWorkspace = chosenWorkspace?.detectedId === detectedWorkspace?.id ? chosenWorkspace?.selection : undefined
   const targetWorkspace = manualWorkspace ?? detectedWorkspace ?? view.workspace
   const composeChannels = useMemo(() => Array.from({ length: count }, (_, index) => String(index + 1)), [count])
@@ -205,7 +169,7 @@ export function RunPage({
     : view.seats.map((seat) => ({
         channelId: seat.channelId,
         name: seat.name,
-        // 团队席位显示角色；池内入组席位显示「组 · 角色」；独立席位不显示。
+        // 池内入组席位显示「组 · 角色」；独立席位不显示角色。
         roleName: seat.solo ? undefined : seat.groupName ? `${seat.groupName} · ${seat.roleName}` : seat.roleName,
         state: seat.state,
         lastSeenAt: seat.lastSeenAt,
@@ -250,112 +214,24 @@ export function RunPage({
       perform()
       return
     }
-    guard(view.mode === 'independent'
-      ? { kind: 'new-batch', targetWorkspaceName: targetWorkspace.name }
-      : { kind: 'switch', to: 'independent' }, perform)
+    guard({ kind: 'new-batch', targetWorkspaceName: targetWorkspace.name }, perform)
   }
 
   const createPendingSessions = (): void => {
     void run('launch-sessions', async () => {
-      setGuideSeats(false)
       const plan = await onLaunchAgentSessions(pendingRequests)
-      reportPlan(plan, view.mode === 'independent' ? '独立会话已全部进入待命。' : '会话已全部就绪，可以启动团队。')
+      reportPlan(plan, '独立会话已全部进入待命。')
     })
   }
 
-  // ---------- 团队 ----------
-  const primary = teamPrimaryAction(team, view)
-  const steps = teamFlowSteps(view)
-  const autoCreateSessions = async (): Promise<void> => {
-    if (!pendingRequests.length) return
-    const plan = await onLaunchAgentSessions(pendingRequests)
-    reportPlan(plan, 'Agent 会话已自动创建并待命，团队进入执行。')
-  }
-  const prepareAndLaunch = async (): Promise<void> => {
-    if (team.preflight.canLaunch) {
-      await onLaunch()
-      setNotice('启动指令已投递；正在为未待命通道自动创建 Agent 会话。')
-      void autoCreateSessions()
-      return
-    }
-    if (team.preflight.mcpInstalled) {
-      setNotice(team.preflight.blockers[0] || '请在 Cursor 手动发起对应 Agent 会话；拾光检测到待命后会自动接管。')
-      if (pendingRequests.length) setGuideSeats(true)
-      return
-    }
-    const prepared = await onInstallMcp()
-    if (prepared.preflight.canLaunch) {
-      await onLaunch()
-      setNotice('通道已接入，团队启动指令已自动投递；正在自动创建 Agent 会话。')
-      void autoCreateSessions()
-      return
-    }
-    setNotice(prepared.preflight.blockers[0] || '请在 Cursor 手动发起对应 Agent 会话；拾光检测到待命后会自动接管。')
-    if (pendingRequests.length) setGuideSeats(true)
-  }
-  const newRound = (): void => {
-    guard({ kind: 'new-round' }, () => {
-      void run('next-run', async () => {
-        const { issue } = await onCreateNextRun()
-        if (issue) setError(issue)
-      })
-    })
-  }
-  const teamPrimary = (): void => {
-    switch (primary.kind) {
-      case 'fill-goal':
-        setEditingGoal(true)
-        return
-      case 'new-round':
-        newRound()
-        return
-      case 'launch':
-      case 'install-mcp':
-      case 'check-standby':
-        void run('launch', prepareAndLaunch)
-        return
-      case 'none':
-        return
-    }
-  }
-  const saveGoal = async (goal: string): Promise<void> => {
-    await run('goal', async () => {
-      const updated = await onUpdateGoal(goal)
-      if (updated.preflight.canLaunch) {
-        await onLaunch()
-        setNotice('目标已保存，团队启动指令已自动投递；正在自动创建 Agent 会话。')
-        void autoCreateSessions()
-      } else if (pendingRequests.length > 0) {
-        setGuideSeats(true)
-        setNotice(`团队目标已保存。下一步：确认模型配置，然后点击「一键创建会话（${pendingRequests.length}）」。`)
-      } else {
-        setNotice('团队目标已保存；现有 Agent 会话已全部待命。')
-      }
-    })
-  }
-
-  // ---------- 模式切换 / 结束 ----------
-  const switchMode = (to: WorkspaceRunMode): void => {
-    if (actionInFlight.current || agentLaunchPlan?.state === 'running') return
-    if (compose && to === view.mode) {
-      setCompose(null)
-      return
-    }
-    if (to === 'independent') {
-      guard({ kind: 'switch', to }, () => setCompose({ confirmed: true }))
-      return
-    }
-    guard({ kind: 'switch', to: 'team' }, () => { void run('workspace', onChooseWorkspace) })
-  }
+  // ---------- 结束 / 新建 ----------
   const endRun = (): void => {
-    if (view.phase === 'prelaunch' || view.phase === 'none' || view.phase === 'completed') return
+    if (view.phase !== 'active') return
     guard({ kind: 'end' }, () => {
       void run('end-run', async () => {
         await onEndActiveRun()
         setCompose(null)
-        setNotice(view.mode === 'independent'
-          ? '独立批次已结束；旧会话会在下一次轮询自行退出。'
-          : '团队运行已结束；旧会话会在下一次轮询自行退出。')
+        setNotice('独立批次已结束；旧会话会在下一次轮询自行退出。')
       })
     })
   }
@@ -395,9 +271,7 @@ export function RunPage({
 
   const createLabel = composingIndependent
     ? `创建 ${count} 个独立会话`
-    : view.mode === 'independent'
-      ? `补齐会话（${view.pendingSeats.length}）`
-      : `一键创建会话（${view.pendingSeats.length}）`
+    : `补齐会话（${view.pendingSeats.length}）`
   const relevantPlan = agentLaunchPlan && (composingIndependent || !view.run || agentLaunchPlan.startedAt >= view.run.createdAt)
     ? agentLaunchPlan
     : undefined
@@ -421,7 +295,6 @@ export function RunPage({
       createLabel={createLabel}
       createBlockedReason={!composingIndependent && view.evidencePending ? '正在确认离线会话的运行状态，确认完成后开放安全重建' : undefined}
       ended={!composingIndependent && view.phase === 'completed'}
-      guided={guideSeats}
       cdpAutoHealEnabled={cdpAutoHealEnabled}
       cdpAutoHealEvent={cdpAutoHealEvent}
       warmupRun={sessionWarmupRun}
@@ -449,35 +322,25 @@ export function RunPage({
                   ? <>Cursor 当前打开的工程：<strong title={detectedWorkspace.path}>{detectedWorkspace.name}</strong></>
                   : '先在 Cursor 中打开一个工程，或在下方手动选择。'}
               </p>
-            </div>
-            <RunModeSwitch value={startMode} disabled={isBusy} onChange={setStartMode} />
-            <RunSlot>
-              {startMode === 'team' ? (
-                <div className="run-start__team">
-                  <p>选择工程后为每个席位挑选角色、模型与技能；主控会按目标拆解任务并分派给成员。</p>
-                  <button type="button" className="primary-button run-primary" disabled={isBusy} onClick={() => void run('workspace', onChooseWorkspace)}>
-                    <TeamIcon />{busy === 'workspace' ? '正在选择…' : '选择工程并组建团队'}
-                  </button>
-                </div>
+              {view.archivedLegacyTeam ? (
+                <p className="run-start__note">{view.state.label}：{view.state.hint}</p>
               ) : null}
-            </RunSlot>
+            </div>
             <RunSlot>{feedbackStrip}</RunSlot>
           </section>
-          {startMode === 'independent' ? (
-            <div className="run-body">
-              <RunIndependentPanel
-                view={view}
-                composing
-                targetWorkspace={targetWorkspace}
-                count={count}
-                busy={isBusy}
-                onCountChange={setCount}
-                onChooseWorkspace={chooseIndependentWorkspace}
-                onNewBatch={newBatch}
-              />
-              {seats ?? <div className="run-empty">Cursor 工程识别完成后即可配置独立会话。</div>}
-            </div>
-          ) : null}
+          <div className="run-body">
+            <RunIndependentPanel
+              view={view}
+              composing
+              targetWorkspace={targetWorkspace}
+              count={count}
+              busy={isBusy}
+              onCountChange={setCount}
+              onChooseWorkspace={chooseIndependentWorkspace}
+              onNewBatch={newBatch}
+            />
+            {seats ?? <div className="run-empty">Cursor 工程识别完成后即可配置独立会话。</div>}
+          </div>
         </div>
       </div>
     )
@@ -490,8 +353,6 @@ export function RunPage({
         view={view}
         busy={isBusy}
         busyAction={busy}
-        composingMode={compose ? 'independent' : undefined}
-        onSwitchMode={switchMode}
         onEnd={endRun}
         onOpenSessions={onOpenSessions}
       />
@@ -501,12 +362,10 @@ export function RunPage({
           <div className="run-banner is-amber" role="status">
             <i aria-hidden="true" />
             <span>
-              {view.mode === 'independent' ? '正在配置新的独立批次' : '正在配置独立批次'}
+              正在配置新的独立批次
               {view.phase === 'completed'
                 ? '：在下方选好数量与模型后创建。'
-                : view.phase === 'prelaunch'
-                  ? '：创建后替换当前未启动的配置，无需先结束运行。'
-                : `：创建后当前${view.mode === 'independent' ? '独立批次' : '团队运行'}结束，旧会话在下一次轮询自行退出。`}
+                : '：创建后当前独立批次结束，旧会话在下一次轮询自行退出。'}
             </span>
             <button type="button" disabled={isBusy} onClick={() => setCompose(null)}>放弃</button>
           </div>
@@ -526,7 +385,7 @@ export function RunPage({
 
       <RunSlot>{feedbackStrip}</RunSlot>
 
-      <div className="run-body" key={composingIndependent ? 'compose' : view.mode}>
+      <div className="run-body" key={composingIndependent ? 'compose' : 'pool'}>
         {composingIndependent ? (
           <RunIndependentPanel
             view={view}
@@ -538,7 +397,7 @@ export function RunPage({
             onChooseWorkspace={chooseIndependentWorkspace}
             onNewBatch={newBatch}
           />
-        ) : view.mode === 'independent' ? (
+        ) : (
           <RunIndependentPanel
             view={view}
             composing={false}
@@ -548,21 +407,6 @@ export function RunPage({
             onChooseWorkspace={chooseIndependentWorkspace}
             onNewBatch={newBatch}
             groupActions={groupActions}
-          />
-        ) : (
-          <RunTeamPanel
-            view={view}
-            primary={primary}
-            steps={steps}
-            busy={isBusy}
-            busyAction={busy}
-            editingGoal={editingGoal}
-            onEditingGoalChange={setEditingGoal}
-            onSaveGoal={saveGoal}
-            onPrimary={teamPrimary}
-            onReconfigure={() => void run('reconfigure', onReconfigure)}
-            allowNewRound={view.phase === 'active' && view.presence === 'offline'}
-            onNewRound={newRound}
           />
         )}
         {seats}

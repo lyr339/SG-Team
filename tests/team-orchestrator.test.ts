@@ -11,12 +11,12 @@ import { TeamMemoryAgentService } from '../src/application/team-memory-agent-ser
 import { TeamMemoryService } from '../src/application/team-memory-service'
 import { TeamOrchestrator } from '../src/application/team-orchestrator'
 import { transactTaskPool } from '../src/application/task-pool-transaction'
-import { createDefaultTeamBundle } from '../src/domain/team-control'
 import type { DesktopSnapshot, SendMessageAccepted, SendMessageInput } from '../src/shared/desktop-api'
 import { SqliteTaskPoolRepository } from '../src/infrastructure/task-pool/sqlite-task-pool-repository'
 import { SqliteTeamCollaborationRepository } from '../src/infrastructure/team-collaboration/sqlite-team-collaboration-repository'
 import { SqliteTeamControlRepository } from '../src/infrastructure/team-control/sqlite-team-control-repository'
 import { SqliteTeamMemoryRepository } from '../src/infrastructure/team-memory/sqlite-team-memory-repository'
+import { createDefaultTeamBundle } from './legacy-team-fixtures'
 
 class QuietBridge implements TeamControlBridge {
   private readonly listeners = new Set<(snapshot: DesktopSnapshot) => void>()
@@ -37,7 +37,7 @@ class QuietBridge implements TeamControlBridge {
   }
 }
 
-function fixture(started = true) {
+function fixture(running = true) {
   const path = join(mkdtempSync(join(tmpdir(), 'sg-orchestrator-')), 'team.sqlite3')
   const controlRepository = new SqliteTeamControlRepository(path)
   const bundle = createDefaultTeamBundle({
@@ -46,10 +46,10 @@ function fixture(started = true) {
     workspacePath: '/workspace/alpha',
     channelIds: ['1', '2', '3'],
     runKey: 'run-orchestrator',
-    now: 100
+    now: 100,
+    goal: '实现、验证并交付自动团队闭环'
   })
   controlRepository.upsertWorkspaceTeam(bundle)
-  controlRepository.updateRunGoal(bundle.run.id, '实现、验证并交付自动团队闭环')
   controlRepository.recordInstallation({
     workspaceId: bundle.workspace.id,
     runId: bundle.run.id,
@@ -63,8 +63,7 @@ function fixture(started = true) {
       capabilities: bundle.roles.find((role) => role.id === slot.roleId)!.capabilities
     }))
   })
-  if (started) {
-    controlRepository.beginLaunch(bundle.run.id, 150, 'binding-key-123')
+  if (running) {
     for (const slot of bundle.slots) {
       const role = bundle.roles.find((candidate) => candidate.id === slot.roleId)!
       controlRepository.recordAgentCheckIn({
@@ -74,6 +73,8 @@ function fixture(started = true) {
         capabilities: [...role.capabilities]
       }, 'ready')
     }
+  } else {
+    controlRepository.completeRun(bundle.run.id, 150)
   }
   const tasksRepository = new SqliteTaskPoolRepository(path)
   const collaboration = new SqliteTeamCollaborationRepository(path)
@@ -115,19 +116,19 @@ function fixture(started = true) {
 }
 
 describe('TeamOrchestrator', () => {
-  it('does not dispatch stale tasks before the run is active', () => {
+  it('does not dispatch tasks once the run is completed', () => {
     const data = fixture(false)
     try {
       transactTaskPool(data.tasksRepository, (pool) => pool.plan(data.bundle.run.id, [{
-        key: 'prelaunch-stale-task',
-        title: '启动前旧任务',
+        key: 'ended-run-stale-task',
+        title: '已结束运行的遗留任务',
         targetSlotId: data.slot('builder').id,
         requiredCapabilities: ['code']
       }]))
       const dispatcher = new TaskDispatcher(data.tasks, data.team, data.collaboration)
       dispatcher.reconcile()
 
-      expect(data.team.getSnapshot().activeRun?.status).toBe('ready')
+      expect(data.team.getSnapshot().activeRun?.status).toBe('completed')
       expect(data.collaboration.loadRun(data.bundle.run.id).messageOrder).toEqual([])
     } finally {
       data.close()

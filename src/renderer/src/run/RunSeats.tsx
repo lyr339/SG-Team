@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useState, type CSSProperties } from 'react'
 import type { AgentLaunchPlan } from '../../../domain/agent-launch'
 import type { SessionWarmupRun } from '../../../domain/session-warmup'
 import type { CdpAutoHealEvent } from '../../../domain/cursor-cdp'
@@ -33,8 +33,6 @@ interface RunSeatsProps {
   createBlockedReason?: string
   /** 运行已结束：席位只作记录展示，不再提供创建。 */
   ended?: boolean
-  /** 用户刚保存目标 / 启动团队：滚到创建区并聚焦主按钮。 */
-  guided?: boolean
   cdpAutoHealEnabled: boolean
   cdpAutoHealEvent?: CdpAutoHealEvent
   /** 会话预热探针：发起前自动执行的开关与最近一次结果；也可单独手动触发。 */
@@ -50,7 +48,7 @@ interface RunSeatsProps {
 }
 
 /**
- * 席位区：两种模式共用同一个列表——通道、名字/角色、模型、运行态。
+ * 席位区：一个列表——通道、名字 / 组内角色、模型、运行态。
  * 点击一行改该席位下一次创建会话用的模型；底部一个创建按钮只针对未待命席位。
  */
 export function RunSeats({
@@ -62,7 +60,6 @@ export function RunSeats({
   createLabel,
   createBlockedReason,
   ended = false,
-  guided = false,
   cdpAutoHealEnabled,
   cdpAutoHealEvent,
   warmupRun,
@@ -80,8 +77,6 @@ export function RunSeats({
   const pendingCount = rows.filter((row) => row.pending).length
   const [countdownLeft, setCountdownLeft] = useState(0)
   const [editingChannel, setEditingChannel] = useState<string>()
-  const sectionRef = useRef<HTMLElement>(null)
-  const createRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
     if (cdpAutoHealEvent?.phase !== 'countdown') {
@@ -94,29 +89,14 @@ export function RunSeats({
     return () => clearInterval(timer)
   }, [cdpAutoHealEvent])
 
-  useEffect(() => {
-    if (!guided) return
-    const frame = window.requestAnimationFrame(() => {
-      sectionRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
-      createRef.current?.focus({ preventScroll: true })
-    })
-    return () => window.cancelAnimationFrame(frame)
-  }, [guided])
-
   const planByChannel = new Map(plan?.items.map((item) => [item.channelId, item] as const) ?? [])
 
   return (
-    <section ref={sectionRef} className={`run-seats${guided ? ' is-guided' : ''}`} aria-label="席位">
+    <section className="run-seats" aria-label="席位">
       <header className="run-section-head">
         <strong>席位</strong>
         <span>{ended ? `${rows.length} 席 · 运行已结束` : pendingCount ? `${pendingCount} / ${rows.length} 待创建会话` : rows.length ? '全部在岗' : '尚无席位'}</span>
       </header>
-
-      {guided ? (
-        <p className="run-seats__guide" role="status" aria-live="polite">
-          下一步：确认模型后创建 {pendingCount} 个 Cursor 会话
-        </p>
-      ) : null}
 
       <ul className="run-seats__list" aria-label="逐会话模型配置">
         {rows.map((row, index) => {
@@ -232,7 +212,6 @@ export function RunSeats({
                 >{warmupRun?.phase === 'creating' || warmupRun?.phase === 'waiting' ? '预热中…' : '立即预热'}</button>
               ) : null}
               <button
-                ref={createRef}
                 type="button"
                 className="primary-button"
                 disabled={busy || launching || Boolean(createBlockedReason)}

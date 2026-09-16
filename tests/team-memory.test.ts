@@ -5,11 +5,12 @@ import { describe, expect, it } from 'vitest'
 import { TeamMemoryAgentService } from '../src/application/team-memory-agent-service'
 import { TeamMemoryService } from '../src/application/team-memory-service'
 import { transactTaskPool } from '../src/application/task-pool-transaction'
-import { createDefaultTeamBundle, type TeamControlSnapshot } from '../src/domain/team-control'
+import type { TeamControlSnapshot } from '../src/domain/team-control'
 import { SqliteTaskPoolRepository } from '../src/infrastructure/task-pool/sqlite-task-pool-repository'
 import { SqliteTeamCollaborationRepository } from '../src/infrastructure/team-collaboration/sqlite-team-collaboration-repository'
 import { SqliteTeamMemoryRepository } from '../src/infrastructure/team-memory/sqlite-team-memory-repository'
 import { SqliteTeamControlRepository } from '../src/infrastructure/team-control/sqlite-team-control-repository'
+import { createDefaultTeamBundle } from './legacy-team-fixtures'
 
 function fixture() {
   const path = join(mkdtempSync(join(tmpdir(), 'sg-team-memory-')), 'team.sqlite3')
@@ -66,8 +67,6 @@ describe('SG Team governed memory', () => {
   it('grants run-memory review to the acting lead after real authority transfer', () => {
     const data = fixture()
     try {
-      data.team.updateRunGoal(data.bundle.run.id, '验证临时主控记忆权限')
-      data.team.beginLaunch(data.bundle.run.id, 200, 'binding-key-memory-lead')
       data.team.setActingLead({ runId: data.bundle.run.id, slotId: data.slot('builder').id, at: 300 })
       const reviewer = data.agent('reviewer')
       const actingIdentity = data.team.resolveAgentRuntimeIdentity(

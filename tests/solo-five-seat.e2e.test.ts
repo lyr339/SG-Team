@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { createTeamAgentLaunchPromptPort } from '../src/application/team-agent-launch-prompts'
 import { TeamControlService, type TeamControlBridge } from '../src/application/team-control-service'
-import { createConfiguredTeamBundle, workspaceRunMode } from '../src/domain/team-control'
+import { workspaceRunMode } from '../src/domain/team-control'
 import { SqliteTeamCollaborationRepository } from '../src/infrastructure/team-collaboration/sqlite-team-collaboration-repository'
 import { SqliteTeamControlRepository } from '../src/infrastructure/team-control/sqlite-team-control-repository'
 import type { DesktopSnapshot, SendMessageInput } from '../src/shared/desktop-api'
@@ -22,40 +22,48 @@ class Bridge implements TeamControlBridge {
   sendMessage(input: SendMessageInput) {
     const commandId = `cmd-${this.sent.length + 1}`
     this.sent.push(input)
-    this.snapshot.conversations[input.channelId] = [{
-      id: commandId, channelId: input.channelId, role: 'user', text: input.text,
-      timestamp: Date.now(), status: 'complete', source: 'desktop', commandId
-    }]
-    for (const listener of this.listeners) listener(this.getSnapshot())
     return { commandId }
   }
 }
 
-describe('solo five-seat end-to-end composition', () => {
-  it('persists an independent-only run and gives every channel the isolated long-poll prompt', async () => {
+function waitingSessions(channelIds: string[]): DesktopSnapshot {
+  return {
+    connection: { state: 'connected', endpoint: 'local', attempt: 0, lastError: '' },
+    sessions: channelIds.map((channelId) => ({
+      id: `session-${channelId}`, channelId, generation: 1, displayName: `CH-${channelId}`,
+      roleName: '', status: 'waiting', currentTask: '', queueDepth: 0, connectionPhase: 'waiting',
+      online: true, connected: true, waiting: true, workingFiles: [], healthEvidence: ['waiting']
+    })),
+    conversations: {}, protocolIssues: [], updatedAt: 1
+  }
+}
+
+const solo = (channelId: string) => ({ channelId, roleTemplateKey: 'solo', avatarId: 'researcher', skills: [], solo: true })
+
+function install(service: TeamControlService, workspaceId: string) {
+  const created = service.getSnapshot()
+  return service.recordInstallation({
+    workspaceId, runId: created.activeRun!.id, generation: 'generation123',
+    agents: created.members.map((member) => ({
+      agentSessionId: `${workspaceId}:ch-${member.slot.channelId}:generation123`,
+      workspaceId, channelId: member.slot.channelId!, generation: 'generation123',
+      runId: created.activeRun!.id, capabilities: []
+    }))
+  })
+}
+
+describe('session pool five-seat end-to-end composition', () => {
+  it('persists an independent-only pool and gives every channel the isolated long-poll prompt', async () => {
     const path = join(mkdtempSync(join(tmpdir(), 'sg-independent-e2e-')), 'team.sqlite3')
     const repository = new SqliteTeamControlRepository(path)
-    const bridge = new Bridge({
-      connection: { state: 'connected', endpoint: 'local', attempt: 0, lastError: '' },
-      sessions: [], conversations: {}, protocolIssues: [], updatedAt: 1
-    })
-    const service = new TeamControlService(repository, bridge, 100)
+    const bridge = new Bridge(waitingSessions([]))
+    const service = new TeamControlService(repository, bridge)
     try {
-      const created = service.configureIndependentWorkspace({
+      service.createSessionPool({
         workspaceId: 'independent-three', workspaceName: 'independent-three', workspacePath: '/workspace/independent-three',
-        members: ['1', '2', '3'].map((channelId) => ({
-          channelId, roleTemplateKey: 'solo', avatarId: 'researcher', skills: [], solo: true
-        }))
+        members: ['1', '2', '3'].map(solo)
       })
-      const run = created.activeRun!
-      service.recordInstallation({
-        workspaceId: 'independent-three', runId: run.id, generation: 'generation123',
-        agents: created.members.map((member) => ({
-          agentSessionId: `independent-three:ch-${member.slot.channelId}:generation123`,
-          workspaceId: 'independent-three', channelId: member.slot.channelId!, generation: 'generation123',
-          runId: run.id, capabilities: []
-        }))
-      })
+      install(service, 'independent-three')
       const restored = service.getSnapshot()
       expect(workspaceRunMode(restored.activeRun)).toBe('independent')
       expect(restored.bindings).toHaveLength(3)
@@ -74,66 +82,62 @@ describe('solo five-seat end-to-end composition', () => {
         expect(prompt).not.toContain('team_check_in')
         expect(() => repository.resolveChannelAgentIdentity(channelId)).toThrowError(/独立席位/)
       }
+      expect(bridge.sent).toEqual([])
     } finally {
       service.dispose()
       repository.close()
     }
   })
 
-  it('installs all five, launches/checks in only the three-person team, and keeps two solo prompts independent', async () => {
-    const path = join(mkdtempSync(join(tmpdir(), 'sg-solo-e2e-')), 'team.sqlite3')
+  it('groups three of five pool seats: the group members check in as a team while every seat, grouped or not, keeps the isolated prompt', async () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'sg-pool-group-e2e-')), 'team.sqlite3')
     const repository = new SqliteTeamControlRepository(path)
     const collaboration = new SqliteTeamCollaborationRepository(path)
-    const bundle = createConfiguredTeamBundle({
-      workspaceId: 'mixed-five', workspaceName: 'mixed-five', workspacePath: '/workspace/mixed-five', now: 100,
-      members: [
-        { channelId: '1', roleTemplateKey: 'lead', avatarId: 'lead', skills: [] },
-        { channelId: '2', roleTemplateKey: 'builder', avatarId: 'architect', skills: [] },
-        { channelId: '3', roleTemplateKey: 'reviewer', avatarId: 'reviewer', skills: [] },
-        { channelId: '4', roleTemplateKey: 'solo', avatarId: 'researcher', skills: [], solo: true },
-        { channelId: '5', roleTemplateKey: 'solo', avatarId: 'devops', skills: [], solo: true }
-      ]
-    })
-    repository.upsertWorkspaceTeam(bundle)
-    repository.updateRunGoal(bundle.run.id, '三人团队协作，两个独立会话由用户单独指派')
-    repository.recordInstallation({
-      workspaceId: bundle.workspace.id, runId: bundle.run.id, generation: 'generation123',
-      agents: bundle.slots.map((slot) => ({
-        agentSessionId: `mixed-five:ch-${slot.channelId}:generation123`, workspaceId: bundle.workspace.id,
-        channelId: slot.channelId!, generation: 'generation123', runId: bundle.run.id,
-        capabilities: bundle.roles.find((role) => role.id === slot.roleId)!.capabilities
-      }))
-    })
-    const bridge = new Bridge({
-      connection: { state: 'connected', endpoint: 'local', attempt: 0, lastError: '' },
-      sessions: ['1', '2', '3', '4', '5'].map((channelId) => ({
-        id: `session-${channelId}`, channelId, generation: 1, displayName: `CH-${channelId}`,
-        roleName: '', status: 'waiting', currentTask: '', queueDepth: 0, connectionPhase: 'waiting',
-        online: true, connected: true, waiting: true, workingFiles: [], healthEvidence: ['waiting']
-      })),
-      conversations: {}, protocolIssues: [], updatedAt: 1
-    })
-    const service = new TeamControlService(repository, bridge, 100)
+    const bridge = new Bridge(waitingSessions(['1', '2', '3', '4', '5']))
+    const service = new TeamControlService(repository, bridge)
     try {
-      expect(service.getSnapshot().members).toHaveLength(5)
-      expect(service.getSnapshot().preflight).toMatchObject({ mcpInstalled: true, agentsWaiting: true, canLaunch: true })
-      await service.launch()
-      expect(bridge.sent.map((message) => message.channelId)).toEqual(['1', '2', '3'])
+      service.createSessionPool({
+        workspaceId: 'mixed-five', workspaceName: 'mixed-five', workspacePath: '/workspace/mixed-five',
+        members: ['1', '2', '3', '4', '5'].map(solo)
+      })
+      install(service, 'mixed-five')
+      const pool = service.getSnapshot()
+      expect(pool.members).toHaveLength(5)
+      expect(pool.preflight).toMatchObject({ mcpInstalled: true, canLaunch: true })
+      const slotOf = (channelId: string) => pool.members.find((member) => member.slot.channelId === channelId)!.slot.id
+
+      // 池内建组 = 阶段 1 的成员关系操作：不触碰令牌 / 绑定，run 状态不变，也没有任何「启动」投递。
+      const { group } = repository.createGroup({
+        runId: pool.activeRun!.id, name: '三人组', goal: '三人团队协作，两个独立会话由用户单独指派',
+        leadSlotId: slotOf('1'),
+        members: [
+          { slotId: slotOf('1'), roleTemplateKey: 'lead' },
+          { slotId: slotOf('2'), roleTemplateKey: 'builder' },
+          { slotId: slotOf('3'), roleTemplateKey: 'reviewer' }
+        ]
+      })
+      expect(bridge.sent).toEqual([])
+      expect(service.getSnapshot().activeRun?.status).toBe('running')
 
       for (const channelId of ['1', '2', '3']) {
         const identity = repository.resolveChannelAgentIdentity(channelId)
+        expect(identity.groupId).toBe(group.id)
         repository.recordAgentCheckIn(identity, 'ready')
       }
-      expect(service.getSnapshot().activeRun?.status).toBe('running')
-      expect(collaboration.listRunMembers(bundle.run.id)).toHaveLength(3)
+      const grouped = service.getSnapshot()
+      expect(grouped.activeRun?.status).toBe('running')
+      expect(grouped.groups.map((view) => [view.group.id, view.members.length])).toEqual([[group.id, 3]])
+      expect(grouped.members.filter((member) => member.slot.solo !== true).map((member) => member.readiness)).toEqual(['active', 'active', 'active'])
+      expect(collaboration.listRunMembers(pool.activeRun!.id, group.id)).toHaveLength(3)
 
-      for (const channelId of ['4', '5']) {
-        expect(() => repository.resolveChannelAgentIdentity(channelId)).toThrowError(/独立席位/)
-        const prompts = createTeamAgentLaunchPromptPort({ getSnapshot: () => service.getSnapshot() })
+      const prompts = createTeamAgentLaunchPromptPort({ getSnapshot: () => service.getSnapshot() })
+      for (const channelId of ['1', '2', '3', '4', '5']) {
         const prompt = await prompts.fetchStartPrompt(channelId)
-        expect(prompt).toContain('独立会话')
         expect(prompt).toContain('check_messages')
         expect(prompt).not.toContain('team_check_in')
+      }
+      for (const channelId of ['4', '5']) {
+        expect(() => repository.resolveChannelAgentIdentity(channelId)).toThrowError(/独立席位/)
       }
     } finally {
       service.dispose()

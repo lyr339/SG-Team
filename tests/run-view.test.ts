@@ -5,9 +5,7 @@ import {
   buildRunView,
   groupActionConsequence,
   replaceRunConsequence,
-  seatStateOf,
-  teamFlowSteps,
-  teamPrimaryAction
+  seatStateOf
 } from '../src/renderer/src/run/run-view'
 import { teamControlSnapshot } from '../src/renderer/src/preview/mock-data'
 import { pooledTeam } from './run-fixtures'
@@ -24,7 +22,7 @@ function runtimeOf(shape: SeatShape, channelId: string): TeamMemberRuntime | und
   return { ...base, status: 'offline', online: false, waiting: false, connectionPhase: 'offline' }
 }
 
-/** 独立批次快照：按形态给每个独立席位一个运行态。 */
+/** 会话池快照：按形态给每个独立席位一个运行态。 */
 function independentTeam(shapes: SeatShape[], status: TeamRunStatus = 'running'): TeamControlSnapshot {
   const snapshot = structuredClone(teamControlSnapshot)
   const solo = snapshot.members.find((member) => member.slot.solo === true)!
@@ -41,8 +39,8 @@ function independentTeam(shapes: SeatShape[], status: TeamRunStatus = 'running')
   return snapshot
 }
 
-/** 团队快照：所有团队席位按同一形态。 */
-function teamRun(shape: SeatShape, status: TeamRunStatus = 'running'): TeamControlSnapshot {
+/** 升级前的一次性团队 run（mock-data 的基础快照就是一个）：阶段 2 · 2B 起只作归档展示。 */
+function legacyTeamRun(shape: SeatShape, status: TeamRunStatus = 'completed'): TeamControlSnapshot {
   const snapshot = structuredClone(teamControlSnapshot)
   snapshot.activeRun = { ...snapshot.activeRun!, status }
   snapshot.members = snapshot.members.map((member) => ({
@@ -57,7 +55,8 @@ describe('run view · seats', () => {
     const team = independentTeam(['waiting', 'working', 'offline', 'unconfirmed'])
     expect(team.members.map(seatStateOf)).toEqual(['waiting', 'working', 'offline', 'unconfirmed'])
     const view = buildRunView(team)
-    expect(view.mode).toBe('independent')
+    expect(view.run?.templateId).toBe('independent-session-v1')
+    expect(view).toMatchObject({ phase: 'active', archivedLegacyTeam: false })
     // 执行中的席位不算待重建：它在干活，只是长任务期间心跳停刷。
     expect(view.seats.map((seat) => [seat.channelId, seat.state, seat.pending])).toEqual([
       ['1', 'waiting', false],
@@ -68,26 +67,22 @@ describe('run view · seats', () => {
     // 软守卫口径：在线 / 执行中 / 尚无证据 都算 live；离线不算。
     expect(view.liveSeatCount).toBe(3)
     expect(view.evidencePending).toBe(true)
-    expect(view.state).toMatchObject({ label: '待命 1 · 执行中 1' })
+    expect(view.pendingSeats.map((seat) => seat.channelId)).toEqual(['3', '4'])
+    expect(view.state).toMatchObject({ label: '待命 1 · 执行中 1', tone: 'neutral' })
   })
 
   it('surfaces a pending user decision as attention without treating the seat as offline or rebuildable', () => {
-    const independent = buildRunView(independentTeam(['awaiting', 'waiting']))
-    expect(independent.seats[0]).toMatchObject({ state: 'awaiting', pending: false })
-    expect(independent.liveSeatCount).toBe(2)
-    expect(independent.state).toMatchObject({ label: '等待回答 1 · 待命 1 · 执行中 0', tone: 'warning' })
-
-    const team = buildRunView(teamRun('awaiting', 'running'))
-    expect(team.state).toMatchObject({ label: '2 个席位等待回答', tone: 'warning' })
+    const view = buildRunView(independentTeam(['awaiting', 'waiting']))
+    expect(view.seats[0]).toMatchObject({ state: 'awaiting', pending: false })
+    expect(view.liveSeatCount).toBe(2)
+    expect(view.state).toMatchObject({ label: '等待回答 1 · 待命 1 · 执行中 0', tone: 'warning' })
   })
 
-  it('shows only the seats of the active mode: team seats hide the solo seat and vice versa', () => {
-    const team = buildRunView(teamControlSnapshot)
-    expect(team.mode).toBe('team')
-    expect(team.seats.every((seat) => !seat.solo)).toBe(true)
-    expect(team.seats).toHaveLength(teamControlSnapshot.members.filter((member) => member.slot.solo !== true).length)
-    const independent = buildRunView(independentTeam(['waiting']))
-    expect(independent.seats.every((seat) => seat.solo)).toBe(true)
+  it('reads the pool state chip from the seats', () => {
+    expect(buildRunView(independentTeam(['waiting', 'waiting'])).state).toMatchObject({ label: '待命 2/2', tone: 'active' })
+    expect(buildRunView(independentTeam(['waiting', 'unconfirmed'])).state).toMatchObject({ label: '待命 1/2', tone: 'neutral' })
+    expect(buildRunView(independentTeam(['offline', 'offline'])).state).toMatchObject({ label: '全部离线', tone: 'warning' })
+    expect(buildRunView(independentTeam([])).state).toMatchObject({ label: '空批次', tone: 'neutral' })
   })
 
   it('an ended run has no live seats and nothing pending to create', () => {
@@ -95,61 +90,30 @@ describe('run view · seats', () => {
     expect(view.phase).toBe('completed')
     expect(view.liveSeatCount).toBe(0)
     expect(view.pendingSeats).toEqual([])
+    expect(view.evidencePending).toBe(false)
     expect(view.state).toMatchObject({ label: '批次已结束', tone: 'muted' })
   })
 
-  it('has no run, no mode and no seats before the first run', () => {
+  it('has no run and no seats before the first run', () => {
     const view = buildRunView(emptyTeamControlSnapshot())
-    expect(view).toMatchObject({ phase: 'none', mode: undefined, seats: [], liveSeatCount: 0 })
+    expect(view).toMatchObject({ phase: 'none', run: undefined, archivedLegacyTeam: false, seats: [], groups: [], liveSeatCount: 0 })
     expect(view.state.label).toBe('尚未开始运行')
+  })
+
+  it('treats an archived legacy team run as "no run": start page, one explanatory chip, no seats or groups (2B)', () => {
+    for (const status of ['completed', 'running'] as const) {
+      const view = buildRunView(legacyTeamRun('waiting', status))
+      expect(view).toMatchObject({ phase: 'none', run: undefined, archivedLegacyTeam: true, seats: [], groups: [], ungroupedSeats: [], liveSeatCount: 0 })
+      expect(view.state).toMatchObject({ label: '旧团队运行已归档', tone: 'muted' })
+      expect(view.state.hint).toContain('独立批次')
+    }
+    // 工作区仍然是它的：新建批次的目标工程照常显示。
+    expect(buildRunView(legacyTeamRun('waiting')).workspace?.id).toBe('wedge-demo')
   })
 
   it('flags a Cursor workspace switch relative to the run workspace', () => {
     expect(buildRunView(teamControlSnapshot, { id: 'wedge-demo', name: 'wedge-demo', path: '/x' }).cursorWorkspaceChanged).toBe(false)
     expect(buildRunView(teamControlSnapshot, { id: 'other', name: '新工程', path: '/y' }).cursorWorkspaceChanged).toBe(true)
-  })
-})
-
-describe('run view · team state chip and primary action', () => {
-  it('reads the phase from the run status and presence from the seats', () => {
-    expect(buildRunView(teamRun('waiting', 'running')).state).toMatchObject({ label: '协作执行中', tone: 'active' })
-    expect(buildRunView(teamRun('offline', 'running')).state).toMatchObject({ label: '全部 Agent 离线', tone: 'warning' })
-    expect(buildRunView(teamRun('working', 'running')).state.label).toBe('长任务中 · 连接待确认')
-    expect(buildRunView(teamRun('waiting', 'attention')).state.label).toBe('团队需处理')
-    expect(buildRunView(teamRun('waiting', 'launching')).state).toMatchObject({ label: '启动确认中', tone: 'progress' })
-    expect(buildRunView(teamRun('offline', 'completed')).state).toMatchObject({ label: '本轮已结束', tone: 'muted' })
-    expect(buildRunView(teamRun('waiting', 'ready')).state.label).toBe('待命 2/2')
-  })
-
-  it('derives the primary action from preflight, not from which page is open', () => {
-    const draft = teamRun('waiting', 'draft')
-    draft.activeRun!.goal = ''
-    expect(teamPrimaryAction(draft, buildRunView(draft)).kind).toBe('fill-goal')
-
-    const needsMcp = teamRun('waiting', 'ready')
-    needsMcp.preflight = { ...needsMcp.preflight, canLaunch: false, mcpInstalled: false }
-    expect(teamPrimaryAction(needsMcp, buildRunView(needsMcp))).toMatchObject({ kind: 'install-mcp', label: '接入团队 MCP' })
-
-    const ready = teamRun('waiting', 'ready')
-    ready.preflight = { ...ready.preflight, canLaunch: true, mcpInstalled: true }
-    expect(teamPrimaryAction(ready, buildRunView(ready))).toMatchObject({ kind: 'launch', label: '启动团队' })
-
-    const notWaiting = teamRun('offline', 'ready')
-    notWaiting.preflight = { ...notWaiting.preflight, canLaunch: false, mcpInstalled: true, blockers: ['并非所有 Agent 通道都已在线待命'] }
-    expect(teamPrimaryAction(notWaiting, buildRunView(notWaiting))).toMatchObject({ kind: 'check-standby', hint: '并非所有 Agent 通道都已在线待命' })
-
-    const completed = teamRun('offline', 'completed')
-    expect(teamPrimaryAction(completed, buildRunView(completed))).toMatchObject({ kind: 'new-round', label: '开始新一轮' })
-    expect(teamPrimaryAction(teamRun('waiting', 'running'), buildRunView(teamRun('waiting', 'running'))).kind).toBe('none')
-  })
-
-  it('walks the four flow steps', () => {
-    const running = teamRun('waiting', 'running')
-    expect(teamFlowSteps(buildRunView(running)).map((step) => step.state)).toEqual(['done', 'done', 'done', 'current'])
-    const draft = teamRun('offline', 'draft')
-    draft.activeRun!.goal = ''
-    expect(teamFlowSteps(buildRunView(draft)).map((step) => step.state)).toEqual(['current', 'todo', 'todo', 'todo'])
-    expect(teamFlowSteps(buildRunView(teamRun('offline', 'completed'))).map((step) => step.state)).toEqual(['done', 'done', 'done', 'done'])
   })
 })
 
@@ -164,26 +128,21 @@ describe('run view · one consequence template for every destructive action', ()
 
     const offline = buildRunView(independentTeam(['offline', 'offline']))
     expect(replaceRunConsequence(offline, { kind: 'end' })).toMatchObject({ needsConfirm: false })
-    expect(replaceRunConsequence(offline, { kind: 'switch', to: 'team' }).body).toContain('所有会话已离线')
+    expect(replaceRunConsequence(offline, { kind: 'end' }).body).toContain('所有会话已离线')
+    expect(replaceRunConsequence(offline, { kind: 'new-batch' }).body).toContain('所有会话已离线')
   })
 
-  it('describes mode switches and new batches in terms of the current run', () => {
-    const team = buildRunView(teamRun('waiting', 'running'))
-    const toIndependent = replaceRunConsequence(team, { kind: 'switch', to: 'independent' })
-    expect(toIndependent.title).toBe('切换到独立模式')
-    expect(toIndependent.body).toContain('切换会结束当前团队运行')
-    expect(toIndependent.body).toContain('随后配置独立批次')
-    expect(toIndependent.needsConfirm).toBe(true)
-
+  it('describes a new batch in terms of the current run', () => {
     const independent = buildRunView(independentTeam(['waiting']))
-    expect(replaceRunConsequence(independent, { kind: 'switch', to: 'team' }).body).toContain('随后进入组队流程')
-    expect(replaceRunConsequence(independent, { kind: 'new-batch', targetWorkspaceName: '新工程 B' }).title).toBe('在「新工程 B」新建批次')
-    expect(replaceRunConsequence(team, { kind: 'new-round' })).toMatchObject({ title: '结束本轮并开始新一轮', confirmLabel: '确认新一轮' })
+    const newBatch = replaceRunConsequence(independent, { kind: 'new-batch', targetWorkspaceName: '新工程 B' })
+    expect(newBatch).toMatchObject({ title: '在「新工程 B」新建批次', confirmLabel: '确认新建', needsConfirm: true })
+    expect(newBatch.body).toContain('当前批次会结束')
+    expect(replaceRunConsequence(independent, { kind: 'new-batch' }).title).toBe('新建独立批次')
   })
 
   it('never asks for confirmation once the run has ended', () => {
     const ended = buildRunView(independentTeam(['waiting', 'waiting'], 'completed'))
-    expect(replaceRunConsequence(ended, { kind: 'switch', to: 'team' }).needsConfirm).toBe(false)
+    expect(replaceRunConsequence(ended, { kind: 'end' }).needsConfirm).toBe(false)
     expect(replaceRunConsequence(ended, { kind: 'new-batch' }).needsConfirm).toBe(false)
   })
 })
@@ -206,7 +165,7 @@ describe('run view · 会话池的协作组', () => {
 
   it('keeps grouped seats on the run page (they are still pool members) and labels them with their group', () => {
     const view = buildRunView(pool())
-    expect(view.mode).toBe('independent')
+    expect(view).toMatchObject({ phase: 'active', archivedLegacyTeam: false })
     expect(view.seats.map((seat) => [seat.channelId, seat.solo, seat.groupName ?? null, seat.roleName])).toEqual([
       ['1', false, '接口重构', '主控协调'],
       ['2', false, '接口重构', '架构实现'],
@@ -217,8 +176,6 @@ describe('run view · 会话池的协作组', () => {
     // 批次概况与在线数把入组席位一并计入。
     expect(view.liveSeatCount).toBe(4)
     expect(view.state.label).toBe('待命 3 · 执行中 1')
-    // 团队模式不受影响：仍然只显示团队席位。
-    expect(buildRunView(teamRun('waiting', 'running')).groups).toEqual([])
   })
 
   it('projects the group cards, lead marks, attention and the ungrouped candidates', () => {

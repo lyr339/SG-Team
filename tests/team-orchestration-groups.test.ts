@@ -65,7 +65,7 @@ function fixture() {
   const channelIds = ['1', '2', '3', '4', '5', '6']
   const bridge = new MutableBridge(desktopSnapshot(channelIds))
   const team = new TeamControlService(controlRepository, bridge)
-  const selected = team.configureIndependentWorkspace({
+  const selected = team.createSessionPool({
     workspaceId: 'alpha', workspaceName: 'alpha', workspacePath: '/workspace/alpha',
     members: channelIds.map((channelId) => ({ channelId, roleTemplateKey: 'solo', avatarId: 'researcher', skills: [], solo: true }))
   })

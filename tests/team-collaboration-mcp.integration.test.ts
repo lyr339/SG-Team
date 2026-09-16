@@ -6,13 +6,13 @@ import { describe, expect, it } from 'vitest'
 import { TaskAgentService } from '../src/application/task-agent-service'
 import { TeamCollaborationAgentService } from '../src/application/team-collaboration-agent-service'
 import type { TeamMemoryAgentService } from '../src/application/team-memory-agent-service'
-import { createDefaultTeamBundle } from '../src/domain/team-control'
 import { SqliteTaskPoolRepository } from '../src/infrastructure/task-pool/sqlite-task-pool-repository'
 import { SqliteTeamCollaborationRepository } from '../src/infrastructure/team-collaboration/sqlite-team-collaboration-repository'
 import { SqliteTeamControlRepository } from '../src/infrastructure/team-control/sqlite-team-control-repository'
 import { ChannelMessageService } from '../src/application/channel-message-service'
 import { SqliteChannelMessageRepository } from '../src/infrastructure/channel-messages/sqlite-channel-message-repository'
 import { createUnifiedChannelServer } from '../src/mcp/unified-channel-server'
+import { createDefaultTeamBundle } from './legacy-team-fixtures'
 
 function createTaskMcpServer(
   taskService: TaskAgentService,

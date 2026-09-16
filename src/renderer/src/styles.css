@@ -278,14 +278,12 @@ body { line-height: var(--font-text-sm-line-height); letter-spacing: 0; }
 :where(
   .primary-button,
   .lobby-account__save,
-  .cursor-model-dialog > footer button,
-  .team-setup-footer > button:last-child
+  .cursor-model-dialog > footer button
 ) { position: relative; overflow: hidden; isolation: isolate; }
 :where(
   .primary-button,
   .lobby-account__save,
-  .cursor-model-dialog > footer button,
-  .team-setup-footer > button:last-child
+  .cursor-model-dialog > footer button
 )::after {
   content: "";
   position: absolute;
@@ -299,8 +297,7 @@ body { line-height: var(--font-text-sm-line-height); letter-spacing: 0; }
 :where(
   .primary-button,
   .lobby-account__save,
-  .cursor-model-dialog > footer button,
-  .team-setup-footer > button:last-child
+  .cursor-model-dialog > footer button
 ):hover:not(:disabled)::after { opacity: 1; animation: shiguang-button-sheen 1.25s ease-in-out infinite; }
 @keyframes shiguang-button-sheen {
   0% { left: -42%; }
@@ -1615,7 +1612,7 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
   .workspace-composer,
   .connection-chip--connected i, .typing-indicator i, .timeline-jump, .context-popover { transition: none; animation: none; }
   .workspace-composer:focus-within { transform: none; }
-  :where(.primary-button, .lobby-account__save, .cursor-model-dialog > footer button, .team-setup-footer > button:last-child)::after { display: none; }
+  :where(.primary-button, .lobby-account__save, .cursor-model-dialog > footer button)::after { display: none; }
 }
 
 @media (max-width: 1200px) {

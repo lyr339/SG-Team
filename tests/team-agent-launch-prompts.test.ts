@@ -1,30 +1,30 @@
 import { describe, expect, it } from 'vitest'
 import {
   createConfiguredTeamBundle,
-  createDefaultTeamBundle,
   type RuntimeBinding,
-  type TeamControlSnapshot
+  type TeamControlSnapshot,
+  type WorkspaceTeamBundle
 } from '../src/domain/team-control'
 import { createTeamAgentLaunchPromptPort } from '../src/application/team-agent-launch-prompts'
+import { createDefaultTeamBundle } from './legacy-team-fixtures'
 
-function snapshotWith(binding?: RuntimeBinding): TeamControlSnapshot {
-  const bundle = createDefaultTeamBundle({
-    workspaceId: 'workspace-a',
-    workspaceName: 'alpha',
-    workspacePath: '/workspace/alpha',
-    channelIds: ['1', '2', '3'],
-    now: 100
+function poolBundle(): WorkspaceTeamBundle {
+  return createConfiguredTeamBundle({
+    workspaceId: 'workspace-a', workspaceName: 'alpha', workspacePath: '/workspace/alpha', now: 100, mode: 'independent',
+    members: ['1', '2', '3'].map((channelId) => ({ channelId, roleTemplateKey: 'solo', avatarId: 'researcher', skills: [], solo: true }))
   })
-  bundle.run.goal = '完成真实 lead/builder/reviewer 协作闭环'
+}
+
+function snapshotOf(bundle: WorkspaceTeamBundle, bindings: RuntimeBinding[]): TeamControlSnapshot {
   return {
-    schemaVersion: 8,
+    schemaVersion: 9,
     revision: 1,
     activeWorkspaceId: bundle.workspace.id,
     workspaces: [bundle.workspace],
     runs: [bundle.run],
     roles: bundle.roles,
     slots: bundle.slots,
-    bindings: binding ? [binding] : [],
+    bindings,
     updatedAt: 100,
     activeRun: bundle.run,
     members: [],
@@ -35,159 +35,92 @@ function snapshotWith(binding?: RuntimeBinding): TeamControlSnapshot {
     preflight: {
       bridgeConnected: true,
       workspaceBound: true,
-      goalDefined: true,
-      mcpInstalled: Boolean(binding),
+      goalDefined: false,
+      mcpInstalled: bindings.length > 0,
       agentsWaiting: false,
-      canLaunch: Boolean(binding),
+      canLaunch: bindings.length > 0,
       blockers: []
     }
   }
 }
 
-describe('team agent launch prompts', () => {
-  it('builds the start prompt from the active TeamRun channel binding', async () => {
-    const binding: RuntimeBinding = {
-      id: 'binding-builder',
-      workspaceId: 'workspace-a',
-      runId: 'team-run:workspace-a:main',
-      slotId: 'agent-slot:workspace-a:builder',
-      channelId: '2',
-      agentSessionId: 'workspace-a:ch-2:generation1',
-      generation: 'generation1',
-      installedAt: 100,
-      launchStatus: 'not_started',
-      launchDetail: '',
-      lastCheckInNote: '',
-      composerBindingKey: 'generation1'
-    }
-    const prompts = createTeamAgentLaunchPromptPort({ getSnapshot: () => snapshotWith(binding) })
+function bindingFor(bundle: WorkspaceTeamBundle, channelId: string, sessionToken?: string): RuntimeBinding {
+  const slot = bundle.slots.find((candidate) => candidate.channelId === channelId)!
+  return {
+    id: `binding-${channelId}`,
+    workspaceId: bundle.workspace.id,
+    runId: bundle.run.id,
+    slotId: slot.id,
+    channelId,
+    agentSessionId: `${bundle.workspace.id}:ch-${channelId}:generation1`,
+    generation: 'generation1',
+    installedAt: 100,
+    launchStatus: 'not_started',
+    launchDetail: '',
+    lastCheckInNote: '',
+    composerBindingKey: 'generation1',
+    sessionToken
+  }
+}
 
+describe('team agent launch prompts (session pool)', () => {
+  it('gives every installed pool seat the compact isolated long-poll prompt with its seat token', async () => {
+    const bundle = poolBundle()
+    const prompts = createTeamAgentLaunchPromptPort({
+      getSnapshot: () => snapshotOf(bundle, [bindingFor(bundle, '2', 'seat-token-0002')])
+    })
     const prompt = await prompts.fetchStartPrompt('2')
-
-    // S4 底层注入：启动提示只保留一句话引导
-    expect(prompt).toContain('CH-2')
-    expect(prompt).toContain('team_check_in')
     expect(prompt).toContain('SG Team')
-    expect(prompt).not.toContain('核心职责')
-    // 升级前的绑定没有会话令牌：提示词不得凭空要求 Agent 附带 session。
-    expect(prompt).not.toContain('session')
-    expect(prompt).not.toContain('会话围栏')
-  })
-
-  it('keeps the team launch visible text compact; check_in briefing owns the seat token and fence rules', async () => {
-    const binding: RuntimeBinding = {
-      id: 'binding-builder',
-      workspaceId: 'workspace-a',
-      runId: 'team-run:workspace-a:main',
-      slotId: 'agent-slot:workspace-a:builder',
-      channelId: '2',
-      agentSessionId: 'workspace-a:ch-2:generation1',
-      generation: 'generation1',
-      installedAt: 100,
-      launchStatus: 'not_started',
-      launchDetail: '',
-      lastCheckInNote: '',
-      composerBindingKey: 'generation1',
-      sessionToken: 'seat-token-builder-0001'
-    }
-    const prompts = createTeamAgentLaunchPromptPort({ getSnapshot: () => snapshotWith(binding) })
-    const prompt = await prompts.fetchStartPrompt('2')
-    // 团队开场只负责启动 team_check_in；通信令牌随后由角色简报交付。
-    expect(prompt).toContain("team_check_in({channel_id:'2'})")
+    expect(prompt).toContain('CH-2 · 独立会话')
     expect(prompt).toContain('不要回复本条')
-    expect(prompt).not.toContain('seat-token-builder-0001')
-    expect(prompt).not.toContain('会话围栏')
-    expect(prompt.length).toBeLessThan(200)
-  })
-
-  it('fails before CDP launch when the channel has no installed runtime binding', async () => {
-    const prompts = createTeamAgentLaunchPromptPort({ getSnapshot: () => snapshotWith() })
-
-    await expect(prompts.fetchStartPrompt('2')).rejects.toThrowError(/尚未安装 Team MCP/)
-  })
-
-  it('refuses to issue a start prompt while the run goal is empty', async () => {
-    const binding: RuntimeBinding = {
-      id: 'binding-builder',
-      workspaceId: 'workspace-a',
-      runId: 'team-run:workspace-a:main',
-      slotId: 'agent-slot:workspace-a:builder',
-      channelId: '2',
-      agentSessionId: 'workspace-a:ch-2:generation1',
-      generation: 'generation1',
-      installedAt: 100,
-      launchStatus: 'not_started',
-      launchDetail: '',
-      lastCheckInNote: '',
-      composerBindingKey: 'generation1'
-    }
-    const snapshot = snapshotWith(binding)
-    snapshot.runs[0]!.goal = ''
-    snapshot.activeRun = { ...snapshot.activeRun!, goal: '' }
-    const prompts = createTeamAgentLaunchPromptPort({ getSnapshot: () => snapshot })
-
-    await expect(prompts.fetchStartPrompt('2')).rejects.toThrowError(/请先填写团队目标/)
-  })
-
-  it('ensures the run has entered launching before the start prompt is delivered', async () => {
-    const binding: RuntimeBinding = {
-      id: 'binding-builder',
-      workspaceId: 'workspace-a',
-      runId: 'team-run:workspace-a:main',
-      slotId: 'agent-slot:workspace-a:builder',
-      channelId: '2',
-      agentSessionId: 'workspace-a:ch-2:generation1',
-      generation: 'generation1',
-      installedAt: 100,
-      launchStatus: 'not_started',
-      launchDetail: '',
-      lastCheckInNote: '',
-      composerBindingKey: 'generation1'
-    }
-    let ensured = 0
-    const prompts = createTeamAgentLaunchPromptPort({
-      getSnapshot: () => snapshotWith(binding),
-      ensureRunLaunched: () => { ensured += 1 }
-    })
-
-    const prompt = await prompts.fetchStartPrompt('2')
-
-    expect(ensured).toBe(1)
-    expect(prompt).toContain('team_check_in')
-  })
-
-  it('gives a solo channel its independent loop without goal or run-state transition', async () => {
-    const bundle = createConfiguredTeamBundle({
-      workspaceId: 'solo-workspace', workspaceName: 'solo', workspacePath: '/workspace/solo', now: 100,
-      members: [
-        { channelId: '1', roleTemplateKey: 'lead', avatarId: 'lead', skills: [] },
-        { channelId: '2', roleTemplateKey: 'solo', avatarId: 'researcher', skills: [], solo: true }
-      ]
-    })
-    bundle.run.goal = ''
-    const slot = bundle.slots.find((candidate) => candidate.solo)!
-    const binding: RuntimeBinding = {
-      id: 'binding-solo', workspaceId: bundle.workspace.id, runId: bundle.run.id,
-      slotId: slot.id, channelId: '2', agentSessionId: 'solo:ch-2:g1', generation: 'g1',
-      installedAt: 100, launchStatus: 'not_started', launchDetail: '', lastCheckInNote: '', composerBindingKey: 'g1'
-    }
-    let ensured = 0
-    const snapshot: TeamControlSnapshot = {
-      schemaVersion: 8, revision: 1, activeWorkspaceId: bundle.workspace.id,
-      workspaces: [bundle.workspace], runs: [bundle.run], roles: bundle.roles, slots: bundle.slots,
-      bindings: [binding], updatedAt: 100, activeRun: bundle.run, members: [], runtimeChannels: [],
-      standbyChannels: [], failovers: [], groups: [],
-      preflight: { bridgeConnected: true, workspaceBound: true, goalDefined: false, mcpInstalled: true, agentsWaiting: false, canLaunch: false, blockers: [] }
-    }
-    const prompts = createTeamAgentLaunchPromptPort({
-      getSnapshot: () => snapshot,
-      ensureRunLaunched: () => { ensured += 1 }
-    })
-    const prompt = await prompts.fetchStartPrompt('2')
-    expect(prompt).toContain('独立会话')
-    expect(prompt).toContain('check_messages')
-    expect(prompt).toContain('不要回复本条')
+    expect(prompt).toContain("check_messages({channel_id:'2', session:'seat-token-0002'})")
+    expect(prompt).toContain('通信工具沿用同一参数')
     expect(prompt).not.toContain('team_check_in')
-    expect(ensured).toBe(0)
+    expect(prompt).not.toContain('会话围栏')
+    expect(prompt).not.toContain('核心职责')
+    expect(prompt.length).toBeLessThan(260)
+  })
+
+  it('omits the session argument for a pre-fence binding that has no token', async () => {
+    const bundle = poolBundle()
+    const prompts = createTeamAgentLaunchPromptPort({ getSnapshot: () => snapshotOf(bundle, [bindingFor(bundle, '2')]) })
+    const prompt = await prompts.fetchStartPrompt('2')
+    expect(prompt).toContain("check_messages({channel_id:'2'})")
+    expect(prompt).not.toContain('session')
+  })
+
+  it('gives a seat of a legacy team run (or a grouped pool seat) the same isolated prompt — no team launch prompt exists any more (2B)', async () => {
+    // 入组 / legacy 团队席位的角色简报由 team_check_in 在首个轮询后交付；开场一律是独立会话。
+    const legacy = createDefaultTeamBundle({
+      workspaceId: 'workspace-a', workspaceName: 'alpha', workspacePath: '/workspace/alpha', channelIds: ['1', '2', '3'], now: 100,
+      goal: '完成真实 lead/builder/reviewer 协作闭环'
+    })
+    const prompts = createTeamAgentLaunchPromptPort({
+      getSnapshot: () => snapshotOf(legacy, [bindingFor(legacy, '1', 'seat-token-lead')])
+    })
+    const prompt = await prompts.fetchStartPrompt('1')
+    expect(prompt).toContain('独立会话')
+    expect(prompt).toContain("check_messages({channel_id:'1', session:'seat-token-lead'})")
+    expect(prompt).not.toContain('team_check_in')
+    expect(prompt).not.toContain(legacy.run.goal)
+  })
+
+  it('fails before CDP launch when the channel has no installed runtime binding, and when there is no pool at all', async () => {
+    const bundle = poolBundle()
+    const prompts = createTeamAgentLaunchPromptPort({ getSnapshot: () => snapshotOf(bundle, []) })
+    await expect(prompts.fetchStartPrompt('2')).rejects.toThrowError(/尚未安装 Team MCP/)
+    await expect(prompts.fetchStartPrompt('x')).rejects.toThrowError(/通道号无效/)
+
+    const empty = snapshotOf(bundle, [])
+    empty.activeRun = undefined
+    const noPool = createTeamAgentLaunchPromptPort({ getSnapshot: () => empty })
+    await expect(noPool.fetchStartPrompt('2')).rejects.toThrowError(/没有可启动的会话池/)
+  })
+
+  it('only answers for bindings of the active run', async () => {
+    const bundle = poolBundle()
+    const stale = { ...bindingFor(bundle, '2', 'stale-token-0002'), runId: 'session-run:workspace-a:older' }
+    const prompts = createTeamAgentLaunchPromptPort({ getSnapshot: () => snapshotOf(bundle, [stale]) })
+    await expect(prompts.fetchStartPrompt('2')).rejects.toThrowError(/尚未安装 Team MCP/)
   })
 })

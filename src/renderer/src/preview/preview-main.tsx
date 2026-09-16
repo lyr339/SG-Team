@@ -7,9 +7,9 @@ import { createRoot } from 'react-dom/client'
 import type { AccountAutomationRun } from '../../../domain/account-automation'
 import { parseCursorAccountCard } from '../../../domain/cursor-account-card'
 import type { ConversationEntry } from '../../../domain/conversation-entry'
-import { AGENT_AVATAR_IDS, TEAM_ROLE_TEMPLATES, createConfiguredTeamBundle, emptyTeamControlSnapshot } from '../../../domain/team-control'
+import { AGENT_AVATAR_IDS, createConfiguredTeamBundle, emptyTeamControlSnapshot } from '../../../domain/team-control'
 import type { TeamRunStatus } from '../../../domain/team-control'
-import type { LiveProcessState, LiveStatusLineState, SgDesktopApi, TeamSetupDraft } from '../../../shared/desktop-api'
+import type { LiveProcessState, LiveStatusLineState, SgDesktopApi } from '../../../shared/desktop-api'
 import type { WorkspaceReviewSummary } from '../../../domain/workspace-review'
 import { estimateTurnCostUsd, estimateUsageFromReference, priceForModel, projectUsage, type CursorUsageSnapshot, type UsageTurn } from '../../../domain/cursor-usage'
 import { CURSOR_STORAGE_CATALOG, buildCleanupPlan, type CursorStorageScan } from '../../../domain/cursor-storage-cleanup'
@@ -26,7 +26,6 @@ import {
 } from './mock-data'
 import '../claude-theme.css'
 import '../styles.css'
-import '../team-setup.css'
 import '../lobby/lobby.css'
 import '../settings/settings.css'
 import '../settings/stats.css'
@@ -81,52 +80,12 @@ const previewRunStatus = (['draft', 'ready', 'launching', 'running', 'attention'
   .find((status) => status === requestedRunStatus)
 // 右栏「变更」面板走查：?review=clean|not_git|error|many（缺省为两文件就绪态）。
 const reviewScene = (['clean', 'not_git', 'error', 'many'] as const).find((scene) => scene === previewParameters.get('review'))
-const setupSkill = (name: string, description: string, source: 'cursor' | 'workspace' | 'user' | 'vercel' | 'anthropic', installed = true) => ({
-  id: installed ? `${source}:${name}` : `recommended:${source}:${name}`,
-  name,
-  description,
-  scope: source === 'cursor' ? 'builtin' as const : source === 'user' ? 'user' as const : 'project' as const,
-  installed,
-  source,
-  recommendedRoles: [] as string[]
-})
-const setupDraft: TeamSetupDraft = {
-  draftId: 'preview-team-setup',
-  workspaceId: 'wedge-demo',
-  workspaceName: 'wedge-demo',
-  workspacePath: '/Users/demo/Workspace/wedge-demo',
-  channels: Array.from({ length: 5 }, (_, index) => ({
-    channelId: String(index + 1),
-    displayName: `SG Team CH-${index + 1}`,
-    status: offlineSessionsPreviewMode ? 'offline' as const : index === 2 || index === 4 ? 'idle' as const : 'waiting' as const,
-    online: !offlineSessionsPreviewMode,
-    waiting: !offlineSessionsPreviewMode && index !== 2 && index !== 4,
-    queueDepth: index === 1 ? 1 : 0
-  })),
-  roleTemplates: structuredClone(TEAM_ROLE_TEMPLATES),
-  avatarIds: [...AGENT_AVATAR_IDS],
-  cursorModels: structuredClone(desktopSnapshot.cursorModels ?? []),
-  skills: [
-    setupSkill('review', '自动选择并执行代码审查流程。', 'cursor'),
-    setupSkill('review-security', '检查安全漏洞与权限边界。', 'cursor'),
-    setupSkill('split-to-prs', '把大型变更拆成可审查 PR。', 'cursor'),
-    setupSkill('frontend-design', '构建具有明确视觉方向的真实界面。', 'workspace'),
-    setupSkill('webapp-testing', '使用 Playwright 验证本地界面。', 'workspace'),
-    setupSkill('mcp-builder', '设计和实现高质量 MCP Server。', 'user'),
-    setupSkill('doc-coauthoring', '结构化共创技术说明。', 'user'),
-    setupSkill('vercel-react-best-practices', 'React 性能和工程最佳实践。', 'vercel', false),
-    setupSkill('web-design-guidelines', '审查 Web 设计与可访问性。', 'vercel', false)
-  ]
-}
-const detectedSetupDraft: TeamSetupDraft = detectedWorkspaceMode ? {
-  ...structuredClone(setupDraft),
-  draftId: 'preview-detected-workspace',
-  workspaceId: 'detected-property-app',
-  workspaceName: '物业管理',
-  workspacePath: '/Users/demo/Workspace/物业管理',
-  channels: setupDraft.channels.slice(0, 4)
-} : setupDraft
+/** 预览里的「Cursor 当前工程」与它的通道号：`?detectedWorkspace=1` 换成另一个工程（4 个通道）。 */
+const previewWorkspace = detectedWorkspaceMode
+  ? { workspaceId: 'detected-property-app', workspaceName: '物业管理', workspacePath: '/Users/demo/Workspace/物业管理', channelIds: ['1', '2', '3', '4'] }
+  : { workspaceId: 'wedge-demo', workspaceName: 'wedge-demo', workspacePath: '/Users/demo/Workspace/wedge-demo', channelIds: ['1', '2', '3', '4', '5'] }
 
+// `?setup=1`：没有任何运行的空工作区——运行页直接进入批次配置。
 const initialTeam = structuredClone(setupMode ? emptyTeamControlSnapshot() : teamControlSnapshot)
 if (activeExecutingMode && initialTeam.activeRun) {
   initialTeam.members = initialTeam.members.map((member) => ({
@@ -314,13 +273,13 @@ if (offlineSessionsPreviewMode) {
   const existing = new Set(state.desktop.sessions.map((session) => session.channelId))
   state.desktop.sessions = [
     ...state.desktop.sessions,
-    ...detectedSetupDraft.channels
-      .filter((channel) => !existing.has(channel.channelId))
-      .map((channel) => ({
+    ...previewWorkspace.channelIds
+      .filter((channelId) => !existing.has(channelId))
+      .map((channelId) => ({
         ...template,
-        id: `preview-channel-${channel.channelId}`,
-        channelId: channel.channelId,
-        displayName: channel.displayName,
+        id: `preview-channel-${channelId}`,
+        channelId,
+        displayName: `SG Team CH-${channelId}`,
         roleName: '未绑定外置团队'
       }))
   ].map((session) => ({
@@ -1103,8 +1062,8 @@ const api: SgDesktopApi = {
   saveImageAs: async () => true,
   getTaskPoolSnapshot: async () => structuredClone(previewTasks),
   installTaskMcp: async () => ({
-    workspacePath: detectedSetupDraft.workspacePath,
-    workspaceId: detectedSetupDraft.workspaceId,
+    workspacePath: previewWorkspace.workspacePath,
+    workspaceId: previewWorkspace.workspaceId,
     runId: state.team.activeRun?.id ?? 'preview-run',
     serverNames: ['SG Team']
   }),
@@ -1112,99 +1071,19 @@ const api: SgDesktopApi = {
   detectCursorWorkspace: async () => ({
     state: 'detected',
     workspace: {
-      id: detectedSetupDraft.workspaceId,
-      name: detectedSetupDraft.workspaceName,
-      path: detectedSetupDraft.workspacePath,
+      id: previewWorkspace.workspaceId,
+      name: previewWorkspace.workspaceName,
+      path: previewWorkspace.workspacePath,
       cursorWorkspaceId: 'preview-cursor-workspace'
     },
     candidates: [],
     detail: '预览中的 Cursor 工作区',
     observedAt: Date.now()
   }),
-  prepareDetectedTeamWorkspace: async () => setupMode || detectedWorkspaceMode
-    ? ({ kind: 'setup', draft: structuredClone(detectedSetupDraft) })
-    : ({ kind: 'existing', snapshot: structuredClone(state.team) }),
-  chooseTeamWorkspace: async () => setupMode ? ({ kind: 'setup', draft: structuredClone(setupDraft) }) : ({ cancelled: true }),
-  createTeam: async (input) => {
-    if (setupMode) {
-      const skillById = new Map(setupDraft.skills.map((skill) => [skill.id, skill]))
-      const configured = createConfiguredTeamBundle({
-        workspaceId: setupDraft.workspaceId,
-        workspaceName: setupDraft.workspaceName,
-        workspacePath: setupDraft.workspacePath,
-        now: Date.now(),
-        members: input.members.map((member) => ({
-          channelId: member.channelId,
-          roleTemplateKey: member.roleTemplateKey,
-          avatarId: member.avatarId,
-          solo: member.solo,
-          modelSelection: member.modelSelection,
-          skills: member.skillIds.flatMap((id) => {
-            const skill = skillById.get(id)
-            return skill ? [{ id: skill.id, name: skill.name, description: skill.description, scope: skill.scope }] : []
-          })
-        }))
-      })
-      const run = { ...configured.run, goal: '预览团队目标', status: 'ready' as const }
-      const members = configured.slots.map((slot, index) => {
-        const role = configured.roles.find((candidate) => candidate.id === slot.roleId)!
-        const runtime = desktopSnapshot.sessions.find((session) => session.channelId === slot.channelId)
-        const binding = {
-          id: `preview-binding-${slot.channelId}`, workspaceId: configured.workspace.id, runId: run.id,
-          slotId: slot.id, channelId: slot.channelId!, agentSessionId: `preview:ch-${slot.channelId}:g1`,
-          generation: 'g1', installedAt: Date.now(), launchStatus: 'not_started' as const,
-          launchDetail: '', lastCheckInNote: '', composerBindingKey: `preview-${slot.channelId}`
-        }
-        return {
-          slot, role, binding,
-          runtime: runtime ? {
-            channelId: runtime.channelId, status: runtime.status, online: runtime.online,
-            waiting: runtime.waiting, queueDepth: runtime.queueDepth, lastSeenAt: runtime.lastSeenAt,
-            healthEvidence: runtime.healthEvidence, workingFiles: runtime.workingFiles
-          } : undefined,
-          readiness: runtime?.online ? runtime.waiting ? 'ready' as const : 'active' as const : 'offline' as const
-        }
-      })
-      state.team = {
-        ...emptyTeamControlSnapshot(),
-        revision: 1,
-        activeWorkspaceId: configured.workspace.id,
-        workspaces: [configured.workspace],
-        runs: [run],
-        roles: configured.roles,
-        slots: configured.slots,
-        bindings: members.map((member) => member.binding),
-        updatedAt: Date.now(),
-        activeRun: run,
-        members,
-        runtimeChannels: members.map((member) => ({
-          channelId: member.binding.channelId,
-          displayName: `SG Team CH-${member.binding.channelId}`,
-          status: member.runtime?.status ?? 'offline',
-          online: member.runtime?.online ?? false,
-          waiting: member.runtime?.waiting ?? false,
-          queueDepth: member.runtime?.queueDepth ?? 0,
-          registered: true,
-          assignedSlotId: member.slot.id,
-          agentSessionId: member.binding.agentSessionId,
-          generation: member.binding.generation
-        })),
-        preflight: {
-          bridgeConnected: true, workspaceBound: true, goalDefined: true,
-          mcpInstalled: false, agentsWaiting: false, canLaunch: false,
-          blockers: ['Agent MCP 尚未接入全部本轮通道', '并非所有团队通道都已在线待命']
-        }
-      }
-    } else {
-      state.team = structuredClone(teamControlSnapshot)
-    }
-    pushTeam()
-    return structuredClone(state.team)
-  },
   createIndependentSessions: async (input) => {
     const configured = createConfiguredTeamBundle({
-      workspaceId: detectedSetupDraft.workspaceId,
-      workspaceName: detectedSetupDraft.workspaceName,
+      workspaceId: previewWorkspace.workspaceId,
+      workspaceName: previewWorkspace.workspaceName,
       workspacePath: input.workspacePath,
       mode: 'independent',
       now: Date.now(),
@@ -1245,24 +1124,10 @@ const api: SgDesktopApi = {
     return structuredClone(state.team)
   },
   chooseIndependentWorkspace: async () => ({
-    id: detectedSetupDraft.workspaceId,
-    name: detectedSetupDraft.workspaceName,
-    path: detectedSetupDraft.workspacePath
+    id: previewWorkspace.workspaceId,
+    name: previewWorkspace.workspaceName,
+    path: previewWorkspace.workspacePath
   }),
-  createNextTeamRun: async () => {
-    state.desktop = { ...state.desktop, conversations: {}, updatedAt: Date.now() }
-    state.team = {
-      ...structuredClone(teamControlSnapshot),
-      runs: teamControlSnapshot.runs.map((run) => ({ ...run, goal: '', status: 'draft' as const })),
-      activeRun: teamControlSnapshot.activeRun
-        ? { ...teamControlSnapshot.activeRun, goal: '', status: 'draft' as const }
-        : undefined,
-      failovers: []
-    }
-    pushDesktop()
-    pushTeam()
-    return structuredClone(state.team)
-  },
   endActiveRun: async () => {
     state.team = {
       ...state.team,
@@ -1276,31 +1141,6 @@ const api: SgDesktopApi = {
     pushTeam()
     return structuredClone(state.team)
   },
-  prepareActiveTeamSetup: async () => structuredClone({
-    ...setupDraft,
-    draftId: 'preview-team-reconfigure',
-    initialMembers: teamControlSnapshot.members.map((member) => ({
-      channelId: member.slot.channelId!,
-      roleTemplateKey: member.role.templateKey,
-      avatarId: member.slot.avatarId,
-      skillIds: member.role.skills.map((skill) => skill.id),
-      solo: member.slot.solo === true,
-      modelSelection: member.slot.modelSelection
-    }))
-  }),
-  updateTeamGoal: async (goal) => {
-    state.team = {
-      ...state.team,
-      revision: state.team.revision + 1,
-      activeRun: state.team.activeRun ? { ...state.team.activeRun, goal, updatedAt: Date.now() } : undefined,
-      runs: state.team.runs.map((run) => run.id === state.team.activeRun?.id
-        ? { ...run, goal, updatedAt: Date.now() }
-        : run)
-    }
-    pushTeam()
-    return structuredClone(state.team)
-  },
-  launchTeam: async () => structuredClone(state.team),
   setSlotModelSelection: async () => structuredClone(state.team),
   // 协作组操作在预览里只回传当前快照；组卡片的交互预览由 ⑤b 的 `?groups=1` 场景补齐。
   createTeamGroup: async () => structuredClone(state.team),

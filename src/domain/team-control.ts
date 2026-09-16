@@ -227,7 +227,7 @@ export interface RuntimeBinding {
 }
 
 export interface TeamControlState {
-  schemaVersion: 8
+  schemaVersion: 9
   revision: number
   activeWorkspaceId?: string
   workspaces: TeamWorkspace[]
@@ -517,7 +517,7 @@ function uniqueChannelIds(values: string[]): string[] {
 
 export function emptyTeamControlState(): TeamControlState {
   return {
-    schemaVersion: 8,
+    schemaVersion: 9,
     revision: 0,
     workspaces: [],
     runs: [],
@@ -655,30 +655,6 @@ export function createConfiguredTeamBundle(input: {
   }
 }
 
-export function createDefaultTeamBundle(input: {
-  workspaceId: string
-  workspacePath: string
-  workspaceName: string
-  channelIds: string[]
-  runKey?: string
-  now?: number
-}): WorkspaceTeamBundle {
-  const channelIds = uniqueChannelIds(input.channelIds)
-  return createConfiguredTeamBundle({
-    ...input,
-    members: channelIds.map((channelId, index) => {
-      const templateKey = index === 0 ? 'lead' : index === 1 ? 'builder' : index === 2 ? 'reviewer' : 'specialist'
-      const template = roleTemplateOf(templateKey)
-      const avatarId = index < 3
-        ? template.avatarId
-        : AGENT_AVATAR_IDS[3 + ((index - 3) % (AGENT_AVATAR_IDS.length - 3))]!
-      return { channelId, roleTemplateKey: templateKey, avatarId, skills: [] }
-    }),
-    runKey: input.runKey,
-    now: input.now
-  })
-}
-
 /** 组 id 形如 `team-group:<workspaceId>:<uuid>`；角色 key 只取 uuid 尾 8 位作前缀。 */
 function groupKeyPrefix(groupId: string): string {
   return `g${groupId.slice(-8)}`
@@ -765,21 +741,10 @@ export function sessionTokenInstruction(input: { channelId: string; sessionToken
     + '若返回「会话围栏」终止指令，说明本会话已被新会话接管或本轮已结束——立即停止轮询并结束，不要重试。'
 }
 
-export function buildTeamLaunchHint(input: {
-  channelId: string
-  binding: RuntimeBinding
-}): string {
-  const { channelId, binding } = input
-  return [
-    `${SG_TEAM_MCP_SERVER_ID} · CH-${channelId}。不要回复本条；`,
-    `立即调用 team_check_in({channel_id:'${channelId}'})，随后按角色简报与服务器说明工作。`,
-    cursorComposerBindingMarker({ bindingKey: binding.composerBindingKey, channelId })
-  ].join('\n')
-}
-
 /**
- * 独立席位开场指令：只交付本会话动态参数与首个动作；完整循环、静默和终止规则
+ * 席位开场指令（阶段 2 · 2B 起唯一的一种）：只交付本会话动态参数与首个动作；完整循环、静默和终止规则
  * 由 SG Team MCP instructions 单一陈述，绑定标记由 AgentSessionLauncher 统一追加。
+ * 入组席位重建后的会话同样先进入 check_messages，入组通知随首个轮询到达（阶段 2C）。
  */
 export function buildSoloLaunchHint(input: { channelId: string; sessionToken?: string }): string {
   const { channelId } = input
