@@ -1,8 +1,9 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join } from 'node:path'
 import { SG_TEAM_MCP_SERVER_ID } from '../../domain/channel-message'
+import { writeStoreFileSync } from '../fs/store-file'
 
 /** 全局注册的通道上限默认值；S4 统一服务器实际只注册单一 SG Team 条目。 */
 export const GLOBAL_CHANNEL_COUNT = 4
@@ -129,7 +130,6 @@ export function reconcileGlobalChannelServers(input: GlobalChannelRegistrationIn
     copyFileSync(configPath, backupPath)
   }
   const temporaryPath = join(dirname(configPath), `.${basename(configPath)}.${randomUUID()}.tmp`)
-  writeFileSync(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, { encoding: 'utf8', mode })
-  renameSync(temporaryPath, configPath)
+  writeStoreFileSync(configPath, `${JSON.stringify(next, null, 2)}\n`, { mode, temporaryPath })
   return { changed: true, configPath, serverNames }
 }

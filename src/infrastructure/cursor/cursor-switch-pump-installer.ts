@@ -1,9 +1,10 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { copyFileSync, existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, readFileSync } from 'node:fs'
 import { dirname, join, normalize } from 'node:path'
 import { promisify } from 'node:util'
 import type { CursorSwitchPumpOutcome, CursorSwitchPumpStatus } from '../../domain/cursor-switch-pump'
+import { writeStoreFileSync } from '../fs/store-file'
 import { cursorWorkbenchBundleCandidates, locateCursorWorkbenchBundle } from './cursor-install-paths'
 import { resolveWindowsCursorWorkbench } from './cursor-windows-launch'
 
@@ -331,7 +332,7 @@ export function syncProductChecksum(appRoot: string, source: string): boolean {
   if (table[WORKBENCH_CHECKSUM_KEY] === next) return true
   table[WORKBENCH_CHECKSUM_KEY] = next
   try {
-    writeFileSync(productPath, `${JSON.stringify(parsed, null, 2)}\n`, 'utf8')
+    writeStoreFileSync(productPath, `${JSON.stringify(parsed, null, 2)}\n`, { temporaryPath: `${productPath}.sg-checksum.tmp` })
     return true
   } catch {
     return false
@@ -528,9 +529,7 @@ export class CursorSwitchPumpInstaller {
     const backup = `${bundlePath}.sg-runtime-switch-backup`
     try {
       if (!existsSync(backup)) copyFileSync(bundlePath, backup)
-      const temporary = `${bundlePath}.sg-switch-pump.tmp`
-      writeFileSync(temporary, nextSource, 'utf8')
-      renameSync(temporary, bundlePath)
+      writeStoreFileSync(bundlePath, nextSource, { temporaryPath: `${bundlePath}.sg-switch-pump.tmp` })
     } catch (error) {
       return { ok: false, changed: false, message: describeBundleWriteFailure(error, bundlePath, this.options.platform) }
     }
@@ -549,9 +548,7 @@ export class CursorSwitchPumpInstaller {
     } catch (error) {
       // 写后自检失败时立刻恢复本次写入前的字节，避免留下半可用 Cursor。
       try {
-        const rollback = `${bundlePath}.sg-switch-pump.rollback.tmp`
-        writeFileSync(rollback, source, 'utf8')
-        renameSync(rollback, bundlePath)
+        writeStoreFileSync(bundlePath, source, { temporaryPath: `${bundlePath}.sg-switch-pump.rollback.tmp` })
       } catch { /* 返回值明确失败，备份仍保留供人工恢复。 */ }
       return { ok: false, changed: false, message: `写后自检失败，已回滚：${error instanceof Error ? error.message : String(error)}` }
     }
@@ -590,9 +587,7 @@ export class CursorSwitchPumpInstaller {
       return { ok: false, changed: false, message: error instanceof Error ? error.message : String(error) }
     }
     try {
-      const temporary = `${bundlePath}.sg-switch-pump.tmp`
-      writeFileSync(temporary, removed.source, 'utf8')
-      renameSync(temporary, bundlePath)
+      writeStoreFileSync(bundlePath, removed.source, { temporaryPath: `${bundlePath}.sg-switch-pump.tmp` })
     } catch (error) {
       return { ok: false, changed: false, message: describeBundleWriteFailure(error, bundlePath, this.options.platform) }
     }
@@ -602,9 +597,7 @@ export class CursorSwitchPumpInstaller {
       if (readback.includes(SWITCH_PUMP_START) || !analyzeSwitchPump(readback).supported) throw new Error('卸载后回读校验失败')
     } catch (error) {
       try {
-        const rollback = `${bundlePath}.sg-switch-pump.rollback.tmp`
-        writeFileSync(rollback, source, 'utf8')
-        renameSync(rollback, bundlePath)
+        writeStoreFileSync(bundlePath, source, { temporaryPath: `${bundlePath}.sg-switch-pump.rollback.tmp` })
       } catch { /* 返回值明确失败，原始备份仍保留。 */ }
       return { ok: false, changed: false, message: `卸载自检失败，已回滚：${error instanceof Error ? error.message : String(error)}` }
     }

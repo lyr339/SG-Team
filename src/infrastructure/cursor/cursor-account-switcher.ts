@@ -1,9 +1,10 @@
 import { execFile } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
 import { DatabaseSync } from 'node:sqlite'
 import { platform } from 'node:os'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
+import { writeStoreFileSync } from '../fs/store-file'
 import type { CursorMachineIdentity } from './cursor-machine-identity'
 import type { CursorRuntimeAccountBridgePort } from './cursor-runtime-account-bridge'
 import {
@@ -542,19 +543,14 @@ export class CursorAccountSwitcher {
     current['telemetry.macMachineId'] = identity.macMachineId
     current['telemetry.devDeviceId'] = identity.devDeviceId
     current['telemetry.sqmId'] = identity.sqmId
-    const temporary = `${path}.tmp`
-    writeFileSync(temporary, JSON.stringify(current, null, 2), 'utf8')
-    renameSync(temporary, path)
+    writeStoreFileSync(path, JSON.stringify(current, null, 2))
   }
 
   /** machineid 文件与 state.vscdb 的 storage.serviceMachineId 恒同值（实证）。 */
   private applyMachineIdFile(machineGuid: string): void {
     const path = this.resolveMachineIdPath()
     try {
-      mkdirSync(dirname(path), { recursive: true })
-      const temporary = `${path}.tmp`
-      writeFileSync(temporary, machineGuid, 'utf8')
-      renameSync(temporary, path)
+      writeStoreFileSync(path, machineGuid)
     } catch {
       // 文件不可写不阻断（storage.serviceMachineId 已落库）。
     }

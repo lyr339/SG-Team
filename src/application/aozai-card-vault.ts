@@ -1,5 +1,5 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { existsSync, rmSync } from 'node:fs'
+import { quarantineStoreFileSync, readStoreJsonSync, writeStoreFileSync } from '../infrastructure/fs/store-file'
 import type { CursorAccountVaultCrypto } from './cursor-account-vault'
 
 interface AozaiCardFile {
@@ -59,24 +59,21 @@ export class AozaiCardVault {
     if (!this.crypto.available()) throw new Error('macOS 系统凭据加密当前不可用')
   }
 
+  /** 坏文件先留档再回「未保存」，避免下一次 store 覆写仅存的密文现场。 */
   private load(): AozaiCardFile | undefined {
-    try {
-      const parsed = JSON.parse(readFileSync(this.path, 'utf8')) as Partial<AozaiCardFile>
-      if (parsed.version !== 1) return undefined
-      if (typeof parsed.encryptedCode !== 'string' || typeof parsed.codeSuffix !== 'string') return undefined
-      if (typeof parsed.updatedAt !== 'number') return undefined
-      return { version: 1, encryptedCode: parsed.encryptedCode, codeSuffix: parsed.codeSuffix, updatedAt: parsed.updatedAt }
-    } catch {
+    const file = readStoreJsonSync(this.path)
+    if (file.kind !== 'json') return undefined
+    const parsed = file.value as Partial<AozaiCardFile> | null
+    if (!parsed || typeof parsed !== 'object' || parsed.version !== 1
+      || typeof parsed.encryptedCode !== 'string' || typeof parsed.codeSuffix !== 'string'
+      || typeof parsed.updatedAt !== 'number') {
+      quarantineStoreFileSync(this.path, '奥仔卡密文件版本或结构不符')
       return undefined
     }
+    return { version: 1, encryptedCode: parsed.encryptedCode, codeSuffix: parsed.codeSuffix, updatedAt: parsed.updatedAt }
   }
 
   private store(card: AozaiCardFile): void {
-    mkdirSync(dirname(this.path), { recursive: true })
-    const temporary = `${this.path}.tmp`
-    writeFileSync(temporary, `${JSON.stringify(card, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
-    chmodSync(temporary, 0o600)
-    renameSync(temporary, this.path)
-    chmodSync(this.path, 0o600)
+    writeStoreFileSync(this.path, `${JSON.stringify(card, null, 2)}\n`, { mode: 0o600 })
   }
 }

@@ -1,10 +1,9 @@
 import { randomUUID } from 'node:crypto'
-import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { dirname } from 'node:path'
 import type { CursorAccountMetadata } from '../domain/cursor-account'
 import { isCursorAccountCredentials, type CursorAccountCredentials } from '../domain/cursor-account'
 import type { CursorAccountCard } from '../domain/cursor-account-card'
 import { isCursorMachineIdentity, type CursorMachineIdentity } from '../infrastructure/cursor/cursor-machine-identity'
+import { quarantineStoreFileSync, readStoreJsonSync, writeStoreFileSync } from '../infrastructure/fs/store-file'
 
 export interface CursorAccountVaultCrypto {
   available(): boolean
@@ -294,10 +293,19 @@ export class CursorAccountVault {
     if (!this.crypto.available()) throw new Error('macOS 系统凭据加密当前不可用')
   }
 
+  /**
+   * 坏文件 / 版本不符先留档再回空金库：金库的每个写操作都是 load→改→store，
+   * 静默回空意味着下一次操作就把所有账号的密文永久覆写掉（断电损坏尤其如此）。
+   */
   private load(): CursorAccountVaultFile {
+    const file = readStoreJsonSync(this.path)
+    if (file.kind !== 'json') return structuredClone(EMPTY_VAULT)
     try {
-      const parsed = JSON.parse(readFileSync(this.path, 'utf8')) as Partial<CursorAccountVaultFile>
-      if (parsed.version !== 1 || !Array.isArray(parsed.accounts)) return structuredClone(EMPTY_VAULT)
+      const parsed = file.value as Partial<CursorAccountVaultFile>
+      if (!parsed || typeof parsed !== 'object' || parsed.version !== 1 || !Array.isArray(parsed.accounts)) {
+        quarantineStoreFileSync(this.path, '账号金库版本或结构不符')
+        return structuredClone(EMPTY_VAULT)
+      }
       return {
         version: 1,
         activeId: typeof parsed.activeId === 'string' ? parsed.activeId : undefined,
@@ -325,16 +333,12 @@ export class CursorAccountVault {
         }))
       }
     } catch {
+      quarantineStoreFileSync(this.path, '账号金库内容异常')
       return structuredClone(EMPTY_VAULT)
     }
   }
 
   private store(vault: CursorAccountVaultFile): void {
-    mkdirSync(dirname(this.path), { recursive: true })
-    const temporary = `${this.path}.tmp`
-    writeFileSync(temporary, `${JSON.stringify(vault, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
-    chmodSync(temporary, 0o600)
-    renameSync(temporary, this.path)
-    chmodSync(this.path, 0o600)
+    writeStoreFileSync(this.path, `${JSON.stringify(vault, null, 2)}\n`, { mode: 0o600 })
   }
 }

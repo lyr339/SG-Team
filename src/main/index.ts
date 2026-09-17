@@ -1,7 +1,8 @@
 import { WINDOW_MIN_WIDTH } from '../shared/window-layout'
 import { app, BrowserWindow, Menu, nativeImage, net, safeStorage, shell, Tray } from 'electron'
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { writeStoreFileSync } from '../infrastructure/fs/store-file'
 import { SqliteTaskPoolRepository } from '../infrastructure/task-pool/sqlite-task-pool-repository'
 import { TaskPoolService } from '../application/task-pool-service'
 import { registerSessionIpc } from './register-session-ipc'
@@ -902,8 +903,7 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     readRoxyApiKey,
     saveRoxyApiKey: (key) => {
       try {
-        mkdirSync(dirname(roxyApiKeyPath), { recursive: true })
-        writeFileSync(roxyApiKeyPath, `${key.trim()}\n`, { encoding: 'utf8', mode: 0o600 })
+        writeStoreFileSync(roxyApiKeyPath, `${key.trim()}\n`, { mode: 0o600 })
       } catch (error) {
         process.stderr.write(`[roxy-api-key] 保存失败：${error instanceof Error ? error.message : String(error)}\n`)
       }

@@ -1,7 +1,7 @@
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { priceForModel, projectUsage } from '../src/domain/cursor-usage'
 import { CursorUsageStore } from '../src/infrastructure/cursor/cursor-usage-store'
 
@@ -58,6 +58,7 @@ describe('CursorUsageStore', () => {
   })
 
   it('坏文件与非法行不进入运行快照', () => {
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
     const path = join(mkdtempSync(join(tmpdir(), 'shiguang-usage-')), 'usage.json')
     const store = new CursorUsageStore(path)
     writeFileSync(path, '{bad json')
@@ -72,6 +73,31 @@ describe('CursorUsageStore', () => {
       }
     }}))
     expect(store.load()).toEqual({ valid: expect.objectContaining({ composerId: 'valid', turns: 1 }) })
+    stderr.mockRestore()
+  })
+
+  it('断电损坏的账本先留档再回空：现场保留，后续保存不覆写（2026-09-17 事故回归）', () => {
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    const base = mkdtempSync(join(tmpdir(), 'shiguang-usage-'))
+    const path = join(base, 'usage.json')
+    const store = new CursorUsageStore(path)
+    // NTFS 断电后的典型现场：文件存在但内容零填充
+    writeFileSync(path, '\u0000'.repeat(128))
+    expect(store.load()).toEqual({})
+    // 损坏文件已改名留档，不再停留在原路径
+    expect(existsSync(path)).toBe(false)
+    expect(readdirSync(base).filter((name) => name.startsWith('usage.json.corrupt-'))).toHaveLength(1)
+    // 下一次保存写全新文件，留档现场不受影响
+    store.save('run-1', {
+      c1: {
+        composerId: 'c1', turns: 1, inputTokens: 1, outputTokens: 1,
+        cacheReadTokens: 0, cacheWriteTokens: 0,
+        estimatedCostUsd: 0.01, pricedModel: 'GPT', lastTurnAt: 1
+      }
+    })
+    expect(store.load().c1).toMatchObject({ composerId: 'c1', turns: 1 })
+    expect(readdirSync(base).filter((name) => name.startsWith('usage.json.corrupt-'))).toHaveLength(1)
+    stderr.mockRestore()
   })
 
   it('请求级采样基线随快照往返（跨重启延续），旧版本快照缺字段不受影响', () => {

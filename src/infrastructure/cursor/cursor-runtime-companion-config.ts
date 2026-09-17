@@ -1,4 +1,5 @@
-import { copyFileSync, existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, readFileSync } from 'node:fs'
+import { writeStoreFileSync } from '../fs/store-file'
 import { cursorWorkbenchBundleCandidates, locateCursorWorkbenchBundle } from './cursor-install-paths'
 
 interface SwitchConfig {
@@ -66,9 +67,7 @@ export class CursorRuntimeCompanionConfig {
     if (!rewritten.changed) return { changed: false, previousPort: rewritten.previousPort }
     const backup = `${bundlePath}.sg-runtime-switch-backup`
     if (!existsSync(backup)) copyFileSync(bundlePath, backup)
-    const temporary = `${bundlePath}.sg-runtime-switch.tmp`
-    writeFileSync(temporary, rewritten.source, 'utf8')
-    renameSync(temporary, bundlePath)
+    writeStoreFileSync(bundlePath, rewritten.source, { temporaryPath: `${bundlePath}.sg-runtime-switch.tmp` })
     const verified = rewriteCursorRuntimeCompanion(readFileSync(bundlePath, 'utf8'), input)
     if (verified.previousPort !== input.port) throw new Error('Cursor 运行时换号 Companion 写入后校验失败')
     return { changed: true, previousPort: rewritten.previousPort }

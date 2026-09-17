@@ -1,7 +1,8 @@
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
 import { platform } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { CursorUpdatePreferences, CursorUpdateWriteResult } from '../../domain/cursor-update'
+import { writeStoreFileSync } from '../fs/store-file'
 import { cursorUserDataRoot } from './cursor-install-paths'
 
 type JsonObject = Record<string, unknown>
@@ -143,11 +144,7 @@ export class CursorUpdatePreferencesStore {
     const backupPath = exists ? backupName(this.path, this.now) : undefined
     if (backupPath) copyFileSync(this.path, backupPath)
     const mode = exists ? statSync(this.path).mode & 0o777 : 0o600
-    const temporary = `${this.path}.tmp-${process.pid}`
-    writeFileSync(temporary, `${JSON.stringify(settings, null, 2)}\n`, { encoding: 'utf8', mode })
-    chmodSync(temporary, mode)
-    renameSync(temporary, this.path)
-    chmodSync(this.path, mode)
+    writeStoreFileSync(this.path, `${JSON.stringify(settings, null, 2)}\n`, { mode, temporaryPath: `${this.path}.tmp-${process.pid}` })
     return { ...settingsSnapshot(this.path, settings), changed: true, backupPath }
   }
 }

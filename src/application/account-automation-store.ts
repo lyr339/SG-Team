@@ -1,10 +1,9 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { dirname } from 'node:path'
 import {
   DEFAULT_ACCOUNT_AUTOMATION_SETTINGS,
   normalizeAccountAutomationSettings,
   type AccountAutomationSettings
 } from '../domain/account-automation'
+import { quarantineStoreFileSync, readStoreJsonSync, writeStoreFileSync } from '../infrastructure/fs/store-file'
 
 interface AccountAutomationFile {
   version: 1
@@ -16,25 +15,20 @@ export class AccountAutomationSettingsStore {
   constructor(readonly path: string) {}
 
   load(): AccountAutomationSettings {
-    try {
-      if (!existsSync(this.path)) return { ...DEFAULT_ACCOUNT_AUTOMATION_SETTINGS }
-      const parsed = JSON.parse(readFileSync(this.path, 'utf8')) as Partial<AccountAutomationFile>
-      if (parsed.version !== 1) return { ...DEFAULT_ACCOUNT_AUTOMATION_SETTINGS }
-      return normalizeAccountAutomationSettings(parsed.settings)
-    } catch {
+    const file = readStoreJsonSync(this.path)
+    if (file.kind !== 'json') return { ...DEFAULT_ACCOUNT_AUTOMATION_SETTINGS }
+    const parsed = file.value as Partial<AccountAutomationFile> | null
+    if (!parsed || typeof parsed !== 'object' || parsed.version !== 1) {
+      quarantineStoreFileSync(this.path, '账号自动化设置版本或结构不符')
       return { ...DEFAULT_ACCOUNT_AUTOMATION_SETTINGS }
     }
+    return normalizeAccountAutomationSettings(parsed.settings)
   }
 
   save(settings: unknown): AccountAutomationSettings {
     const normalized = normalizeAccountAutomationSettings(settings)
-    mkdirSync(dirname(this.path), { recursive: true })
     const file: AccountAutomationFile = { version: 1, settings: normalized }
-    const temporary = `${this.path}.tmp`
-    writeFileSync(temporary, `${JSON.stringify(file, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
-    chmodSync(temporary, 0o600)
-    renameSync(temporary, this.path)
-    chmodSync(this.path, 0o600)
+    writeStoreFileSync(this.path, `${JSON.stringify(file, null, 2)}\n`, { mode: 0o600 })
     return normalized
   }
 }

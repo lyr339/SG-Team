@@ -1,4 +1,5 @@
-import { copyFileSync, existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, readFileSync } from 'node:fs'
+import { writeStoreFileSync } from '../fs/store-file'
 import {
   appRootOfBundle,
   assertJavaScriptSyntax,
@@ -205,9 +206,7 @@ export class CursorLegacyPatchRemover {
     const backup = `${bundlePath}${UNPATCH_BACKUP_SUFFIX}`
     try {
       if (!existsSync(backup)) copyFileSync(bundlePath, backup)
-      const temporary = `${bundlePath}.sg-unpatch.tmp`
-      writeFileSync(temporary, removal.source, 'utf8')
-      renameSync(temporary, bundlePath)
+      writeStoreFileSync(bundlePath, removal.source, { temporaryPath: `${bundlePath}.sg-unpatch.tmp` })
     } catch (error) {
       return { ok: false, changed: false, message: describeBundleWriteFailure(error, bundlePath, this.options.platform) }
     }
@@ -234,9 +233,7 @@ export class CursorLegacyPatchRemover {
       }
     } catch (error) {
       try {
-        const rollback = `${bundlePath}.sg-unpatch.rollback.tmp`
-        writeFileSync(rollback, source, 'utf8')
-        renameSync(rollback, bundlePath)
+        writeStoreFileSync(bundlePath, source, { temporaryPath: `${bundlePath}.sg-unpatch.rollback.tmp` })
       } catch { /* 返回值明确失败，备份仍在盘上供人工恢复。 */ }
       return { ok: false, changed: false, message: `写后自检失败，已回滚：${error instanceof Error ? error.message : String(error)}` }
     }

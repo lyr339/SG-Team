@@ -1,7 +1,7 @@
-import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { CursorAccountVault, type CursorAccountVaultCrypto } from '../src/application/cursor-account-vault'
 import { generateCursorMachineIdentity } from '../src/infrastructure/cursor/cursor-machine-identity'
 
@@ -270,5 +270,23 @@ describe('CursorAccountVault', () => {
       expect(account).not.toHaveProperty('email')
       expect(account).not.toHaveProperty('hasCredentials')
     })
+  })
+
+  it('损坏的金库文件先留档再回空：密文现场保留，后续写入不覆写（断电回归）', () => {
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    const base = mkdtempSync(join(tmpdir(), 'sg-cursor-accounts-'))
+    const path = join(base, 'accounts.json')
+    // 断电后典型现场：文件存在但内容零填充，JSON 解析必失败
+    writeFileSync(path, '\u0000'.repeat(64))
+    const vault = new CursorAccountVault(path, crypto)
+    expect(vault.list()).toEqual([])
+    const kept = readdirSync(base).filter((name) => name.startsWith('accounts.json.corrupt-'))
+    expect(kept).toHaveLength(1)
+    expect(readFileSync(join(base, kept[0]!), 'utf8')).toBe('\u0000'.repeat(64))
+    // 新库照常工作，且不再产生第二份留档
+    expect(vault.save({ label: '新账号', token: 'cursor-token-9999' })).toHaveLength(1)
+    expect(vault.credential()).toBe('cursor-token-9999')
+    expect(readdirSync(base).filter((name) => name.startsWith('accounts.json.corrupt-'))).toHaveLength(1)
+    stderr.mockRestore()
   })
 })

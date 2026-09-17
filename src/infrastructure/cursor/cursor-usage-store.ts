@@ -1,6 +1,5 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { dirname } from 'node:path'
 import { projectUsage, type CursorUsageLedger, type UsageTurn, type CursorSessionUsage, type CursorUsageSnapshot } from '../../domain/cursor-usage'
+import { quarantineStoreFileSync, readStoreJsonSync, writeStoreFileSync } from '../fs/store-file'
 
 /**
  * V4：每行自带 runId，文件跨 run 保留全部账本（历史 run 已由 tracker 冻结）。
@@ -77,16 +76,25 @@ function sessionUsage(value: unknown, composerId: string, fallbackRunId: string 
 export class CursorUsageStore {
   constructor(readonly path: string) {}
 
-  /** 读出全部 run 的账（时间裁旧由 tracker 负责）；坏文件 / 不识别的版本回空。 */
+  /**
+   * 读出全部 run 的账（时间裁旧由 tracker 负责）。
+   * 坏文件 / 不识别的版本不再静默回空——先留档再回空，否则下一次 save 会把
+   * 仅存的历史覆写掉（2026-09-17 断电事故正是这样丢的全部账本）。
+   */
   load(): CursorUsageSnapshot {
+    const file = readStoreJsonSync(this.path)
+    if (file.kind !== 'json') return {}
     try {
-      const parsed = JSON.parse(readFileSync(this.path, 'utf8')) as {
+      const parsed = file.value as {
         version?: unknown
         runId?: unknown
         sessions?: unknown
       }
       const storedRunId = typeof parsed.runId === 'string' ? parsed.runId : undefined
-      if (typeof parsed.version !== 'number' || !READABLE_VERSIONS.has(parsed.version) || !parsed.sessions || typeof parsed.sessions !== 'object') return {}
+      if (typeof parsed.version !== 'number' || !READABLE_VERSIONS.has(parsed.version) || !parsed.sessions || typeof parsed.sessions !== 'object') {
+        quarantineStoreFileSync(this.path, '用量账本版本或结构不符')
+        return {}
+      }
       const rows = Object.entries(parsed.sessions as Record<string, unknown>)
         .flatMap(([composerId, value]) => {
           const normalizedId = composerId.trim().slice(0, 200)
@@ -97,6 +105,7 @@ export class CursorUsageStore {
         .slice(0, MAX_SESSIONS)
       return Object.fromEntries(rows)
     } catch {
+      quarantineStoreFileSync(this.path, '用量账本内容异常')
       return {}
     }
   }
@@ -106,9 +115,6 @@ export class CursorUsageStore {
     const sessions = Object.fromEntries(Object.entries(snapshot)
       .sort((left, right) => right[1].lastTurnAt - left[1].lastTurnAt)
       .slice(0, MAX_SESSIONS))
-    mkdirSync(dirname(this.path), { recursive: true })
-    const temporary = `${this.path}.tmp`
-    writeFileSync(temporary, JSON.stringify({ version: STORE_VERSION, runId, sessions }), { encoding: 'utf8', mode: 0o600 })
-    renameSync(temporary, this.path)
+    writeStoreFileSync(this.path, JSON.stringify({ version: STORE_VERSION, runId, sessions }), { mode: 0o600 })
   }
 }

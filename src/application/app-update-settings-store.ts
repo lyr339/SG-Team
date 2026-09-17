@@ -1,10 +1,9 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { dirname } from 'node:path'
 import {
   DEFAULT_APP_UPDATE_SETTINGS,
   normalizeAppUpdateSettings,
   type AppUpdateSettings
 } from '../domain/app-update'
+import { quarantineStoreFileSync, readStoreJsonSync, writeStoreFileSync } from '../infrastructure/fs/store-file'
 
 export interface AppUpdateRuntimeRecord {
   /** 上次成功或失败完成检查的时刻；自动检查的周期从这里起算，跨重启保留。 */
@@ -30,25 +29,20 @@ export class AppUpdateSettingsStore {
   constructor(readonly path: string) {}
 
   load(): { settings: AppUpdateSettings; runtime: AppUpdateRuntimeRecord } {
-    try {
-      if (!existsSync(this.path)) return { settings: { ...DEFAULT_APP_UPDATE_SETTINGS }, runtime: {} }
-      const parsed = JSON.parse(readFileSync(this.path, 'utf8')) as Partial<AppUpdateSettingsFile>
-      if (parsed.version !== 1) return { settings: { ...DEFAULT_APP_UPDATE_SETTINGS }, runtime: {} }
-      return { settings: normalizeAppUpdateSettings(parsed.settings), runtime: normalizeRuntime(parsed.runtime) }
-    } catch {
+    const file = readStoreJsonSync(this.path)
+    if (file.kind !== 'json') return { settings: { ...DEFAULT_APP_UPDATE_SETTINGS }, runtime: {} }
+    const parsed = file.value as Partial<AppUpdateSettingsFile> | null
+    if (!parsed || typeof parsed !== 'object' || parsed.version !== 1) {
+      quarantineStoreFileSync(this.path, '自更新设置版本或结构不符')
       return { settings: { ...DEFAULT_APP_UPDATE_SETTINGS }, runtime: {} }
     }
+    return { settings: normalizeAppUpdateSettings(parsed.settings), runtime: normalizeRuntime(parsed.runtime) }
   }
 
   save(settings: unknown, runtime: AppUpdateRuntimeRecord = this.load().runtime): AppUpdateSettings {
     const normalized = normalizeAppUpdateSettings(settings)
-    mkdirSync(dirname(this.path), { recursive: true })
     const file: AppUpdateSettingsFile = { version: 1, settings: normalized, runtime: normalizeRuntime(runtime) }
-    const temporary = `${this.path}.tmp`
-    writeFileSync(temporary, `${JSON.stringify(file, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
-    chmodSync(temporary, 0o600)
-    renameSync(temporary, this.path)
-    chmodSync(this.path, 0o600)
+    writeStoreFileSync(this.path, `${JSON.stringify(file, null, 2)}\n`, { mode: 0o600 })
     return normalized
   }
 }
