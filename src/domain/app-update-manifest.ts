@@ -44,10 +44,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+/**
+ * 资产名必须是纯文件名：它会直接拼进本地下载路径（`updates/downloads/<name>`），而清单来自更新源——
+ * 自定义源 / 镜像站是第三方，带 `/`、`\` 或 `..` 的名字就是一次任意路径写入。
+ */
+export function isPlainAssetFileName(name: string): boolean {
+  return name.length > 0 && name !== '.' && name !== '..' && !/[\\/\u0000]/.test(name)
+}
+
 function parseAsset(raw: unknown, key: string): UpdateManifestAsset | { error: string } {
   if (!isRecord(raw)) return { error: `assets.${key} 不是对象` }
   const { name, url, size, sha512 } = raw
   if (typeof name !== 'string' || !name.trim()) return { error: `assets.${key}.name 缺失` }
+  if (!isPlainAssetFileName(name.trim())) return { error: `assets.${key}.name 不是纯文件名：${name.trim()}` }
   if (typeof url !== 'string' || !/^https?:\/\//.test(url)) return { error: `assets.${key}.url 不是 http(s) 地址` }
   if (typeof size !== 'number' || !Number.isInteger(size) || size <= 0) return { error: `assets.${key}.size 不是正整数` }
   if (typeof sha512 !== 'string' || !/^[0-9a-f]{128}$/.test(sha512)) return { error: `assets.${key}.sha512 不是 128 位 hex` }

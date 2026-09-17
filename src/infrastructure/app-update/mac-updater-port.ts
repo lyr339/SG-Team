@@ -12,6 +12,7 @@ import {
   classifyInstallLocation,
   estimateUpdateRequiredBytes,
   installLocationBlockReason,
+  isPlainAssetFileName,
   MAC_BUNDLE_IDENTIFIER,
   UPDATE_MANIFEST_FILE_NAME,
   updatePlatformKey,
@@ -186,6 +187,10 @@ export function createMacUpdaterPort(input: MacUpdaterPortInput): AppUpdaterPort
       }
       staged = undefined
       rmSync(stagingDir, { recursive: true, force: true })
+      // 清单解析已拒绝带路径分隔的资产名；这里再兜一层——下载目标只能落在 downloads/ 里。
+      if (!isPlainAssetFileName(asset.name) || basename(asset.name) !== asset.name) {
+        throw new Error(`清单里的资产名不是纯文件名：${asset.name}`)
+      }
       const zipPath = join(downloadsDir, asset.name)
       rmSync(zipPath, { force: true })
       try {

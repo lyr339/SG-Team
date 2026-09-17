@@ -168,24 +168,38 @@ export interface RollbackScriptPlan {
 }
 
 /**
- * 回滚脚本（任务书 §7.5）：等退出 → 当前包挪走 → 备份包放回 → 用备份库快照覆盖库（先清 -wal/-shm，
- * 经临时文件 mv 覆盖，避免半写）→ 写结果 → open 旧版。库必须一起回：旧代码打不开更高 schema 的库。
+ * 回滚脚本（任务书 §7.5）：等退出 → 备份库快照先复制到库旁的临时文件 → 当前包挪走 → 备份包放回 →
+ * 临时文件 mv -f 覆盖库 → 清掉新版留下的 -wal/-shm → 写结果 → open 旧版。库必须一起回：旧代码打不开
+ * 更高 schema 的库。所以会失败的步骤（复制 130 MB 快照，磁盘不足时最常见）放在换包之前；换包之后
+ * 任何一步失败都先把两个包换回，保证「fail 时 open 的那个包」与「库」始终是同一版本。
  */
 export function buildRollbackScript(plan: RollbackScriptPlan): string {
   const ticks = plan.waitTicks ?? 300
   const tick = plan.tickSeconds ?? '0.2'
   const done = resultJson({ status: 'rolled_back', from: plan.fromVersion, to: plan.toVersion })
   const failedFormat = resultJson({ status: 'rollback_failed', from: plan.fromVersion, to: plan.toVersion, reason: '%s' })
-  const databaseLines = plan.backupDatabasePath
+  const backupDatabasePath = plan.backupDatabasePath
+  const withDatabase = backupDatabasePath !== undefined
+  // 换包前：快照就位（失败时什么都没动，fail 打开的仍是当前版本 + 当前库）。
+  const prepareDatabase = backupDatabasePath !== undefined
     ? [
         `DB=${shellQuote(plan.databasePath)}`,
-        `DBBAK=${shellQuote(plan.backupDatabasePath)}`,
+        `DBBAK=${shellQuote(backupDatabasePath)}`,
         '[ -f "$DBBAK" ] || fail database_backup_missing',
-        'cp "$DBBAK" "$DB.rollback-tmp" || fail database_copy_failed',
-        'rm -f "$DB-wal" "$DB-shm"',
-        'mv -f "$DB.rollback-tmp" "$DB" || fail database_restore_failed'
+        'rm -f "$DB.rollback-tmp"',
+        'cp "$DBBAK" "$DB.rollback-tmp" || { rm -f "$DB.rollback-tmp"; fail database_copy_failed; }'
       ]
     : ['echo "no database snapshot in backup; database left as is"']
+  // 换包时失败：收掉临时快照再 fail（包已在原位或已换回）。
+  const dropTemp = withDatabase ? 'rm -f "$DB.rollback-tmp"; ' : ''
+  // 换包后：同目录 rename 覆盖库；万一失败把两个包换回——新版的库与 -wal 此时都还没动。
+  // -wal/-shm 是新版的写入尾巴，必须在库换回之后、任何进程重新打开之前删掉，否则会被套到旧库上。
+  const restoreDatabase = withDatabase
+    ? [
+        'mv -f "$DB.rollback-tmp" "$DB" || { mv "$APP" "$BAK"; mv "$ROLLED" "$APP"; fail database_restore_failed; }',
+        'rm -f "$DB-wal" "$DB-shm"'
+      ]
+    : []
   return [
     '#!/bin/sh',
     '# 拾光回滚：由拾光退出前生成，/bin/sh 在拾光退出后执行。',
@@ -201,11 +215,12 @@ export function buildRollbackScript(plan: RollbackScriptPlan): string {
     `i=0; while kill -0 ${plan.pid} 2>/dev/null; do i=$((i+1)); [ "$i" -gt ${ticks} ] && fail app_still_running; sleep ${tick}; done`,
     'echo "current instance gone after $i ticks"',
     '[ -d "$BAK" ] || fail backup_missing',
+    ...prepareDatabase,
     'mkdir -p "$(dirname "$ROLLED")"',
     'rm -rf "$ROLLED"',
-    'mv "$APP" "$ROLLED" || fail move_current_failed',
-    'mv "$BAK" "$APP" || { mv "$ROLLED" "$APP"; fail move_backup_failed; }',
-    ...databaseLines,
+    `mv "$APP" "$ROLLED" || { ${dropTemp}fail move_current_failed; }`,
+    `mv "$BAK" "$APP" || { mv "$ROLLED" "$APP"; ${dropTemp}fail move_backup_failed; }`,
+    ...restoreDatabase,
     `printf '%s\\n' ${shellQuote(done)} > "$RESULT"`,
     'echo "OK"',
     'open "$APP"',

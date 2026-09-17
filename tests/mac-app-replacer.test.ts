@@ -181,23 +181,34 @@ describe('buildApplyScript', () => {
 })
 
 describe('buildRollbackScript', () => {
-  it('带库快照：清 -wal/-shm、经临时文件覆盖；结果写 rolled_back', () => {
+  it('带库快照：快照先复制到临时文件再换包，换包后 rename 覆盖库、再清 -wal/-shm；结果写 rolled_back', () => {
     const script = buildRollbackScript(rollbackPlan)
     expect(script).toContain('[ -d "$BAK" ] || fail backup_missing')
-    expect(script).toContain('mv "$APP" "$ROLLED" || fail move_current_failed')
-    expect(script).toContain('mv "$BAK" "$APP" || { mv "$ROLLED" "$APP"; fail move_backup_failed; }')
-    expect(script).toContain('cp "$DBBAK" "$DB.rollback-tmp" || fail database_copy_failed')
-    expect(script).toContain('rm -f "$DB-wal" "$DB-shm"')
-    expect(script).toContain('mv -f "$DB.rollback-tmp" "$DB" || fail database_restore_failed')
+    const copy = script.indexOf('cp "$DBBAK" "$DB.rollback-tmp" || { rm -f "$DB.rollback-tmp"; fail database_copy_failed; }')
+    const moveCurrent = script.indexOf('mv "$APP" "$ROLLED" || { rm -f "$DB.rollback-tmp"; fail move_current_failed; }')
+    const moveBackup = script.indexOf('mv "$BAK" "$APP" || { mv "$ROLLED" "$APP"; rm -f "$DB.rollback-tmp"; fail move_backup_failed; }')
+    const restore = script.indexOf('mv -f "$DB.rollback-tmp" "$DB" || { mv "$APP" "$BAK"; mv "$ROLLED" "$APP"; fail database_restore_failed; }')
+    const dropWal = script.indexOf('rm -f "$DB-wal" "$DB-shm"')
+    // 会失败的复制在换包之前；库覆盖在换包之后且失败换回；-wal/-shm 在库换回之后才删（失败路径里新版的库与 wal 都还完整）。
+    expect(copy).toBeGreaterThan(0)
+    expect(moveCurrent).toBeGreaterThan(copy)
+    expect(moveBackup).toBeGreaterThan(moveCurrent)
+    expect(restore).toBeGreaterThan(moveBackup)
+    expect(dropWal).toBeGreaterThan(restore)
+    expect(script).toContain('[ -f "$DBBAK" ] || fail database_backup_missing')
+    expect(script.indexOf('fail database_backup_missing')).toBeLessThan(moveCurrent)
     expect(script).toContain(`printf '%s\\n' '{"status":"rolled_back","from":"0.3.4","to":"0.3.3"}' > "$RESULT"`)
     expect(script).toContain('"status":"rollback_failed"')
   })
 
-  it('备份里没有库快照：不动库，只换包', () => {
+  it('备份里没有库快照：不动库，只换包；换包失败路径里没有临时文件可收', () => {
     const { backupDatabasePath: _omit, ...withoutDb } = rollbackPlan
     const script = buildRollbackScript(withoutDb)
     expect(script).toContain('no database snapshot in backup; database left as is')
     expect(script).not.toContain('$DBBAK')
+    expect(script).not.toContain('rollback-tmp')
+    expect(script).toContain('mv "$APP" "$ROLLED" || { fail move_current_failed; }')
+    expect(script).toContain('mv "$BAK" "$APP" || { mv "$ROLLED" "$APP"; fail move_backup_failed; }')
   })
 })
 

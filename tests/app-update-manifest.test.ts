@@ -3,6 +3,7 @@ import {
   classifyInstallLocation,
   estimateUpdateRequiredBytes,
   installLocationBlockReason,
+  isPlainAssetFileName,
   macBundlePathOf,
   parseUpdateManifest,
   updatePlatformKey
@@ -47,6 +48,19 @@ describe('app-update-manifest · 清单解析', () => {
     // 未知平台键被忽略，不算错
     const extra = parseUpdateManifest({ ...manifest, assets: { ...manifest.assets, 'linux-x64': { bogus: true } } })
     expect('manifest' in extra && Object.keys(extra.manifest.assets).sort()).toEqual(['mac-arm64', 'win-x64'])
+  })
+
+  it('资产名必须是纯文件名：带 / 、\\ 、.. 或 NUL 的名字一律拒绝（它会拼进本地下载路径，清单来自第三方源）', () => {
+    const errorOf = (name: string): string => {
+      const parsed = parseUpdateManifest({ ...manifest, assets: { 'mac-arm64': { ...manifest.assets['mac-arm64'], name } } })
+      return 'error' in parsed ? parsed.error : ''
+    }
+    for (const name of ['../../.cursor/mcp.json', 'sub/ShiGuang.zip', '..\\ShiGuang.zip', '/etc/passwd', '..', '.', 'a\u0000b']) {
+      expect(errorOf(name), name).toContain('不是纯文件名')
+    }
+    expect(isPlainAssetFileName('ShiGuang-0.3.4-mac-arm64.zip')).toBe(true)
+    expect(isPlainAssetFileName('拾光 0.3.4.zip')).toBe(true)
+    expect(isPlainAssetFileName('.hidden.zip')).toBe(true) // 以点开头的普通文件名不是路径穿越
   })
 
   it('平台键：darwin/arm64 → mac-arm64，darwin/x64 → mac-x64，win32/x64 → win-x64，其余 undefined', () => {

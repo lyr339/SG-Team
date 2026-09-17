@@ -192,6 +192,19 @@ describe('mac 更新器端口 · 检查', () => {
     expect(await missing.port.checkForUpdates()).toMatchObject({ available: true })
   })
 
+  it('清单资产名带路径穿越：检查即失败（一句话原因），downloads/ 里什么都不会落地', async () => {
+    const evil = {
+      ...manifest,
+      assets: { ...manifest.assets, 'mac-arm64': { ...manifest.assets['mac-arm64'], name: '../../../evil.zip' } }
+    }
+    const h = harness({ routes: { [DEFAULT_MANIFEST_URL]: () => jsonResponse(evil) } })
+    await expect(h.port.checkForUpdates()).rejects.toThrow(/不是纯文件名/)
+    await expect(h.port.downloadUpdate({ onProgress: () => {}, signal: new AbortController().signal }))
+      .rejects.toThrow('这一版没有提供 mac 安装包，请到发布页手动下载。')
+    expect(existsSync(join(h.updatesDir, 'downloads'))).toBe(false)
+    expect(existsSync(join(h.dir, 'evil.zip'))).toBe(false)
+  })
+
   it('网络失败与坏 JSON 都以一句话错误上抛', async () => {
     const offline = harness({ routes: { [DEFAULT_MANIFEST_URL]: () => { throw new Error('ENETDOWN') } } })
     await expect(offline.port.checkForUpdates()).rejects.toThrow(/请求更新清单失败：.*ENETDOWN/)
