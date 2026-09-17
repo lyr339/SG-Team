@@ -11,7 +11,7 @@
 |---|---|---|---|---|
 | 0 | `DYNAMIC-GROUPS-HANDOFF-TODO.md` §2 | 实机验证：运行中的独立会话能否不重启地入组 / 出组 | — | **已通过**（09-13，CH-3） |
 | 1 | `DYNAMIC-GROUPS-HANDOFF-TODO.md` | 数据模型与迁移：`team_groups` / `agent_slots.group_id` / run 内对象 `group_id`；身份与授权；服务 API；编排器按组；失效接管收敛；最小 UI | 0 | **已合回 main**（v0.3.0，09-15）；其 §11 实机验收按用户 09-16 决定与阶段 3 §9、阶段 4 §7 合并到全部阶段完成后一次进行 |
-| 2 | `DYNAMIC-GROUPS-PHASE2-RUNTIME-TODO.md` | 运行时语义收口：编排边界定稿、团队 run 启动状态机退役、席位重建 / 交接与组的交互、检查点与用量按组、（可选）lease 语义修正 | 1 | **进行中**（09-16 起，分支 `feat/dynamic-groups-phase2`，worktree `E:\SG-phase2`；2A、2B（2B-1 创建 / 启动路径退役 + schema v9，2B-2 状态枚举收敛，run 两态）完成，2C–2F 待做；进度见其 §8） |
+| 2 | `DYNAMIC-GROUPS-PHASE2-RUNTIME-TODO.md` | 运行时语义收口：编排边界定稿、团队 run 启动状态机退役、席位重建 / 交接与组的交互、检查点与用量按组、（可选）lease 语义修正 | 1 | **进行中**（09-16 起，分支 `feat/dynamic-groups-phase2`，worktree `E:\SG-phase2`；2A、2B（2B-1 创建 / 启动路径退役 + schema v9，2B-2 状态枚举收敛，run 两态）、2C（重建后补投入组通知，手动交接改为组成员身份迁移 `transferMembership`）完成，2D–2F 待做；进度见其 §8） |
 | 3 | `DYNAMIC-GROUPS-PHASE3-UI-TODO.md` | 渲染层「会话与分组」页：替换模式切换 / 团队面板 / ReplaceRunSheet / TeamSetupPage | 1（可与 2 并行） | 待动工 |
 | 4 | `DYNAMIC-GROUPS-PHASE4-MCP-TODO.md` | MCP 工具面收敛：按分组状态暴露工具、schema 判别联合、删死参数、团队消息内联投递、删探活动作 | 1、2 | 待动工 |
 
