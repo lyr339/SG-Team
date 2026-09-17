@@ -424,7 +424,7 @@ const scenes = [
   { name: 'settings-cleanup-empty-dark', hash: 'account:cleanup', query: 'cleanup=empty', width: 1440, height: 900, colorScheme: 'dark', storage: baseStorage({ colorMode: 'dark' }), clip: null },
   // 软件更新（手动组件）：状态卡的每个相位（?update=…）× 深浅色；已就绪时点「安装并重启」出现门禁确认块；
   // 有新版时会话页右下角的小提醒框与齿轮角标（geometry probe：不遮挡输入框、齿轮上有角标）。
-  ...['idle', 'up_to_date', 'available', 'downloading', 'downloaded', 'failed', 'unsupported'].flatMap(phase =>
+  ...['idle', 'up_to_date', 'available', 'downloading', 'downloaded', 'failed', 'offline', 'unsupported'].flatMap(phase =>
     ['light', 'dark'].map(colorScheme => ({
       name: `settings-update-${phase.replace('_', '-')}-${colorScheme}`, hash: 'account:update', query: `update=${phase}`,
       width: 1440, height: 900, colorScheme, storage: baseStorage({ colorMode: colorScheme }), clip: null
@@ -440,6 +440,27 @@ const scenes = [
       return { text: confirm.textContent.slice(0, 60) }
     })()` }]
   },
+  // 自定义更新源展开：提示、镜像预设胶囊、输入 + 保存一行；点预设只填入输入框（保存按钮亮起、胶囊不亮）。
+  ...['light', 'dark'].map(colorScheme => ({
+    name: `settings-update-advanced-${colorScheme}`, hash: 'account:update', query: 'update=idle', width: 1440, height: 900, colorScheme, storage: baseStorage({ colorMode: colorScheme }), clip: '.app-update__settings',
+    actions: [{ wait: 200 }, { click: '.app-update__advanced > summary' }, { wait: 200 }, { click: '.app-update__preset' }, { wait: 100 }, { label: '自定义源排版', probe: `(() => {
+      const details = document.querySelector('.app-update__advanced')
+      if (!details?.open) throw new Error('点 summary 后未展开')
+      const body = details.closest('.settings-section__body').getBoundingClientRect()
+      const feed = document.querySelector('.app-update__feed').getBoundingClientRect()
+      const input = document.querySelector('.app-update__feed-input')
+      const save = [...document.querySelectorAll('.app-update__feed button')].find((node) => node.textContent === '保存')
+      if (feed.right > body.right + 1 || feed.left < body.left - 1) throw new Error('输入行溢出区块正文')
+      if (Math.abs(input.getBoundingClientRect().height - save.getBoundingClientRect().height) > 1) throw new Error('输入框与保存按钮不等高')
+      if (!input.value.startsWith('https://gh-proxy.com/')) throw new Error('点预设后输入框未填入镜像地址')
+      if (save.disabled) throw new Error('填入预设后保存按钮应可点')
+      if (document.querySelector('.app-update__preset').classList.contains('is-active')) throw new Error('未保存时胶囊不该点亮')
+      const chip = document.querySelector('.app-update__preset').getBoundingClientRect()
+      const line = document.querySelector('.app-update__feed-presets').getBoundingClientRect()
+      if (chip.top < line.top - 1 || chip.bottom > line.bottom + 1) throw new Error('预设胶囊撑破了所在行')
+      return { inputWidth: Math.round(input.getBoundingClientRect().width), chipHeight: Math.round(chip.height) }
+    })()` }]
+  })),
   // mac 分支：辅助脚本结果横幅（applied 绿 / apply_failed 红 alert）与回滚脚注 → 确认块（含数据回退警告）。
   { name: 'settings-update-applied-light', hash: 'account:update', query: 'update=idle&updated=applied', width: 1440, height: 900, colorScheme: 'light', storage: baseStorage({ colorMode: 'light' }), clip: '.app-update' },
   { name: 'settings-update-apply-failed-dark', hash: 'account:update', query: 'update=idle&updated=apply_failed', width: 1440, height: 900, colorScheme: 'dark', storage: baseStorage({ colorMode: 'dark' }), clip: '.app-update' },

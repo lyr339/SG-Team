@@ -1,7 +1,8 @@
 /* ---------- 设置 › 软件更新 ---------- */
 /* 状态卡沿用 settings-section 的语言：边框优先、状态色只落在圆点 / 徽章 / 主按钮上，正文保持炭色。 */
 
-.app-update { min-width: 0; display: grid; gap: 12px; padding: 12px 14px 14px; }
+/* 两个容器都直接住在 settings-section__body（自带 12/14 内边距）里：自己不再加一层，否则双重内缩。 */
+.app-update { min-width: 0; display: grid; gap: 12px; }
 
 .app-update__badge {
   padding: 2px 8px;
@@ -156,8 +157,10 @@
 .app-update__button.is-link:hover:not(:disabled) { color: var(--accent-deep); border-color: transparent; text-decoration: underline; }
 
 /* 检查设置 */
-.app-update__settings { min-width: 0; display: grid; padding: 4px 14px 12px; }
+.app-update__settings { min-width: 0; display: grid; }
 .app-update__settings .settings-row--sub .menu-select { width: 160px; }
+/* 间隔选择不是「带色板的模型选择」：藏掉默认灰色 swatch（与账号绑定、清理页同一处理）。 */
+.app-update__settings .menu-select__swatch { display: none; }
 
 .app-update__advanced { padding: 10px 0 2px; }
 .app-update__advanced > summary {
@@ -181,6 +184,28 @@
 .app-update__advanced[open] > summary::before { transform: rotate(45deg); }
 .app-update__advanced-hint { margin: 8px 0 0; color: var(--muted); font-size: var(--fs-10); line-height: 1.5; }
 .app-update__advanced-hint code { padding: 0 4px; background: var(--surface-soft); border-radius: 4px; font-size: var(--fs-10); }
+/* 预设一句话：正文里嵌一枚可点的胶囊（填入输入框，仍要按「保存」）；已是当前源时点亮为品牌色。 */
+.app-update__feed-presets { margin: 4px 0 0; color: var(--muted); font-size: var(--fs-10); line-height: 1.7; }
+.app-update__preset {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  margin: 0 4px;
+  padding: 0 9px;
+  vertical-align: middle;
+  color: var(--text-soft);
+  background: var(--surface-pure);
+  border: 1px solid var(--color-border-tertiary);
+  border-radius: 999px;
+  font-size: var(--fs-10);
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
+}
+.app-update__preset:hover:not(:disabled) { color: var(--text); border-color: var(--accent-border); }
+.app-update__preset:disabled { opacity: .5; cursor: not-allowed; }
+.app-update__preset.is-active { color: var(--accent-deep); background: var(--accent-wash); border-color: var(--accent-border); }
 .app-update__feed { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; margin-top: 8px; }
 .app-update__feed-input {
   min-width: 0;

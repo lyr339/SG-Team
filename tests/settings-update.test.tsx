@@ -188,13 +188,17 @@ describe('设置 › 软件更新', () => {
     expect(button('下载').disabled).toBe(false)
   })
 
-  it('检查设置：开关与间隔经归一化保存；不支持的平台禁用；自定义源保存与恢复默认', async () => {
+  it('检查设置：开关与间隔经归一化保存，关掉开关间隔子组收起；不支持的平台禁用；自定义源保存与恢复默认', async () => {
     const { api } = installApi(statusOf({ phase: 'up_to_date', checkedAt: NOW }))
     await render()
     const toggle = container.querySelector<HTMLInputElement>('input[type="checkbox"][aria-label="自动检查新版本"]')!
     expect(toggle.checked).toBe(true)
+    const collapse = container.querySelector('.settings-collapse')!
+    expect(collapse.classList.contains('is-open')).toBe(true)
+    expect(collapse.textContent).toContain('检查间隔')
     await act(async () => { toggle.click() })
     expect(api.saveAppUpdateSettings).toHaveBeenLastCalledWith({ autoCheck: false, checkIntervalHours: 6 })
+    expect(collapse.classList.contains('is-open')).toBe(false)
     expect(container.querySelector<HTMLButtonElement>('.menu-select__button')?.disabled).toBe(true)
 
     const input = container.querySelector<HTMLInputElement>('input[aria-label="自定义更新源"]')!
@@ -209,6 +213,26 @@ describe('设置 › 软件更新', () => {
     expect(api.saveAppUpdateSettings).toHaveBeenLastCalledWith({ autoCheck: false, checkIntervalHours: 6, feedUrl: 'https://mirror.example.com/sg/' })
     await click('恢复默认')
     expect(api.saveAppUpdateSettings).toHaveBeenLastCalledWith({ autoCheck: false, checkIntervalHours: 6 })
+  })
+
+  it('镜像预设：点胶囊只填入输入框（仍要保存）；保存后胶囊点亮为当前源，恢复默认后熄灭', async () => {
+    const { api } = installApi(statusOf({ phase: 'up_to_date', checkedAt: NOW }))
+    await render()
+    const preset = button('gh-proxy 镜像')
+    const input = container.querySelector<HTMLInputElement>('input[aria-label="自定义更新源"]')!
+    expect(preset.title).toBe('https://gh-proxy.com/https://github.com/lyr339/SG-Team/releases/latest/download/')
+    expect(preset.classList.contains('is-active')).toBe(false)
+    await click('gh-proxy 镜像')
+    expect(input.value).toBe(preset.title)
+    expect(api.saveAppUpdateSettings).not.toHaveBeenCalled()
+    expect(preset.classList.contains('is-active')).toBe(false) // 只是草稿：胶囊表示「当前源」，保存前不亮
+    expect(button('保存').disabled).toBe(false)
+    await click('保存')
+    expect(api.saveAppUpdateSettings).toHaveBeenLastCalledWith({ autoCheck: true, checkIntervalHours: 6, feedUrl: preset.title })
+    expect(button('gh-proxy 镜像').classList.contains('is-active')).toBe(true)
+    await click('恢复默认')
+    expect(input.value).toBe('')
+    expect(button('gh-proxy 镜像').classList.contains('is-active')).toBe(false)
   })
 
   it('平台不支持：状态卡说明原因、只剩发布页，开关禁用', async () => {

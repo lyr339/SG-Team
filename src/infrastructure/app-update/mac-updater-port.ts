@@ -13,6 +13,7 @@ import {
   estimateUpdateRequiredBytes,
   installLocationBlockReason,
   MAC_BUNDLE_IDENTIFIER,
+  UPDATE_MANIFEST_FILE_NAME,
   updatePlatformKey,
   type InstallLocation,
   type UpdateManifest,
@@ -111,8 +112,22 @@ export function createMacUpdaterPort(input: MacUpdaterPortInput): AppUpdaterPort
   })()
 
   let manifestUrl: string | undefined
-  let candidate: { manifest: UpdateManifest; asset: UpdateManifestAsset | undefined } | undefined
+  let candidate: { manifest: UpdateManifest; asset: UpdateManifestAsset | undefined; assetUrl: string | undefined } | undefined
   let staged: { version: string; bundlePath: string } | undefined
+
+  /**
+   * 设置里的「自定义更新源」两个平台同义：一个静态目录，Windows 下 electron-updater 取目录里的
+   * `latest.yml` 并相对它下载安装包；这里取 `update-manifest.json`，安装包同样从该目录取——
+   * 镜像前缀（gh-proxy 类）才能把检查与下载一起接走。直接给到清单文件的 URL 也认，目录取其所在处。
+   */
+  const customFeed = (): { manifestUrl: string; directory: string } | undefined => {
+    if (manifestUrl === undefined) return undefined
+    if (/\.json($|[?#])/.test(manifestUrl)) {
+      return { manifestUrl, directory: manifestUrl.replace(/\/[^/]*$/, '') }
+    }
+    const directory = manifestUrl.replace(/\/+$/, '')
+    return { manifestUrl: `${directory}/${UPDATE_MANIFEST_FILE_NAME}`, directory }
+  }
 
   const releaseUrlOf = (tag: string): string =>
     `https://github.com/${APP_UPDATE_REPOSITORY.owner}/${APP_UPDATE_REPOSITORY.repo}/releases/tag/${tag}`
@@ -141,11 +156,13 @@ export function createMacUpdaterPort(input: MacUpdaterPortInput): AppUpdaterPort
       log(url ? `更新源切换为自定义清单：${url}` : '更新源恢复为 GitHub Releases')
     },
     checkForUpdates: async (): Promise<AppUpdateCheckOutcome> => {
-      const result = await fetchUpdateManifest({ ...(manifestUrl ? { url: manifestUrl } : {}), fetch: input.fetch })
+      const feed = customFeed()
+      const result = await fetchUpdateManifest({ ...(feed ? { url: feed.manifestUrl } : {}), fetch: input.fetch })
       if (result.kind === 'error') throw new Error(result.message)
       if (result.kind === 'manifest') {
         const asset = platformKey ? result.manifest.assets[platformKey] : undefined
-        candidate = { manifest: result.manifest, asset }
+        const assetUrl = asset ? (feed ? `${feed.directory}/${encodeURIComponent(asset.name)}` : asset.url) : undefined
+        candidate = { manifest: result.manifest, asset, assetUrl }
         return { available: true, release: releaseFromManifest(result.manifest, asset) }
       }
       // 最新 Release 没有清单（清单机制之前发的版本）：只能知道 tag，不能应用内下载。
@@ -159,8 +176,8 @@ export function createMacUpdaterPort(input: MacUpdaterPortInput): AppUpdaterPort
       }
     },
     downloadUpdate: async ({ onProgress, signal }) => {
-      if (!candidate?.asset) throw new Error('这一版没有提供 mac 安装包，请到发布页手动下载。')
-      const { manifest, asset } = candidate
+      if (!candidate?.asset || !candidate.assetUrl) throw new Error('这一版没有提供 mac 安装包，请到发布页手动下载。')
+      const { manifest, asset, assetUrl } = candidate
       const required = estimateUpdateRequiredBytes(asset.size, databaseBytes())
       mkdirSync(updatesDir, { recursive: true })
       const available = freeBytes(updatesDir)
@@ -173,7 +190,7 @@ export function createMacUpdaterPort(input: MacUpdaterPortInput): AppUpdaterPort
       rmSync(zipPath, { force: true })
       try {
         await downloadFile({
-          url: asset.url,
+          url: assetUrl,
           destination: zipPath,
           expectedSha512: asset.sha512,
           expectedSize: asset.size,

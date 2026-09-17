@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
   APP_UPDATE_FIRST_CHECK_DELAY_MS,
+  APP_UPDATE_MIRROR_FEED,
+  APP_UPDATE_RETRY_DELAYS_MS,
   appUpdateReleaseUrl,
   appUpdateReminderVersion,
+  appUpdateRetryDelayMs,
+  classifyAppUpdateError,
   compareAppVersions,
   evaluateUpdateGate,
   isNewerAppVersion,
@@ -76,8 +80,11 @@ describe('app-update · 状态机', () => {
     expect(checking).toEqual({ phase: 'checking', startedAt: NOW })
     expect(reduceAppUpdate(checking, { type: 'check_up_to_date' }, NOW + 1)).toEqual({ phase: 'up_to_date', checkedAt: NOW + 1 })
     expect(reduceAppUpdate(checking, { type: 'check_available', release }, NOW + 1)).toEqual({ phase: 'available', release, checkedAt: NOW + 1 })
-    expect(reduceAppUpdate(checking, { type: 'check_failed', message: 'ENOTFOUND' }, NOW + 1))
-      .toEqual({ phase: 'idle', lastCheckedAt: NOW + 1, lastError: 'ENOTFOUND' })
+    expect(reduceAppUpdate(checking, { type: 'check_failed', message: 'ENOTFOUND', kind: 'network' }, NOW + 1))
+      .toEqual({ phase: 'idle', lastCheckedAt: NOW + 1, lastError: 'ENOTFOUND', lastErrorKind: 'network' })
+    // 不带 kind 的失败按明确错误对待（宁可报红，不藏进「稍后重试」）
+    expect(reduceAppUpdate(checking, { type: 'check_failed', message: '更新清单不合法：assets 缺失' }, NOW + 1))
+      .toEqual({ phase: 'idle', lastCheckedAt: NOW + 1, lastError: '更新清单不合法：assets 缺失', lastErrorKind: 'other' })
   })
 
   it('再次检查保留已知发布；下载中 / 已下载 / 安装中 / 检查中拒绝重入', () => {
@@ -202,10 +209,57 @@ describe('app-update · 提醒判定与门禁', () => {
     expect(appUpdateReleaseUrl()).toBe('https://github.com/lyr339/SG-Team/releases/latest')
     expect(appUpdateReleaseUrl('v0.3.3')).toBe('https://github.com/lyr339/SG-Team/releases/tag/v0.3.3')
     expect(appUpdateReleaseUrl('0.3.3')).toBe('https://github.com/lyr339/SG-Team/releases/tag/v0.3.3')
+    // 镜像预设是「最新 Release 资产目录」套镜像前缀：目录形式、以 / 收尾，且能过设置归一化。
+    expect(APP_UPDATE_MIRROR_FEED.url).toBe('https://gh-proxy.com/https://github.com/lyr339/SG-Team/releases/latest/download/')
+    expect(normalizeAppUpdateSettings({ feedUrl: APP_UPDATE_MIRROR_FEED.url }).feedUrl).toBe(APP_UPDATE_MIRROR_FEED.url)
     expect(releaseNotesToPlainText(undefined)).toEqual([])
     expect(releaseNotesToPlainText('<h2>v0.3.3 更新</h2>\n<ul><li><strong>热切</strong>修复 &amp; 提速</li><li>第二条</li></ul><p>尾注</p>'))
       .toEqual(['v0.3.3 更新', '- 热切修复 & 提速', '- 第二条', '尾注'])
     expect(releaseNotesToPlainText('## 标题\n- **加粗** 与 `代码`\n\n\n正文'))
       .toEqual(['标题', '- 加粗 与 代码', '正文'])
+  })
+})
+
+describe('app-update · 检查失败分级与退避', () => {
+  it('网络类：Chromium net:: 错误、Node E* 码、undici 掐断、超时、清单源包装', () => {
+    for (const message of [
+      'net::ERR_CONNECTION_CLOSED',
+      'net::ERR_NAME_NOT_RESOLVED',
+      'ETIMEDOUT',
+      'connect ECONNREFUSED 20.205.243.166:443',
+      'read ECONNRESET',
+      'getaddrinfo ENOTFOUND github.com',
+      'terminated',
+      'fetch failed',
+      'socket hang up',
+      'The operation was aborted due to timeout',
+      '请求更新清单失败：fetch failed',
+      '无法获取最新版本信息（清单不存在，发布页也没有给出版本）'
+    ]) {
+      expect(classifyAppUpdateError(message), message).toBe('network')
+    }
+  })
+
+  it('其他类：HTTP 状态是服务端的明确答复；清单损坏、版本不合法、未知错误都如实报', () => {
+    for (const message of [
+      '更新清单返回 HTTP 500',
+      '下载返回 HTTP 404',
+      '更新清单不是合法 JSON',
+      '更新清单不合法：assets 缺失',
+      '自定义更新源上没有 update-manifest.json',
+      'spawn EACCES',
+      'something exploded'
+    ]) {
+      expect(classifyAppUpdateError(message), message).toBe('other')
+    }
+  })
+
+  it('退避序列 2 → 10 → 30 分钟，之后封顶在 30 分钟', () => {
+    expect(APP_UPDATE_RETRY_DELAYS_MS).toEqual([120_000, 600_000, 1_800_000])
+    expect(appUpdateRetryDelayMs(1)).toBe(120_000)
+    expect(appUpdateRetryDelayMs(2)).toBe(600_000)
+    expect(appUpdateRetryDelayMs(3)).toBe(1_800_000)
+    expect(appUpdateRetryDelayMs(9)).toBe(1_800_000)
+    expect(appUpdateRetryDelayMs(0)).toBe(120_000)
   })
 })

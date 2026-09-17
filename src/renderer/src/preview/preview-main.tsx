@@ -824,7 +824,7 @@ function previewStorageScan(olderThanDays = 90): CursorStorageScan {
 }
 
 /**
- * 软件更新走查：?update=idle（默认）| up_to_date | available | downloading | downloaded | failed | unsupported。
+ * 软件更新走查：?update=idle（默认）| up_to_date | available | downloading | downloaded | failed | offline | unsupported。
  * `available` 场景会让顶栏出现小提醒与齿轮角标；下载在预览里用假进度跑完。
  */
 const previewUpdateScene = previewParameters.get('update') ?? 'idle'
@@ -843,6 +843,8 @@ function previewUpdateInitialState(): AppUpdateState {
     case 'downloading': return { phase: 'downloading', release: previewUpdateRelease, receivedBytes: 48_300_000, totalBytes: 116_467_543, bytesPerSecond: 3_200_000, startedAt: previewNow - 15_000 }
     case 'downloaded': return { phase: 'downloaded', release: previewUpdateRelease, filePath: 'C:\\Users\\demo\\AppData\\Local\\shiguang-team-updater\\pending\\ShiGuang-Setup-0.3.3.exe', downloadedAt: previewNow - 60_000 }
     case 'failed': return { phase: 'failed', step: 'download', message: 'sha512 checksum mismatch, expected 5f2a… got 91c0…', at: previewNow - 30_000, release: previewUpdateRelease }
+    // 网络类检查失败：中性呈现 + 退避重试的说明（真机上直连 GitHub 抽风的常态）。
+    case 'offline': return { phase: 'idle', lastCheckedAt: previewNow - 3 * 60_000, lastError: 'net::ERR_CONNECTION_CLOSED', lastErrorKind: 'network' }
     case 'unsupported': return { phase: 'unsupported', reason: '此平台的应用内更新尚未提供：请到发布页下载新版后手动替换。' }
     default: return { phase: 'idle', lastCheckedAt: previewNow - 3 * 3_600_000 }
   }

@@ -32,6 +32,8 @@ export interface UpdatePanelView {
   headline: string
   /** 一行补充：上次检查时间、发布日期与体积、错误原因。 */
   detail?: string
+  /** detail 的悬停全文（网络失败时给原始错误码，正文只留人话）。 */
+  detailTitle?: string
   /** 发布说明的纯文本段落；没有新版时为空。 */
   notes: string[]
   progress?: { percent: number; received: string; total: string; rate?: string }
@@ -114,19 +116,26 @@ function buildPhaseView(status: AppUpdateStatus, now: number): UpdatePanelView {
         actions: [openRelease],
         busy: false
       }
-    case 'idle':
+    case 'idle': {
+      // 网络类失败（瞬断、断网、被墙）不吓人：中性色 + 人话 + 原始错误收进悬停；红色留给明确错误。
+      const networkError = state.lastError !== undefined && state.lastErrorKind === 'network'
+      const at = state.lastCheckedAt ? `（${formatUpdateTime(state.lastCheckedAt, now)}）` : ''
       return {
-        tone: state.lastError ? 'danger' : 'neutral',
+        tone: state.lastError && !networkError ? 'danger' : 'neutral',
         headline: `当前版本 ${currentVersion}`,
-        detail: state.lastError
-          ? `上次检查失败${state.lastCheckedAt ? `（${formatUpdateTime(state.lastCheckedAt, now)}）` : ''}：${state.lastError}`
-          : state.lastCheckedAt
-            ? `上次检查 ${formatUpdateTime(state.lastCheckedAt, now)}`
-            : '尚未检查过更新',
+        detail: networkError
+          ? `连不上更新源${at}：${settings.autoCheck ? '稍后会自动重试，' : ''}网络恢复后也可「立即检查」`
+          : state.lastError
+            ? `上次检查失败${at}：${state.lastError}`
+            : state.lastCheckedAt
+              ? `上次检查 ${formatUpdateTime(state.lastCheckedAt, now)}`
+              : '尚未检查过更新',
+        ...(networkError && state.lastError ? { detailTitle: state.lastError } : {}),
         notes: [],
         actions: [{ id: 'check', label: '立即检查', kind: 'primary' }, openRelease],
         busy: false
       }
+    }
     case 'checking':
       return {
         tone: 'info',

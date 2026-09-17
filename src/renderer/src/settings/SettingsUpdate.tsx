@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { AppUpdateApplyResult, AppUpdateSettings, AppUpdateStatus, UpdateGate } from '../../../domain/app-update'
-import { APP_UPDATE_CHECK_INTERVAL_HOURS, normalizeAppUpdateSettings } from '../../../domain/app-update'
+import { APP_UPDATE_CHECK_INTERVAL_HOURS, APP_UPDATE_MIRROR_FEED, normalizeAppUpdateSettings } from '../../../domain/app-update'
 import { MenuSelect } from '../lobby/MenuSelect'
 import { ToggleSwitch } from '../lobby/ToggleSwitch'
 import { SettingsSection } from './SettingsSection'
@@ -165,8 +165,7 @@ export function SettingsUpdate({ initialStatus, now = () => Date.now() }: Settin
   return (
     <>
       <SettingsSection
-        title="软件更新"
-        description={status ? `当前版本 ${status.currentVersion}` : undefined}
+        title="版本状态"
         aside={view && view.tone === 'accent' && !view.skippedNote ? <span className="app-update__badge">有新版本</span> : undefined}
       >
         <div className="app-update">
@@ -187,7 +186,7 @@ export function SettingsUpdate({ initialStatus, now = () => Date.now() }: Settin
                 <i className="app-update__dot" aria-hidden="true" />
                 <div className="app-update__copy">
                   <strong className="app-update__headline">{view.headline}</strong>
-                  {view.detail ? <span className="app-update__detail">{view.detail}</span> : null}
+                  {view.detail ? <span className="app-update__detail" title={view.detailTitle}>{view.detail}</span> : null}
                   {view.skippedNote ? <span className="app-update__note">{view.skippedNote}</span> : null}
                   {view.snoozedNote ? <span className="app-update__note">{view.snoozedNote}</span> : null}
                 </div>
@@ -278,25 +277,46 @@ export function SettingsUpdate({ initialStatus, now = () => Date.now() }: Settin
               onChange={(checked) => saveSettings({ autoCheck: checked })}
             />
           </div>
-          <div className="settings-row settings-row--sub">
-            <div className="settings-row__copy">
-              <span className="settings-row__label">检查间隔</span>
+          {/* 间隔隶属于开关：关掉就收起（与自动化页的子组同一手法），不留一个灰掉的下拉。 */}
+          <div className={`settings-collapse${settings.autoCheck && !unsupported ? ' is-open' : ''}`}>
+            <div className="settings-collapse__inner">
+              <div className="settings-subgroup">
+                <div className="settings-row settings-row--sub">
+                  <div className="settings-row__copy">
+                    <span className="settings-row__label">检查间隔</span>
+                    <span className="settings-row__hint">到点静默检查一次；连不上更新源时按 2 → 10 → 30 分钟退避重试</span>
+                  </div>
+                  <MenuSelect
+                    ariaLabel="检查间隔"
+                    value={String(settings.checkIntervalHours)}
+                    options={[...UPDATE_INTERVAL_OPTIONS]}
+                    disabled={unsupported || !settings.autoCheck}
+                    onChange={(value) => {
+                      const hours = APP_UPDATE_CHECK_INTERVAL_HOURS.find((candidate) => String(candidate) === value)
+                      if (hours) saveSettings({ checkIntervalHours: hours })
+                    }}
+                  />
+                </div>
+              </div>
             </div>
-            <MenuSelect
-              ariaLabel="检查间隔"
-              value={String(settings.checkIntervalHours)}
-              options={[...UPDATE_INTERVAL_OPTIONS]}
-              disabled={unsupported || !settings.autoCheck}
-              onChange={(value) => {
-                const hours = APP_UPDATE_CHECK_INTERVAL_HOURS.find((candidate) => String(candidate) === value)
-                if (hours) saveSettings({ checkIntervalHours: hours })
-              }}
-            />
           </div>
           <details className="app-update__advanced settings-row--divided">
             <summary>自定义更新源（高级）</summary>
             <p className="app-update__advanced-hint">
-              填一个静态目录地址（目录下有 <code>latest.yml</code> 与安装包），国内镜像或本机验收用；留空走 GitHub Releases。
+              填一个静态目录地址：Windows 读目录下的 <code>latest.yml</code>，mac 读 <code>update-manifest.json</code>，安装包同目录；留空走 GitHub Releases。
+            </p>
+            <p className="app-update__feed-presets">
+              直连 GitHub 不稳时可填入
+              <button
+                type="button"
+                className={`app-update__preset${settings.feedUrl === APP_UPDATE_MIRROR_FEED.url ? ' is-active' : ''}`}
+                title={APP_UPDATE_MIRROR_FEED.url}
+                disabled={unsupported}
+                onClick={() => setFeedDraft(APP_UPDATE_MIRROR_FEED.url)}
+              >
+                {APP_UPDATE_MIRROR_FEED.label}
+              </button>
+              ，保存后检查与下载都经镜像中转。
             </p>
             <div className="app-update__feed">
               <input

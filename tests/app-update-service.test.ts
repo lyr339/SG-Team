@@ -162,6 +162,41 @@ describe('AppUpdateService · 检查', () => {
     expect(logs.some((line) => line.includes('ERR_NAME_NOT_RESOLVED'))).toBe(true)
   })
 
+  it('网络失败：不记 lastCheckedAt、自动检查按 2→10→30 分钟退避重排；成功后归零回正常间隔', async () => {
+    const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
+    const { service, fake, store, timers, clock } = harness()
+    service.start()
+    fake.setCheck(new Error('net::ERR_CONNECTION_CLOSED'))
+    timers.fire(); await tick()
+    expect(service.getStatus().state).toMatchObject({ phase: 'idle', lastError: 'net::ERR_CONNECTION_CLOSED', lastErrorKind: 'network' })
+    expect(store.load().runtime.lastCheckedAt).toBeUndefined()
+    expect(timers.delays()).toEqual([120_000])
+    timers.fire(); await tick()
+    expect(timers.delays()).toEqual([600_000])
+    timers.fire(); await tick()
+    expect(timers.delays()).toEqual([1_800_000])
+    timers.fire(); await tick()
+    expect(timers.delays()).toEqual([1_800_000]) // 封顶
+    fake.setCheck({ available: false })
+    timers.fire(); await tick()
+    expect(service.getStatus().state.phase).toBe('up_to_date')
+    expect(store.load().runtime.lastCheckedAt).toBe(clock.now)
+    expect(timers.delays()).toEqual([6 * 3_600_000])
+    service.stop()
+  })
+
+  it('明确错误（HTTP 500）：记 lastCheckedAt、kind=other、按正常间隔排', async () => {
+    const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
+    const { service, fake, store, timers, clock } = harness()
+    service.start()
+    fake.setCheck(new Error('更新清单返回 HTTP 500'))
+    timers.fire(); await tick()
+    expect(service.getStatus().state).toMatchObject({ phase: 'idle', lastErrorKind: 'other' })
+    expect(store.load().runtime.lastCheckedAt).toBe(clock.now)
+    expect(timers.delays()).toEqual([6 * 3_600_000])
+    service.stop()
+  })
+
   it('检查进行中重入返回当前状态且不再调端口', async () => {
     const { service, fake } = harness()
     let release_: (value: AppUpdateCheckOutcome) => void = () => {}

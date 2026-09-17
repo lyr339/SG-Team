@@ -147,12 +147,45 @@ export interface AppUpdateRelease {
 
 export type AppUpdateFailureStep = 'check' | 'download' | 'install' | 'rollback'
 
+/** 检查失败的分级：网络类（瞬断、断网、被墙——该重试、别吓人）与其他（服务端答复、清单损坏——如实报）。 */
+export type AppUpdateErrorKind = 'network' | 'other'
+
+const NETWORK_ERROR_PATTERNS: readonly RegExp[] = [
+  /net::ERR_[A-Z_]+/, // Chromium 网络栈（Electron net / electron-updater 的 ElectronHttpExecutor）
+  /\bE(?:CONNRESET|CONNREFUSED|CONNABORTED|TIMEDOUT|NOTFOUND|AI_AGAIN|NETDOWN|NETUNREACH|HOSTUNREACH|PIPE)\b/,
+  /\b(?:ETIMEOUT|ENETRESET)\b/,
+  /socket hang up/i,
+  /fetch failed/i,
+  /\bterminated\b/i, // undici：连接在响应中途被掐
+  /timeout/i,
+  /aborted/i,
+  /请求更新清单失败/, // mac 清单源对 fetch 异常的包装
+  /无法获取最新版本信息/ // 清单 404 且发布页拿不到 tag：多为网络不通，按可重试处理
+]
+
+/**
+ * 按错误文案分级。HTTP 状态类（「返回 HTTP 500」）是服务端的明确答复，不算网络失败；
+ * 拿不准的一律归 other——宁可如实报红，也不把真错误藏成「稍后重试」。
+ */
+export function classifyAppUpdateError(message: string): AppUpdateErrorKind {
+  if (/返回 HTTP \d{3}/.test(message)) return 'other'
+  return NETWORK_ERROR_PATTERNS.some((pattern) => pattern.test(message)) ? 'network' : 'other'
+}
+
+/** 网络类检查失败的短退避：2 → 10 → 30 分钟，此后每 30 分钟一次，直到成功或出现明确错误。 */
+export const APP_UPDATE_RETRY_DELAYS_MS = [2 * 60_000, 10 * 60_000, 30 * 60_000] as const
+
+export function appUpdateRetryDelayMs(consecutiveFailures: number): number {
+  const index = Math.min(Math.max(1, consecutiveFailures), APP_UPDATE_RETRY_DELAYS_MS.length) - 1
+  return APP_UPDATE_RETRY_DELAYS_MS[index]!
+}
+
 /** 下载相位里的子活动：传输中，或传输完成后正在校验 / 解压（mac 的 ditto + codesign 要跑几秒）。 */
 export type AppUpdateDownloadActivity = 'transfer' | 'verify'
 
 export type AppUpdateState =
   | { phase: 'unsupported'; reason: string }
-  | { phase: 'idle'; lastCheckedAt?: number; lastError?: string }
+  | { phase: 'idle'; lastCheckedAt?: number; lastError?: string; lastErrorKind?: AppUpdateErrorKind }
   | { phase: 'checking'; startedAt: number; release?: AppUpdateRelease }
   | { phase: 'up_to_date'; checkedAt: number }
   | { phase: 'available'; release: AppUpdateRelease; checkedAt: number }
@@ -175,7 +208,7 @@ export type AppUpdateEvent =
   | { type: 'check_started' }
   | { type: 'check_up_to_date' }
   | { type: 'check_available'; release: AppUpdateRelease }
-  | { type: 'check_failed'; message: string }
+  | { type: 'check_failed'; message: string; kind?: AppUpdateErrorKind }
   | { type: 'download_started' }
   | { type: 'download_progress'; receivedBytes: number; totalBytes: number; bytesPerSecond?: number; activity?: AppUpdateDownloadActivity }
   | { type: 'download_completed'; filePath?: string }
@@ -212,7 +245,9 @@ export function reduceAppUpdate(state: AppUpdateState, event: AppUpdateEvent, no
     case 'check_available':
       return state.phase === 'checking' ? { phase: 'available', release: event.release, checkedAt: now } : state
     case 'check_failed':
-      return state.phase === 'checking' ? { phase: 'idle', lastCheckedAt: now, lastError: event.message } : state
+      return state.phase === 'checking'
+        ? { phase: 'idle', lastCheckedAt: now, lastError: event.message, lastErrorKind: event.kind ?? 'other' }
+        : state
     case 'download_started':
       // 没有本平台资产的版本只能去发布页：下载边不成立。
       return state.phase === 'available' && state.release.downloadable !== false
@@ -376,6 +411,16 @@ export function appUpdateReleaseUrl(version?: string): string {
   if (!version) return `${base}/latest`
   return `${base}/tag/v${version.replace(/^v/, '')}`
 }
+
+/**
+ * 「自定义更新源」的一键预设：直连 GitHub 不稳时，用 gh-proxy 前缀把最新 Release 的资产目录整个接走——
+ * 目录下 `latest.yml`（Windows）、`update-manifest.json`（mac）与安装包都经镜像取，检查与下载一起走。
+ * 填进去的仍是普通目录 URL：用户能看到、能改、能恢复默认；镜像换站只需改这一处。
+ */
+export const APP_UPDATE_MIRROR_FEED = {
+  label: 'gh-proxy 镜像',
+  url: `https://gh-proxy.com/${appUpdateReleaseUrl()}/download/`
+} as const
 
 /** 渲染层展示用：把 GitHub Release 正文（HTML / Markdown）压成纯文本段落。 */
 export function releaseNotesToPlainText(notes: string | undefined): string[] {

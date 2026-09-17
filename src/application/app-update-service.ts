@@ -1,6 +1,8 @@
 import {
   appUpdateReleaseUrl,
   appUpdateReminderVersion,
+  appUpdateRetryDelayMs,
+  classifyAppUpdateError,
   evaluateUpdateGate,
   isNewerAppVersion,
   nextAppUpdateCheckDelayMs,
@@ -85,6 +87,8 @@ export class AppUpdateService {
   private timer: unknown
   private started = false
   private downloadAbort: AbortController | undefined
+  /** 连续网络类检查失败次数：>0 时下一次自动检查按短退避排（2 → 10 → 30 分钟），成功或明确错误归零。 */
+  private networkFailures = 0
   private lastProgressEmitAt = 0
   private lastProgressPercent = -1
   private lastProgressActivity: AppUpdateDownloadActivity | undefined
@@ -184,6 +188,7 @@ export class AppUpdateService {
     this.dispatch({ type: 'check_started' })
     try {
       const outcome = await this.deps.port.checkForUpdates()
+      this.networkFailures = 0
       this.noteChecked()
       if (outcome.available && isNewerAppVersion(outcome.release.version, this.deps.currentVersion)) {
         this.dispatch({ type: 'check_available', release: outcome.release })
@@ -191,10 +196,19 @@ export class AppUpdateService {
         this.dispatch({ type: 'check_up_to_date' })
       }
     } catch (error) {
-      this.noteChecked()
       const message = errorMessage(error)
-      this.log(`检查更新失败：${message}`)
-      this.dispatch({ type: 'check_failed', message })
+      const kind = classifyAppUpdateError(message)
+      if (kind === 'network') {
+        // 瞬断不算「已检查」：不记 lastCheckedAt（重启后照常 45 秒首检），短退避重试。
+        this.networkFailures += 1
+      } else {
+        this.networkFailures = 0
+        this.noteChecked()
+      }
+      this.log(kind === 'network'
+        ? `检查更新失败（网络，连续第 ${this.networkFailures} 次，将退避重试）：${message}`
+        : `检查更新失败：${message}`)
+      this.dispatch({ type: 'check_failed', message, kind })
     }
     this.scheduleAutoCheck()
     return this.getStatus()
@@ -362,7 +376,9 @@ export class AppUpdateService {
   private scheduleAutoCheck(): void {
     this.clearTimer()
     if (!this.started || !this.settings.autoCheck || this.state.phase === 'unsupported') return
-    const delay = nextAppUpdateCheckDelayMs(this.settings, this.lastCheckedAt, this.now())
+    const delay = this.networkFailures > 0
+      ? appUpdateRetryDelayMs(this.networkFailures)
+      : nextAppUpdateCheckDelayMs(this.settings, this.lastCheckedAt, this.now())
     this.timer = this.timers.setTimeout(() => {
       this.timer = undefined
       void this.check({ manual: false })

@@ -41,6 +41,20 @@ describe('软件更新 · 面板视图', () => {
     expect(failed.detail).toBe('上次检查失败（今天 10:25）：ENOTFOUND')
   })
 
+  it('idle（网络失败）：中性色、人话文案、原始错误只进悬停；自动检查关掉时不承诺重试', () => {
+    const view = buildUpdatePanelView(statusOf({ phase: 'idle', lastCheckedAt: NOW - 5 * 60_000, lastError: 'net::ERR_CONNECTION_CLOSED', lastErrorKind: 'network' }), NOW)
+    expect(view.tone).toBe('neutral')
+    expect(view.detail).toBe('连不上更新源（今天 10:25）：稍后会自动重试，网络恢复后也可「立即检查」')
+    expect(view.detailTitle).toBe('net::ERR_CONNECTION_CLOSED')
+    const manual = buildUpdatePanelView(statusOf({ phase: 'idle', lastError: 'fetch failed', lastErrorKind: 'network' }, { autoCheck: false }), NOW)
+    expect(manual.detail).toBe('连不上更新源：网络恢复后也可「立即检查」')
+    // 明确错误仍然报红、原文直给
+    const explicit = buildUpdatePanelView(statusOf({ phase: 'idle', lastCheckedAt: NOW - 5 * 60_000, lastError: '更新清单返回 HTTP 500', lastErrorKind: 'other' }), NOW)
+    expect(explicit.tone).toBe('danger')
+    expect(explicit.detail).toBe('上次检查失败（今天 10:25）：更新清单返回 HTTP 500')
+    expect(explicit.detailTitle).toBeUndefined()
+  })
+
   it('unsupported / checking / up_to_date 的文案与忙态', () => {
     expect(buildUpdatePanelView(statusOf({ phase: 'unsupported', reason: '开发模式下不检查更新。' }), NOW))
       .toMatchObject({ tone: 'muted', headline: '当前版本 0.3.2', detail: '开发模式下不检查更新。', actions: [{ id: 'open-release', label: '打开发布页', kind: 'link' }] })

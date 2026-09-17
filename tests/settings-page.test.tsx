@@ -337,9 +337,11 @@ describe('SettingsPage', () => {
       automationSettings: { ...DEFAULT_ACCOUNT_AUTOMATION_SETTINGS, enabled: false }
     })} />)
     const on = renderToStaticMarkup(<SettingsPage {...propsFor()} />)
-    expect(off).toContain('<div class="settings-collapse">')
-    expect(off).not.toContain('settings-collapse is-open')
-    expect(on).toContain('settings-collapse is-open')
+    // 只看自动化那一段：软件更新组也有一个随「自动检查」开合的 settings-collapse（默认开）。
+    const automationBlock = (html: string): string => html.slice(html.indexOf('settings-automation'), html.indexOf('倒计时后复核会话'))
+    expect(automationBlock(off)).toContain('<div class="settings-collapse">')
+    expect(automationBlock(off)).not.toContain('settings-collapse is-open')
+    expect(automationBlock(on)).toContain('settings-collapse is-open')
   })
 
   it('合并状态行：mismatch 红点精简文案，title 携带双账号明细', () => {

@@ -167,11 +167,23 @@ describe('mac 更新器端口 · 检查', () => {
     await expect(dead.port.checkForUpdates()).rejects.toThrow('无法获取最新版本信息（清单不存在，发布页也没有给出版本）')
   })
 
-  it('自定义更新源：从该 URL 取清单；404 直接报错不退化', async () => {
+  it('自定义更新源：目录地址补 update-manifest.json、安装包从同一目录取（与 Windows 的目录语义一致），清单文件 URL 也认；404 直接报错不退化', async () => {
     const custom = 'https://mirror.example.com/sg/update-manifest.json'
-    const h = harness({ routes: { [custom]: () => jsonResponse(manifest) } })
+    const mirroredAsset = 'https://mirror.example.com/sg/ShiGuang-0.3.4-mac-arm64.zip'
+    const fetched: string[] = []
+    const h = harness({ routes: {
+      [custom]: () => jsonResponse(manifest),
+      [mirroredAsset]: () => { fetched.push(mirroredAsset); return new Response(new Uint8Array(zipBytes), { status: 200, headers: { 'content-length': String(zipBytes.length) } }) },
+      [ASSET_URL]: () => { throw new Error('自定义源在场时不该回 GitHub 取安装包') }
+    } })
     h.port.setFeedUrl(custom)
     expect(await h.port.checkForUpdates()).toMatchObject({ available: true, release: { version: '0.3.4' } })
+    await h.port.downloadUpdate({ onProgress: () => {}, signal: new AbortController().signal })
+    expect(fetched).toEqual([mirroredAsset])
+    h.port.setFeedUrl('https://mirror.example.com/sg/') // 目录形式，同一路由生效
+    expect(await h.port.checkForUpdates()).toMatchObject({ available: true, release: { version: '0.3.4' } })
+    await h.port.downloadUpdate({ onProgress: () => {}, signal: new AbortController().signal })
+    expect(fetched).toEqual([mirroredAsset, mirroredAsset])
 
     const missing = harness({ routes: { [custom]: () => new Response('', { status: 404 }) } })
     missing.port.setFeedUrl(custom)
