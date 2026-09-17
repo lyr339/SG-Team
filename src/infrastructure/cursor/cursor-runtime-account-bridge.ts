@@ -211,8 +211,14 @@ export class CursorRuntimeAccountBridge implements CursorRuntimeAccountBridgePor
       })
       return Promise.race([ackPromise, timeout])
     }
+    // 一次性协议：票据取走一次、回执收一次，之后没有任何连接值得保留——必须强制掐断全部连接
+    // 再关服务器。Node 的 server.close() 是「不再 accept，等所有连接自己断开」，只顺手关掉
+    // 此刻空闲的连接；一条刚 accept、请求字节还没到的连接（补丁从别的窗口发起的轮询）会活下来，
+    // 而补丁每 1.5s 用同一条 keep-alive 连接轮询、永不停歇，这条连接就永不空闲——close 回调
+    // 永远不来，serveOnce 永不返回，持锁的热切与自动化收尾随之永久吊住（2026-09-17 实机事故）。
     const close = (): Promise<void> => {
       if (timer) clearTimeout(timer)
+      server.closeAllConnections()
       return new Promise<void>((resolve) => server.close(() => resolve()))
     }
     return { port, waitAck, close }

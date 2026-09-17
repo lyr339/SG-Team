@@ -88,6 +88,17 @@ interface LiveSwitchPreparation {
 }
 
 const TICK_MS = 500
+/**
+ * 收尾两条支线的编排级时限（看门狗）。每一步 I/O 各自有超时，但叠起来没有上限，而收尾
+ * 相位既不可取消也没有别的兜底——任何一条支线「再也不返回」，运行卡就永远停在「收尾 ·
+ * 进行中」，只能重启应用（2026-09-17 实机事故：热切回环服务器关不掉）。取值只兜「不返回」，
+ * 不截正常的慢，都留在各自可算出的最坏路径之上：
+ *   清场：页面卸载与站点数据清理（CDP 20s + 20s）+ 关 target（20s）+ Roxy 事务两轮
+ *        （取 workspace / 关窗 / 本地缓存 / 服务端缓存 / 指纹轮换各 20s）≈ 260s；
+ *   热切：切换前等待 ≤60s + 两次回执 12s + 两次补丁配置读取 ≈ 90s。
+ */
+const CLEANUP_DEADLINE_MS = 300_000
+const LIVE_SWITCH_DEADLINE_MS = 120_000
 /** 限流退避：起始 5s、逐次翻倍、单次上限 120s、总窗口 5min（自首次限流起算）。 */
 const RATE_LIMIT_INITIAL_BACKOFF_MS = 5_000
 const RATE_LIMIT_MAX_BACKOFF_MS = 120_000
@@ -373,10 +384,41 @@ export class AccountAutomationService {
   }
 
   /**
+   * 看门狗：等 work 完成，最多等 ms。超时返回 `{ done: false }`——只是「不再等」，work 仍在
+   * 后台跑完；未超时的异常原样抛给调用方分支。用服务自己的 now/sleep 时钟按 TICK_MS 巡检
+   * （与倒计时同一时间模型），完成即刻返回，不留长定时器。
+   */
+  private async awaitWithin<T>(work: Promise<T>, ms: number): Promise<{ done: true; value: T } | { done: false }> {
+    let settled: { ok: true; value: T } | { ok: false; error: unknown } | undefined
+    const tracked = work.then(
+      (value) => { settled = { ok: true, value } },
+      (error: unknown) => { settled = { ok: false, error } }
+    )
+    const deadline = this.now() + ms
+    while (!settled) {
+      if (this.now() >= deadline) return { done: false }
+      await Promise.race([tracked, this.sleep(TICK_MS)])
+    }
+    if (!settled.ok) throw settled.error
+    return { done: true, value: settled.value }
+  }
+
+  /** 等热切定型并生成摘要，压上看门狗：超时只降级提示，最终结果以 handover 子状态为准。 */
+  private async liveSwitchNoteWithin(settling: Promise<string | undefined>): Promise<string | undefined> {
+    const settled = await this.awaitWithin(settling, LIVE_SWITCH_DEADLINE_MS)
+    if (settled.done) return settled.value
+    return `无感换号 ${LIVE_SWITCH_DEADLINE_MS / 1_000}s 内未回执，以接手状态为准（可在账号列表手动切换）`
+  }
+
+  /**
    * 所有删除成功分支的唯一收口（Profile 事务）：
    * ① 本地凭据移除；② 浏览器清场事务。分别执行、分别记错，任一失败不阻断
    * 另一项——账号加固已成功是事实，收尾异常按降级口径呈现（不置 failed，
    * 不再让用户以为加固失败；旧版曾把清场失败误报成整个流程失败）。
+   *
+   * 「不阻断」必须同时管住「不返回」：`cleaning` 相位不可取消（`cancel()` 只在两个倒计时
+   * 相位生效），运行态只在内存里——清场与热切任一支线吊住，运行卡就永远停在「收尾 · 进行中」。
+   * 所以两条支线都压上看门狗，超时按「收尾异常」降级并写明是哪一条（下次不必再猜）。
    */
   private async finishDeletedAccount(accountId: string, successMessage: string, runSeq: number): Promise<void> {
     let localRemoveError: string | undefined
@@ -386,20 +428,29 @@ export class AccountAutomationService {
       localRemoveError = error instanceof Error ? error.message : String(error)
     }
     // 热切 settle 与浏览器清场并行：两条通道本就独立（回环泵 ↔ Roxy profile）。
+    let liveSwitchSettled = this.pendingLiveSwitch?.runSeq !== runSeq
     const liveSwitchNotePromise = this.settleLiveSwitch(runSeq)
-    const finalizer = this.deps.inBrowserDeleter?.finalizeDeletedAccount
-    const legacyClear = this.deps.inBrowserDeleter?.clearSiteData
+    void liveSwitchNotePromise.then(() => { liveSwitchSettled = true }, () => { liveSwitchSettled = true })
+    const cleanup = this.deps.inBrowserDeleter?.finalizeDeletedAccount ?? this.deps.inBrowserDeleter?.clearSiteData
     let cleanupError: string | undefined
-    if (finalizer || legacyClear) {
+    if (cleanup) {
       this.setRun({ phase: 'cleaning', message: '账号已加固，正在清理浏览器环境并轮换指纹…' })
       try {
-        if (finalizer) await finalizer()
-        else await legacyClear?.()
+        const cleaned = await this.awaitWithin(cleanup(), CLEANUP_DEADLINE_MS)
+        if (!cleaned.done) cleanupError = `超过 ${CLEANUP_DEADLINE_MS / 1_000}s 未返回（后台继续）`
       } catch (error) {
         cleanupError = error instanceof Error ? error.message : String(error)
       }
     }
-    const liveSwitchNote = await liveSwitchNotePromise
+    // 清场已收、只剩热切未定型时如实告知——不让「正在清理」挂在等 Cursor 回执的时间上；
+    // 具体在等什么（切换前倒计时 / 等待 Cursor 确认）由 handover 子状态呈现，这里不重复。
+    if (!liveSwitchSettled) {
+      this.setRun({
+        phase: 'cleaning',
+        message: cleanup && !cleanupError ? '账号已加固、浏览器环境已清场，等待无感换号完成…' : '账号已加固，等待无感换号完成…'
+      })
+    }
+    const liveSwitchNote = await this.liveSwitchNoteWithin(liveSwitchNotePromise)
     const message = liveSwitchNote ? `${successMessage}；${liveSwitchNote}` : successMessage
     if (localRemoveError || cleanupError) {
       const details = [
@@ -584,7 +635,7 @@ export class AccountAutomationService {
         const direct = await this.deleteWithTeamWait(previousToken)
         if (direct.ok) {
           this.deps.accounts.remove(account.id)
-          const liveSwitchNote = await this.settleLiveSwitch(mySeq)
+          const liveSwitchNote = await this.liveSwitchNoteWithin(this.settleLiveSwitch(mySeq))
           this.setRun({
             phase: 'done',
             message: `自动化完成：已处理、账号已加固（当前会话直接执行）、本地记录已移除${liveSwitchNote ? `；${liveSwitchNote}` : ''}`,
@@ -664,8 +715,9 @@ export class AccountAutomationService {
     } finally {
       if (this.runSeq === mySeq) {
         // 成功收口已消费 pending；取消/失败也必须把已启动热切的结果呈现并清空。
+        // 同样压看门狗：这里吊住会让 running 永远为 true，之后每一轮自动化都被静默拒绝。
         if (this.pendingLiveSwitch?.runSeq === mySeq) {
-          const liveSwitchNote = await this.settleLiveSwitch(mySeq)
+          const liveSwitchNote = await this.liveSwitchNoteWithin(this.settleLiveSwitch(mySeq))
           if (liveSwitchNote && this.runSeq === mySeq && this.run.phase !== 'done') {
             this.setRun({ message: `${this.run.message}；${liveSwitchNote}` })
           }

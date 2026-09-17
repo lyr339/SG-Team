@@ -53,8 +53,8 @@ interface HarnessOptions {
   deleteResults?: DeleteResultSpec[]
   /** 秒级通道行为（提供时注入 inBrowserDeleter）。 */
   inBrowser?: FastChannelSpec
-  /** finalizeDeletedAccount 的注入行为（默认成功 noop）。 */
-  finalize?: { error?: string }
+  /** finalizeDeletedAccount 的注入行为（默认成功 noop；hang = 永不返回，用于看门狗）。 */
+  finalize?: { error?: string; hang?: boolean }
   /** Cursor 运行态一致性核对（提供时注入 verifyCursorRuntime）。 */
   verifyCursorRuntime?: { ok: boolean; reason?: string }
   seamlessHandoverEnabled?: boolean
@@ -207,6 +207,7 @@ function createHarness(options: HarnessOptions = {}) {
             },
             finalizeDeletedAccount: async () => {
               finalizeCalls.push(1)
+              if (options.finalize?.hang) return new Promise<void>(() => {})
               if (options.finalize?.error) throw new Error(options.finalize.error)
             }
           }
@@ -250,8 +251,9 @@ function createHarness(options: HarnessOptions = {}) {
   }
 }
 
-async function waitForTerminal(service: AccountAutomationService): Promise<AccountAutomationRun> {
-  for (let i = 0; i < 1_000; i += 1) {
+/** maxPolls：看门狗场景要按 0.5s 步进走完几分钟的虚拟时钟，微任务轮次远多于常规链。 */
+async function waitForTerminal(service: AccountAutomationService, maxPolls = 1_000): Promise<AccountAutomationRun> {
+  for (let i = 0; i < maxPolls; i += 1) {
     const run = service.getRun()
     if (['done', 'failed', 'cancelled'].includes(run.phase)) return run
     await Promise.resolve()
@@ -1042,6 +1044,71 @@ describe('AccountAutomationService', () => {
     // finally 可能在 waitForTerminal 观察到 failed 后继续补充消息，等待微任务收口。
     for (let i = 0; i < 10; i += 1) await Promise.resolve()
     expect(harness.service.getRun().message).toContain('无感换号已完成，但需处理')
+  })
+
+  /*
+   * 收尾看门狗：收尾相位不可取消、运行态只在内存里，任何一条支线「再也不返回」都曾让运行卡
+   * 永远停在「收尾 · 进行中」（2026-09-17 实机：热切回环服务器关不掉）。下面三条分别钉住
+   * 清场支线、热切支线与 finally 结算三处等待都有上限，且超时只降级、不改写加固结果。
+   */
+  it('收尾看门狗：清场永不返回 → 等满 300s 后按收尾异常定型 done，加固结果与本地移除不受影响', async () => {
+    const harness = createHarness({ inBrowser: { kind: 'deleted' }, finalize: { hang: true } })
+    cleanup = harness.cleanup
+    harness.service.onAllSessionsTriggered('plan-hang-cleanup')
+    const run = await waitForTerminal(harness.service, 20_000)
+    expect(run.phase).toBe('done')
+    expect(run.message).toContain('浏览器会话内秒级执行')
+    expect(run.message).toContain('收尾异常（不影响加固结果）：浏览器清场未完成：超过 300s 未返回（后台继续）')
+    expect(harness.accounts[0]?.removed).toBe(true)
+    // 只兜「不返回」：确实等满了 300s（加两段 7s 倒计时）才放行，没有提前截掉正常的慢。
+    expect(run.finishedAt! - run.startedAt).toBeGreaterThanOrEqual(314_000)
+  })
+
+  it('收尾看门狗：热切回执永不到达 → 清场收完后如实显示在等换号，120s 后定型 done 并指向接手状态', async () => {
+    const harness = createHarness({
+      accounts: [
+        { id: 'acc-1', label: 'A', active: true, token: 'old-token' },
+        { id: 'acc-2', label: 'B', active: false, token: 'next-token' }
+      ],
+      nextAccountId: 'acc-2',
+      inBrowser: { kind: 'deleted' },
+      liveSwitch: () => new Promise(() => {})
+    })
+    cleanup = harness.cleanup
+    harness.service.onAllSessionsTriggered('plan-hang-switch')
+    const run = await waitForTerminal(harness.service, 20_000)
+    expect(run.phase).toBe('done')
+    expect(run.message).toBe(
+      '自动化完成：已处理、账号已加固（浏览器会话内秒级执行）、浏览器环境已清场；无感换号 120s 内未回执，以接手状态为准（可在账号列表手动切换）'
+    )
+    // 清场收完后不再挂着「正在清理」，而是说明在等换号；具体在等什么由 handover 子状态呈现。
+    expect(harness.runMessages).toContain('账号已加固、浏览器环境已清场，等待无感换号完成…')
+    // 接手子状态保持真实（仍在等 Cursor 确认），主链超时不替它定型。
+    expect(run.handover?.status).toBe('switching')
+    expect(harness.finalizeCalls).toHaveLength(1)
+  })
+
+  it('收尾看门狗：删除失败后 finally 结算热切同样有上限——放行后 running 复位、通道清理执行、下一轮可以启动', async () => {
+    const harness = createHarness({
+      accounts: [
+        { id: 'acc-1', label: 'A', active: true, token: 'old-token' },
+        { id: 'acc-2', label: 'B', active: false, token: 'next-token' }
+      ],
+      nextAccountId: 'acc-2',
+      inBrowser: { kind: 'retry_legacy' },
+      liveSwitch: () => new Promise(() => {}),
+      deleteResult: { ok: false, message: 'delete failed' }
+    })
+    cleanup = harness.cleanup
+    harness.service.onAllSessionsTriggered('plan-1')
+    const run = await waitForTerminal(harness.service, 20_000)
+    expect(run.phase).toBe('failed')
+    for (let i = 0; i < 20_000 && harness.disposeCalls.length === 0; i += 1) await Promise.resolve()
+    expect(harness.disposeCalls).toHaveLength(1)
+    expect(harness.service.getRun().message).toContain('无感换号 120s 内未回执，以接手状态为准')
+    // running 已复位：新一轮触发不再被静默拒绝。
+    harness.service.onAllSessionsTriggered('plan-2')
+    expect(harness.service.getRun()).toMatchObject({ phase: 'countdown', planId: 'plan-2' })
   })
 
   it('设置持久化：指纹浏览器窗口 id（非空字符串保留、空串/非法值剔除）', () => {
