@@ -127,6 +127,20 @@
   --badge-fast-bg: light-dark(#edf3e8, #2d3b29);
   --badge-fast-border: light-dark(#87a875, #68835a);
 
+  /* 文件类型识别色：只用于文件类型图标（本轮文件栏），按语言族稳定分色，不与状态色混用。 */
+  --filetype-typescript: light-dark(#3178c6, #5b9bde);
+  --filetype-react: light-dark(#1f8fb3, #61dafb);
+  --filetype-javascript: light-dark(#d9b40e, #f0db4f);
+  --filetype-json: light-dark(#b0861c, #e2c076);
+  --filetype-styles: light-dark(#6a5cd0, #a79bf2);
+  --filetype-markdown: light-dark(#4b6b9e, #8fb0e0);
+  --filetype-markup: light-dark(#d2622b, #f08a5a);
+  --filetype-image: light-dark(#2a9d8f, #6fd0c3);
+  --filetype-shell: light-dark(#4d7c4f, #8fc493);
+  --filetype-config: light-dark(#7a7f8a, #a6acb8);
+  --filetype-code: light-dark(#5a6b85, #9aabc4);
+  --filetype-file: light-dark(#8a8f99, #9ea4ae);
+
   /* 模型厂商识别色：只用于模型身份，不与状态色混用。 */
   --provider-anthropic-fg: light-dark(#a84b2d, #f0a083);
   --provider-anthropic-bg: light-dark(#fff0ea, #41261e);
@@ -1306,7 +1320,23 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 .turn-files__row:not(:disabled):hover, .turn-files__row:focus-visible { background: var(--accent-wash); }
 .turn-files__row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 /* 语言徽标：等宽小字、浅底，不染色相——文件类型不是状态。 */
-.turn-files__badge { width: 30px; height: 20px; display: grid; place-items: center; color: var(--muted); background: var(--surface-soft); border-radius: 5px; font: 700 var(--fs-9, 10px)/1 var(--mono); font-style: normal; letter-spacing: .02em; }
+/* 文件类型图标：16px 单色 SVG，识别色只落在图标上（--filetype-*），TS / JS 方块里的字用反色。 */
+.file-type-icon { width: 16px; height: 16px; flex: 0 0 auto; display: block; color: var(--filetype-file); }
+.file-type-icon text { font: 700 7px/1 var(--mono); fill: #fff; letter-spacing: -.02em; }
+.file-type-icon.is-typescript { color: var(--filetype-typescript); }
+.file-type-icon.is-react { color: var(--filetype-react); }
+.file-type-icon.is-javascript { color: var(--filetype-javascript); }
+.file-type-icon.is-javascript text { fill: #1f1f1f; }
+.file-type-icon.is-json { color: var(--filetype-json); }
+.file-type-icon.is-styles { color: var(--filetype-styles); }
+.file-type-icon.is-markdown { color: var(--filetype-markdown); }
+.file-type-icon.is-markup { color: var(--filetype-markup); }
+.file-type-icon.is-image { color: var(--filetype-image); }
+.file-type-icon.is-shell { color: var(--filetype-shell); }
+.file-type-icon.is-config { color: var(--filetype-config); }
+.file-type-icon.is-code { color: var(--filetype-code); }
+.turn-files__row > .file-type-icon { margin-left: 3px; }
+.turn-files__item.is-deleted .file-type-icon { opacity: .55; }
 /* 文件名：主干从尾部截断、扩展名永不截断、目录跟在其后从头部截断（窄栏先牺牲目录）。 */
 .turn-files__name { min-width: 0; display: flex; align-items: baseline; gap: 7px; overflow: hidden; }
 .turn-files__name strong { min-width: 0; flex: 0 1 auto; display: inline-flex; overflow: hidden; color: var(--text); font-size: var(--fs-11); font-weight: 600; white-space: nowrap; }

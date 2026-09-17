@@ -16,6 +16,11 @@ import { fileTouchedBy, normalizeReviewPath, previousTurnMutationBlocks, process
  * Agent 正在处理新消息、本轮尚无编辑时，栏保留上一轮的文件并标「上一轮」，直到本轮第一次编辑替换；
  * 回复落库后仍然没有编辑就正常消失（这一轮确实什么都没改）。
  */
+/** 文件类型图标（按扩展名归族）：与 Cursor 原生栏一样用图标而不是文字徽标指认语言。 */
+export type FileIconKind =
+  | 'typescript' | 'react' | 'javascript' | 'json' | 'styles' | 'markdown' | 'markup'
+  | 'image' | 'shell' | 'config' | 'code' | 'file'
+
 export interface TurnFileView {
   /** 归一后的仓库相对路径（与右栏审查页同一口径）。 */
   path: string
@@ -25,8 +30,9 @@ export interface TurnFileView {
   stem: string
   /** 扩展名（含点），没有则空串。 */
   ext: string
-  /** 语言徽标（TS / CSS / MD …）。 */
-  badge: string
+  icon: FileIconKind
+  /** 列表里有别的文件同名（如多个 index.ts）：只有这时才需要把目录摆出来区分。 */
+  ambiguous: boolean
   additions: number
   deletions: number
   /** Git 侧状态；只有 git 口径的行才有。 */
@@ -50,27 +56,37 @@ export interface TurnFilesView {
 
 const EMPTY_VIEW: TurnFilesView = { files: [], additions: 0, deletions: 0, working: false, estimated: false, scope: 'turn' }
 
-/** 扩展名 → 徽标。未列出的取扩展名大写（≤ 4 字符），没有扩展名给 `·`。 */
-const BADGES: Record<string, string> = {
-  ts: 'TS', tsx: 'TS', mts: 'TS', cts: 'TS',
-  js: 'JS', jsx: 'JS', mjs: 'JS', cjs: 'JS',
-  css: 'CSS', scss: 'CSS', less: 'CSS',
-  md: 'MD', mdx: 'MD',
-  json: 'JSON', jsonc: 'JSON', jsonl: 'JSON',
-  yml: 'YML', yaml: 'YML', toml: 'TOML',
-  html: 'HTML', htm: 'HTML', svg: 'SVG',
-  py: 'PY', rs: 'RS', go: 'GO', java: 'JAVA', kt: 'KT', swift: 'SWIFT', rb: 'RB', php: 'PHP',
-  c: 'C', h: 'C', cc: 'C++', cpp: 'C++', hpp: 'C++', cs: 'C#',
-  sh: 'SH', bash: 'SH', zsh: 'SH', ps1: 'PS', bat: 'BAT',
-  sql: 'SQL', graphql: 'GQL',
-  png: 'IMG', jpg: 'IMG', jpeg: 'IMG', gif: 'IMG', webp: 'IMG', ico: 'IMG',
-  lock: 'LOCK', txt: 'TXT', env: 'ENV', xml: 'XML', csv: 'CSV'
+/**
+ * 扩展名 → 图标族。tsx / jsx 归 React（与 Cursor 一致：组件文件看框架不看语言）；
+ * 未列出的扩展名给通用文件图标——名字里本来就带着扩展名，图标只是辅助指认。
+ */
+const ICON_KINDS: Record<string, FileIconKind> = {
+  ts: 'typescript', mts: 'typescript', cts: 'typescript',
+  tsx: 'react', jsx: 'react',
+  js: 'javascript', mjs: 'javascript', cjs: 'javascript',
+  json: 'json', jsonc: 'json', jsonl: 'json',
+  css: 'styles', scss: 'styles', less: 'styles',
+  md: 'markdown', mdx: 'markdown',
+  html: 'markup', htm: 'markup', svg: 'markup', xml: 'markup', vue: 'markup', svelte: 'markup',
+  png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', webp: 'image', ico: 'image', avif: 'image',
+  sh: 'shell', bash: 'shell', zsh: 'shell', ps1: 'shell', bat: 'shell', cmd: 'shell',
+  yml: 'config', yaml: 'config', toml: 'config', ini: 'config', env: 'config', lock: 'config', properties: 'config',
+  py: 'code', rs: 'code', go: 'code', java: 'code', kt: 'code', swift: 'code', rb: 'code', php: 'code',
+  c: 'code', h: 'code', cc: 'code', cpp: 'code', hpp: 'code', cs: 'code', sql: 'code', graphql: 'code', gql: 'code'
 }
 
-export function fileBadge(ext: string): string {
-  const key = ext.replace(/^\./, '').toLowerCase()
-  if (!key) return '·'
-  return BADGES[key] ?? key.toUpperCase().slice(0, 4)
+export function fileIconKind(ext: string): FileIconKind {
+  return ICON_KINDS[ext.replace(/^\./, '').toLowerCase()] ?? 'file'
+}
+
+/**
+ * 增删行数的文字形态（悬停 / 读屏用；与栏上的显示同一规则）：只说非零的一侧——
+ * `+28`、`−30`、`+18 −20`；两侧都为零说「无行数变化」，二进制说「二进制」。
+ */
+export function describeLineCounts(additions: number, deletions: number, binary = false): string {
+  if (binary) return '二进制'
+  const parts = [additions > 0 ? `+${additions}` : '', deletions > 0 ? `−${deletions}` : ''].filter(Boolean)
+  return parts.length ? parts.join(' ') : '无行数变化'
 }
 
 /** 路径拆成目录 / 主干 / 扩展名（与右栏 `splitPath` 同规则：点开头的隐藏文件与无扩展名整体视为主干）。 */
@@ -155,13 +171,19 @@ export function buildTurnFilesView(input: TurnFilesInput): TurnFilesView {
   if (!order.length) return EMPTY_VIEW
 
   const gitFiles = input.summary?.state === 'ready' ? input.summary.files : []
+  // 同名文件（多个 index.ts）才把目录摆出来；文件名唯一时目录留在悬停里，和 Cursor 原生栏一样只看名字。
+  const nameCounts = new Map<string, number>()
+  for (const path of order) {
+    const { stem, ext } = splitTurnFilePath(path)
+    nameCounts.set(stem + ext, (nameCounts.get(stem + ext) ?? 0) + 1)
+  }
   const files: TurnFileView[] = order.map((path) => {
     const parts = splitTurnFilePath(path)
-    const badge = fileBadge(parts.ext)
+    const identity = { path, ...parts, icon: fileIconKind(parts.ext), ambiguous: (nameCounts.get(parts.stem + parts.ext) ?? 0) > 1 }
     const git = gitFiles.find((file) => fileTouchedBy(file, [path]))
     if (git) {
       return {
-        path, ...parts, badge,
+        ...identity,
         additions: git.additions ?? 0,
         deletions: git.deletions ?? 0,
         status: git.status,
@@ -170,7 +192,7 @@ export function buildTurnFilesView(input: TurnFilesInput): TurnFilesView {
       }
     }
     const estimate = processCounts.get(path) ?? { additions: 0, deletions: 0 }
-    return { path, ...parts, badge, additions: estimate.additions, deletions: estimate.deletions, source: 'process' }
+    return { ...identity, additions: estimate.additions, deletions: estimate.deletions, source: 'process' }
   })
   return {
     files,

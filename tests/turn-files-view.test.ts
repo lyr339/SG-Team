@@ -4,7 +4,8 @@ import type { WorkspaceReviewSummary } from '../src/domain/workspace-review'
 import type { LiveProcessState } from '../src/shared/desktop-api'
 import {
   buildTurnFilesView,
-  fileBadge,
+  describeLineCounts,
+  fileIconKind,
   parseEditHint,
   sameTurnFilesView,
   splitTurnFilePath
@@ -39,14 +40,30 @@ describe('turn-files-view · 解析与拆分', () => {
     expect(parseEditHint(undefined)).toBeUndefined()
   })
 
-  it('fileBadge 按扩展名给语言徽标；未知扩展名取大写，无扩展名给 ·', () => {
-    expect(fileBadge('.tsx')).toBe('TS')
-    expect(fileBadge('.css')).toBe('CSS')
-    expect(fileBadge('.md')).toBe('MD')
-    expect(fileBadge('.png')).toBe('IMG')
-    expect(fileBadge('.vue')).toBe('VUE')
-    expect(fileBadge('.longext')).toBe('LONG')
-    expect(fileBadge('')).toBe('·')
+  it('fileIconKind 按扩展名归图标族：tsx/jsx 归 React（看框架不看语言），未知扩展名与无扩展名给通用文件', () => {
+    expect(fileIconKind('.ts')).toBe('typescript')
+    expect(fileIconKind('.TSX')).toBe('react')
+    expect(fileIconKind('.jsx')).toBe('react')
+    expect(fileIconKind('.mjs')).toBe('javascript')
+    expect(fileIconKind('.json')).toBe('json')
+    expect(fileIconKind('.scss')).toBe('styles')
+    expect(fileIconKind('.md')).toBe('markdown')
+    expect(fileIconKind('.html')).toBe('markup')
+    expect(fileIconKind('.svg')).toBe('markup')
+    expect(fileIconKind('.png')).toBe('image')
+    expect(fileIconKind('.ps1')).toBe('shell')
+    expect(fileIconKind('.yml')).toBe('config')
+    expect(fileIconKind('.py')).toBe('code')
+    expect(fileIconKind('.longext')).toBe('file')
+    expect(fileIconKind('')).toBe('file')
+  })
+
+  it('describeLineCounts 只说非零的一侧；两侧为零说无行数变化，二进制说二进制', () => {
+    expect(describeLineCounts(18, 20)).toBe('+18 −20')
+    expect(describeLineCounts(28, 0)).toBe('+28')
+    expect(describeLineCounts(0, 30)).toBe('−30')
+    expect(describeLineCounts(0, 0)).toBe('无行数变化')
+    expect(describeLineCounts(5, 5, true)).toBe('二进制')
   })
 
   it('splitTurnFilePath 拆目录 / 主干 / 扩展名，隐藏文件与无扩展名整体视为主干', () => {
@@ -96,9 +113,9 @@ describe('turn-files-view · 投影', () => {
     expect(view.files.some((file) => file.path.includes('old-turn') || file.path.includes('unrelated'))).toBe(false)
     const [control, failover, deleted, fresh] = view.files
     // Git 口径：两次编辑 (+10 −2) + (+8 −18) 不做求和，取工作树净变化 +18 −20。
-    expect(control).toMatchObject({ additions: 18, deletions: 20, status: 'modified', source: 'git', badge: 'TS', stem: 'team-control', ext: '.ts', dir: 'src/domain/' })
+    expect(control).toMatchObject({ additions: 18, deletions: 20, status: 'modified', source: 'git', icon: 'typescript', stem: 'team-control', ext: '.ts', dir: 'src/domain/', ambiguous: false })
     expect(failover).toMatchObject({ additions: 27, deletions: 318, source: 'git' })
-    expect(deleted).toMatchObject({ status: 'deleted', additions: 0, deletions: 30, source: 'git', badge: 'MD' })
+    expect(deleted).toMatchObject({ status: 'deleted', additions: 0, deletions: 30, source: 'git', icon: 'markdown' })
     // Git 还没看到的新文件回退到过程块：hint 缺失就数结构化 diff 的行。
     expect(fresh).toMatchObject({ additions: 2, deletions: 1, source: 'process' })
     expect(fresh?.status).toBeUndefined()
@@ -129,7 +146,26 @@ describe('turn-files-view · 投影', () => {
     ]
     const view = buildTurnFilesView({ entries: absolute, summary: summaryReady, workspacePath: 'E:\\SG', working: false })
     expect(view.files).toHaveLength(1)
-    expect(view.files[0]).toMatchObject({ path: 'build/icon.png', binary: true, status: 'untracked', source: 'git', badge: 'IMG' })
+    expect(view.files[0]).toMatchObject({ path: 'build/icon.png', binary: true, status: 'untracked', source: 'git', icon: 'image' })
+  })
+
+  it('同名文件不止一个时才标 ambiguous（行里才摆目录）；名字唯一的文件不标', () => {
+    const sameNames: ConversationEntry[] = [
+      entry({ id: 'u', role: 'user', source: 'desktop', timestamp: 1, deliveredAt: 2, text: 'x' }),
+      entry({ id: 'r', role: 'assistant', timestamp: 3, replyToEntryId: 'u', processBlocks: [
+        edit('a', 'src/mcp/index.ts', '+1 −0'),
+        edit('b', 'src/renderer/src/App.tsx', '+2 −0'),
+        edit('c', 'src/main/index.ts', '+3 −0'),
+        edit('d', 'src/preload/index.ts', '+4 −0')
+      ] })
+    ]
+    const view = buildTurnFilesView({ entries: sameNames, working: false })
+    expect(view.files.map((file) => [file.path, file.ambiguous])).toEqual([
+      ['src/mcp/index.ts', true],
+      ['src/renderer/src/App.tsx', false],
+      ['src/main/index.ts', true],
+      ['src/preload/index.ts', true]
+    ])
   })
 
   it('本轮没有文件改动时返回同一个空视图对象（栏不渲染，memo 边界天然稳定）', () => {

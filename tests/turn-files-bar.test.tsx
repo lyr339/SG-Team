@@ -8,10 +8,10 @@ import type { TurnFilesView } from '../src/renderer/src/turn-files-view'
 
 const view: TurnFilesView = {
   files: [
-    { path: 'src/domain/team-control.ts', dir: 'src/domain/', stem: 'team-control', ext: '.ts', badge: 'TS', additions: 18, deletions: 20, status: 'modified', source: 'git' },
-    { path: 'src/mcp/index.ts', dir: 'src/mcp/', stem: 'index', ext: '.ts', badge: 'TS', additions: 22, deletions: 37, status: 'modified', source: 'git' },
-    { path: 'docs/old.md', dir: 'docs/', stem: 'old', ext: '.md', badge: 'MD', additions: 0, deletions: 30, status: 'deleted', source: 'git' },
-    { path: 'src/new-file.ts', dir: 'src/', stem: 'new-file', ext: '.ts', badge: 'TS', additions: 9, deletions: 0, source: 'process' }
+    { path: 'src/domain/team-control.ts', dir: 'src/domain/', stem: 'team-control', ext: '.ts', icon: 'typescript', ambiguous: false, additions: 18, deletions: 20, status: 'modified', source: 'git' },
+    { path: 'src/mcp/index.ts', dir: 'src/mcp/', stem: 'index', ext: '.ts', icon: 'typescript', ambiguous: true, additions: 22, deletions: 37, status: 'modified', source: 'git' },
+    { path: 'docs/old.md', dir: 'docs/', stem: 'old', ext: '.md', icon: 'markdown', ambiguous: false, additions: 0, deletions: 30, status: 'deleted', source: 'git' },
+    { path: 'src/main/index.ts', dir: 'src/main/', stem: 'index', ext: '.ts', icon: 'typescript', ambiguous: true, additions: 9, deletions: 0, source: 'process' }
   ],
   additions: 49,
   deletions: 87,
@@ -39,7 +39,7 @@ describe('TurnFilesBar（本轮文件栏）', () => {
     expect(renderToStaticMarkup(<TurnFilesBar view={{ files: [], additions: 0, deletions: 0, working: true, estimated: false, scope: 'turn' }} onReview={() => {}} />)).toBe('')
   })
 
-  it('lists one row per file with badge, name, directory, status mark and +/− counts; head carries count, totals, spinner and 审查', () => {
+  it('lists one row per file with type icon, name, status mark and +/− counts; head carries count, totals, spinner and 审查', () => {
     const html = renderToStaticMarkup(<TurnFilesBar view={view} onReview={() => {}} />)
     expect(html).toContain('turn-files is-open is-working is-estimated')
     expect(html).toContain('data-file-count="4"')
@@ -48,10 +48,12 @@ describe('TurnFilesBar（本轮文件栏）', () => {
     expect(html).toMatch(/turn-files__totals[^>]*>.*?≈.*?<b>\+49<\/b><em>−87<\/em>/)
     expect(html).toContain('turn-files__spinner')
     expect(html).toContain('>审查<')
-    // 行：路径为 key / data-path，徽标、主干 + 扩展名、目录、增删。
+    // 行：路径为 key / data-path，类型图标（SVG，按族分类名）、主干 + 扩展名、增删。
     expect(html).toContain('data-path="src/domain/team-control.ts"')
-    expect(html).toMatch(/turn-files__badge[^>]*>TS</)
-    expect(html).toMatch(/<strong><span>team-control<\/span><b>\.ts<\/b><\/strong><small><bdi>src\/domain\/<\/bdi><\/small>/)
+    expect(html).toMatch(/<svg class="file-type-icon is-typescript"[^>]*aria-hidden="true"/)
+    expect(html).toMatch(/<svg class="file-type-icon is-markdown"/)
+    expect(html).not.toContain('turn-files__badge')
+    expect(html).toMatch(/<strong><span>team-control<\/span><b>\.ts<\/b><\/strong>/)
     expect(html).toMatch(/<b>\+18<\/b><em>−20<\/em>/)
     expect(html).toMatch(/<b>\+22<\/b><em>−37<\/em>/)
     // 删除的文件带 D 标记；只有过程块估算的文件行标 is-estimated。
@@ -63,6 +65,37 @@ describe('TurnFilesBar（本轮文件栏）', () => {
     // 没有「中止」入口：中止 Cursor 回合不是拾光的能力。
     expect(html).not.toContain('Stop')
     expect(html).not.toContain('中止')
+  })
+
+  it('shows the directory only for files whose name is not unique in the list (the two index.ts), like Cursor shows names alone', () => {
+    const html = renderToStaticMarkup(<TurnFilesBar view={view} onReview={() => {}} />)
+    expect(html).toMatch(/<strong><span>index<\/span><b>\.ts<\/b><\/strong><small><bdi>src\/mcp\/<\/bdi><\/small>/)
+    expect(html).toMatch(/<strong><span>index<\/span><b>\.ts<\/b><\/strong><small><bdi>src\/main\/<\/bdi><\/small>/)
+    expect(html).not.toContain('src/domain/</bdi>')
+    expect(html).not.toContain('docs/</bdi>')
+    // 悬停仍给完整路径。
+    expect(html).toContain('title="src/domain/team-control.ts')
+  })
+
+  it('writes only the non-zero side of a count (+9 / −30), never −0, and a dash when nothing changed', () => {
+    const html = renderToStaticMarkup(<TurnFilesBar view={view} onReview={() => {}} />)
+    expect(html).not.toContain('−0<')
+    expect(html).not.toContain('+0<')
+    expect(html).toMatch(/turn-files__counts" aria-label="−30"><em>−30<\/em><\/span>/)
+    expect(html).toMatch(/turn-files__counts" aria-label="\+9"><b>\+9<\/b><\/span>/)
+    expect(html).toContain('aria-label="+18 −20"')
+    expect(html).toContain('aria-label="合计 +49 −87（估算）"')
+    const unchanged: TurnFilesView = {
+      files: [{ ...view.files[0]!, additions: 0, deletions: 0 }], additions: 0, deletions: 0, working: false, estimated: false, scope: 'turn'
+    }
+    const dash = renderToStaticMarkup(<TurnFilesBar view={unchanged} onReview={() => {}} />)
+    expect(dash).toMatch(/turn-files__counts" aria-label="无行数变化"><small>—<\/small><\/span>/)
+    expect(dash).toMatch(/turn-files__totals[^>]*aria-label="合计 无行数变化"><small>—<\/small><\/span>/)
+    const binary: TurnFilesView = {
+      files: [{ ...view.files[0]!, path: 'build/icon.png', stem: 'icon', ext: '.png', icon: 'image', binary: true, additions: 0, deletions: 0 }],
+      additions: 0, deletions: 0, working: false, estimated: false, scope: 'turn'
+    }
+    expect(renderToStaticMarkup(<TurnFilesBar view={binary} onReview={() => {}} />)).toMatch(/turn-files__counts" aria-label="二进制"><small>BIN<\/small>/)
   })
 
   it('omits the spinner when the Agent has replied and shows exact totals without ≈ when every count is git-backed', () => {

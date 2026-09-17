@@ -1,6 +1,7 @@
 import { memo, useEffect, useId, useState } from 'react'
+import { FileTypeIcon } from './FileTypeIcon'
 import type { ReviewFocusRequest } from './inspector/review-focus-bus'
-import type { TurnFileView, TurnFilesView } from './turn-files-view'
+import { describeLineCounts, type TurnFileView, type TurnFilesView } from './turn-files-view'
 
 interface TurnFilesBarProps {
   view: TurnFilesView
@@ -45,11 +46,26 @@ const STATUS_TITLES: Record<NonNullable<TurnFileView['status']>, string> = {
 }
 
 function fileTitle(file: TurnFileView): string {
-  const counts = file.binary ? '二进制' : `+${file.additions} −${file.deletions}`
+  const counts = describeLineCounts(file.additions, file.deletions, file.binary)
   const basis = file.source === 'git'
     ? `${file.status ? `${STATUS_TITLES[file.status]} · ` : ''}${counts}（工作树相对 HEAD 的未提交变更）`
     : `${counts}（按本轮编辑逐次累计的估算；Git 摘要就绪后换成文件级净变化）`
   return `${file.path}\n${basis}`
+}
+
+/**
+ * 增删行数只写非零的一侧（`+28` / `−30` / `+18 −20`），和 Cursor 原生栏一致——`−0` 是噪音；
+ * 两侧都为零给一个弱色破折号占位，列不塌。二进制文件没有行数，写 BIN。
+ */
+function LineCounts({ additions, deletions, binary }: { additions: number; deletions: number; binary?: boolean }): React.JSX.Element {
+  if (binary) return <small>BIN</small>
+  if (additions <= 0 && deletions <= 0) return <small>—</small>
+  return (
+    <>
+      {additions > 0 ? <b>+{additions}</b> : null}
+      {deletions > 0 ? <em>−{deletions}</em> : null}
+    </>
+  )
 }
 
 /**
@@ -106,10 +122,10 @@ export const TurnFilesBar = memo(function TurnFilesBar({ view, onReview, yieldTo
           <span
             className="turn-files__totals"
             title={view.estimated ? '含按编辑逐次累计的估算值' : `${previous ? '上一轮' : '本轮'}文件的增删行数合计（工作树相对 HEAD）`}
-            aria-label={`新增 ${view.additions} 行，删除 ${view.deletions} 行${view.estimated ? '（估算）' : ''}`}
+            aria-label={`合计 ${describeLineCounts(view.additions, view.deletions)}${view.estimated ? '（估算）' : ''}`}
           >
             {view.estimated ? <small aria-hidden="true">≈</small> : null}
-            <b>+{view.additions}</b><em>−{view.deletions}</em>
+            <LineCounts additions={view.additions} deletions={view.deletions} />
           </span>
         </button>
         <div className="turn-files__aside">
@@ -138,15 +154,16 @@ export const TurnFilesBar = memo(function TurnFilesBar({ view, onReview, yieldTo
                 disabled={!onReview}
                 onClick={onReview ? () => onReview({ path: file.path, scope: reviewScope }) : undefined}
               >
-                <i className="turn-files__badge" aria-hidden="true">{file.badge}</i>
+                <FileTypeIcon kind={file.icon} />
                 <span className="turn-files__name">
                   <strong><span>{file.stem}</span>{file.ext ? <b>{file.ext}</b> : null}</strong>
-                  {file.dir ? <small><bdi>{file.dir}</bdi></small> : null}
+                  {/* 目录只在同名文件不止一个时出场（多个 index.ts）；唯一的名字留在悬停里，行只认名字。 */}
+                  {file.ambiguous && file.dir ? <small><bdi>{file.dir}</bdi></small> : null}
                 </span>
                 {file.status === 'deleted' ? <em className="turn-files__status" title="已删除">D</em> : null}
                 {file.status === 'added' || file.status === 'untracked' ? <em className="turn-files__status" title={STATUS_TITLES[file.status]}>A</em> : null}
-                <span className="turn-files__counts" aria-label={file.binary ? '二进制文件' : `新增 ${file.additions} 行，删除 ${file.deletions} 行`}>
-                  {file.binary ? <small>BIN</small> : <><b>+{file.additions}</b><em>−{file.deletions}</em></>}
+                <span className="turn-files__counts" aria-label={describeLineCounts(file.additions, file.deletions, file.binary)}>
+                  <LineCounts additions={file.additions} deletions={file.deletions} binary={file.binary} />
                 </span>
               </button>
             </li>

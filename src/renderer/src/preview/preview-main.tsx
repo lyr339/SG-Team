@@ -508,12 +508,17 @@ if (turnFilesScene) {
     { kind: 'tool', id: 'tf-edit-1', toolName: 'edit_file_v2', toolKind: 'edit', toolCase: 'editToolCall', summary: 'src/domain/team-control.ts', hint: '+18 −20', status: 'done', startedAt: askedAt + 30_000 },
     { kind: 'tool', id: 'tf-edit-2', toolName: 'edit_file_v2', toolKind: 'edit', toolCase: 'editToolCall', summary: 'src/mcp/index.ts', hint: '+22 −37', status: 'done', startedAt: askedAt + 70_000 },
     { kind: 'tool', id: 'tf-edit-3', toolName: 'edit_file_v2', toolKind: 'edit', toolCase: 'editToolCall', summary: 'src/application/team-failover-service.ts', hint: '+27 −318', status: 'done', startedAt: askedAt + 120_000 },
-    // &deep=1：再加一条深路径 + 长文件名（新建文件，Git 摘要里是 untracked），走查目录列从头截断、扩展名不截断。
+    // &deep=1：再加一对同名文件——深路径 + 长文件名（新建，Git 摘要里是 untracked）和它在 tests/ 下的同名兄弟：
+    // 同名才把目录摆出来，走查目录列从头截断、扩展名不截断，以及 tsx 的 React 图标。
     ...(previewParameters.get('deep') === '1'
       ? [{
           kind: 'tool' as const, id: 'tf-edit-deep', toolName: 'write_file_v2', toolKind: 'write' as const, toolCase: 'writeToolCall',
           summary: 'src/renderer/src/features/very-long-feature-module-name/components/nested/deeper/TurnFilesBarAccessibilityRegressionHarness.test.tsx',
           hint: '+164 −0', status: 'done' as const, startedAt: askedAt + 150_000
+        }, {
+          kind: 'tool' as const, id: 'tf-edit-deep-twin', toolName: 'write_file_v2', toolKind: 'write' as const, toolCase: 'writeToolCall',
+          summary: 'tests/TurnFilesBarAccessibilityRegressionHarness.test.tsx',
+          hint: '+41 −0', status: 'done' as const, startedAt: askedAt + 152_000
         }]
       : []),
     { kind: 'tool', id: 'tf-edit-4', toolName: 'edit_file_v2', toolKind: 'edit', toolCase: 'editToolCall', summary: 'src/application/team-handoff-service.ts', hint: '+9 −15', status, startedAt: status === 'running' ? previewNow - 9_000 : askedAt + 150_000 }

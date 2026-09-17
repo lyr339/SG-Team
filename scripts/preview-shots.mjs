@@ -842,8 +842,12 @@ const scenes = [
           const rows = Array.from(bar.querySelectorAll('.turn-files__item')).map((row) => ({
             path: row.getAttribute('data-path'),
             counts: row.querySelector('.turn-files__counts')?.textContent ?? '',
-            estimated: row.classList.contains('is-estimated')
+            estimated: row.classList.contains('is-estimated'),
+            icon: row.querySelector('.file-type-icon')?.getAttribute('class') ?? ''
           }))
+          // 与 Cursor 原生栏同规则：图标而不是文字徽标；数字只写非零一侧，−0 / +0 不该出现。
+          if (rows.some((row) => !row.icon.includes('file-type-icon'))) throw new Error('有文件行没有类型图标')
+          if (/[−+]0(?!\\d)/.test(bar.textContent ?? '')) throw new Error('出现了 −0 / +0')
           return {
             found: true,
             belowTimeline: barBox.top >= timeline.getBoundingClientRect().bottom - 1,
@@ -985,16 +989,40 @@ const scenes = [
         const deep = rows.find((row) => (row.getAttribute('title') ?? '').includes('very-long-feature-module-name'))
         const dir = deep?.querySelector('.turn-files__name small')
         const ext = deep?.querySelector('.turn-files__name strong > b')
+        // 目录只在同名文件不止一个时出场：深路径那对同名 .test.tsx 带目录，名字唯一的四行不带。
+        if (!dir) throw new Error('同名文件的深路径行没有摆出目录')
+        const uniqueRowsWithDir = rows.filter((row) => !(row.getAttribute('title') ?? '').includes('AccessibilityRegressionHarness') && row.querySelector('.turn-files__name small'))
+        if (uniqueRowsWithDir.length) throw new Error('名字唯一的行不该显示目录')
         return {
           found: true,
           barWidth: Math.round(bar.getBoundingClientRect().width),
           deepRow: Boolean(deep),
-          dirTruncated: dir ? dir.scrollWidth > dir.clientWidth + 1 : null,
+          dirTruncated: dir.scrollWidth > dir.clientWidth + 1,
           extVisible: ext ? ext.getBoundingClientRect().right <= bar.getBoundingClientRect().right : null,
           extText: ext?.textContent ?? '',
+          reactIcons: bar.querySelectorAll('.file-type-icon.is-react').length,
           noOverflow: rows.every((row) => row.scrollWidth <= row.clientWidth + 1),
           counts: Array.from(bar.querySelectorAll('.turn-files__counts')).map((el) => el.textContent)
         }
+      })()`
+    }]
+  },
+  // 浅色近景：类型图标（TS 方块 / React 原子）、同名对带目录、其余行只有名字、数字只写非零一侧。
+  {
+    name: 'session-turn-files-icons-light', width: 1440, height: 900, colorScheme: 'light', query: 'turnfiles=1&deep=1',
+    storage: railStorage(), clip: '.turn-files',
+    actions: [{ wait: 400 }, {
+      label: '类型图标与目录出场规则',
+      probe: `(() => {
+        const bar = document.querySelector('.turn-files')
+        if (!bar) return { found: false }
+        const kinds = Array.from(bar.querySelectorAll('.file-type-icon')).map((icon) => icon.getAttribute('class').replace('file-type-icon is-', ''))
+        const withDir = Array.from(bar.querySelectorAll('.turn-files__item')).filter((row) => row.querySelector('.turn-files__name small')).map((row) => row.getAttribute('data-path'))
+        const icon = bar.querySelector('.file-type-icon').getBoundingClientRect()
+        if (kinds.length !== 6) throw new Error('图标数量不对: ' + kinds.length)
+        if (Math.round(icon.width) !== 16 || Math.round(icon.height) !== 16) throw new Error('图标不是 16px: ' + icon.width + 'x' + icon.height)
+        if (/[−+]0(?!\\d)/.test(bar.textContent ?? '')) throw new Error('出现了 −0 / +0')
+        return { found: true, kinds, withDir, counts: Array.from(bar.querySelectorAll('.turn-files__counts')).map((el) => el.textContent) }
       })()`
     }]
   },

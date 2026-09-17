@@ -316,8 +316,8 @@ describe('SessionWorkspace', () => {
   it('本轮文件栏与托盘同住停靠区（托盘上、文件栏下、输入区之前）；托盘在场时文件栏让位只留头部；空集合或未传入时不渲染', () => {
     const turnFiles = {
       files: [
-        { path: 'src/domain/team-control.ts', dir: 'src/domain/', stem: 'team-control', ext: '.ts', badge: 'TS', additions: 18, deletions: 20, status: 'modified' as const, source: 'git' as const },
-        { path: 'src/mcp/index.ts', dir: 'src/mcp/', stem: 'index', ext: '.ts', badge: 'TS', additions: 22, deletions: 37, status: 'modified' as const, source: 'git' as const }
+        { path: 'src/domain/team-control.ts', dir: 'src/domain/', stem: 'team-control', ext: '.ts', icon: 'typescript' as const, ambiguous: false, additions: 18, deletions: 20, status: 'modified' as const, source: 'git' as const },
+        { path: 'src/mcp/index.ts', dir: 'src/mcp/', stem: 'index', ext: '.ts', icon: 'typescript' as const, ambiguous: false, additions: 22, deletions: 37, status: 'modified' as const, source: 'git' as const }
       ],
       additions: 40, deletions: 57, working: true, estimated: false, scope: 'turn' as const
     }
