@@ -317,7 +317,7 @@ if (manualHandoffMode) {
     queueDepth: 0
   }))
 }
-// 会话名册走查：?sessions=none（空态）| many（四个状态组齐全、需要滚动、含未绑定的备用通道）。
+// 会话名册走查：?sessions=none（空态）| many（两个组 + 独立段、四种状态齐全、需要滚动、含未绑定的备用通道）。
 const sessionsScene = (['none', 'many'] as const).find((scene) => scene === previewParameters.get('sessions'))
 if (sessionsScene === 'none') {
   state.desktop.sessions = []
@@ -338,7 +338,39 @@ if (sessionsScene === 'none') {
       variant(lead, '6', { displayName: '前端体验 · CH-6', roleName: '体验席', roleTemplateKey: 'frontend', avatarId: 'frontend', isEffectiveLead: false, status: 'blocked', connectionPhase: 'approval', waiting: false, contextUsage: { used: 210_000, limit: 1_000_000, ratio: 0.21 }, changes: { additions: 9, deletions: 1, files: 1 }, modelName: 'Kimi K3', executionProfile: undefined }),
       variant(lead, '7', { displayName: '研究分析 · CH-7', roleName: '研究席', roleTemplateKey: 'researcher', avatarId: 'researcher', isEffectiveLead: false, status: 'waiting', connectionPhase: 'keepalive', waiting: true, contextUsage: undefined, changes: undefined, modelName: 'Gemini 3.5 Pro', executionProfile: undefined }),
       solo,
-      variant(solo, '8', { displayName: 'SG Team CH-8', roleName: '未绑定外置团队', roleTemplateKey: undefined, avatarId: undefined, status: 'offline', online: false, connected: false, waiting: false, contextUsage: undefined, lastSeenAt: previewNow - 3 * 60 * 60_000, queueDepth: 0, modelName: undefined, executionProfile: undefined })
+      variant(solo, '8', { displayName: 'SG Team CH-8', roleName: '未绑定外置团队', roleTemplateKey: undefined, avatarId: undefined, status: 'offline', online: false, connected: false, waiting: false, contextUsage: undefined, lastSeenAt: previewNow - 3 * 60 * 60_000, queueDepth: 0, modelName: undefined, executionProfile: undefined }),
+      // 独立段再放三行（干活 / 待命 / 离线），让第二个组条在 620px 高的窗口里也能被钉住后折叠（滚动锚定走查的前提）。
+      variant(solo, '9', { displayName: '独立执行 2 · CH-9', roleName: '独立执行 2', status: 'running', connectionPhase: 'processing', waiting: false, online: true, contextUsage: { used: 96_000, limit: 1_000_000, ratio: 0.096 }, changes: { additions: 17, deletions: 4, files: 3 }, queueDepth: 0, modelName: 'Fable 5', executionProfile: undefined }),
+      variant(solo, '10', { displayName: '独立执行 3 · CH-10', roleName: '独立执行 3', status: 'waiting', connectionPhase: 'waiting', waiting: true, online: true, contextUsage: { used: 320_000, limit: 1_000_000, ratio: 0.32 }, changes: undefined, queueDepth: 0, modelName: 'GPT-5.6', executionProfile: undefined }),
+      variant(solo, '11', { displayName: '独立执行 4 · CH-11', roleName: '独立执行 4', status: 'offline', online: false, connected: false, waiting: false, contextUsage: undefined, changes: undefined, lastSeenAt: previewNow - 40 * 60_000, queueDepth: 0, modelName: 'Fable 5', executionProfile: undefined })
+    ]
+  }
+  // 名册按组分区（阶段 3 · D4=a）：CH-1 / 2 / 4 成「接口重构」（CH-1 lead），CH-5 / 6 / 8 成「验收」
+  //（CH-8 已确认离线 → 组头「成员离线」徽标），CH-3 / 7 / 9 / 10 / 11 未入组落「独立」段。名册只认通道号，
+  // 基础快照里没有的席位按 solo 席位的形状补一个即可。
+  if (state.team.activeRun) {
+    const seatOf = (channelId: string) => state.team.members.find((member) => member.slot.channelId === channelId)
+    const template = seatOf('3') ?? state.team.members[0]!
+    const memberOf = (channelId: string): typeof template => seatOf(channelId) ?? {
+      ...template,
+      slot: { ...template.slot, id: `slot:preview-many-${channelId}`, name: `席位 ${channelId}`, channelId },
+      binding: template.binding ? { ...template.binding, channelId } : undefined
+    }
+    const groupBase = {
+      runId: state.team.activeRun.id, goal: '', planPolicy: 'lead_only' as const,
+      createdAt: previewNow - 3 * 3_600_000, updatedAt: previewNow - 15 * 60_000
+    }
+    const refactor = ['1', '2', '4'].map(memberOf)
+    const review = ['5', '6', '8'].map(memberOf)
+    state.team.groups = [
+      {
+        group: { ...groupBase, id: 'team-group:many:refactor', name: '接口重构', status: 'active', leadSlotId: refactor[0]!.slot.id },
+        members: refactor, effectiveLeadSlotId: refactor[0]!.slot.id, attention: false
+      },
+      {
+        group: { ...groupBase, id: 'team-group:many:review', name: '验收', status: 'active', leadSlotId: review[0]!.slot.id },
+        members: review, effectiveLeadSlotId: review[0]!.slot.id, attention: true
+      }
     ]
   }
 }

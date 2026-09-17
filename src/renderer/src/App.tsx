@@ -6,12 +6,13 @@ import type {
 } from '../../shared/desktop-api'
 import { emptyTaskPoolSnapshot, newestTaskPoolSnapshot } from '../../domain/task-pool'
 import type { CursorUsageSnapshot } from '../../domain/cursor-usage'
-import { emptyTeamControlSnapshot, type TeamRunStatus } from '../../domain/team-control'
+import { emptyTeamControlSnapshot, type TeamMemberView, type TeamRunStatus } from '../../domain/team-control'
 import { emptyTeamCollaborationSnapshot } from '../../domain/team-collaboration'
 import { DesktopShell, type AppModule } from './DesktopShell'
 import { SessionOverview } from './SessionOverview'
 import { SessionWorkspace } from './SessionWorkspace'
 import { SessionSidebar } from './SessionSidebar'
+import type { RailGroupSource } from './session-rail-view'
 import { WorkspaceInspector } from './WorkspaceInspector'
 import { RunPage } from './run/RunPage'
 import { SettingsPage } from './settings/SettingsPage'
@@ -855,17 +856,29 @@ export function App(): React.JSX.Element {
       slotId: slotByChannel.get(session.channelId)
     }))
   }, [visibleSnapshot.sessions, teamControl.members])
-  // 统计页组来源：活动 run 的 active 组 → 成员通道号；组求和 = 成员席位之和（阶段 2 · 2E）。
-  const statsGroups = useMemo(() => teamControl.groups
+  // active 组的通道投影：名册按组分区（阶段 3 · D4=a）与统计页的组求和（阶段 2 · 2E）共用同一份，
+  // 免得「谁算一个组、成员怎么对到通道」在两处各写一遍还慢慢走样。
+  const activeGroups = useMemo((): RailGroupSource[] => teamControl.groups
     .filter((view) => view.group.status === 'active')
-    .map((view) => ({
-      key: view.group.id,
-      label: view.group.name,
-      channelIds: view.members.flatMap((member) => {
-        const channelId = member.binding?.channelId ?? member.slot.channelId
-        return channelId ? [channelId] : []
-      })
-    })), [teamControl.groups])
+    .map((view) => {
+      const channelOf = (member: TeamMemberView): string | undefined => member.binding?.channelId ?? member.slot.channelId
+      const lead = view.members.find((member) => member.slot.id === view.effectiveLeadSlotId)
+      const leadChannelId = lead ? channelOf(lead) : undefined
+      return {
+        id: view.group.id,
+        name: view.group.name,
+        channelIds: view.members.flatMap((member) => {
+          const channelId = channelOf(member)
+          return channelId ? [channelId] : []
+        }),
+        ...(leadChannelId ? { leadChannelId } : {}),
+        attention: view.attention
+      }
+    }), [teamControl.groups])
+  const statsGroups = useMemo(
+    () => activeGroups.map((group) => ({ key: group.id, label: group.name, channelIds: group.channelIds })),
+    [activeGroups]
+  )
   const selectedSession = visibleSnapshot.sessions.find((session) => session.channelId === selectedChannelId)
   const selectedMember = teamControl.members.find((member) => (
     (member.binding?.channelId ?? member.slot.channelId) === selectedSession?.channelId
@@ -1349,6 +1362,7 @@ export function App(): React.JSX.Element {
           snapshot={visibleSnapshot}
           selectedChannelId={selectedSession?.channelId}
           onSelectSession={selectSession}
+          groups={activeGroups}
           onOpenRun={() => changeModule('run')}
         />
       ) : null}
