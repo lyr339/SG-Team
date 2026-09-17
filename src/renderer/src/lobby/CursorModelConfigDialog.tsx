@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { CursorModelOption, CursorModelSelection } from '../../../domain/cursor-model'
 import {
@@ -50,6 +50,7 @@ export function CursorModelConfigDialog({
   const [saveError, setSaveError] = useState('')
   const [linkNotice, setLinkNotice] = useState('')
   const [syncOthers, setSyncOthers] = useState(false)
+  const dialog = useRef<HTMLElement>(null)
   const option = models.find((model) => model.modelId === draft?.modelId)
     ?? initialOption
   const resolvedSelection = draft ?? cursorModelSelectionFromOption(option)
@@ -74,6 +75,28 @@ export function CursorModelConfigDialog({
     return () => window.removeEventListener('keydown', closeOnEscape)
   }, [onClose, saving])
 
+  // 打开时把焦点收进弹层，关闭后还给触发它的那个按钮——否则键盘用户得从页首重新 Tab 回来。
+  useEffect(() => {
+    const opener = document.activeElement
+    dialog.current?.focus()
+    return () => { if (opener instanceof HTMLElement) opener.focus() }
+  }, [])
+
+  /** Tab 在弹层内循环。模型下拉的列表挂在 body 上（React 事件仍会冒泡到这里）：焦点在列表里时不拦。 */
+  const keepTabInside = (event: React.KeyboardEvent): void => {
+    const root = dialog.current
+    if (event.key !== 'Tab' || !root || !root.contains(event.target as Node)) return
+    const stops = [...root.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled)')]
+    const first = stops[0]
+    const last = stops[stops.length - 1]
+    if (!first || !last) return
+    const active = document.activeElement
+    const leaving = event.shiftKey ? active === first || active === root : active === last
+    if (!leaving) return
+    event.preventDefault()
+    ;(event.shiftKey ? last : first).focus()
+  }
+
   const save = async (): Promise<void> => {
     if (!resolvedSelection || saving) return
     setSaving(true)
@@ -93,10 +116,13 @@ export function CursorModelConfigDialog({
       if (event.target === event.currentTarget && !saving) onClose()
     }}>
       <section
+        ref={dialog}
         aria-label={`${subject} 会话配置`}
         aria-modal="true"
         className={`cursor-model-dialog${scope.kind === 'all' ? ' is-all' : ''}`}
         role="dialog"
+        tabIndex={-1}
+        onKeyDown={keepTabInside}
       >
         <header>
           {scope.kind === 'all' ? (

@@ -199,7 +199,9 @@ export function cursorModelSelectionSummary(
   selection: CursorModelSelection | undefined,
   option: CursorModelOption | undefined
 ): string {
-  if (!selection || !option) return '使用 Cursor 当前配置'
+  if (!selection) return '使用 Cursor 当前配置'
+  // 席位存着一份配置，但这个模型已经不在 Cursor 的模型目录里了：说清楚，别假装它还生效。
+  if (!option) return '该模型已不在 Cursor 模型目录，请重新选择'
   const parts = option.parameterDefinitions.flatMap((definition) => {
     const value = cursorModelParameterValue(selection, option, definition)
     const valueDefinition = definition.values.find((candidate) => candidate.value === value)

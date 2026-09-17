@@ -37,7 +37,7 @@ describe('会话配置行 · RunBatchConfig', () => {
 
   it('shows the uniform selection with its provider swatch, the implicit tag and the parameter summary', async () => {
     await act(async () => root.render(
-      <RunBatchConfig models={models} seatCount={3} uniform={composer} implicit onSave={() => {}} />
+      <RunBatchConfig models={models} seatCount={3} uniform={composer} implicitFrom="cursor" onSave={() => {}} />
     ))
     const strong = container.querySelector('.run-batch-config__value strong')!
     expect(strong.className).toBe('provider-cursor')
@@ -60,6 +60,42 @@ describe('会话配置行 · RunBatchConfig', () => {
     expect(container.querySelector('.run-batch-config__value strong')?.className).toBe('provider-anthropic')
     expect(container.querySelector('.run-batch-config__tag')).toBeNull()
     expect(container.querySelector('.run-batch-config__note')?.textContent).toBe('另有 2 席单独配置')
+  })
+
+  it('marks a baseline inherited from the previous run, and folds the hint into the same note line', async () => {
+    await act(async () => root.render(
+      <RunBatchConfig models={models} seatCount={4} uniform={fable} implicitFrom="previous" hint="改动作用于下一次新建会话" onSave={() => {}} />
+    ))
+    expect(container.querySelector('.run-batch-config__tag')?.textContent).toBe('沿用上次')
+    expect(container.querySelector('.run-batch-config__note')?.textContent).toBe('改动作用于下一次新建会话')
+
+    await act(async () => root.render(
+      <RunBatchConfig models={models} seatCount={4} uniform={fable} overriddenCount={1} hint="改动作用于下一次新建会话" onSave={() => {}} />
+    ))
+    expect(container.querySelector('.run-batch-config__note')?.textContent).toBe('另有 1 席单独配置 · 改动作用于下一次新建会话')
+    // 没有基线时也要看得到这句说明（此时不谈例外席位）。
+    await act(async () => root.render(
+      <RunBatchConfig models={models} seatCount={4} spread="2 席 Composer 2.5 · 2 席 Claude Fable 5" hint="改动作用于下一次新建会话" onSave={() => {}} />
+    ))
+    expect(container.querySelector('.run-batch-config__note')?.textContent).toBe('改动作用于下一次新建会话')
+  })
+
+  it('moves focus into the dialog and hands it back to the trigger when it closes', async () => {
+    await act(async () => root.render(
+      <RunBatchConfig models={models} seatCount={3} uniform={composer} onSave={() => {}} />
+    ))
+    await act(async () => { action().focus(); action().click() })
+    expect(document.activeElement).toBe(document.querySelector('.cursor-model-dialog'))
+    await act(async () => document.querySelector<HTMLButtonElement>('button[aria-label="关闭会话配置"]')!.click())
+    expect(document.activeElement).toBe(action())
+  })
+
+  it('keeps the live region on the row itself, so the value block can remount for the swap animation', async () => {
+    await act(async () => root.render(
+      <RunBatchConfig models={models} seatCount={3} uniform={composer} onSave={() => {}} />
+    ))
+    expect(container.querySelector('.run-batch-config')?.getAttribute('aria-live')).toBe('polite')
+    expect(container.querySelector('.run-batch-config__value')?.getAttribute('aria-live')).toBeNull()
   })
 
   it('without a baseline it describes the spread and offers 「统一」 drafted from the fallback seat', async () => {
@@ -87,7 +123,7 @@ describe('会话配置行 · RunBatchConfig', () => {
   it('「修改」 opens the all-seats dialog drafted from the uniform selection; a successful save closes it and replays the swap animation', async () => {
     const onSave = vi.fn(async (_selection: CursorModelSelection) => {})
     await act(async () => root.render(
-      <RunBatchConfig models={models} seatCount={3} uniform={composer} implicit onSave={onSave} />
+      <RunBatchConfig models={models} seatCount={3} uniform={composer} implicitFrom="cursor" onSave={onSave} />
     ))
     await act(async () => action().click())
     const dialog = document.querySelector('[role="dialog"]')!

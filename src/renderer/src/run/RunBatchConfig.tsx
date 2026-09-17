@@ -11,10 +11,15 @@ export interface RunBatchConfigProps {
   seatCount: number
   /** 批次的统一配置。各席已经不同、又没有统一基线时为空——此时显示分布并提供「统一」。 */
   uniform?: CursorModelSelection
-  /** 统一配置只是沿用 Cursor 当前模型，用户尚未显式设置过。 */
-  implicit?: boolean
+  /**
+   * 基线不是用户为本批次显式设定的，而是沿用来的：`cursor` = Cursor 当前选中的模型，
+   * `previous` = 上一次运行里多数席位的配置。据此打一枚说明标。
+   */
+  implicitFrom?: 'cursor' | 'previous'
   /** 与统一配置不同的席位数（有基线时）。 */
   overriddenCount?: number
+  /** 注脚上追加的一句说明，例如运行中的批次：改动只作用于下一次新建会话。 */
+  hint?: string
   /** 没有统一基线时各席的分布，如「2 席 Claude Fable 5 · 2 席 Kimi K3」。 */
   spread?: string
   /** 没有统一基线时弹层的起草点（通常是第一席的现状）。 */
@@ -23,6 +28,11 @@ export interface RunBatchConfigProps {
   /** 把一套配置写到全部席位；抛错时弹层留在原地显示错误。 */
   onSave: (selection: CursorModelSelection) => Promise<void> | void
 }
+
+const IMPLICIT_TAG = {
+  cursor: { label: 'Cursor 当前', title: '尚未统一设置，沿用 Cursor 当前选中的模型' },
+  previous: { label: '沿用上次', title: '尚未为本批次设置，沿用上一次运行里多数席位的配置' }
+} as const
 
 /**
  * 「会话配置」：批次的一项属性，与目标工程、会话数量并列——
@@ -33,8 +43,9 @@ export function RunBatchConfig({
   models,
   seatCount,
   uniform,
-  implicit = false,
+  implicitFrom,
   overriddenCount = 0,
+  hint,
   spread,
   fallback,
   disabled = false,
@@ -47,11 +58,14 @@ export function RunBatchConfig({
   const option = uniform ? models.find((model) => model.modelId === uniform.modelId) : undefined
   const diverged = ready && !uniform
   const actionLabel = diverged ? '统一' : '修改'
+  const tag = implicitFrom ? IMPLICIT_TAG[implicitFrom] : undefined
+  const note = [overriddenCount > 0 ? `另有 ${overriddenCount} 席单独配置` : '', hint].filter(Boolean).join(' · ')
 
   return (
-    <div className={`run-field run-batch-config${diverged ? ' is-spread' : ''}`}>
+    // 播报区是这一行本身：值块换装时会整块重挂载，读屏监听的必须是它稳定的父节点。
+    <div className={`run-field run-batch-config${diverged ? ' is-spread' : ''}`} aria-live="polite">
       <span className="run-field__label">会话配置</span>
-      <div key={stamp} className={`run-field__value run-batch-config__value${stamp > 0 ? ' is-swapped' : ''}`} aria-live="polite">
+      <div key={stamp} className={`run-field__value run-batch-config__value${stamp > 0 ? ' is-swapped' : ''}`}>
         {!ready ? (
           <>
             <strong><span>Cursor 当前模型</span></strong>
@@ -62,12 +76,9 @@ export function RunBatchConfig({
             <strong className={modelProviderClass(uniform.modelId, uniform.displayName)}>
               <i className="run-batch-config__swatch" aria-hidden="true" />
               <span>{uniform.displayName}</span>
-              {implicit ? <em className="run-batch-config__tag" title="尚未统一设置，沿用 Cursor 当前选中的模型">Cursor 当前</em> : null}
+              {tag ? <em className="run-batch-config__tag" title={tag.title}>{tag.label}</em> : null}
             </strong>
             <small>{cursorModelSelectionSummary(uniform, option)}</small>
-            {overriddenCount > 0 ? (
-              <small className="run-batch-config__note">另有 {overriddenCount} 席单独配置</small>
-            ) : null}
           </>
         ) : (
           <>
@@ -75,6 +86,7 @@ export function RunBatchConfig({
             <small>{spread}</small>
           </>
         )}
+        {ready && note ? <small className="run-batch-config__note">{note}</small> : null}
       </div>
       <button
         type="button"

@@ -260,7 +260,8 @@ describe('RunPage（一个工程一个活跃运行：团队 / 独立两种模式
       await click(buttonNamed('结束并新建批次'))
       await click(buttonNamed('确认新建'))
       expect(container.textContent).toContain('会话数量')
-      await click(buttonNamed('创建 3 个独立会话'))
+      // 数量接着上一批（2 席）来。
+      await click(buttonNamed('创建 2 个独立会话'))
       expect(sheet()).toBeNull()
       expect(onCreateIndependentSessions).toHaveBeenCalledTimes(1)
     })
@@ -269,7 +270,7 @@ describe('RunPage（一个工程一个活跃运行：团队 / 独立两种模式
       const { onCreateIndependentSessions, onLaunchAgentSessions } = await render(independentTeam(['offline'], 'completed'))
       await click(buttonNamed('新建批次'))
       expect(sheet()).toBeNull()
-      await click(buttonNamed('创建 3 个独立会话'))
+      await click(buttonNamed('创建 1 个独立会话'))
       expect(onCreateIndependentSessions).toHaveBeenCalledTimes(1)
       expect(onLaunchAgentSessions).not.toHaveBeenCalled()
     })
@@ -283,21 +284,45 @@ describe('RunPage（一个工程一个活跃运行：团队 / 独立两种模式
       await click(buttonNamed('确认新建'))
       expect(container.querySelector('.run-field__value code')?.textContent).toBe('/projects/b')
       expect(container.textContent).toContain('Cursor 已切换工程：新批次将创建到「新工程 B」')
-      await click(buttonNamed('创建 3 个独立会话'))
+      await click(buttonNamed('创建 1 个独立会话'))
       expect(onCreateIndependentSessions).toHaveBeenCalledWith(expect.objectContaining({ workspacePath: '/projects/b' }))
     })
 
-    it('adjusts the session count within 1–16', async () => {
-      await render(independentTeam(['offline'], 'completed'))
+    it('adjusts the session count within 1–16, by stepper or by typing the number', async () => {
+      await render(independentTeam(['offline', 'offline', 'offline'], 'completed'))
       await click(buttonNamed('新建批次'))
-      const output = (): string => container.querySelector('output')?.textContent ?? ''
-      expect(output()).toBe('3')
+      const field = (): HTMLInputElement => container.querySelector<HTMLInputElement>('.run-stepper input')!
+      const typeCount = async (value: string): Promise<void> => {
+        await act(async () => {
+          field().focus()
+          const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+          setter.call(field(), value)
+          field().dispatchEvent(new Event('input', { bubbles: true }))
+        })
+      }
+      expect(field().value).toBe('3')
       await click(container.querySelector<HTMLButtonElement>('.run-stepper button[aria-label="减少"]')!)
       await click(container.querySelector<HTMLButtonElement>('.run-stepper button[aria-label="减少"]')!)
-      expect(output()).toBe('1')
+      expect(field().value).toBe('1')
       expect(container.querySelector<HTMLButtonElement>('.run-stepper button[aria-label="减少"]')?.disabled).toBe(true)
       expect(buttonNamed('创建 1 个独立会话')).toBeTruthy()
       expect(container.querySelectorAll('.run-seat')).toHaveLength(1)
+
+      // 直接输入：范围内的数字立即生效，不用点十几次。
+      await typeCount('12')
+      expect(container.querySelectorAll('.run-seat')).toHaveLength(12)
+      expect(buttonNamed('创建 12 个独立会话')).toBeTruthy()
+      // 输入过程中的空值不钳回去，离开输入框才回到当前数量。
+      await typeCount('')
+      expect(field().value).toBe('')
+      expect(container.querySelectorAll('.run-seat')).toHaveLength(12)
+      await act(async () => field().blur())
+      expect(field().value).toBe('12')
+      // 越界的输入在离开输入框时钳到边界。
+      await typeCount('99')
+      await act(async () => field().blur())
+      expect(field().value).toBe('16')
+      expect(buttonNamed('创建 16 个独立会话')).toBeTruthy()
     })
 
   })
@@ -415,7 +440,8 @@ describe('RunPage（一个工程一个活跃运行：团队 / 独立两种模式
       const onPersistModelSelection = vi.fn(async (_channelId: string, _selection: CursorModelSelection) => team)
       await render(team, { onPersistModelSelection })
       expect(batchModel()).toBe('Composer 2.5')
-      expect(batchNote()).toBe('另有 1 席单独配置')
+      // 运行中的批次：注脚同时点明例外席位数与「改动作用于下一次新建会话」。
+      expect(batchNote()).toBe('另有 1 席单独配置 · 改动作用于下一次新建会话')
       const chips = overrideChips()
       expect(chips).toHaveLength(1)
       expect(chips[0]!.closest('.run-seat')?.querySelector('.run-seat__model strong')?.textContent).toBe('Claude Fable 5')
@@ -425,7 +451,7 @@ describe('RunPage（一个工程一个活跃运行：团队 / 独立两种模式
       expect(onPersistModelSelection.mock.calls[0]?.[0]).toBe('2')
       expect(onPersistModelSelection.mock.calls[0]?.[1]).toMatchObject({ modelId: 'composer-2.5' })
       expect(overrideChips()).toHaveLength(0)
-      expect(batchNote()).toBeNull()
+      expect(batchNote()).toBe('改动作用于下一次新建会话')
       expect(seatSummaries()).toEqual(Array(4).fill(COMPOSER_FAST))
     })
 
@@ -449,6 +475,91 @@ describe('RunPage（一个工程一个活跃运行：团队 / 独立两种模式
       await click(batchAction())
       expect(document.querySelector('[role="dialog"]')?.getAttribute('aria-label')).toBe('全部席位 会话配置')
       expect(document.querySelector('.cursor-model-dialog .menu-select__button')?.textContent).toContain('Composer 2.5')
+      await click(document.querySelector<HTMLButtonElement>('button[aria-label="关闭会话配置"]')!)
+    })
+
+    it('新批次的会话数量也接着上一批来', async () => {
+      const { onCreateIndependentSessions } = await render(independentTeam(['waiting', 'waiting', 'waiting', 'waiting', 'waiting']))
+      await click(buttonNamed('结束并新建批次'))
+      await click(buttonNamed('确认新建'))
+      expect(container.querySelector<HTMLInputElement>('.run-stepper input')?.value).toBe('5')
+      await click(buttonNamed('创建 5 个独立会话'))
+      expect(onCreateIndependentSessions.mock.calls[0]?.[0].sessions).toHaveLength(5)
+    })
+
+    it('从团队切到独立用默认数量：团队席位是角色，不是并行会话', async () => {
+      await render(teamRun('waiting', 'running'))
+      await click(modeButton('独立'))
+      if (sheet()) await click(buttonNamed('确认切换'))
+      expect(container.querySelector<HTMLInputElement>('.run-stepper input')?.value).toBe('3')
+    })
+
+    it('新批次沿用上一批多数席位的配置，而不是每次都退回 Cursor 当前模型', async () => {
+      const previous = withSeatModels(independentTeam(['waiting', 'waiting', 'waiting']), {
+        '1': fableSelection(), '2': fableSelection(), '3': fableSelection()
+      })
+      const { onCreateIndependentSessions } = await render(previous)
+      await click(buttonNamed('结束并新建批次'))
+      await click(buttonNamed('确认新建'))
+      expect(batchModel()).toBe('Claude Fable 5')
+      expect(batchTag()).toBe('沿用上次')
+      expect(overrideChips()).toHaveLength(0)
+
+      await click(buttonNamed('创建 3 个独立会话'))
+      const sessions = onCreateIndependentSessions.mock.calls[0]?.[0].sessions ?? []
+      expect(sessions.map((session) => session.modelSelection?.modelId)).toEqual(Array(3).fill('claude-fable-5'))
+    })
+
+    it('配置批次：基线跟着多数席位走，不会留下一个谁都没在用的基线', async () => {
+      await render(emptyTeamControlSnapshot(), { startMode: 'independent' })
+      const step = async (label: '增加' | '减少'): Promise<void> => {
+        await click(container.querySelector<HTMLButtonElement>(`.run-stepper button[aria-label="${label}"]`)!)
+      }
+      // 只留一席并改掉它：这一席就是本批次的配置，不该被标成相对某个幽灵基线的「单独配置」。
+      await step('减少')
+      await step('减少')
+      await click(container.querySelector<HTMLButtonElement>('button[aria-label="配置 CH-1 会话"]')!)
+      await click(document.querySelector<HTMLButtonElement>('button[aria-label="CH-1 弹层Fast Off"]')!)
+      await click(dialogButton('保存'))
+      expect(batchSummary()).toBe(COMPOSER_SLOW)
+      expect(batchTag()).toBeNull()
+      expect(overrideChips()).toHaveLength(0)
+
+      // 再加一席（沿用 Cursor 当前模型）：两席各不相同又没有多数，显示分布并提供「统一」。
+      await step('增加')
+      expect(batchModel()).toBe('各席配置不同')
+      expect(batchSummary()).toBe('Composer 2.5 · 参数各不相同')
+      expect(batchAction().textContent).toBe('统一')
+      expect(overrideChips()).toHaveLength(0)
+    })
+
+    it('运行中的批次：统一只写与目标不同的席位', async () => {
+      const team = withSeatModels(independentTeam(['waiting', 'waiting', 'waiting', 'waiting']), { '2': fableSelection() })
+      const persisted: string[] = []
+      await render(team, { onPersistModelSelection: vi.fn(async (channelId: string) => { persisted.push(channelId); return team }) })
+      // 基线就是另外三席共用的那份：原样应用一次，只有偏离的 CH-2 需要落库。
+      await click(batchAction())
+      await click(dialogButton('应用到 4 个席位'))
+      expect(persisted).toEqual(['2'])
+      expect(overrideChips()).toHaveLength(0)
+    })
+
+    it('运行中的批次：统一中途失败时弹层留在原地，并说清已经应用了几席', async () => {
+      const team = withSeatModels(independentTeam(['waiting', 'waiting', 'waiting', 'waiting']), { '3': fableSelection(), '4': fableSelection() })
+      let calls = 0
+      await render(team, {
+        onPersistModelSelection: vi.fn(async () => {
+          calls += 1
+          if (calls > 1) throw new Error('写入席位配置失败')
+          return team
+        })
+      })
+      expect(batchAction().textContent).toBe('统一')
+      await click(batchAction())
+      await click(dialogButton('应用到 4 个席位'))
+      expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+      expect(document.querySelector('.cursor-model-dialog [role="alert"]')?.textContent)
+        .toBe('写入席位配置失败（2 席里已应用 1 席，其余保持原配置）')
       await click(document.querySelector<HTMLButtonElement>('button[aria-label="关闭会话配置"]')!)
     })
 

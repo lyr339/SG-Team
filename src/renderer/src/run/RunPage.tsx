@@ -13,7 +13,7 @@ import { describeSelectionSpread, majoritySelection, type RunBatchConfigProps } 
 import { ReplaceRunSheet } from './ReplaceRunSheet'
 import { RunHeader } from './RunHeader'
 import type { RunGroupActions } from './RunGroupsPanel'
-import { RunIndependentPanel } from './RunIndependentPanel'
+import { RunIndependentPanel, clampSessionCount } from './RunIndependentPanel'
 import { RunModeSwitch } from './RunModeSwitch'
 import { RunSeats, type RunSeatRow } from './RunSeats'
 import { RunSlot } from './RunSlot'
@@ -192,24 +192,36 @@ export function RunPage({
   const composeChannels = useMemo(() => Array.from({ length: count }, (_, index) => String(index + 1)), [count])
 
   const defaultSelection = cursorModelSelectionFromOption(cursorModels.find((model) => model.selected) ?? cursorModels[0])
+  /**
+   * 新批次的起点：上一次运行里多数席位的配置——连开几批同样配置时不必每批重选一遍。
+   * 没有上一次运行（或它的模型已不在目录里）才退回 Cursor 当前选中的模型。
+   */
+  const inherited = useMemo(() => majoritySelection(view.seats.map((seat) => {
+    const option = seat.modelSelection ? cursorModels.find((model) => model.modelId === seat.modelSelection?.modelId) : undefined
+    return seat.modelSelection && option ? normalizeCursorModelSelection(seat.modelSelection, option) : undefined
+  })), [cursorModels, view.seats])
   const selections = useMemo(() => {
     const current = draftSelections.runId === runId
     const drafts = current ? draftSelections.byChannel : {}
     const uniform = current ? draftSelections.uniform : undefined
     const channels = composingIndependent ? composeChannels : view.seats.map((seat) => seat.channelId)
+    const fallback = (composingIndependent ? inherited : undefined) ?? defaultSelection
     return Object.fromEntries(channels.flatMap((channelId) => {
       const persisted = composingIndependent ? undefined : view.seats.find((seat) => seat.channelId === channelId)?.modelSelection
-      const candidate = drafts[channelId] ?? persisted ?? uniform ?? defaultSelection
-      const option = candidate ? cursorModels.find((model) => model.modelId === candidate.modelId) : undefined
-      const normalized = candidate && option ? normalizeCursorModelSelection(candidate, option) : defaultSelection
-      return normalized ? [[channelId, normalized] as const] : []
+      const candidate = drafts[channelId] ?? persisted ?? uniform ?? fallback
+      if (!candidate) return []
+      const option = cursorModels.find((model) => model.modelId === candidate.modelId)
+      if (option) return [[channelId, normalizeCursorModelSelection(candidate, option)] as const]
+      // 目录还没加载时先什么都不显示；目录里确实没有这个模型，就原样留着，
+      // 由摘要行点明「已不在目录」——不要悄悄换成默认模型再被一次「统一」写死。
+      return cursorModels.length ? [[channelId, candidate] as const] : []
     }))
-  }, [composeChannels, composingIndependent, cursorModels, defaultSelection, draftSelections, runId, view.seats])
+  }, [composeChannels, composingIndependent, cursorModels, defaultSelection, draftSelections, inherited, runId, view.seats])
 
   /**
-   * 批次的统一配置基线：显式统一过的那份 > 配置中沿用 Cursor 当前模型 > 运行中多数席位共用的那份；
-   * 运行中各席已分叉又没有多数，就没有基线（显示分布，提供「统一」）。与基线不同的席位是「单独配置」。
-   * 已结束的批次只作记录，不再谈配置。
+   * 批次的统一配置基线：显式统一过的那份，否则是被多数席位共用的那份（配置中与运行中同一口径）。
+   * 各席已分叉又没有多数，就没有基线（显示分布，提供「统一」）。与基线不同的席位是「单独配置」——
+   * 于是「每席都被单独改过」不会再留下一个谁都没在用的基线。已结束的批次只作记录，不再谈配置。
    */
   const independentBatch = composingIndependent || (view.mode === 'independent' && view.phase !== 'completed')
   const batchModel = useMemo(() => {
@@ -219,21 +231,24 @@ export function RunPage({
     const current = channels.map((channelId) => selections[channelId])
     const uniform = explicit && explicitOption
       ? normalizeCursorModelSelection(explicit, explicitOption)
-      : composingIndependent
-        ? defaultSelection
-        : majoritySelection(current)
+      : majoritySelection(current)
     const option = uniform ? cursorModels.find((model) => model.modelId === uniform.modelId) : undefined
     const overridden = uniform ? channels.filter((channelId) => !sameCursorModelSelection(selections[channelId], uniform)) : []
+    // 配置中的基线如果只是沿用来的（Cursor 当前模型 / 上一次运行），行内说明它从哪来。
+    const implicitFrom = explicit || !uniform || !composingIndependent ? undefined
+      : sameCursorModelSelection(uniform, defaultSelection) ? 'cursor' as const
+        : sameCursorModelSelection(uniform, inherited) ? 'previous' as const
+          : undefined
     return {
       channels,
       uniform,
-      implicit: composingIndependent && !explicit,
+      implicitFrom,
       overridden,
       spread: uniform ? undefined : describeSelectionSpread(current),
       fallback: current[0],
       restoreHint: uniform ? `恢复为统一配置：${uniform.displayName} · ${cursorModelSelectionSummary(uniform, option)}` : undefined
     }
-  }, [composeChannels, composingIndependent, cursorModels, defaultSelection, draftSelections, runId, selections, view.seats])
+  }, [composeChannels, composingIndependent, cursorModels, defaultSelection, draftSelections, inherited, runId, selections, view.seats])
   const overriddenChannels = new Set(independentBatch ? batchModel.overridden : [])
 
   const seatRows: RunSeatRow[] = composingIndependent
@@ -372,6 +387,14 @@ export function RunPage({
   }
 
   // ---------- 模式切换 / 结束 ----------
+  /**
+   * 进入新批次配置：数量接着上一个独立批次来，配合沿用来的会话配置，「和上一批一样再来一批」不用重设。
+   * 团队运行的席位是角色而不是并行会话，不沿用它的数量。
+   */
+  const beginCompose = (): void => {
+    if (view.mode === 'independent' && view.seats.length) setCount(clampSessionCount(view.seats.length))
+    setCompose({ confirmed: true })
+  }
   const switchMode = (to: WorkspaceRunMode): void => {
     if (actionInFlight.current || agentLaunchPlan?.state === 'running') return
     if (compose && to === view.mode) {
@@ -379,7 +402,7 @@ export function RunPage({
       return
     }
     if (to === 'independent') {
-      guard({ kind: 'switch', to }, () => setCompose({ confirmed: true }))
+      guard({ kind: 'switch', to }, beginCompose)
       return
     }
     guard({ kind: 'switch', to: 'team' }, () => { void run('workspace', onChooseWorkspace) })
@@ -397,7 +420,7 @@ export function RunPage({
     })
   }
   const newBatch = (): void => {
-    guard({ kind: 'new-batch', targetWorkspaceName: view.cursorWorkspaceChanged ? targetWorkspace?.name : undefined }, () => setCompose({ confirmed: true }))
+    guard({ kind: 'new-batch', targetWorkspaceName: view.cursorWorkspaceChanged ? targetWorkspace?.name : undefined }, beginCompose)
   }
   const chooseIndependentWorkspace = (): void => {
     void run('choose-workspace', async () => {
@@ -416,10 +439,24 @@ export function RunPage({
     }))
   }
 
-  /** 统一配置：同一份写到每个席位，并成为批次基线。已存在的席位逐个持久化（中途失败即停，弹层留在原地报错）。 */
+  /**
+   * 统一配置：同一份写到每个席位，并成为批次基线。已存在的席位逐个持久化——
+   * 本就是这套配置的席位跳过（16 席常常只有一两席真需要写），中途失败即停，
+   * 错误里带上已经落库几席，弹层留在原地。
+   */
   const saveModelForAll = async (channelIds: string[], selection: CursorModelSelection): Promise<void> => {
     if (!composingIndependent && onPersistModelSelection) {
-      for (const channelId of channelIds) await onPersistModelSelection(channelId, selection)
+      const targets = channelIds.filter((channelId) => !sameCursorModelSelection(selections[channelId], selection))
+      let applied = 0
+      for (const channelId of targets) {
+        try {
+          await onPersistModelSelection(channelId, selection)
+        } catch (reason) {
+          const detail = reason instanceof Error ? reason.message : String(reason)
+          throw new Error(`${detail}（${targets.length} 席里已应用 ${applied} 席，其余保持原配置）`)
+        }
+        applied += 1
+      }
     }
     setDraftSelections((current) => ({
       runId,
@@ -451,8 +488,10 @@ export function RunPage({
     models: cursorModels,
     seatCount: batchModel.channels.length,
     uniform: batchModel.uniform,
-    implicit: batchModel.implicit,
+    implicitFrom: batchModel.implicitFrom,
     overriddenCount: batchModel.overridden.length,
+    // 运行中的席位已经各自开着会话：改配置不会换掉正在跑的那个 Composer。
+    hint: composingIndependent ? undefined : '改动作用于下一次新建会话',
     spread: batchModel.spread,
     fallback: batchModel.fallback,
     disabled: agentLaunchPlan?.state === 'running',

@@ -38,11 +38,13 @@
 .run-slot.is-open .run-slot__inner > * { opacity: 1; transition: opacity 200ms ease 60ms; }
 
 /* ---------- 共用：焦点环 / 按压反馈 ---------- */
-.run-page :is(button, textarea, [role="radio"]):focus-visible {
+.run-page :is(button, input, textarea, [role="radio"]):focus-visible {
   outline: 2px solid var(--accent-border-strong);
   outline-offset: 2px;
 }
 .run-page .run-mode-switch button:focus-visible { outline-offset: -2px; }
+/* 步进器 overflow: hidden 会裁掉外扩的焦点环，数字框把环画在自己里面。 */
+.run-page .run-stepper input:focus-visible { outline-offset: -1px; }
 .run-page :is(.primary-button, .secondary-button, .run-header__ghost, .run-sheet__confirm, .run-stepper button):active:not(:disabled) {
   transform: translateY(0.5px) scale(0.995);
 }
@@ -455,7 +457,25 @@ html[data-card-transparency="clear"] :is(.run-panel, .run-seats, .run-header, .r
 }
 .run-stepper button:hover:not(:disabled) { background: var(--surface-soft); color: var(--text); }
 .run-stepper button:disabled { color: var(--faint); }
-.run-stepper output { min-width: 40px; text-align: center; font: 650 var(--fs-15)/1 var(--mono); font-variant-numeric: tabular-nums; animation: run-pop 180ms ease both; }
+/* 数字可直接输入：藏掉原生微调箭头，键盘上下键仍然可用（type=number 自带）。 */
+.run-stepper input {
+  width: 44px;
+  /* 比 32px 的按钮矮一圈，焦点环才有地方落。 */
+  height: 26px;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  text-align: center;
+  font: 650 var(--fs-15)/1 var(--mono);
+  font-variant-numeric: tabular-nums;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+.run-stepper input::-webkit-inner-spin-button,
+.run-stepper input::-webkit-outer-spin-button { margin: 0; appearance: none; }
+.run-stepper input:disabled { color: var(--faint); }
 @keyframes run-pop { from { transform: scale(0.82); opacity: 0.4; } to { transform: none; opacity: 1; } }
 
 .run-batch { display: flex; align-items: flex-end; gap: 22px; }
@@ -958,7 +978,7 @@ html[data-card-transparency="clear"] .run-seat { background: color-mix(in srgb, 
 @keyframes run-fade-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @keyframes run-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 @media (prefers-reduced-motion: reduce) {
-  .run-body > *, .run-feedback, .run-sheet, .run-seat, .run-goal, .run-goal-editor, .run-stepper output, .run-group, .run-group-drawer, .run-seat__override { animation: none; }
+  .run-body > *, .run-feedback, .run-sheet, .run-seat, .run-goal, .run-goal-editor, .run-group, .run-group-drawer, .run-seat__override { animation: none; }
   .run-seat.is-synced .run-seat__main, .run-seat.is-synced .run-seat__model strong { animation: none; }
   .run-batch-config__value.is-swapped, .run-batch-config__value.is-swapped > strong { animation: none; }
   .run-mode-switch__indicator, .run-slot, .run-slot__inner > * { transition: none; }
