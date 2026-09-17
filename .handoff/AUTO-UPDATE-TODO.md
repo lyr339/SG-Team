@@ -1,7 +1,7 @@
 # 交接任务书：拾光自动更新（Windows 先行 · electron-updater · 手动组件；mac 自替换待做）
 
-> **状态（2026-09-17 00:10）：Windows 路线已随 v0.3.3 发布**（合回 main、tag 已推、Release 带 `latest.yml`；真机应用内升级验收仍待 §0.6.4）。
-> **mac 自替换路线（§4–§7）代码与测试完成**——分支 `feat/app-update-mac`，worktree `E:\SG-update`（已 rebase 到 main `0f0cef7`），
+> **状态（2026-09-17 18:55）：Windows 路线已随 v0.3.3 发布**（合回 main、tag 已推、Release 带 `latest.yml`；真机应用内升级验收仍待 §0.6.4）。
+> **mac 自替换路线（§4–§7）代码与测试完成**——分支 `feat/app-update-mac`，worktree `E:\SG-update`（已 rebase 到 main `1d2b8ba`，领先 5 落后 0，未推送），
 > typecheck / knip / 全量测试 / build / smoke:channel 全绿；**待 mac 真机验收（§11）并合回 main**。每完成一步在 §12 追加一行；中断后接手者只读 §0、§12、§13 即可定位。
 >
 > **2026-09-16 用户重新拍板**（在真实 Windows 机器上，覆盖 09-15 的 U2 / U3）：① **Windows 先行**；② **允许引入 `electron-updater`**（运行时依赖从 ws + zod 扩到三项）；
@@ -610,6 +610,7 @@ tests/mac-app-replacer.test.ts · tests/update-backup.test.ts · tests/register-
 | 09-17 15:15–15:40 | 整支审查 + 两处修复 | （CH-2）对 `feat/app-update-mac` 相对 main 的全部改动做缺陷优先审查。**P1** 清单资产名未清洗即拼进 `updates/downloads/<name>`：第三方源一份 `name: "../../.cursor/mcp.json"` 的清单可覆盖再删除任意用户可写文件 → `parseUpdateManifest` 拒绝非纯文件名（`isPlainAssetFileName`），端口再兜 `basename` 一层。**P2** 回滚脚本先换包再复制库快照，`cp` 失败（磁盘不足）会让旧版包配新版库、结果文件还说「当前仍是新版」→ 快照复制挪到换包之前，换包后 `mv -f` 失败把两个包换回，`-wal/-shm` 在库换回之后才删。其余：`minimumVersion` 预留不用、`notesMarkdown` 取全文、downloader 注释「重新解析清单 URL」与实现不符——均按任务书意图不改。登记「更新源 = 代码执行授权」风险行 | typecheck · knip · 全量 vitest（见 ARCHITECTURE 条目）|
 | 09-17 15:45–16:20 | 状态卡重做 | （CH-2）用户嫌「小圆点」不精致，要求参考其他页重来。状态卡改成存储清理页头部的读法：眉题「当前版本」+ 26px 数字，有目标时「→ 新版本 / 回滚到」第二个数字（当前降次要色、目标承接品牌色）；状态一句话 + 弱补充行；操作右对齐同一行。状态改由区块头的文字胶囊承担（`UpdatePanelView.badge`：已是最新 / 有新版本 / 已跳过 / 下载中 N% / 正在校验 / 待安装 / 正在安装 / 正在回滚 / 暂时连不上更新源 / 检查失败 / 下载失败 / 不支持应用内更新；忙态胶囊带细环），圆点与脉冲动画全部移除，卡片色调只落在目标数字。`headline` 不再重复版本号。顺带修 `settings-update-up-to-date-*` 场景名（`replace` 只换第一个 `_`，这两张一直没拍出来），矩阵 16 张全部加英雄行几何探针 | typecheck · knip · 2070 用例 · 24 个场景探针全过 |
 | 09-17 16:20–17:55 | 版本状态改成一行设置 | （CH-2，两段会话接力）用户否掉英雄行（「这是软件开发，不是数据面板」）。去掉内卡、眉题、26px 数字与箭头：版本状态成为直接住在区块正文里的一条 `settings-row`（与 Cursor 维护页 / 自动化页同一结构）——标签是版本（无目标「拾光 0.3.2」，有目标「新版本 0.3.3」/「回滚到 0.3.1」，当前版本退到事实行「当前 0.3.2」），下面一两行说明（上次检查 / 发布日期 · 体积 · 当前 / 下一步会发生什么 / 错误原文），下载时说明之下一条 4px 进度 + 读数；操作在右列。发布说明从色块搬进 hairline 分隔的「更新内容」行（`groupReleaseNotes`：连续 `- ` 行合成真列表），mac 备份脚注成「旧版备份」行、按钮在右、确认块出现时收起。`UpdatePanelView.next` → `title`，`detail` 在标签为目标版本时带「当前 x」；区块头胶囊与色彩规则不变。窗口最小宽 1440 = 矩阵宽度，四个操作按钮并排装得下。探针：矩阵场景断言无内卡 / 英雄行 / 大号数字、行是 settings-row 且标签 ≤ 14px、操作不重叠不出正文不折行、分隔行不溢出；确认块在状态行之下；备份行几何 | typecheck · knip · 2071 用例 · 22 个更新场景探针全过 |
+| 09-17 18:15–18:55 | rebase 到 main + 交接复核 | （CH-2，两段会话接力）分支落后 main 5 个提交，先 rebase：`docs/ARCHITECTURE.md` 五次尾部追加冲突逐个解；与 main `50e833c` 重复的钉时钟提交 `47a485d` 丢弃——两份叠加会让 `settings-stats` 的 `beforeEach` 连调两次 `useFakeTimers`，main 那份是超集。接手复核又查出 rebase 自身留下的两处伤并修掉：**① 冲突解错顺序**——main 的 Dock 条目（09-17）被放到分支 mac 条目（09-16）之前，而全文 40 条日期标题此前严格递增；按提交时间（mac `dde7463` 00:06 → Dock `541028e` 00:21 → 网络失败 `dcd1563` 14:55）把 Dock 挪到两者之间，恢复唯一被打破的不变量，改动由脚本断言为纯换序（行多重集不变）。**② 末行尾换行丢失**——删冲突标记时把尾部 LF 一并删了（同目录其余文档均以 LF 收尾），补回。合并正确性另用集合法证明：两个自动合并文件里分支侧与 main 侧的增删行在合并后逐行一致（`preview-shots.mjs` 92 / 132 行、`preview-main.tsx` 35 / 105 行，差异均为 0）；场景名集合 = 两侧并集减去分支有意改名的 `settings-update-up-to_date-*`，无重名；`git diff 5419c88 HEAD` 只含 main 改过的那 36 个文件，分支独有文件逐字节未变 | typecheck · knip · 2105 用例 / 210 文件（`brand-migration` 随 main 的 Node 修复转绿）· build · smoke:channel · 35 个场景探针（24 更新 + 11 dock/turn-files）全过 |
 
 ***
 
