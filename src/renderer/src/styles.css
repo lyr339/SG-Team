@@ -1112,7 +1112,14 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
   box-shadow: var(--shadow-sm);
 }
 .chat-row--mine.is-grouped .chat-bubble { border-radius: 12px; }
-.chat-row--mine .chat-bubble::selection { background: rgba(255, 255, 255, 0.28); }
+/* 选中反色：::selection 不随选择器下传，正文在 .message-content 等子元素里，
+   只写在气泡自身上的规则永远命中不到——落回全局那条 accent 淡洗，正好与橙色气泡同色，
+   选中看着跟没选一样。后代选择器覆盖子元素，并显式给出前景色，不依赖默认反色。 */
+.chat-row--mine .chat-bubble::selection,
+.chat-row--mine .chat-bubble ::selection {
+  color: var(--accent-deep);
+  background: rgba(255, 255, 255, 0.92);
+}
 .chat-row--error .chat-bubble { color: var(--red); background: var(--red-soft); border-color: var(--red-border); }
 
 .chat-bubble .typing-indicator { margin-left: 7px; }
