@@ -1,6 +1,6 @@
 import { WINDOW_MIN_WIDTH } from '../shared/window-layout'
-import { app, BrowserWindow, Menu, nativeImage, safeStorage, shell, Tray } from 'electron'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { app, BrowserWindow, Menu, nativeImage, net, safeStorage, shell, Tray } from 'electron'
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { SqliteTaskPoolRepository } from '../infrastructure/task-pool/sqlite-task-pool-repository'
 import { TaskPoolService } from '../application/task-pool-service'
@@ -21,7 +21,7 @@ import { TeamMemoryService } from '../application/team-memory-service'
 import { registerTeamCollaborationIpc } from './register-team-collaboration-ipc'
 import { SqliteChannelMessageRepository } from '../infrastructure/channel-messages/sqlite-channel-message-repository'
 import { ChannelMessageRelay } from '../application/channel-message-relay'
-import { reconcileGlobalChannelServers } from '../infrastructure/cursor/global-mcp-registrar'
+import { globalMcpConfigPath, reconcileGlobalChannelServers } from '../infrastructure/cursor/global-mcp-registrar'
 import { resolveTaskMcpServerPath } from './task-mcp-runtime'
 import { TeamFailoverService } from '../application/team-failover-service'
 import { TeamGroupService } from '../application/team-group-service'
@@ -87,9 +87,6 @@ import { createTeamAgentLaunchPromptPort } from '../application/team-agent-launc
 import { WorkspaceReviewReader } from '../infrastructure/git/workspace-review-reader'
 import { registerWorkspaceReviewIpc } from './register-workspace-review-ipc'
 import { SessionHandoffService } from '../application/session-handoff-service'
-import { SeatRotationService } from '../application/seat-rotation-service'
-import { SeatRotationSettingsStore } from '../application/seat-rotation-settings-store'
-import { registerSeatRotationIpc } from './register-seat-rotation-ipc'
 import { RevealPathPolicy } from '../application/reveal-path-policy'
 import { registerSessionHandoffIpc } from './register-session-handoff-ipc'
 import { installLocalImageProtocol, registerLocalImageScheme } from './local-image-protocol'
@@ -97,6 +94,14 @@ import { CursorQuestionResponder } from '../infrastructure/cursor/cursor-questio
 import { CursorQuestionService } from '../application/cursor-question-service'
 import { registerCursorQuestionIpc } from './register-cursor-question-ipc'
 import { legacyUserDataDirectory, resolveUserDataDirectory } from './user-data-directory'
+import { AppUpdateService } from '../application/app-update-service'
+import { AppUpdateSettingsStore } from '../application/app-update-settings-store'
+import { createElectronUpdaterPort } from '../infrastructure/app-update/electron-updater-port'
+import { createMacUpdaterPort } from '../infrastructure/app-update/mac-updater-port'
+import { registerAppUpdateIpc } from './register-app-update-ipc'
+// electron-updater 是 CJS，`autoUpdater` 是 exports 上的惰性 getter：主进程是 ESM，命名导入会在链接期
+// 找不到该导出（cjs-module-lexer 认不出 getter），只能默认导入整个 module.exports 再取属性。
+import electronUpdater from 'electron-updater'
 import { homedir } from 'node:os'
 
 let mainWindow: BrowserWindow | undefined
@@ -120,9 +125,9 @@ let disposeCursorStorageIpc: (() => void) | undefined
 let disposeWindowChromeIpc: (() => void) | undefined
 let disposeWorkspaceReviewIpc: (() => void) | undefined
 let disposeSessionHandoffIpc: (() => void) | undefined
-let disposeSeatRotationIpc: (() => void) | undefined
-let seatRotationService: SeatRotationService | undefined
 let disposeCursorQuestionIpc: (() => void) | undefined
+let disposeAppUpdateIpc: (() => void) | undefined
+let appUpdateServiceRef: AppUpdateService | undefined
 let cursorCdpKeeperRef: CursorCdpKeeper | undefined
 /** 退出前清理账号自动化浏览器宿主（按当前设置解析：指纹=关窗断连；外部=noop）。 */
 let accountBrowserHostDisposeRef: (() => Promise<void>) | undefined
@@ -334,7 +339,9 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
         appPath: app.getAppPath(),
         resourcesPath: process.resourcesPath
       }),
-      databasePath
+      databasePath,
+      // 版本进条目 env：原地升级后路径不变，只有这项变化能让 Cursor 重载一次 MCP，新服务器代码才上线。
+      appVersion: app.getVersion()
     })
     if (registration.changed) {
       process.stderr.write(`[sg-team-global-mcp] registered ${registration.serverNames.join(', ')}\n`)
@@ -571,11 +578,9 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     },
     desktopSessionService,
     {
-      // 席位自动轮换也走这条创建链，但账号自动化（奥仔处理 / 加固 / 换号，不可撤销）
-      // 只跟随用户手动的批量创建。
-      onAllTriggered: (plan) => {
-        if (plan.origin !== 'seat-rotation') accountAutomationService.onAllSessionsTriggered(plan.id)
-      }
+      // 创建链只剩用户手动的批量创建（席位自动轮换已退役），账号自动化照常跟随；
+      // 启动状态机随 2B-1 退役，没有 onFinished 可结算。
+      onAllTriggered: (plan) => accountAutomationService.onAllSessionsTriggered(plan.id)
     }
   )
   // 协作通知与用户消息共用同一发送分流（内嵌通道走 SQLite，插件通道走 WS）
@@ -803,30 +808,6 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     () => mainWindow,
     { downloadsPath: () => app.getPath('downloads') }
   )
-  // 席位自动轮换：独立席位的 Composer 到气泡阈值且连续待命时，交接上下文 → 轮换令牌 →
-  // 走同一条一键建会话链换新 Composer（持续会话的 Cursor 回合永不结束，只能靠换会话压体积）。
-  const seatRotationSettingsStore = new SeatRotationSettingsStore(join(app.getPath('userData'), 'seat-rotation.json'))
-  const seatRotationTeam = teamControlService
-  seatRotationService = new SeatRotationService({
-    sessions: desktopSessionService,
-    team: {
-      getSnapshot: () => seatRotationTeam.getSnapshot(),
-      prepareComposerRelaunch: (channelId, options) => seatRotationTeam.prepareComposerRelaunch(channelId, options)
-    },
-    handoff: sessionHandoffService,
-    launcher: agentSessionLauncher,
-    conversationsOf: (channelId) => channelMessageRelay?.conversationsOf(channelId),
-    settings: () => seatRotationSettingsStore.load(),
-    // 与手动一键建会话同一条进度推送：运行页照常显示三级证据进度。
-    onLaunchProgress: (plan) => {
-      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.agentLaunchProgress, plan)
-    },
-    onerror: (error) => process.stderr.write(`[seat-rotation] ${error instanceof Error ? error.message : String(error)}\n`)
-  })
-  seatRotationService.start()
-  disposeSeatRotationIpc = registerSeatRotationIpc(seatRotationSettingsStore, () => mainWindow, {
-    onSettingsSaved: () => seatRotationService?.refreshSettings()
-  })
   // 拾光内回答 Cursor 原生 ask_question：与会话创建/过程观察共用同一 Cursor 窗口解析。
   disposeCursorQuestionIpc = registerCursorQuestionIpc(
     new CursorQuestionService({
@@ -839,6 +820,47 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     () => mainWindow
   )
   disposeCursorUpdateIpc = registerCursorUpdateIpc(cursorUpdatePreferencesStore, () => mainWindow)
+  // 拾光自更新（手动组件）：只静默检查，发现新版由渲染层出小提醒；下载 / 安装都由用户点。
+  // Windows 走 electron-updater（NSIS）；mac 包是 adhoc 签名过不了 Squirrel 校验，走拾光自己的
+  // 清单 + 整包 mv 替换器（`/bin/sh` 脚本在退出后交换，失败换回，可回滚）。
+  const appUpdatePort = process.platform === 'darwin'
+    ? createMacUpdaterPort({
+        platform: process.platform,
+        arch: process.arch,
+        isPackaged: app.isPackaged,
+        execPath: process.execPath,
+        homeDir: homedir(),
+        currentVersion: app.getVersion(),
+        userDataDir: app.getPath('userData'),
+        databasePath,
+        // 备份里除库快照外的小文件：mcp.json（回滚后路径 / 版本 env 一致）与 userData 根下的所有 json 设置。
+        backupFiles: () => [
+          globalMcpConfigPath(),
+          ...readdirSync(app.getPath('userData')).filter((name) => name.endsWith('.json')).map((name) => join(app.getPath('userData'), name))
+        ],
+        fetch: (url, init) => net.fetch(url, init),
+        relaunch: (execPath, args) => app.relaunch({ execPath, args }),
+        quit: () => app.quit()
+      })
+    : createElectronUpdaterPort({
+        // 只在 Windows 上碰 getter（它才实例化 NsisUpdater）；其他平台不接更新器。
+        ...(process.platform === 'win32' ? { updater: electronUpdater.autoUpdater } : {}),
+        platform: process.platform,
+        isPackaged: app.isPackaged
+      })
+  appUpdateServiceRef = new AppUpdateService({
+    currentVersion: app.getVersion(),
+    port: appUpdatePort,
+    settings: new AppUpdateSettingsStore(join(app.getPath('userData'), 'app-update.json')),
+    gateInput: () => ({
+      onlineSeats: desktopSessionService?.getSnapshot().sessions.filter((session) => session.online).length ?? 0,
+      sessionLaunchRunning: agentSessionLauncher.getPlan()?.state === 'running'
+    }),
+    // 安装器装完拉起新版时带 `--updated`（electron-builder NSIS 约定）：首页可提示一次「已更新」。
+    launchedAfterUpdate: process.argv.includes('--updated')
+  })
+  disposeAppUpdateIpc = registerAppUpdateIpc(appUpdateServiceRef, () => mainWindow)
+  appUpdateServiceRef.start()
   // Cursor 本机存储清理：盘点只读；对话历史的数据库分析/删除在 worker 线程（22GB 库上
   // 一次索引遍历要数秒）；目录类清理走系统回收站。拾光运行绑定过的 Composer 永不清理。
   const cursorStorageUserDataRoot = cursorUserDataRoot()
@@ -966,9 +988,9 @@ app.on('before-quit', () => {
   disposeWindowChromeIpc?.()
   disposeWorkspaceReviewIpc?.()
   disposeSessionHandoffIpc?.()
-  seatRotationService?.stop()
-  disposeSeatRotationIpc?.()
   disposeCursorQuestionIpc?.()
+  disposeAppUpdateIpc?.()
+  appUpdateServiceRef?.stop()
   cursorCdpKeeperRef?.stop()
   teamControlService?.dispose()
   teamControlRepository?.close()

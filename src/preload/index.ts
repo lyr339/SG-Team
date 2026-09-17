@@ -58,8 +58,6 @@ const api: SgDesktopApi = {
   getSessionWarmupRun: () => ipcRenderer.invoke(IPC.sessionWarmupGet),
   getCursorCdpSettings: () => ipcRenderer.invoke(IPC.cursorCdpGetSettings),
   saveCursorCdpSettings: (settings) => ipcRenderer.invoke(IPC.cursorCdpSaveSettings, settings),
-  getSeatRotationSettings: () => ipcRenderer.invoke(IPC.seatRotationGetSettings),
-  saveSeatRotationSettings: (settings) => ipcRenderer.invoke(IPC.seatRotationSaveSettings, settings),
   getCursorUpdatePreferences: () => ipcRenderer.invoke(IPC.cursorUpdateGetPreferences),
   setCursorAutoUpdateDisabled: (disabled) => ipcRenderer.invoke(IPC.cursorUpdateSetAutoUpdateDisabled, disabled),
   scanCursorStorage: (input) => ipcRenderer.invoke(IPC.cursorStorageScan, input),
@@ -70,6 +68,24 @@ const api: SgDesktopApi = {
     const wrapped = (_event: Electron.IpcRendererEvent, payload: Parameters<typeof listener>[0]): void => listener(payload)
     ipcRenderer.on(IPC.cursorCdpAutoHealEvent, wrapped)
     return () => ipcRenderer.off(IPC.cursorCdpAutoHealEvent, wrapped)
+  },
+  getAppUpdateStatus: () => ipcRenderer.invoke(IPC.appUpdateGetStatus),
+  checkAppUpdate: () => ipcRenderer.invoke(IPC.appUpdateCheck),
+  downloadAppUpdate: () => ipcRenderer.invoke(IPC.appUpdateDownload),
+  cancelAppUpdateDownload: () => ipcRenderer.invoke(IPC.appUpdateCancelDownload),
+  installAppUpdate: (input) => ipcRenderer.invoke(IPC.appUpdateInstall, input),
+  rollbackAppUpdate: (input) => ipcRenderer.invoke(IPC.appUpdateRollback, input),
+  dismissAppUpdateApplyResult: () => ipcRenderer.invoke(IPC.appUpdateDismissApplyResult),
+  skipAppUpdate: () => ipcRenderer.invoke(IPC.appUpdateSkip),
+  unskipAppUpdate: () => ipcRenderer.invoke(IPC.appUpdateUnskip),
+  snoozeAppUpdate: () => ipcRenderer.invoke(IPC.appUpdateSnooze),
+  dismissAppUpdateFailure: () => ipcRenderer.invoke(IPC.appUpdateDismissFailure),
+  saveAppUpdateSettings: (settings) => ipcRenderer.invoke(IPC.appUpdateSaveSettings, settings),
+  openAppUpdateReleasePage: () => ipcRenderer.invoke(IPC.appUpdateOpenReleasePage),
+  onAppUpdateStatus: (listener) => {
+    const wrapped = (_event: Electron.IpcRendererEvent, status: Parameters<typeof listener>[0]): void => listener(status)
+    ipcRenderer.on(IPC.appUpdateStatus, wrapped)
+    return () => ipcRenderer.off(IPC.appUpdateStatus, wrapped)
   },
   getAccountAutomationSettings: () => ipcRenderer.invoke(IPC.accountAutomationGetSettings),
   saveAccountAutomationSettings: (settings) => ipcRenderer.invoke(IPC.accountAutomationSaveSettings, settings),

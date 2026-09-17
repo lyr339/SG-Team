@@ -10,6 +10,9 @@ import { ClampedMessage } from './ClampedMessage'
 import { ProcessTurnCard } from './ProcessTurnCard'
 import type { QuestionActions } from './QuestionCard'
 import { QueuedMessageTray } from './QueuedMessageTray'
+import { TurnFilesBar } from './TurnFilesBar'
+import type { ReviewFocusRequest } from './inspector/review-focus-bus'
+import type { TurnFilesView } from './turn-files-view'
 import { TurnResponseText } from './TurnResponseText'
 import { SessionUsageStat } from './SessionUsageStat'
 import { suggestedActionsFromText } from './process-turn-view'
@@ -41,6 +44,10 @@ interface SessionWorkspaceProps {
   nativeProcessStream?: NativeProcessStreamStatus
   /** 过程卡里 ask_question 的回答 / 跳过动作（绑定到本通道）。 */
   questionActions?: QuestionActions
+  /** 本轮改动文件栏（贴在输入区上方）；缺省或空集合不渲染。 */
+  turnFiles?: TurnFilesView
+  /** 文件栏的「审查」：打开右栏审查页并切到请求的范围，带路径时定位到该文件。 */
+  onReviewTurnFiles?: (request: ReviewFocusRequest) => void
 }
 
 /** 同角色且间隔小于该值的连续消息合并成一组（只显示一次头像与名称）。 */
@@ -156,7 +163,9 @@ export function SessionWorkspace({
   liveProcess,
   liveAgentResponse,
   nativeProcessStream,
-  questionActions
+  questionActions,
+  turnFiles,
+  onReviewTurnFiles
 }: SessionWorkspaceProps): React.JSX.Element {
   const [sendError, setSendError] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -174,6 +183,8 @@ export function SessionWorkspace({
     () => partitionTimelineEntries(visibleEntries, !queuedTransport),
     [visibleEntries, queuedTransport]
   )
+  // 托盘是否在场（与 QueuedMessageTray 自己的渲染判定同一口径：服务端计数与可见排队条目取大）。
+  const trayVisible = Math.max(session.queueDepth, queuedEntries.length) > 0
   const latestAssistantId = [...timelineEntries].reverse().find((entry) => entry.role === 'assistant')?.id
   const seenCount = useRef(timelineEntries.length)
   /**
@@ -784,21 +795,29 @@ export function SessionWorkspace({
         )}
       </div>
 
-      {/* 待投递托盘：发送后的即时回显。消息在这里等 Agent 取走，取走那一刻移入上方时间线。 */}
-      <QueuedMessageTray
-        session={session}
-        entries={queuedEntries}
-        onWithdraw={onWithdrawQueued ? (entryId) => {
-          void onWithdrawQueued(entryId).catch((error: unknown) => {
-            setSendError(error instanceof Error ? error.message : String(error))
-          })
-        } : undefined}
-        onRelease={onReleaseQueued ? (entryId) => {
-          void onReleaseQueued(entryId).catch((error: unknown) => {
-            setSendError(error instanceof Error ? error.message : String(error))
-          })
-        } : undefined}
-      />
+      {/*
+        停靠区：时间线与输入区之间的两段——待投递托盘（发送后的即时回显，等 Agent 取走）在上，
+        本轮文件栏（这一轮改动过的文件与增删行数）在下。两段同时出现时共用一个外框（CSS :has），
+        整个停靠区在纵向预算不够时先于时间线收缩（时间线有下限，列表各自滚动）；
+        托盘在场时文件栏让位（只留头部）。
+      */}
+      <div className="session-dock">
+        <QueuedMessageTray
+          session={session}
+          entries={queuedEntries}
+          onWithdraw={onWithdrawQueued ? (entryId) => {
+            void onWithdrawQueued(entryId).catch((error: unknown) => {
+              setSendError(error instanceof Error ? error.message : String(error))
+            })
+          } : undefined}
+          onRelease={onReleaseQueued ? (entryId) => {
+            void onReleaseQueued(entryId).catch((error: unknown) => {
+              setSendError(error instanceof Error ? error.message : String(error))
+            })
+          } : undefined}
+        />
+        {turnFiles ? <TurnFilesBar view={turnFiles} onReview={onReviewTurnFiles} yieldToTray={trayVisible} /> : null}
+      </div>
 
       <ComposerWorkbench
         session={session}

@@ -2398,6 +2398,86 @@ describe('过程帧契约（阶段 C：snapshotComplete 权威合并）', () => 
     }
   })
 
+  it('ask_question 答题换回合：带走未封口的旧块，过程流不消失（且后续权威帧不再撤下）', () => {
+    vi.useFakeTimers()
+    const base = Date.now()
+    vi.setSystemTime(base)
+    const { service, update } = buildService()
+    const ids = (): string[] => service.getSnapshot().liveProcess?.['1']?.blocks.map((block) => block.id) ?? []
+    try {
+      // 回合内：思考 + 一条 ask_question（Cursor 为等作答而停止生成）。
+      update('1', {
+        composerId: 'composer-alpha-123', state: 'active', detail: 'observer', observedAt: base,
+        isGenerating: true,
+        process: {
+          turnId: 'user-before-answer', snapshotComplete: true, generatingBubbleCount: 1,
+          items: [
+            { kind: 'thinking', id: 'cursor:think-1', text: '分析根因', status: 'done', startedAt: base - 2_000 },
+            {
+              kind: 'tool', id: 'cursor:ask-1', toolName: 'ask_question', toolKind: 'mcp', summary: '选择修法',
+              status: 'running', startedAt: base - 500,
+              question: { toolCallId: 'call-1', status: 'pending', questions: [] }
+            }
+          ]
+        }
+      })
+      expect(ids()).toEqual(['cursor:think-1', 'cursor:ask-1'])
+
+      // 作答 = submitChatMaybeAbortCurrent 送出跟进消息 → Cursor 新增 user 气泡 →
+      // observer 的 turnId 前移，且本帧只剩答题之后的气泡（这里还没有，故为空集）。
+      // 修复前：权威空快照会把整个直播过程删掉，过程卡瞬间消失。
+      update('1', {
+        composerId: 'composer-alpha-123', state: 'active', detail: 'observer', observedAt: base + 100,
+        isGenerating: true,
+        process: { turnId: 'user-answer-note', snapshotComplete: true, generatingBubbleCount: 1, items: [] }
+      })
+      expect(ids()).toEqual(['cursor:think-1', 'cursor:ask-1'])
+
+      // 新回合继续产出：旧块留在前面，新块追加在后。
+      update('1', {
+        composerId: 'composer-alpha-123', state: 'active', detail: 'observer', observedAt: base + 200,
+        isGenerating: true,
+        process: {
+          turnId: 'user-answer-note', snapshotComplete: true, generatingBubbleCount: 1,
+          items: [{ kind: 'tool', id: 'cursor:work-after', toolName: 'edit_file', toolKind: 'edit', summary: '按选择动手', status: 'running', startedAt: base + 150 }]
+        }
+      })
+      // 带过来的块每帧都「缺席」于新回合快照，权威撤下规则必须放过它们。
+      expect(ids()).toEqual(['cursor:think-1', 'cursor:ask-1', 'cursor:work-after'])
+    } finally {
+      service.dispose()
+      vi.useRealTimers()
+    }
+  })
+
+  it('普通换回合（上一回合没有提问）仍不留旧 turn 孤儿块', () => {
+    vi.useFakeTimers()
+    const base = Date.now()
+    vi.setSystemTime(base)
+    const { service, update } = buildService()
+    try {
+      update('1', {
+        composerId: 'composer-alpha-123', state: 'active', detail: 'observer', observedAt: base,
+        isGenerating: true,
+        process: {
+          turnId: 'user-t1', snapshotComplete: true, generatingBubbleCount: 1,
+          items: [{ kind: 'thinking', id: 'cursor:think-1', text: '上一回合', status: 'done', startedAt: base - 1_000 }]
+        }
+      })
+      expect(service.getSnapshot().liveProcess?.['1']?.blocks).toHaveLength(1)
+
+      update('1', {
+        composerId: 'composer-alpha-123', state: 'active', detail: 'observer', observedAt: base + 100,
+        isGenerating: true,
+        process: { turnId: 'user-t2', snapshotComplete: true, generatingBubbleCount: 1, items: [] }
+      })
+      expect(service.getSnapshot().liveProcess?.['1']).toBeUndefined()
+    } finally {
+      service.dispose()
+      vi.useRealTimers()
+    }
+  })
+
   it('keeps out-of-window history but retracts in-window absent blocks on truncated frames', () => {
     vi.useFakeTimers()
     const base = Date.now()
@@ -3453,7 +3533,7 @@ describe('ask_question 等待用户决策', () => {
   })
 })
 
-describe('Composer 气泡数事实（席位自动轮换的阈值）', () => {
+describe('Composer 气泡数事实（名册悬停详情的会话体积）', () => {
   it('hook 帧与 inspect 同源写入，按观测时刻取新，随会话投影；未观测到时缺省', async () => {
     const active = teamSnapshot('composer-alpha-123')
     active.runs = [{
@@ -3498,63 +3578,6 @@ describe('Composer 气泡数事实（席位自动轮换的阈值）', () => {
       }
       service.notifyComposerWriteSignal('composer-alpha-123')
       await vi.waitFor(() => expect(service.getSnapshot().sessions[0]?.composerBubbleCount).toBe(413))
-    } finally {
-      service.dispose()
-    }
-  })
-
-  it('席位自动轮换结果投影到会话（noteSeatRotation）：同值不重建视图，清除即消失，run 切换清空', async () => {
-    const active = teamSnapshot('composer-alpha-123')
-    active.runs = [{
-      id: 'run-a', workspaceId: 'workspace-a', name: 'run', goal: 'goal', templateId: 'default',
-      status: 'running', createdAt: 1, updatedAt: 1
-    }]
-    active.activeRun = active.runs[0]
-    const team = new FakeTeam(active)
-    const service = new DesktopSessionService(new FakeBridge(), team, { readWorkspace: () => telemetry() })
-    try {
-      service.refreshTelemetry()
-      expect(service.getSnapshot().sessions[0]?.seatRotation).toBeUndefined()
-      await new Promise((resolve) => setTimeout(resolve, 0))
-      const pushes: number[] = []
-      const unsubscribe = service.subscribe(() => pushes.push(1))
-
-      service.noteSeatRotation('1', { status: 'rotating', bubbleCount: 412, at: 5_000, message: '正在换新 Composer…' })
-      const first = service.getSnapshot().sessions[0]
-      expect(first?.seatRotation).toEqual({ status: 'rotating', bubbleCount: 412, at: 5_000, message: '正在换新 Composer…' })
-      await vi.waitFor(() => expect(pushes.length).toBeGreaterThanOrEqual(1))
-      // 同值再写：视图引用不变（指纹命中），也不再推送
-      const pushed = pushes.length
-      service.noteSeatRotation('1', { status: 'rotating', bubbleCount: 412, at: 5_000, message: '正在换新 Composer…' })
-      await new Promise((resolve) => setTimeout(resolve, 0))
-      expect(pushes).toHaveLength(pushed)
-      expect(service.getSnapshot().sessions[0]).toBe(first)
-
-      service.noteSeatRotation('1', { status: 'done', bubbleCount: 412, at: 5_000, message: '已自动轮换' })
-      expect(service.getSnapshot().sessions[0]?.seatRotation?.status).toBe('done')
-      expect(service.getSnapshot().sessions[0]).not.toBe(first)
-
-      service.noteSeatRotation('1', undefined)
-      expect(service.getSnapshot().sessions[0]?.seatRotation).toBeUndefined()
-      // 不存在时清除是空操作（不推送）
-      await new Promise((resolve) => setTimeout(resolve, 0))
-      const settled = pushes.length
-      service.noteSeatRotation('1', undefined)
-      await new Promise((resolve) => setTimeout(resolve, 0))
-      expect(pushes).toHaveLength(settled)
-
-      // run 切换清空
-      service.noteSeatRotation('1', { status: 'failed', bubbleCount: 412, at: 6_000, message: '失败' })
-      expect(service.getSnapshot().sessions[0]?.seatRotation?.status).toBe('failed')
-      const next = teamSnapshot('composer-alpha-123')
-      next.runs = [{
-        id: 'run-b', workspaceId: 'workspace-a', name: 'run', goal: 'goal', templateId: 'default',
-        status: 'running', createdAt: 2, updatedAt: 2
-      }]
-      next.activeRun = next.runs[0]
-      team.replace(next)
-      expect(service.getSnapshot().sessions[0]?.seatRotation).toBeUndefined()
-      unsubscribe()
     } finally {
       service.dispose()
     }

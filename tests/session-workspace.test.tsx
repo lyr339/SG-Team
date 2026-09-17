@@ -41,6 +41,8 @@ function renderWorkspace(overrides: {
   liveProcess?: { turn: string; startedAt: number; updatedAt: number; truncatedItemCount?: number; generating?: boolean; blocks: import('../src/domain/conversation-entry').ProcessBlock[] }
   liveAgentResponse?: import('../src/shared/desktop-api').LiveAgentResponseState
   nativeProcessStream?: import('../src/shared/desktop-api').NativeProcessStreamStatus
+  turnFiles?: import('../src/renderer/src/turn-files-view').TurnFilesView
+  onReviewTurnFiles?: (request: import('../src/renderer/src/inspector/review-focus-bus').ReviewFocusRequest) => void
 } = {}): string {
   return renderToStaticMarkup(
     <SessionWorkspace
@@ -56,6 +58,8 @@ function renderWorkspace(overrides: {
       liveProcess={overrides.liveProcess}
       liveAgentResponse={overrides.liveAgentResponse}
       nativeProcessStream={overrides.nativeProcessStream}
+      turnFiles={overrides.turnFiles}
+      onReviewTurnFiles={overrides.onReviewTurnFiles}
     />
   )
 }
@@ -307,6 +311,60 @@ describe('SessionWorkspace', () => {
     expect(html).toContain('queue-tray__item is-held')
     expect(html).toContain('1 条等待新会话')
     expect(html).toContain('Agent 正在监听：下一条消息会立即投递')
+  })
+
+  it('本轮文件栏与托盘同住停靠区（托盘上、文件栏下、输入区之前）；托盘在场时文件栏让位只留头部；空集合或未传入时不渲染', () => {
+    const turnFiles = {
+      files: [
+        { path: 'src/domain/team-control.ts', dir: 'src/domain/', stem: 'team-control', ext: '.ts', badge: 'TS', additions: 18, deletions: 20, status: 'modified' as const, source: 'git' as const },
+        { path: 'src/mcp/index.ts', dir: 'src/mcp/', stem: 'index', ext: '.ts', badge: 'TS', additions: 22, deletions: 37, status: 'modified' as const, source: 'git' as const }
+      ],
+      additions: 40, deletions: 57, working: true, estimated: false, scope: 'turn' as const
+    }
+    const html = renderWorkspace({
+      session: { status: 'running', waiting: false, connectionPhase: 'processing', deliveryMode: 'queued', queueDepth: 1 },
+      entries: [
+        entry({ id: 'u1', role: 'user', source: 'desktop', text: '第一条', timestamp: 1_000, deliveredAt: 1_050 }),
+        entry({ id: 'u2', role: 'user', source: 'desktop', text: '第二条（排队中）', timestamp: 5_000 })
+      ],
+      turnFiles,
+      onReviewTurnFiles: () => {}
+    })
+    const timeline = html.indexOf('class="workspace-timeline-wrap"')
+    const dock = html.indexOf('class="session-dock"')
+    const tray = html.indexOf('class="queue-tray')
+    const bar = html.indexOf('class="turn-files')
+    const composer = html.indexOf('class="workspace-composer')
+    expect(timeline).toBeGreaterThan(-1)
+    expect(dock).toBeGreaterThan(timeline)
+    expect(tray).toBeGreaterThan(dock)
+    expect(bar).toBeGreaterThan(tray)
+    expect(composer).toBeGreaterThan(bar)
+    expect(html).toContain('<b>2</b> 个文件')
+    expect(html).toContain('data-path="src/mcp/index.ts"')
+    expect(html).toContain('>审查<')
+    // 托盘在场：文件栏让位——默认收起、不转圈（托盘头已在说「正在处理」）。
+    expect(html).toContain('turn-files is-collapsed is-yielding')
+    expect(html).not.toContain('turn-files__spinner')
+    expect(html).toContain('Agent 正在处理当前任务')
+
+    // 托盘不在场：文件栏按自己的偏好展开、转圈；停靠区只有它一段。
+    const alone = renderWorkspace({
+      session: { status: 'running', waiting: false, connectionPhase: 'processing', deliveryMode: 'queued', queueDepth: 0 },
+      entries: [entry({ id: 'u1', role: 'user', source: 'desktop', text: '第一条', timestamp: 1_000, deliveredAt: 1_050 })],
+      turnFiles,
+      onReviewTurnFiles: () => {}
+    })
+    expect(alone).not.toContain('queue-tray')
+    expect(alone).toContain('turn-files is-open is-working')
+    expect(alone).toContain('turn-files__spinner')
+
+    expect(renderWorkspace({ turnFiles: { ...turnFiles, files: [] } })).not.toContain('turn-files')
+    const none = renderWorkspace()
+    expect(none).not.toContain('turn-files')
+    // 停靠区空着也在（0 高的格），不出现任何一段。
+    expect(none).toContain('class="session-dock"')
+    expect(none).not.toContain('queue-tray')
   })
 
   it('直连传输没有排队态：未带投递时刻的用户消息照常留在时间线', () => {

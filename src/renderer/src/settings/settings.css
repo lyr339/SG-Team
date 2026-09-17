@@ -258,7 +258,8 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
 .settings-status-strip .lobby-account__current { min-width: 0; }
 
 /* 账号卡片网格：auto-fill + minmax(250px, 1fr)——目标每行 3 张（设置页内容区 800px → 3×260px）。
-   min 250 保证四按钮操作行（处理/无感切换/切换并重启/删除 ≈ 241px）不挤；
+   min 250 容得下操作行的三个常驻按钮 + 「⋯」（≈ 202px）；次要动作进了溢出菜单后，
+   按钮数不再随账号状态变化，这个下限不会再被新增按钮悄悄撑破；
    1fr 让列均分容器：会话栏拉宽把内容区压到 ~611px 时降为 2 列 300px，而不是 1 列留白。
    单卡 460px 封顶：单列超宽容器（如窄断点单列）时卡片不拉满——卡片过宽会让卡内右侧留下大白块。 */
 .settings-account-list {
@@ -386,7 +387,9 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
 
 .settings-account-list .account-card__meta .account-membership-inline { margin-right: 0; }
 
-/* 操作行：贴卡片底部，按钮右对齐可换行。 */
+/* 操作行：贴卡片底部。行内只放无感切换 / 切换并重启 / 删除三个，次要动作在「⋯」里，
+   按钮数不再随账号状态浮动——否则有的卡换行、有的不换，等高卡片会把不换行那张的
+   按钮压到卡底，两张卡的按钮一上一下。wrap 仅作极窄宽度下的兜底。 */
 .settings-account-list .account-card__actions {
   margin-top: auto;
   min-height: 32px;
@@ -396,6 +399,58 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
   flex-wrap: wrap;
   row-gap: 3px;
 }
+
+/* 「⋯」触发器：贴操作行左端，与右侧的切换 / 删除拉开距离。 */
+.account-actions-menu__trigger {
+  margin-right: auto;
+  width: 28px;
+  min-height: 25px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  font-size: var(--fs-10);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.account-actions-menu__trigger:hover:not(:disabled),
+.account-actions-menu__trigger.is-open { color: var(--text); background: var(--accent-wash); }
+/* 有动作在跑：触发器改显进度文案，按文字宽度撑开。 */
+.account-actions-menu__trigger.is-busy { width: auto; padding: 0 7px; color: var(--accent); opacity: 0.85; }
+.account-actions-menu__glyph { width: 15px; height: 15px; }
+
+.account-actions-menu {
+  z-index: 240;
+  min-width: 132px;
+  display: grid;
+  padding: 5px;
+  background: var(--surface-solid);
+  border: var(--border-width-regular) solid var(--color-border-secondary);
+  border-radius: 10px;
+  box-shadow: var(--shadow-3);
+}
+
+.account-actions-menu button {
+  width: 100%;
+  min-height: 30px;
+  padding: 6px 9px;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  font-size: var(--fs-10);
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.account-actions-menu button:hover:not(:disabled),
+.account-actions-menu button:focus-visible:not(:disabled) { color: var(--accent-deep); background: var(--accent-wash); outline: none; }
+.account-actions-menu button:disabled { color: var(--faint); cursor: default; }
 
 /* 窗口绑定控件：读作行内元信息的紧凑 chip；已绑定态略强，未绑定（默认窗口）保持克制。
    min-width 96px 保证「默认窗口 ▾」全显——flex 行内先压缩到此宽度再换行，不出现「默认窗…」截断。 */
@@ -568,90 +623,241 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
 .settings-checkout-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .settings-checkout-form__wide { grid-column: 1 / -1; }
 
-/* ---------- 自动化分组：运行状态横幅（设置页签名元素） ---------- */
-.settings-flow-banner {
+/* ---------- 自动化分组：运行卡（设置页签名元素） ----------
+   与 .settings-section 同一外壳语言（surface + hairline + 14px 圆角）；状态色只落在徽标、
+   节点与当前步文字上，卡面不做彩色底——状态色不做装饰。 */
+.automation-run {
   min-width: 0;
   display: grid;
-  gap: 12px;
-  padding: 14px;
-  background: color-mix(in srgb, var(--blue) 5%, var(--surface));
-  border: 1px solid color-mix(in srgb, var(--blue-border) 65%, transparent);
+  background: var(--surface);
+  border: 1px solid var(--color-border-tertiary);
   border-radius: 14px;
   box-shadow: var(--shadow-hairline);
   animation: settings-enter 200ms ease-out;
 }
 
-.settings-flow-banner.is-done {
-  background: color-mix(in srgb, var(--color-text-success) 5%, var(--surface));
-  border-color: color-mix(in srgb, var(--color-border-success) 65%, transparent);
-}
-
-.settings-flow-banner.is-failed {
-  background: color-mix(in srgb, var(--red) 4%, var(--surface));
-  border-color: color-mix(in srgb, var(--red-border) 55%, transparent);
-}
-
-.settings-flow-banner.is-cancelled {
-  background: var(--surface);
-  border-color: var(--color-border-tertiary);
-}
-
-.settings-flow-track {
+.automation-run__head {
+  min-height: 52px;
   display: flex;
-  align-items: flex-start;
-  margin: 0;
-  padding: 0;
-  list-style: none;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: var(--border-width-regular) solid var(--line-faint);
 }
 
-.settings-flow-track__step {
-  position: relative;
-  flex: 1 1 0;
-  min-width: 0;
-  display: grid;
-  justify-items: center;
-  gap: 5px;
+.automation-run__head > strong {
+  color: var(--text);
+  font-size: var(--fs-12);
+  font-weight: 600;
+}
+
+.automation-run__badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: var(--fs-10);
+  font-weight: 600;
+  line-height: 1.5;
+  transition: color 200ms ease, background 200ms ease;
+}
+
+.automation-run__badge.is-running { color: var(--blue); background: var(--blue-soft); }
+.automation-run__badge.is-done { color: var(--color-text-success); background: var(--color-background-success); }
+.automation-run__badge.is-failed { color: var(--red); background: var(--red-soft); }
+.automation-run__badge.is-cancelled { color: var(--muted); background: var(--surface-soft); }
+
+/* 卡头右侧：倒计时期间是取消（唯一可用操作），结束后是耗时。 */
+.automation-run__cancel {
+  margin-left: auto;
+  min-height: 30px;
+  padding: 0 12px;
+  font-size: var(--fs-10);
+}
+
+.automation-run__duration {
+  margin-left: auto;
   color: var(--muted);
   font-size: var(--fs-10);
-  line-height: 1.2;
-  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 
-/* 步骤间连接线：除末步外向右延伸，完成态染绿。 */
-.settings-flow-track__step::after {
+/* 横向四阶段轨道：每列 = 节点 + 标题 + 一行说明，左对齐；节点之间 hairline 相连，完成段染绿。 */
+.automation-run__stages {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  column-gap: 16px;
+  row-gap: 6px;
+  padding: 14px 14px 13px;
+}
+
+.automation-run__stage {
+  position: relative;
+  min-width: 0;
+  display: grid;
+  grid-template-rows: 22px auto auto;
+  row-gap: 3px;
+  justify-items: start;
+  align-content: start;
+}
+
+.automation-run__stage::after {
   content: '';
   position: absolute;
-  top: 11px;
-  left: calc(50% + 16px);
-  right: calc(-50% + 16px);
+  top: 10.5px;
+  left: 30px;
+  right: -8px;
   height: 1px;
   background: var(--line);
+  transition: background 300ms ease;
 }
 
-.settings-flow-track__step:last-child::after { display: none; }
-.settings-flow-track__step.is-done::after { background: var(--color-border-success); }
+.automation-run__stage:last-child::after { display: none; }
+.automation-run__stage.is-done::after { background: var(--color-border-success); }
 
-.settings-flow-track__step .flow-status-icon {
+.automation-run__stage-title {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: var(--fs-11);
+  font-weight: 600;
+  line-height: 1.35;
+  transition: color 200ms ease;
+}
+
+.automation-run__stage-detail {
+  min-width: 0;
+  color: var(--muted);
+  font-size: var(--fs-10);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+  transition: color 200ms ease;
+}
+
+.automation-run__stage.is-done .automation-run__stage-title { color: var(--text-soft); }
+.automation-run__stage.is-running .automation-run__stage-title,
+.automation-run__stage.is-running .automation-run__stage-detail { color: var(--text); }
+.automation-run__stage.is-failed .automation-run__stage-title,
+.automation-run__stage.is-failed .automation-run__stage-detail { color: var(--red); }
+.automation-run__stage.is-cancelled .automation-run__stage-title { color: var(--text-soft); }
+.automation-run__stage.is-skipped .automation-run__stage-title,
+.automation-run__stage.is-skipped .automation-run__stage-detail { color: var(--faint); }
+
+/* 节点：22px 圆位。等待 = 细描空环；进行中 = 实心信息蓝 + 白芯 + 呼吸光晕；
+   倒计时期间光晕换成随剩余时间线性排空的进度环（tick 之间连续过渡）；终态 = 描边空心环 + 勾 / 叉 / 横。 */
+.automation-run__node {
+  position: relative;
   width: 22px;
   height: 22px;
-  box-shadow: 0 0 0 3px transparent;
-}
-
-.settings-flow-track__step.is-running { color: var(--blue); font-weight: 600; }
-.settings-flow-track__step.is-done { color: var(--color-text-success); }
-.settings-flow-track__step.is-failed { color: var(--red); font-weight: 600; }
-.settings-flow-track__step.is-ready { color: var(--accent-deep); }
-
-.settings-flow-banner__live {
   display: grid;
-  gap: 8px;
-  min-width: 0;
+  place-items: center;
+  border-radius: 50%;
+  transition: background 200ms ease, color 200ms ease;
 }
 
-.settings-flow-banner__duration {
-  margin: 0;
-  color: var(--faint);
+.automation-run__node > svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* 勾 / 叉 / 横：14px 字形居中；进度环另有 22px 满位规则。 */
+.automation-run__node > svg:not(.automation-run__ring) {
+  width: 14px;
+  height: 14px;
+  stroke-width: 1.9;
+}
+
+.automation-run__node.is-waiting::before,
+.automation-run__node.is-skipped::before {
+  content: '';
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid var(--line-strong);
+  border-radius: 50%;
+}
+
+.automation-run__node.is-skipped::before { border-color: var(--line); border-style: dashed; }
+
+.automation-run__node.is-running {
+  color: #fff;
+  background: var(--blue);
+  animation: automation-node-pulse 1.8s ease-out infinite;
+}
+
+.automation-run__node.is-running::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  background: currentColor;
+  border-radius: 50%;
+}
+
+.automation-run__node.is-running.has-countdown {
+  color: var(--blue);
+  background: transparent;
+  animation: none;
+}
+
+.automation-run__ring {
+  position: absolute;
+  inset: 0;
+  width: 22px;
+  height: 22px;
+  transform: rotate(-90deg);
+}
+
+.automation-run__ring circle { stroke-width: 2; stroke: var(--blue-border); opacity: 0.45; }
+.automation-run__ring circle + circle { stroke: var(--blue); stroke-linecap: round; opacity: 1; transition: stroke-dashoffset 500ms linear; }
+
+/* 终态是描边空心环 + 同色字形；只有进行中的节点是实心——实心即「当前」。 */
+.automation-run__node.is-done { color: var(--color-text-success); box-shadow: inset 0 0 0 1.5px var(--color-border-success); }
+.automation-run__node.is-failed { color: var(--red); box-shadow: inset 0 0 0 1.5px var(--red-border); }
+.automation-run__node.is-cancelled { color: var(--muted); box-shadow: inset 0 0 0 1.5px var(--line-strong); }
+
+@keyframes automation-node-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--blue) 32%, transparent); }
+  70%, 100% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--blue) 0%, transparent); }
+}
+
+/* 无感切换：与主链并行的分支，从奥仔处理列起横跨到末列，一行「接手账号 · 状态」。 */
+.automation-run__handover {
+  grid-column: 2 / -1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
   font-size: var(--fs-10);
+  line-height: 1.5;
+  animation: settings-enter 200ms ease-out;
+}
+
+.automation-run__handover::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  margin: -6px 2px 0 6px;
+  border-left: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  border-radius: 0 0 0 4px;
+}
+
+.automation-run__handover > strong { overflow: hidden; color: var(--text-soft); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.automation-run__handover > em { overflow: hidden; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+.automation-run__handover.is-switching > em { color: var(--blue); }
+.automation-run__handover.is-done > em { color: var(--color-text-success); }
+.automation-run__handover.is-failed > em { color: var(--red); white-space: normal; }
+
+/* 完成摘要：服务端总结原文，hairline 之上一行。 */
+.automation-run__summary {
+  margin: 0;
+  padding: 9px 14px 11px;
+  color: var(--text-soft);
+  border-top: var(--border-width-regular) solid var(--line-faint);
+  font-size: var(--fs-10);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
 }
 
 /* 自动化卡片：一个设置项一行——左文案（标题+说明），右控件，右缘对齐。 */
@@ -717,7 +923,6 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
 .settings-row--sub .settings-row__label { font-size: var(--fs-10); font-weight: 600; }
 
 /* 子组控件：固定紧凑宽度，全部右缘对齐。 */
-.settings-row--sub .range-field { flex: none; width: 216px; }
 .settings-row--sub .menu-select { width: 216px; justify-self: end; }
 .settings-row--sub .menu-select__button { min-height: 29px; background: var(--surface-pure); box-shadow: none; }
 
@@ -749,21 +954,6 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
 }
 
 .settings-collapse.is-open > .settings-collapse__inner { transform: none; }
-
-/* 数值读出：pill 化，与滑杆同一视觉件。 */
-.settings-automation .range-field__value {
-  min-width: 48px;
-  padding: 3px 6px;
-  background: var(--surface-soft);
-  border: 1px solid var(--line-faint);
-  border-radius: 6px;
-  text-align: center;
-}
-
-.settings-automation .range-field input[type="range"]:active::-webkit-slider-thumb {
-  transform: scale(1.05);
-  box-shadow: 0 2px 6px rgba(24, 35, 52, 0.28);
-}
 
 /* 执行浏览器：卡片 footer，hairline 之上的一行只读信息。 */
 .settings-automation .account-automation__follow {
@@ -797,12 +987,6 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
    三行右列统一为开关——切号补丁的 installed 即「无感换号已开启」，
    外部兼容（开态禁用）与不支持版本（关态禁用）由说明文字承载。 */
 .settings-maintenance { min-width: 0; display: grid; }
-.settings-handover-status { min-width: 0; display: grid; grid-template-columns: auto minmax(0, auto) minmax(0, 1fr); align-items: center; gap: 7px; padding: 7px 9px; color: var(--color-text-info); background: color-mix(in srgb, var(--color-background-info) 58%, transparent); border: var(--border-width-regular) solid var(--color-border-info); border-radius: 9px; font-size: var(--fs-10); }
-.settings-handover-status > span { color: var(--muted); }
-.settings-handover-status > strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650; }
-.settings-handover-status > em { overflow: hidden; color: var(--color-text-tertiary); font-style: normal; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
-.settings-handover-status.is-done { color: var(--color-text-success); background: color-mix(in srgb, var(--color-background-success) 58%, transparent); border-color: var(--color-border-success); }
-.settings-handover-status.is-failed { color: var(--red); background: color-mix(in srgb, var(--red-soft) 58%, transparent); border-color: var(--red-border); }
 
 /* ---------- 窄断点：导航折叠为顶部横排 ---------- */
 @media (max-width: 760px) {
@@ -837,12 +1021,9 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
     height: 2.5px;
   }
 
-  .settings-flow-track__step span { font-size: 9px; }
-
   /* 窄屏：子组行纵向堆叠，控件拉满整行。 */
   .settings-row { gap: 12px; }
   .settings-row--sub { grid-template-columns: minmax(0, 1fr); gap: 6px; }
-  .settings-row--sub .range-field,
   .settings-row--sub .menu-select { width: 100%; justify-self: stretch; }
 }
 
@@ -859,7 +1040,17 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
 
   .settings-content__head,
   .settings-groups,
-  .settings-flow-banner { animation: none; }
+  .automation-run,
+  .automation-run__handover { animation: none; }
+
+  .automation-run__badge,
+  .automation-run__stage::after,
+  .automation-run__node,
+  .automation-run__stage-title,
+  .automation-run__stage-detail,
+  .automation-run__ring circle + circle { transition: none; }
+
+  .automation-run__node.is-running { animation: none; }
 
   .settings-nav__dot.is-running { animation: none; }
 }

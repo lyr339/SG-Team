@@ -6,10 +6,8 @@ import {
   type AccountAutomationRun
 } from '../src/domain/account-automation'
 import {
-  accountFlowStatesFor,
   automationBrowserFollowText,
   automationDurationText,
-  automationFailedStepHint,
   liveSwitchAvailability,
   profileDisplayName,
   type SettingsPageProps
@@ -61,45 +59,6 @@ function propsFor(overrides: Partial<SettingsPageProps> = {}): SettingsPageProps
 function runFor(overrides: Partial<AccountAutomationRun>): AccountAutomationRun {
   return { phase: 'idle', message: '', startedAt: 0, ...overrides }
 }
-
-describe('accountFlowStatesFor', () => {
-  it('maps idle phase to stock-driven resting states', () => {
-    expect(accountFlowStatesFor({
-      phase: 'idle', hasAccount: true, automationEnabled: true, aozaiReady: true, lastActiveStep: 'countdown'
-    })).toEqual({ acquire: 'done', countdown: 'ready', processing: 'ready', deleting: 'waiting', finish: 'waiting' })
-    expect(accountFlowStatesFor({
-      phase: 'idle', hasAccount: false, automationEnabled: false, aozaiReady: false, lastActiveStep: 'countdown'
-    })).toEqual({ acquire: 'waiting', countdown: 'off', processing: 'waiting', deleting: 'waiting', finish: 'waiting' })
-  })
-
-  it('walks active phases in order and attributes failure to the last active step', () => {
-    expect(accountFlowStatesFor({
-      phase: 'processing', hasAccount: true, automationEnabled: true, aozaiReady: true, lastActiveStep: 'processing'
-    })).toEqual({ acquire: 'done', countdown: 'done', processing: 'running', deleting: 'waiting', finish: 'waiting' })
-    expect(accountFlowStatesFor({
-      phase: 'importing', hasAccount: true, automationEnabled: true, aozaiReady: true, lastActiveStep: 'deleting'
-    }).deleting).toBe('running')
-    const failed = accountFlowStatesFor({
-      phase: 'failed', hasAccount: true, automationEnabled: true, aozaiReady: true, lastActiveStep: 'deleting'
-    })
-    expect(failed).toEqual({ acquire: 'done', countdown: 'done', processing: 'done', deleting: 'failed', finish: 'failed' })
-  })
-
-  it('marks cancelled runs at the countdown step', () => {
-    expect(accountFlowStatesFor({
-      phase: 'cancelled', hasAccount: true, automationEnabled: true, aozaiReady: true, lastActiveStep: 'countdown'
-    })).toEqual({ acquire: 'done', countdown: 'cancelled', processing: 'waiting', deleting: 'waiting', finish: 'cancelled' })
-  })
-
-  it('marks hardening-countdown as the deleting step, and its cancel keeps prior steps done', () => {
-    expect(accountFlowStatesFor({
-      phase: 'hardening-countdown', hasAccount: true, automationEnabled: true, aozaiReady: true, lastActiveStep: 'deleting'
-    })).toEqual({ acquire: 'done', countdown: 'done', processing: 'done', deleting: 'running', finish: 'waiting' })
-    expect(accountFlowStatesFor({
-      phase: 'cancelled', hasAccount: true, automationEnabled: true, aozaiReady: true, lastActiveStep: 'deleting'
-    })).toEqual({ acquire: 'done', countdown: 'done', processing: 'done', deleting: 'cancelled', finish: 'cancelled' })
-  })
-})
 
 describe('automationDurationText', () => {
   it('formats sub-minute and multi-minute durations', () => {
@@ -336,7 +295,7 @@ describe('SettingsPage', () => {
     expect(selectAccountHandoverTarget(candidates, 'account:1', 'account:1')?.id).toBe('account:3')
   })
 
-  it('自动化横幅独立显示本轮冻结的接手账号和实时子状态', () => {
+  it('运行卡把本轮冻结的接手账号挂在奥仔处理步下：用户语句上屏，服务端原文留在悬停', () => {
     const html = renderToStaticMarkup(<SettingsPage {...propsFor({
       automationRun: runFor({
         phase: 'processing',
@@ -351,9 +310,11 @@ describe('SettingsPage', () => {
         }
       })
     })} />)
-    expect(html).toContain('settings-handover-status is-preparing')
-    expect(html).toContain('spare@example.com')
-    expect(html).toContain('票据已就绪，等待退款完成')
+    expect(html).toMatch(/第 2 步：奥仔处理，进行中[\s\S]*?第 4 步：收尾，等待[\s\S]*?automation-run__handover is-preparing/)
+    expect(html).toContain('<strong>spare@example.com</strong>')
+    expect(html).toContain('<em>准备中</em>')
+    expect(html).toContain('title="票据已就绪，等待退款完成"')
+    expect(html).not.toContain('<em>票据已就绪')
   })
 
   it('自动化设置行统一为左文案右控件，倒计时步进输入编组于主开关之下的展开区', () => {
@@ -376,9 +337,11 @@ describe('SettingsPage', () => {
       automationSettings: { ...DEFAULT_ACCOUNT_AUTOMATION_SETTINGS, enabled: false }
     })} />)
     const on = renderToStaticMarkup(<SettingsPage {...propsFor()} />)
-    expect(off).toContain('<div class="settings-collapse">')
-    expect(off).not.toContain('settings-collapse is-open')
-    expect(on).toContain('settings-collapse is-open')
+    // 只看自动化那一段：软件更新组也有一个随「自动检查」开合的 settings-collapse（默认开）。
+    const automationBlock = (html: string): string => html.slice(html.indexOf('settings-automation'), html.indexOf('倒计时后复核会话'))
+    expect(automationBlock(off)).toContain('<div class="settings-collapse">')
+    expect(automationBlock(off)).not.toContain('settings-collapse is-open')
+    expect(automationBlock(on)).toContain('settings-collapse is-open')
   })
 
   it('合并状态行：mismatch 红点精简文案，title 携带双账号明细', () => {
@@ -437,9 +400,10 @@ describe('SettingsPage', () => {
       })} />
     )
 
-    // 账号库存：选择 / 切换并重启 / 处理 / 删除
+    // 账号库存：切换并重启 / 删除 常驻行内；处理等次要动作收在「⋯」弹层里（静态标记下未展开，
+    // 其行为见 account-actions-menu.test.tsx），这里只确认入口还在。
     expect(html).toContain('work@example.com')
-    expect(html).toContain('>处理</button>')
+    expect(html).toContain('account-actions-menu__trigger')
     expect(html).toContain('>切换并重启</button>')
     expect(html).toContain('>删除</button>')
     // 获取路径并列（external 来源下从浏览器导入为工作流主路径）
@@ -466,7 +430,7 @@ describe('SettingsPage', () => {
     expect(html).toContain('自动确认受限模型数据政策')
   })
 
-  it('shows the countdown scene with remaining seconds and a cancel button', () => {
+  it('倒计时相位：准备步进行中，整秒读数 + 进度环，取消在卡头；服务端 tick 原文不再重复上屏', () => {
     const html = renderToStaticMarkup(
       <SettingsPage {...propsFor({
         automationRun: runFor({
@@ -479,15 +443,38 @@ describe('SettingsPage', () => {
       />
     )
 
-    expect(html).toContain('aria-label="步骤 2：倒计时，进行"')
-    expect(html).toContain('aria-label="自动化倒计时"')
-    expect(html).toContain('6.5')
-    expect(html).toContain('将在 6.5s 后自动处理当前账号（可取消）')
-    expect(html).toContain('flow-step__cancel')
-    expect(html).toContain('>取消</button>')
+    expect(html).toContain('automation-run is-running')
+    expect(html).toContain('automation-run__badge is-running">进行中')
+    expect(html).toContain('aria-label="第 1 步：准备，进行中"')
+    expect(html).toContain('aria-current="step"')
+    // 倒计时 = 当前节点上的进度环 + 说明行里的整秒读数；旧的 6.5 / 6.5s 与「（可取消）」不再出现
+    expect(html).toMatch(/automation-run__node is-running has-countdown"[\s\S]*?class="automation-run__ring"/)
+    expect(html).toMatch(/automation-run__stage-detail" aria-live="polite">7 秒后开始处理当前账号</)
+    expect(html).not.toContain('6.5s')
+    expect(html).not.toContain('6.5 秒')
+    expect(html).not.toContain('（可取消）')
+    expect(html).toMatch(/automation-run__head[\s\S]*?class="secondary-button automation-run__cancel"[^>]*>取消<\/button>/)
+    // 单次运行只有一个进度环、一条读数
+    expect(html.match(/has-countdown/g)).toHaveLength(1)
+    expect(html.match(/秒后开始处理当前账号/g)).toHaveLength(1)
+    // 节点不再是序号 / 旋转弧
+    expect(html).not.toContain('flow-status-icon')
+    expect(html).not.toContain('<b>02</b>')
   })
 
-  it('streams the live message on the processing step', () => {
+  it('倒计时归零后的复核窗口：不再显示读数，也不再提供无效的取消', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPage {...propsFor({
+        automationRun: runFor({ phase: 'countdown', message: '将在 0.5s 后自动处理当前账号（可取消）', startedAt: 1_000 })
+      })}
+      />
+    )
+    expect(html).toContain('倒计时结束，正在复核会话')
+    expect(html).not.toContain('has-countdown')
+    expect(html).not.toContain('automation-run__cancel')
+  })
+
+  it('处理相位：实时消息落在奥仔处理步的说明行，前一步完成、后两步等待', () => {
     const html = renderToStaticMarkup(
       <SettingsPage {...propsFor({
         automationRun: runFor({ phase: 'processing', message: '奥仔：正在提交 Session Token 处理…', startedAt: 1_000 })
@@ -495,30 +482,46 @@ describe('SettingsPage', () => {
       />
     )
 
-    expect(html).toContain('aria-label="步骤 3：奥仔处理，进行"')
-    expect(html).toContain('aria-label="步骤 2：倒计时，完成"')
-    expect(html).toContain('aria-live="polite">奥仔：正在提交 Session Token 处理…')
+    expect(html).toContain('aria-label="第 1 步：准备，完成"')
+    expect(html).toContain('aria-label="第 2 步：奥仔处理，进行中"')
+    expect(html).toContain('aria-label="第 3 步：加固账号，等待"')
+    expect(html).toContain('aria-label="第 4 步：收尾，等待"')
+    expect(html).toMatch(/automation-run__stage-detail" aria-live="polite">奥仔：正在提交 Session Token 处理…</)
+    expect(html).not.toContain('automation-run__cancel')
   })
 
-  it('summarizes a done run with duration on the finish step', () => {
+  it('加固前倒计时归属加固步，读数与文案一致', () => {
     const html = renderToStaticMarkup(
       <SettingsPage {...propsFor({
-        automationRun: runFor({
-          phase: 'done',
-          message: '自动化完成：已处理、账号已加固、本地记录已移除',
-          startedAt: 10_000,
-          finishedAt: 22_500
-        })
+        automationRun: runFor({ phase: 'hardening-countdown', message: '奥仔已完成，将在 4s 后加固当前账号（可取消）', remainingSec: 4, startedAt: 1_000 })
+      })}
+      />
+    )
+    expect(html).toContain('aria-label="第 2 步：奥仔处理，完成"')
+    expect(html).toContain('aria-label="第 3 步：加固账号，进行中"')
+    expect(html).toContain('4 秒后加固账号')
+    expect(html).toContain('automation-run__cancel')
+  })
+
+  it('完成态：四步全绿，卡头显示耗时，服务端总结落在卡尾摘要', () => {
+    const message = '自动化完成：已处理、账号已加固、本地记录已移除'
+    const html = renderToStaticMarkup(
+      <SettingsPage {...propsFor({
+        automationRun: runFor({ phase: 'done', message, startedAt: 10_000, finishedAt: 22_500 })
       })}
       />
     )
 
-    expect(html).toContain('aria-label="步骤 5：收尾，完成"')
-    expect(html).toContain('耗时 12.5 秒')
-    expect(html).toContain('自动化完成：已处理、账号已加固、本地记录已移除')
+    expect(html).toContain('automation-run__badge is-done">已完成')
+    for (const step of ['第 1 步：准备，完成', '第 2 步：奥仔处理，完成', '第 3 步：加固账号，完成', '第 4 步：收尾，完成']) {
+      expect(html).toContain(`aria-label="${step}"`)
+    }
+    expect(html).toContain('automation-run__duration">耗时 12.5 秒')
+    expect(html).toContain(`automation-run__summary">${message}</p>`)
+    expect(html.split(message)).toHaveLength(2)
   })
 
-  it('shows the full error message when the run failed', () => {
+  it('失败态：原因只出现一次、落在归属步骤上；后续步骤标未执行而非失败', () => {
     const message = '奥仔处理失败：卡密余额不足，请先充值或更换卡密（本地账号已保留）'
     const html = renderToStaticMarkup(
       <SettingsPage {...propsFor({
@@ -527,25 +530,18 @@ describe('SettingsPage', () => {
       />
     )
 
+    expect(html).toContain('automation-run__badge is-failed">未完成')
     // 无活跃轨迹时按消息文案归属到奥仔处理步骤
-    expect(html).toContain('aria-label="步骤 3：奥仔处理，失败"')
-    expect(html).toContain('aria-label="步骤 5：收尾，失败"')
-    expect(html).toContain('role="alert"')
-    expect(html).toContain(`流程未完成：${message}`)
+    expect(html).toContain('aria-label="第 2 步：奥仔处理，失败"')
+    expect(html).toContain('aria-label="第 3 步：加固账号，未执行"')
+    expect(html).toContain('aria-label="第 4 步：收尾，未执行"')
+    expect(html).toMatch(new RegExp(`role="alert">${message}<`))
+    expect(html.split(message)).toHaveLength(2)
+    expect(html).not.toContain('流程未完成')
+    expect(html).toContain('耗时 10 秒')
   })
 
-  it('hints the failed step from persisted run messages', () => {
-    expect(automationFailedStepHint('奥仔处理失败：卡密余额不足')).toBe('processing')
-    expect(automationFailedStepHint('新 Token 获取失败：网络超时（本地账号已保留）')).toBe('deleting')
-    expect(automationFailedStepHint('官网持续要求先退出团队（已等待 60s 重试 3 次）')).toBe('deleting')
-    expect(automationFailedStepHint('尚未选择 Cursor 账号，自动化中止')).toBe('countdown')
-    // preflight 类失败含「会话」但发生在倒计时阶段，不能误标到删除步骤
-    expect(automationFailedStepHint('浏览器会话读取失败，请先登录')).toBe('countdown')
-    // 加固前倒计时取消的消息归属到删除步骤
-    expect(automationFailedStepHint('奥仔处理已完成；已取消后续账号加固，本地账号保留')).toBe('deleting')
-  })
-
-  it('marks a cancelled run without pretending progress', () => {
+  it('取消态：取消原因只出现一次，其余步骤未执行', () => {
     const html = renderToStaticMarkup(
       <SettingsPage {...propsFor({
         automationRun: runFor({ phase: 'cancelled', message: '已取消本次自动化', startedAt: 10_000, finishedAt: 14_000 })
@@ -553,17 +549,18 @@ describe('SettingsPage', () => {
       />
     )
 
-    expect(html).toContain('aria-label="步骤 2：倒计时，已取消"')
-    expect(html).toContain('aria-label="步骤 5：收尾，已取消"')
-    expect(html).toContain('已取消本次自动化')
+    expect(html).toContain('automation-run__badge is-cancelled">已取消')
+    expect(html).toContain('aria-label="第 1 步：准备，已取消"')
+    expect(html).toContain('aria-label="第 4 步：收尾，未执行"')
+    expect(html.split('已取消本次自动化')).toHaveLength(2)
   })
 
-  it('labels the countdown step as off when automation is disabled', () => {
+  it('空闲相位不渲染运行卡', () => {
     const html = renderToStaticMarkup(
       <SettingsPage {...propsFor({ automationSettings: { ...DEFAULT_ACCOUNT_AUTOMATION_SETTINGS, enabled: false, delaySec: 10 } })} />
     )
 
-    expect(html).not.toContain('aria-label="账号自动化流程"')
+    expect(html).not.toContain('automation-run')
     expect(html).toContain('会话创建后自动处理账号')
   })
 
@@ -741,38 +738,6 @@ describe('SettingsPage', () => {
     // mac 上系统浏览器宿主（Keychain + Apple Events）仍可选；Roxy Key 掩码双平台展示
     expect(html).toMatch(/aria-selected="false"[^>]*>[\s\S]*?<strong>系统浏览器<\/strong>/)
     expect(html).toContain('6192****eada')
-  })
-
-  it('席位自动轮换区块：有设置才渲染；开关状态决定阈值滑杆是否展开；阈值以气泡数读出', () => {
-    const absent = renderToStaticMarkup(<SettingsPage {...propsFor()} />)
-    expect(absent).not.toContain('席位自动轮换')
-
-    const enabled = renderToStaticMarkup(
-      <SettingsPage {...propsFor({ seatRotationSettings: { enabled: true, bubbleThreshold: 450 }, onSaveSeatRotationSettings: () => {} })} />
-    )
-    const toggleInput = (html: string): string => html.match(/<input[^>]*aria-label="到阈值自动换新会话"[^>]*>/)?.[0] ?? ''
-    expect(enabled).toContain('席位自动轮换')
-    expect(enabled).toContain('到阈值自动换新会话')
-    expect(toggleInput(enabled)).toContain('checked=""')
-    expect(enabled).toContain('触发阈值')
-    expect(enabled).toContain('450')
-    expect(enabled).toContain('气泡')
-    // 账号自动化那一段仍在，且不受奥仔卡密门禁影响
-    expect(enabled).toContain('会话创建后自动处理账号')
-
-    const disabled = renderToStaticMarkup(
-      <SettingsPage {...propsFor({
-        aozaiStatus: { saved: false },
-        seatRotationSettings: { enabled: false, bubbleThreshold: 400 },
-        onSaveSeatRotationSettings: () => {}
-      })} />
-    )
-    expect(disabled).toContain('席位自动轮换')
-    expect(toggleInput(disabled)).not.toContain('checked=""')
-    // 关闭时参数区折叠（settings-collapse 不带 is-open）
-    const section = disabled.slice(disabled.indexOf('席位自动轮换'))
-    expect(section).toContain('class="settings-collapse"')
-    expect(section).not.toContain('settings-collapse is-open')
   })
 
   it('奥仔手动处理区：有卡密且有回调才渲染；无卡密或无回调时隐藏', () => {

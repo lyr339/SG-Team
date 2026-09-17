@@ -161,16 +161,19 @@ export function formatExecutionProfile(
   return [name, ...executionBadges(profile)].join(' · ')
 }
 
+/** 席位状态词一律三个字（名册行右侧对齐成一列，长短不一会参差）。 */
 export function statusLabel(status: string): string {
   const labels: Record<string, string> = {
     starting: '启动中',
     idle: '未待命',
-    running: '运行中',
+    // 会话池里 Cursor 回合永不结束，「运行中」对每个在线席位都成立、没有信息量；
+    // running 的真实含义是「已取走消息、正在处理」（presence 相位 processing），与 waiting「在长轮询里等消息」相对。
+    running: '干活中',
     waiting: '待命中',
     review: '待验收',
-    blocked: '等待拍板',
+    blocked: '待拍板',
     reviving: '恢复中',
-    offline: '离线',
+    offline: '已离线',
     stopped: '已停止'
   }
   return labels[status] ?? status

@@ -10,7 +10,6 @@ import type {
 } from '../../../domain/account-automation'
 import type { CursorUpdatePreferences } from '../../../domain/cursor-update'
 import type { CursorSwitchPumpStatus } from '../../../domain/cursor-switch-pump'
-import type { SeatRotationSettings } from '../../../domain/seat-rotation'
 import type {
   CursorStorageCleanupRequest,
   CursorStorageCleanupResult,
@@ -209,9 +208,6 @@ export interface SettingsPageProps {
   onSetModelDataPolicyAutoAcknowledge?: (enabled: boolean) => Promise<{ message: string }>
   onSaveAutomationSettings?: (settings: AccountAutomationSettings) => void
   onCancelAutomation?: () => void
-  /** 席位自动轮换（独立席位到气泡阈值换新 Composer）：开关 + 阈值；缺省时区块不渲染。 */
-  seatRotationSettings?: SeatRotationSettings
-  onSaveSeatRotationSettings?: (settings: SeatRotationSettings) => void
   /** 无感换号（热切）：不重启 Cursor 直接把运行态切到指定账号；结果经账号区消息条呈现。 */
   onSwitchLiveAccount?: (accountId: string) => Promise<void>
   /** 切号补丁状态卡（维护页）：只读检测 + 一键安装/卸载。 */
@@ -236,105 +232,12 @@ export interface SettingsPageProps {
   statsGroups?: readonly StatsGroupSource[]
 }
 
-export type AccountFlowStepKey = 'acquire' | 'countdown' | 'processing' | 'deleting' | 'finish'
-export type AccountFlowState = 'waiting' | 'ready' | 'running' | 'done' | 'failed' | 'cancelled' | 'off'
+/** 运行中的相位（非空闲、非终态）：期间禁用会改动账号 / 浏览器状态的操作。 */
+export type ActiveAutomationPhase = Exclude<AccountAutomationPhase, 'idle' | 'done' | 'failed' | 'cancelled'>
 
-const FLOW_STEP_ORDER: readonly AccountFlowStepKey[] = ['acquire', 'countdown', 'processing', 'deleting', 'finish']
-
-export const FLOW_STEP_LABEL: Record<AccountFlowStepKey, string> = {
-  acquire: '获取 Token',
-  countdown: '倒计时',
-  processing: '奥仔处理',
-  // 步骤名界面用「账号加固」（删除官网账号的趣称）；协议语义保持原表述
-  deleting: '账号加固',
-  finish: '收尾'
-}
-
-const FLOW_STATE_LABEL: Record<AccountFlowState, string> = {
-  waiting: '等待',
-  ready: '就绪',
-  running: '进行',
-  done: '完成',
-  failed: '失败',
-  cancelled: '已取消',
-  off: '未开启'
-}
-
-export function accountFlowStateLabel(state: AccountFlowState): string {
-  return FLOW_STATE_LABEL[state]
-}
-
-/** 活跃 phase 到流程步骤的映射；importing 属于删除链路的会话刷新子阶段。 */
-export const ACTIVE_PHASE_STEP: Partial<Record<AccountAutomationPhase, AccountFlowStepKey>> = {
-  countdown: 'countdown',
-  processing: 'processing',
-  'hardening-countdown': 'deleting',
-  importing: 'deleting',
-  deleting: 'deleting',
-  cleaning: 'deleting'
-}
-
-export function isActiveAutomationPhase(phase: AccountAutomationPhase): boolean {
+export function isActiveAutomationPhase(phase: AccountAutomationPhase): phase is ActiveAutomationPhase {
   return phase === 'countdown' || phase === 'processing' || phase === 'hardening-countdown'
     || phase === 'importing' || phase === 'deleting' || phase === 'cleaning'
-}
-
-/** 由运行相位推导五个流程步骤的状态，纯函数便于 SSR 测试。 */
-export function accountFlowStatesFor(input: {
-  phase: AccountAutomationPhase
-  hasAccount: boolean
-  automationEnabled: boolean
-  aozaiReady: boolean
-  lastActiveStep: AccountFlowStepKey
-}): Record<AccountFlowStepKey, AccountFlowState> {
-  const { phase, hasAccount, automationEnabled, aozaiReady, lastActiveStep } = input
-  if (phase === 'idle') {
-    return {
-      acquire: hasAccount ? 'done' : 'waiting',
-      countdown: automationEnabled ? 'ready' : 'off',
-      processing: aozaiReady ? 'ready' : 'waiting',
-      deleting: 'waiting',
-      finish: 'waiting'
-    }
-  }
-  if (phase === 'done') {
-    return { acquire: 'done', countdown: 'done', processing: 'done', deleting: 'done', finish: 'done' }
-  }
-  if (phase === 'cancelled') {
-    // 加固前倒计时取消：奥仔已完成（处理/倒计时均 done），仅删除步被取消。
-    if (lastActiveStep === 'deleting') {
-      return {
-        acquire: 'done',
-        countdown: 'done',
-        processing: 'done',
-        deleting: 'cancelled',
-        finish: 'cancelled'
-      }
-    }
-    return {
-      acquire: hasAccount ? 'done' : 'waiting',
-      countdown: 'cancelled',
-      processing: 'waiting',
-      deleting: 'waiting',
-      finish: 'cancelled'
-    }
-  }
-  if (phase === 'failed') {
-    const at = FLOW_STEP_ORDER.indexOf(lastActiveStep)
-    const states = {} as Record<AccountFlowStepKey, AccountFlowState>
-    FLOW_STEP_ORDER.forEach((key, index) => {
-      states[key] = index < at ? 'done' : index === at ? 'failed' : 'waiting'
-    })
-    states.acquire = hasAccount ? states.acquire : 'waiting'
-    states.finish = 'failed'
-    return states
-  }
-  const at = FLOW_STEP_ORDER.indexOf(ACTIVE_PHASE_STEP[phase] ?? 'countdown')
-  const states = {} as Record<AccountFlowStepKey, AccountFlowState>
-  FLOW_STEP_ORDER.forEach((key, index) => {
-    states[key] = index < at ? 'done' : index === at ? 'running' : 'waiting'
-  })
-  return states
 }
 
 /** 运行耗时摘要：仅在有始有终时给出。 */
@@ -343,15 +246,6 @@ export function automationDurationText(run: AccountAutomationRun): string {
   const sec = (run.finishedAt - run.startedAt) / 1000
   if (sec >= 60) return `${Math.floor(sec / 60)} 分 ${Math.round(sec % 60)} 秒`
   return `${Math.round(sec * 10) / 10} 秒`
-}
-
-/** 持久化/直出的失败运行没有活跃步骤轨迹时，按服务消息文案推断失败归属（仅影响展示，完整错误始终展示）。 */
-export function automationFailedStepHint(message: string): AccountFlowStepKey {
-  if (/取消后续账号加固|加固前/.test(message)) return 'deleting'
-  if (/奥仔处理失败/.test(message)) return 'processing'
-  // 删除链路的失败必含新凭据或删除语义；裸「会话」会误吞 preflight 失败（如浏览器会话读取失败），不用。
-  if (/新 Token|删除|官网|入库/.test(message)) return 'deleting'
-  return 'countdown'
 }
 
 /** 指纹窗口的展示名（#序号 名称；列表缺失时回退原始 id——窗口可能被删或 Roxy 未连接）。 */

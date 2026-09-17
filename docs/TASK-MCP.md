@@ -81,14 +81,15 @@ The model never supplies its identity or a lease token. One unified server proce
       "env": {
         "ELECTRON_RUN_AS_NODE": "1",
         "SG_TEAM_DB": "/absolute/path/to/task-pool.sqlite3",
-        "SG_TEAM_SERVER_ROLE": "unified"
+        "SG_TEAM_SERVER_ROLE": "unified",
+        "SG_TEAM_APP_VERSION": "0.3.2"
       }
     }
   }
 }
 ```
 
-On Windows `command` is the installed `ShiGuang.exe` (ASCII executable name via `build.win.executableName`; the product/shortcut name stays 拾光) and `args` points at `resources/mcp/index.mjs`.
+On Windows `command` is the installed `ShiGuang.exe` (ASCII executable name via `build.win.executableName`; the product/shortcut name stays 拾光) and `args` points at `resources/mcp/index.mjs`. `SG_TEAM_APP_VERSION` is not read by the server: it is the desktop's version stamp, so the first start after an in-place upgrade changes the entry and Cursor reloads the server with the new bundle (an unchanged entry is never rewritten, and an unchanged path alone would leave the old server process running until Cursor restarts).
 
 The Agent identity is `workspace hash + channel + install generation`. It is intentionally not treated as a permanent conversation identity. Every MCP tool call checks the active SQLite registration; reinstalling revokes older generations, so a stale Cursor MCP process cannot claim or mutate tasks.
 

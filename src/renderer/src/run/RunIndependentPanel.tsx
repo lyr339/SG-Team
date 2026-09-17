@@ -1,9 +1,14 @@
+import { useState } from 'react'
 import { formatFullClock, formatRelativeClock } from '../format'
+import { RunBatchConfig, type RunBatchConfigProps } from './RunBatchConfig'
 import { RunGroupsPanel, type RunGroupActions } from './RunGroupsPanel'
 import type { RunView } from './run-view'
 
 export const INDEPENDENT_MIN_SESSIONS = 1
 export const INDEPENDENT_MAX_SESSIONS = 16
+
+export const clampSessionCount = (value: number): number =>
+  Math.min(INDEPENDENT_MAX_SESSIONS, Math.max(INDEPENDENT_MIN_SESSIONS, value))
 
 interface RunIndependentPanelProps {
   view: RunView
@@ -18,10 +23,12 @@ interface RunIndependentPanelProps {
   onNewBatch: () => void
   /** 会话池的协作组操作；不提供时不显示协作组区（预览 / 旧调用方）。 */
   groupActions?: RunGroupActions
+  /** 批次的「会话配置」行（统一的模型与参数）；不提供时不显示（旧调用方）。 */
+  modelConfig?: RunBatchConfigProps
 }
 
 /**
- * 会话池区。配置中：目标工程 + 会话数量；运行中：批次概况 + 协作组 + 新建批次。
+ * 会话池区。配置中：目标工程 + 会话数量 + 会话配置；运行中：批次概况 + 会话配置 + 协作组 + 新建批次。
  * 创建按钮在席位区底部。
  */
 export function RunIndependentPanel({
@@ -33,11 +40,24 @@ export function RunIndependentPanel({
   onCountChange,
   onChooseWorkspace,
   onNewBatch,
-  groupActions
+  groupActions,
+  modelConfig
 }: RunIndependentPanelProps): React.JSX.Element {
   const waiting = view.seats.filter((seat) => seat.state === 'waiting').length
   const working = view.seats.filter((seat) => seat.state === 'working').length
   const ended = view.phase === 'completed'
+  // 输入过程中的原始文本：清空、或「1」还没输完成「12」时，不能立刻被钳回去。
+  const [typedCount, setTypedCount] = useState<string>()
+  const stepCount = (delta: number): void => {
+    setTypedCount(undefined)
+    onCountChange(clampSessionCount(count + delta))
+  }
+  /** 直接输入的数量以离开输入框 / 回车为准：越界钳到边界，空值回到当前值。 */
+  const commitCount = (raw: string): void => {
+    const parsed = Number.parseInt(raw, 10)
+    if (Number.isFinite(parsed)) onCountChange(clampSessionCount(parsed))
+    setTypedCount(undefined)
+  }
 
   if (composing) {
     return (
@@ -64,13 +84,30 @@ export function RunIndependentPanel({
 
         <div className="run-field">
           <span className="run-field__label">会话数量</span>
-          <div className="run-field__value"><small>一次创建 {INDEPENDENT_MIN_SESSIONS}–{INDEPENDENT_MAX_SESSIONS} 个，创建后分别对话</small></div>
+          <div className="run-field__value"><small>{INDEPENDENT_MIN_SESSIONS}–{INDEPENDENT_MAX_SESSIONS} 个，可直接输入</small></div>
           <div className="run-stepper" role="group" aria-label="会话数量">
-            <button type="button" aria-label="减少" disabled={busy || count <= INDEPENDENT_MIN_SESSIONS} onClick={() => onCountChange(Math.max(INDEPENDENT_MIN_SESSIONS, count - 1))}>−</button>
-            <output key={count} aria-live="polite">{count}</output>
-            <button type="button" aria-label="增加" disabled={busy || count >= INDEPENDENT_MAX_SESSIONS} onClick={() => onCountChange(Math.min(INDEPENDENT_MAX_SESSIONS, count + 1))}>+</button>
+            <button type="button" aria-label="减少" disabled={busy || count <= INDEPENDENT_MIN_SESSIONS} onClick={() => stepCount(-1)}>−</button>
+            <input
+              type="number"
+              aria-label="会话数量"
+              min={INDEPENDENT_MIN_SESSIONS}
+              max={INDEPENDENT_MAX_SESSIONS}
+              step={1}
+              disabled={busy}
+              value={typedCount ?? count}
+              onChange={(event) => {
+                setTypedCount(event.target.value)
+                const parsed = Number.parseInt(event.target.value, 10)
+                if (parsed >= INDEPENDENT_MIN_SESSIONS && parsed <= INDEPENDENT_MAX_SESSIONS) onCountChange(parsed)
+              }}
+              onBlur={(event) => commitCount(event.target.value)}
+              onKeyDown={(event) => { if (event.key === 'Enter') commitCount(event.currentTarget.value) }}
+            />
+            <button type="button" aria-label="增加" disabled={busy || count >= INDEPENDENT_MAX_SESSIONS} onClick={() => stepCount(1)}>+</button>
           </div>
         </div>
+
+        {modelConfig ? <RunBatchConfig {...modelConfig} disabled={busy || modelConfig.disabled} /> : null}
       </section>
     )
   }
@@ -97,6 +134,9 @@ export function RunIndependentPanel({
           ) : null}
         </dl>
       </div>
+
+      {/* 运行中的批次：改的是每个席位下一次新建 Composer 的配置；结束后席位只作记录，不再提供。 */}
+      {modelConfig && !ended ? <RunBatchConfig {...modelConfig} disabled={busy || modelConfig.disabled} /> : null}
 
       {view.cursorWorkspaceChanged ? (
         <p className="run-callout is-warning">

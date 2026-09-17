@@ -8,6 +8,8 @@ import { SettingsAozai } from './SettingsAozai'
 import { SettingsMaintenance } from './SettingsMaintenance'
 import { SettingsCleanup } from './SettingsCleanup'
 import { SettingsStats } from './SettingsStats'
+import { SettingsUpdate } from './SettingsUpdate'
+import { useAppUpdateStatus } from '../UpdateReminder'
 import {
   SettingsAccountsIcon,
   SettingsAozaiIcon,
@@ -15,10 +17,11 @@ import {
   SettingsCleanupIcon,
   SettingsImportIcon,
   SettingsMaintenanceIcon,
-  SettingsStatsIcon
+  SettingsStatsIcon,
+  SettingsUpdateIcon
 } from './icons'
 
-export type SettingsGroupId = 'stats' | 'accounts' | 'import' | 'automation' | 'aozai' | 'maintenance' | 'cleanup'
+export type SettingsGroupId = 'stats' | 'accounts' | 'import' | 'automation' | 'aozai' | 'maintenance' | 'cleanup' | 'update'
 
 interface SettingsGroupDef {
   id: SettingsGroupId
@@ -34,7 +37,8 @@ const GROUPS = [
   { id: 'automation', label: '自动化', description: '会话创建后的账号自动处理流程', icon: SettingsAutomationIcon },
   { id: 'aozai', label: '奥仔服务', description: '自助处理的卡密与次数', icon: SettingsAozaiIcon },
   { id: 'maintenance', label: 'Cursor 维护', description: '本机 Cursor 的更新与数据政策', icon: SettingsMaintenanceIcon },
-  { id: 'cleanup', label: '存储清理', description: '盘点 Cursor 本机数据，按项清理', icon: SettingsCleanupIcon }
+  { id: 'cleanup', label: '存储清理', description: '盘点 Cursor 本机数据，按项清理', icon: SettingsCleanupIcon },
+  { id: 'update', label: '软件更新', description: '检查新版本，手动下载与安装', icon: SettingsUpdateIcon }
 ] as const satisfies readonly SettingsGroupDef[]
 
 function initialGroup(): SettingsGroupId {
@@ -47,7 +51,7 @@ function initialGroup(): SettingsGroupId {
 /**
  * 设置页（方案 A）：左侧分组导航 + 右侧内容面板。
  * 整包接收 accountPanel props（App.tsx 组装逻辑零变更），组内自取所需字段。
- * 运行态只在两处留下痕迹：自动化导航项的状态圆点、自动化组顶部的实时横幅。
+ * 运行态只在两处留下痕迹：自动化导航项的状态圆点、自动化组顶部的运行卡（AutomationRunCard）。
  */
 export function SettingsPage(props: SettingsPageProps): React.JSX.Element {
   const [group, setGroup] = useState<SettingsGroupId>(initialGroup)
@@ -61,6 +65,7 @@ export function SettingsPage(props: SettingsPageProps): React.JSX.Element {
   const automationFailed = phase === 'failed'
   const accountMismatch = props.runtimeMatch?.status === 'mismatch'
     || props.membership?.state === 'auth_expired'
+  const updateReminderVersion = useAppUpdateStatus()?.reminderVersion
 
   const selectGroup = (id: SettingsGroupId): void => {
     setGroup(id)
@@ -98,6 +103,9 @@ export function SettingsPage(props: SettingsPageProps): React.JSX.Element {
               {def.id === 'automation' && automationFailed ? (
                 <i className="settings-nav__dot is-attention" aria-label="上次自动化失败" />
               ) : null}
+              {def.id === 'update' && updateReminderVersion ? (
+                <i className="settings-nav__dot is-accent" aria-label={`拾光 ${updateReminderVersion} 可用`} />
+              ) : null}
             </button>
           )
         })}
@@ -117,6 +125,7 @@ export function SettingsPage(props: SettingsPageProps): React.JSX.Element {
           <div hidden={group !== 'aozai'}><SettingsAozai {...props} /></div>
           <div hidden={group !== 'maintenance'}><SettingsMaintenance {...props} /></div>
           <div hidden={group !== 'cleanup'}><SettingsCleanup {...props} active={group === 'cleanup'} /></div>
+          <div hidden={group !== 'update'}><SettingsUpdate /></div>
         </div>
       </div>
     </div>

@@ -36,6 +36,8 @@
   --accent: var(--anthropic-orange);
   --accent-deep: light-dark(#dc4718, #ff8a61);
   --accent-bright: light-dark(#ff6b35, #ff8056);
+  /* 光刃余晖：仅名册选中态的左缘脊线使用；暗色降一档，是余晖不是霓虹。 */
+  --accent-glow: light-dark(color-mix(in srgb, var(--accent-bright) 32%, transparent), color-mix(in srgb, var(--accent-bright) 20%, transparent));
   --accent-soft: color-mix(in srgb, var(--anthropic-orange) 16%, var(--color-background-primary));
   --accent-wash: color-mix(in srgb, var(--anthropic-orange) 7%, var(--color-background-primary));
   /* 用量四桶里 Output 的数据分类色：固定出厂橙、不随主题色——否则黛蓝下与 Input（信息蓝）、
@@ -47,6 +49,9 @@
   --amber-soft: var(--color-background-warning);
   --red: var(--color-text-danger);
   --red-soft: var(--color-background-danger);
+  /* 名册状态灯的「干活」琥珀：文本级 warning 在浅色下是棕（#925d14），做 7px 灯芯不亮；
+     这里取灯用的饱和琥珀（色相 ≈35°），与主题橙（≈18°）拉开，也不随主题色预设漂移。 */
+  --signal-busy: light-dark(#e08e1b, #f0b64d);
   --purple: var(--color-text-info);
   --purple-soft: var(--color-background-info);
 
@@ -158,7 +163,21 @@
   --handoff-dialog-border: var(--color-border-secondary);
   --window-control-safe-left: 0px;
   --window-control-safe-right: 0px;
-  --app-background-image: url("./assets/backgrounds/shiguang-light.png");
+
+  /* 背景预设：每套浅 / 深各一张，图片 URL 只在这里出现一次（页面背景与外观弹层的色卡共用）。
+     id 与文案在 appearance-preferences.ts（BACKGROUND_PRESETS）。 */
+  --bg-refraction-light: url("./assets/backgrounds/shiguang-light.png");
+  --bg-refraction-dark: url("./assets/backgrounds/shiguang-dark.png");
+  --bg-aurora-light: url("./assets/backgrounds/aurora-light.png");
+  --bg-aurora-dark: url("./assets/backgrounds/aurora-dark.png");
+  --bg-mesh-light: url("./assets/backgrounds/mesh-light.png");
+  --bg-mesh-dark: url("./assets/backgrounds/mesh-dark.png");
+  --bg-prism-light: url("./assets/backgrounds/prism-light.png");
+  --bg-prism-dark: url("./assets/backgrounds/prism-dark.png");
+  /* 当前预设的两张图（默认折光）；深浅由下方 color-mode 规则在两张之间选。 */
+  --app-background-light: var(--bg-refraction-light);
+  --app-background-dark: var(--bg-refraction-dark);
+  --app-background-image: var(--app-background-light);
 
   /* Worklog 节点 */
 
@@ -167,11 +186,16 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root { --app-background-image: url("./assets/backgrounds/shiguang-dark.png"); }
+  :root { --app-background-image: var(--app-background-dark); }
 }
 
-html[data-color-mode="light"] { --app-background-image: url("./assets/backgrounds/shiguang-light.png"); }
-html[data-color-mode="dark"] { --app-background-image: url("./assets/backgrounds/shiguang-dark.png"); }
+html[data-color-mode="light"] { --app-background-image: var(--app-background-light); }
+html[data-color-mode="dark"] { --app-background-image: var(--app-background-dark); }
+
+/* 非默认背景预设：applyAppearancePreferences 写 data-background，默认时移除属性。 */
+html[data-background="aurora"] { --app-background-light: var(--bg-aurora-light); --app-background-dark: var(--bg-aurora-dark); }
+html[data-background="mesh"] { --app-background-light: var(--bg-mesh-light); --app-background-dark: var(--bg-mesh-dark); }
+html[data-background="prism"] { --app-background-light: var(--bg-prism-light); --app-background-dark: var(--bg-prism-dark); }
 
 * { box-sizing: border-box; }
 html, body, #root { width: 100%; height: 100%; }
@@ -446,6 +470,51 @@ html[data-platform="darwin"] .topbar__context { position: relative; left: -8px; 
   .appearance-accent__swatch { transition: none; }
 }
 
+/* 背景：四张 16:9 缩略卡（真图，随当前深浅模式取对应那张），下方一行名字；
+   选中双环描边（与主题色色卡同一语言），标签行右端写出当前预设名。 */
+.appearance-background { display: grid; gap: 8px; }
+.appearance-background > div:first-child { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.appearance-background span { color: var(--text-soft); font-size: var(--font-text-xs-size); font-weight: var(--font-weight-semibold); }
+.appearance-background em { color: var(--accent-deep); font-size: var(--fs-11); font-style: normal; font-weight: 600; }
+.appearance-background > div[role="group"] { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.appearance-background__tile {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  font-size: var(--fs-10);
+  font-weight: 600;
+  cursor: pointer;
+}
+.appearance-background__tile > i {
+  display: block;
+  aspect-ratio: 16 / 9;
+  background: var(--canvas-solid) var(--tile-light) center / cover no-repeat;
+  border-radius: 7px;
+  box-shadow: inset 0 0 0 1px var(--line);
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+.appearance-background__tile:hover > i { transform: scale(1.04); }
+.appearance-background__tile.is-active { color: var(--accent-deep); }
+.appearance-background__tile.is-active > i { box-shadow: 0 0 0 2px var(--surface-solid), 0 0 0 4px var(--accent); }
+.appearance-background__tile:focus-visible { outline: none; }
+.appearance-background__tile:focus-visible > i { outline: 2px solid var(--color-ring-primary); outline-offset: 2px; }
+.appearance-background__tile[data-preset="refraction"] > i { --tile-light: var(--bg-refraction-light); --tile-dark: var(--bg-refraction-dark); }
+.appearance-background__tile[data-preset="aurora"] > i { --tile-light: var(--bg-aurora-light); --tile-dark: var(--bg-aurora-dark); }
+.appearance-background__tile[data-preset="mesh"] > i { --tile-light: var(--bg-mesh-light); --tile-dark: var(--bg-mesh-dark); }
+.appearance-background__tile[data-preset="prism"] > i { --tile-light: var(--bg-prism-light); --tile-dark: var(--bg-prism-dark); }
+@media (prefers-color-scheme: dark) {
+  .appearance-background__tile > i { background-image: var(--tile-dark); }
+}
+html[data-color-mode="light"] .appearance-background__tile > i { background-image: var(--tile-light); }
+html[data-color-mode="dark"] .appearance-background__tile > i { background-image: var(--tile-dark); }
+@media (prefers-reduced-motion: reduce) {
+  .appearance-background__tile > i { transition: none; }
+}
+
 .appearance-opacity { display: grid; gap: 9px; }
 .appearance-opacity > div:first-child { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .appearance-opacity label { color: var(--text-soft); font-size: var(--fs-11); font-weight: 600; }
@@ -607,26 +676,52 @@ body.is-resizing-columns .resizable-columns { transition: none; }
 }
 .session-list > .inspector-state { padding-bottom: 18vh; }
 
-/* ---------- 分组：吸顶标题 + 可折叠列表 ---------- */
-.session-group { flex: 0 0 auto; border-bottom: 1px solid var(--color-border-tertiary); }
-.session-group:last-of-type { border-bottom: 0; }
+/* ---------- 分组：书签式组条（吸顶）+ 可折叠列表 ----------
+   组条是一枚从名册左缘伸出的书签：平色小旗（右端 45° 收尖）贴着左缘，旗的左脊是 3px 状态色——
+   与名册行的状态点同一套色，只表状态；旗上是组名 + 计数，旗尾一条 hairline 横到右缘，chevron 落在
+   线的末端（展开态只在悬停时浮现，折叠态常显并转向）。整条 32px，几何在折叠 / 展开态完全一致——
+   切换时唯一会变高的是下面的列表（0fr ↔ 1fr），组条只转 chevron、换颜色。
+   曾经折叠态把 padding-bottom 从 4 拉到 10 并做过渡：叠在 min-height 34 上，高度前 1/3 不动、后段
+   突然长 2.8px，文字随之重新居中——就是被点的那一行「抽一下」的来源（2026-09-16 实测），不要再加回来。
+   分隔只有书签尾线这一条，组与组之间靠 6px 留白；section 不带底线，折叠的组条叠在一起不会出现双线。
+   曾试过胶囊标签（状态点 + 组名 + 计数收进圆角胶囊）：像徽章不像分栏，同日改为书签。 */
+.session-group { flex: 0 0 auto; }
+.session-group + .session-group { margin-top: 6px; }
+/* 与名册行同一套四色状态灯（定义见名册行）：只落在书签左脊上。 */
+.session-group.is-waiting { --rail-state: var(--color-text-success); }
+.session-group.is-active { --rail-state: var(--signal-busy); }
+.session-group.is-attention { --rail-state: var(--color-text-info); }
+.session-group.is-offline { --rail-state: var(--color-text-danger); }
 .session-group__header {
   position: sticky; top: 0; z-index: 1;
-  width: 100%; min-height: 34px; display: flex; align-items: center; gap: 6px;
-  padding: 10px 10px 4px 14px;
-  color: var(--muted); text-align: left;
-  /* 吸顶时有行从下面滚过：标题必须实底，哪怕名册正文只有 92% 阅读面（差异肉眼不可辨）。 */
+  width: 100%; height: 32px; display: flex; align-items: center; gap: 8px;
+  margin: 0; padding: 0 10px 0 0;
+  color: var(--text-soft); text-align: left;
+  /* 吸顶时有行从下面滚过：组条必须实底，哪怕名册正文只有 92% 阅读面（差异肉眼不可辨）。 */
   background: var(--surface-solid);
   border: 0;
-  font-size: var(--fs-11); font-weight: 650; letter-spacing: .02em;
-  transition: color 120ms ease, padding 200ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: color 120ms ease;
 }
 .session-group__header:hover { color: var(--text); }
 .session-group__header:focus-visible { outline: 2px solid var(--color-ring-primary); outline-offset: -2px; border-radius: 6px; }
-.session-group__header > b { color: var(--text-soft); font: 650 var(--fs-10)/1 var(--font-numeric); }
-.session-group__header > svg { width: 14px; height: 14px; margin-left: auto; color: var(--muted); transition: transform 160ms ease; }
-.session-group.is-collapsed .session-group__header { padding-bottom: 10px; }
-.session-group.is-collapsed .session-group__header > svg { transform: rotate(-90deg); }
+.session-group__tab {
+  position: relative; flex: 0 0 auto; height: 22px; display: inline-flex; align-items: center; gap: 6px;
+  padding: 0 15px 0 11px;
+  background: var(--surface-soft);
+  /* 右端 45° 收尖成书签；clip-path 会裁掉边框，所以旗身是平色，状态脊用 ::before 画在旗内。 */
+  clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 50%, calc(100% - 8px) 100%, 0 100%);
+  font-size: var(--fs-11); font-weight: 650; line-height: 22px; letter-spacing: .02em; white-space: nowrap;
+  transition: background 120ms ease;
+}
+.session-group__tab::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--rail-state); }
+.session-group__header:hover .session-group__tab { background: color-mix(in srgb, var(--surface-soft) 70%, var(--color-border-tertiary)); }
+.session-group__tab > b { color: var(--muted); font: 650 var(--fs-10)/1 var(--font-numeric); font-variant-numeric: lining-nums tabular-nums; }
+.session-group__rule { flex: 1 1 auto; height: 1px; background: var(--color-border-tertiary); }
+/* chevron 骑在尾线末端：绝对定位不占 flex 空间，尾线一直画到右缘；浮现时用实底垫住身下那一小段线。
+   展开态只在悬停 / 聚焦时浮现（列表本身已经说明了「开着」），折叠态常显并转向。 */
+.session-group__chevron { position: absolute; right: 8px; top: 9px; width: 14px; height: 14px; padding: 0 2px; box-sizing: content-box; color: var(--muted); background: var(--surface-solid); opacity: 0; transition: transform 160ms ease, opacity 120ms ease; }
+.session-group__header:hover .session-group__chevron, .session-group__header:focus-visible .session-group__chevron, .session-group.is-collapsed .session-group__chevron { opacity: 1; }
+.session-group.is-collapsed .session-group__chevron { transform: rotate(-90deg); }
 .session-group__list { min-width: 0; display: grid; }
 
 /* 拖拽重排：源行半透明；插入线覆盖在 N + 1 个边界上，压在行间 hairline 上，不参与布局。 */
@@ -651,14 +746,21 @@ body.is-resizing-columns .resizable-columns { transition: none; }
 }
 .session-row:hover { background: var(--surface-soft); }
 .session-row:focus-visible { outline: 2px solid var(--color-ring-primary); outline-offset: -2px; }
-/* 选中：左缘一道信号橙 + 底色。整条侧栏里橙色只出现在这里——它的意思是「你在这」。 */
-.session-row::before { content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: 2px; background: var(--accent); border-radius: 0 2px 2px 0; opacity: 0; transition: opacity 160ms ease; }
-.session-row.is-selected { background: var(--surface-soft); }
-.session-row.is-selected::before { opacity: 1; }
+/* 选中：左缘一道光刃（亮→深纵向渐变 + 一圈余晖），并自左缘向右晕开一层淡橙。
+   整条侧栏里橙色只出现在这里——它的意思是「你在这」。光刃在选中切换时从中点生长一次，随后绝对静止；
+   hover 保持中性灰（surface-soft），与选中不再共享底色——一眼可辨，而不是靠一道细线硬扛。 */
+.session-row::before { content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; background: linear-gradient(to bottom, var(--accent-bright), var(--accent-deep)); border-radius: 0 var(--border-radius-full) var(--border-radius-full) 0; box-shadow: 0 0 7px var(--accent-glow); opacity: 0; transform: scaleY(.3); transition: opacity 160ms ease, transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+/* 晕染一直铺到右缘才归零：线性渐变在中途归零会留下一道肉眼可辨的马赫带（暗色下尤甚），铺满则终点藏进卡片边界。 */
+.session-row.is-selected { background: linear-gradient(to right, color-mix(in srgb, var(--accent) 7%, transparent), transparent); }
+.session-row.is-selected::before { opacity: 1; transform: scaleY(1); }
+/* 四色状态灯：待命绿（在长轮询里等消息）· 干活琥珀（已取走消息在处理，唯一会呼吸的灯）·
+   需关注蓝（等你拍板 / 验收 / 回答）· 离线红（空心环）。语义色只落在这枚 7px 灯、需关注行的状态词
+   和分组书签的 3px 脊上。琥珀是独立信号色而不是主题橙——橙在侧栏里只表示「你在这」（选中）。
+   曾是 待命绿 · 干活蓝 · 需关注琥珀 · 离线灰：蓝灯呼吸看不出「在干活」，灰环看不出「掉线了」（2026-09-16 用户反馈）。 */
 .session-row.is-waiting { --rail-state: var(--color-text-success); }
-.session-row.is-active { --rail-state: var(--color-text-info); }
-.session-row.is-attention { --rail-state: var(--color-text-warning); }
-.session-row.is-offline { --rail-state: var(--color-border-primary); }
+.session-row.is-active { --rail-state: var(--signal-busy); }
+.session-row.is-attention { --rail-state: var(--color-text-info); }
+.session-row.is-offline { --rail-state: var(--color-text-danger); }
 
 /* 头像 + 上下文光环：环绕头像的一圈弧，弧长即上下文占用；晴 → 午后 → 日暮三档色。 */
 .session-row__avatar { position: relative; width: 42px; height: 42px; display: grid; place-items: center; }
@@ -682,11 +784,16 @@ body.is-resizing-columns .resizable-columns { transition: none; }
 .session-row__channel { flex: 0 0 auto; color: var(--muted); font: 600 var(--fs-10)/1 var(--font-numeric); letter-spacing: .02em; }
 .session-row__state { flex: 0 0 auto; margin-left: auto; display: inline-flex; align-items: center; gap: 6px; color: var(--text-soft); font-size: var(--fs-11); font-style: normal; font-weight: 500; white-space: nowrap; }
 .session-row__state > i { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--rail-state); box-shadow: 0 0 0 2px color-mix(in srgb, var(--rail-state) 16%, transparent); }
-.session-row.is-active .session-row__state > i { animation: rail-pulse 1.6s ease-in-out infinite; }
-.session-row.is-attention .session-row__state { color: var(--color-text-warning); }
+/* 干活呼吸灯：灯芯常亮（它确实在干活，不该忽明忽暗），呼吸的是光晕——2 → 4px、16% → 32% 呼出再收回。
+   曾是灯芯 opacity 1 → .35 的闪烁，读作「在眨眼」而不是「在呼吸」。 */
+.session-row.is-active .session-row__state > i { animation: rail-pulse 1.8s ease-in-out infinite; }
+.session-row.is-attention .session-row__state { color: var(--rail-state); }
 .session-row.is-offline .session-row__state > i { background: transparent; box-shadow: inset 0 0 0 1.5px var(--rail-state); }
 .session-row.is-offline .session-row__state, .session-row.is-offline .session-row__name { color: var(--muted); }
-@keyframes rail-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@keyframes rail-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--rail-state) 16%, transparent); }
+  50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--rail-state) 32%, transparent); }
+}
 
 /* 行高 15px = Anthropic Sans 12px 的字形包围盒（升 12 + 降 3）：模型名 span 带 overflow:hidden 做省略号，
    行高 1 时盒子只有 12px，g/p 这类降部会被切平（"gpt-…" 一类模型名踩中）。 */
@@ -703,13 +810,6 @@ body.is-resizing-columns .resizable-columns { transition: none; }
 .session-row__changes > em { color: var(--color-text-danger); font-style: normal; font-weight: 600; }
 .session-row__time { flex: 0 0 auto; margin-left: auto; color: var(--muted); font: 500 11px/14px var(--font-numeric); white-space: nowrap; }
 .session-row__queue { display: inline-flex; align-items: center; padding: 2px 6px; color: var(--color-text-warning); background: var(--color-background-warning); border-radius: var(--border-radius-full); font-size: var(--fs-10); font-weight: 600; line-height: 1; }
-/* 席位自动轮换提示：与排队胶囊同一形制；进行中蓝、已轮换绿、未交接上下文橙、失败红、已停用灰——状态色只表状态。 */
-.session-row__rotation { display: inline-flex; align-items: center; padding: 2px 6px; border-radius: var(--border-radius-full); font-size: var(--fs-10); font-weight: 600; line-height: 1; white-space: nowrap; }
-.session-row__rotation.is-rotating { color: var(--color-text-info); background: var(--color-background-info); }
-.session-row__rotation.is-done { color: var(--color-text-success); background: var(--color-background-success); }
-.session-row__rotation.is-partial { color: var(--color-text-warning); background: var(--color-background-warning); }
-.session-row__rotation.is-failed { color: var(--color-text-danger); background: var(--color-background-danger); }
-.session-row__rotation.is-disabled { color: var(--muted); background: var(--surface-soft); }
 .session-row.is-offline .session-row__model { color: var(--muted); }
 
 /* 状态行是卡片的底行：横跨头像列与文字列（头像左沿 → 卡片右沿），每行等宽，
@@ -768,7 +868,7 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 
 @media (prefers-reduced-motion: reduce) {
   .session-row.is-active .session-row__state > i { animation: none; }
-  .session-row, .session-row::before, .session-row__ring-arc, .session-group__header, .session-group__header > svg, .session-row.is-offline .agent-avatar img { transition: none; }
+  .session-row, .session-row::before, .session-row__ring-arc, .session-group__header, .session-group__tab, .session-group__chevron, .session-row.is-offline .agent-avatar img { transition: none; }
 }
 /* 会话页头用量度量组（Orbit 静默度量）：排版即界面——小号大写标签压
    齐宽数字，hairline 竖分隔，无底色无描边；冷中性承载内容。 */
@@ -806,6 +906,9 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 .usage-breakdown-list li > i.is-output, .usage-breakdown-bar > i.is-output { background: var(--usage-output); }
 .usage-breakdown-list li > i.is-cacheread, .usage-breakdown-bar > i.is-cacheread { background: var(--color-text-tertiary); }
 .usage-breakdown-list li > i.is-cachewrite, .usage-breakdown-bar > i.is-cachewrite { background: var(--color-border-secondary); }
+/* 该模型没有的计费桶：行保留（列表形状不随模型变），标签、色块与 — 一律转弱。 */
+.usage-breakdown-list li.is-unavailable > span, .usage-breakdown-list li.is-unavailable > b { color: var(--muted); }
+.usage-breakdown-list li.is-unavailable > i { opacity: 0.45; }
 .usage-popover footer { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 5px 10px; padding-top: 9px; border-top: var(--border-width-regular) solid var(--line-faint); color: var(--color-text-tertiary); font-size: var(--fs-10); overflow-wrap: anywhere; }
 .usage-popover footer > span:last-child { grid-column: 1 / -1; }
 .usage-popover__empty { margin: 0; color: var(--text-soft); font-size: var(--fs-12); line-height: 1.5; }
@@ -889,8 +992,12 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
    会话工作区
    ============================================================ */
 
-/* 行：页头 / 警示条 / 时间线 / 待投递托盘 / 输入区 */
-.workspace-main { height: 100%; min-width: 0; min-height: 0; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto auto; background: transparent; }
+/* 五行：页头 / 警示 / 时间线 / 停靠区（待投递托盘 + 本轮文件栏）/ 输入区。
+   时间线有下限：停靠区两段各自有列表上限，但同时出现（Agent 干活中、用户继续发消息）时合计可达 ~350px，
+   在 680px 的窗口下限会把时间线挤到 0。下限取 min(240px, 55vh − 230px)：900 高给足 240，
+   680 高给 144——后者正是输入区拖到上限（45vh + 工具条）时仍放得下的最大值，所以永不把输入区顶出窗口。
+   预算不够时收缩的是停靠区（它是 auto 行、段内 min-height: 0、列表自己滚动），不是时间线。 */
+.workspace-main { --timeline-floor: min(240px, calc(55vh - 230px)); height: 100%; min-width: 0; min-height: 0; display: grid; grid-template-rows: auto auto minmax(var(--timeline-floor), 1fr) auto auto; background: transparent; }
 .workspace-header { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 14px; min-height: 78px; padding: 13px 22px; background: transparent; border-bottom: var(--border-width-regular) solid var(--line-faint); }
 .workspace-back { display: none; }
 .workspace-identity { min-width: 0; }
@@ -1002,7 +1109,14 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
   box-shadow: var(--shadow-sm);
 }
 .chat-row--mine.is-grouped .chat-bubble { border-radius: 12px; }
-.chat-row--mine .chat-bubble::selection { background: rgba(255, 255, 255, 0.28); }
+/* 选中反色：::selection 不随选择器下传，正文在 .message-content 等子元素里，
+   只写在气泡自身上的规则永远命中不到——落回全局那条 accent 淡洗，正好与橙色气泡同色，
+   选中看着跟没选一样。后代选择器覆盖子元素，并显式给出前景色，不依赖默认反色。 */
+.chat-row--mine .chat-bubble::selection,
+.chat-row--mine .chat-bubble ::selection {
+  color: var(--accent-deep);
+  background: rgba(255, 255, 255, 0.92);
+}
 .chat-row--error .chat-bubble { color: var(--red); background: var(--red-soft); border-color: var(--red-border); }
 
 .chat-bubble .typing-indicator { margin-left: 7px; }
@@ -1081,10 +1195,26 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 .run-seats__footer .toggle-switch__text { color: var(--muted); font-size: var(--fs-11); font-weight: 400; }
 .run-seats__footer .toggle-switch:hover .toggle-switch__text { color: var(--text); }
 
+/* ---------- 停靠区 ----------
+   时间线与输入区之间的一格：待投递托盘在上、本轮文件栏在下。空时 0 高。
+   纵向预算不够时它先于时间线收缩：自身与两段都 min-height: 0，段内列表行 minmax(0, 1fr) 让列表自己滚动。
+   两段同时在场时共用一个实线外框（虚线退为两段之间的分界：上面还没进对话，下面已经发生），
+   消除「两层托盘」的观感；单独在场时各保留自己的外框。 */
+.session-dock { min-width: 0; min-height: 0; display: grid; grid-auto-rows: auto; }
+.session-dock > .queue-tray, .session-dock > .turn-files { min-height: 0; }
+.session-dock:has(> .queue-tray):has(> .turn-files) { margin: 0 16px 8px; background: var(--surface); border: var(--border-width-regular) solid var(--line-strong); border-radius: 12px; animation: queue-tray-in 160ms ease; }
+.session-dock:has(> .queue-tray):has(> .turn-files) > .queue-tray,
+.session-dock:has(> .queue-tray):has(> .turn-files) > .turn-files { margin: 0; background: transparent; border: 0; border-radius: 0; animation: none; }
+.session-dock:has(> .queue-tray):has(> .turn-files) > .turn-files { border-top: var(--border-width-regular) dashed var(--line-strong); }
+.session-dock:has(> .queue-tray):has(> .turn-files) > .queue-tray .queue-tray__head { border-radius: 11px 11px 0 0; }
+.session-dock:has(> .queue-tray):has(> .turn-files) > .turn-files .turn-files__toggle { border-radius: 0 0 0 11px; }
+.session-dock:has(> .queue-tray):has(> .turn-files) > .turn-files.is-open .turn-files__toggle { border-radius: 0; }
+
 /* ---------- 待投递托盘 ----------
    时间线与输入区之间的停泊位：尚未被 check_messages 取走的用户消息在这里等待，
-   取走那一刻移入时间线。虚线外框表达「还不是对话记录」；与输入区同宽同圆角。 */
-.queue-tray { min-width: 0; display: grid; margin: 0 16px 8px; color: var(--text); background: var(--surface); border: var(--border-width-regular) dashed var(--line-strong); border-radius: 12px; animation: queue-tray-in 160ms ease; }
+   取走那一刻移入时间线。虚线外框表达「还不是对话记录」；与输入区同宽同圆角。
+   行：头部 / 列表 / 内部消息注记。列表行 minmax(0, 1fr)：被停靠区压缩时列表滚动、头部不动。 */
+.queue-tray { min-width: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; margin: 0 16px 8px; color: var(--text); background: var(--surface); border: var(--border-width-regular) dashed var(--line-strong); border-radius: 12px; animation: queue-tray-in 160ms ease; }
 .queue-tray__head { width: 100%; min-height: 36px; display: flex; align-items: center; gap: 8px; padding: 6px 10px 6px 9px; color: var(--text-soft); background: transparent; border: 0; border-radius: 11px; font: inherit; text-align: left; cursor: pointer; }
 .queue-tray__head:disabled { cursor: default; }
 .queue-tray__head:not(:disabled):hover, .queue-tray__head:focus-visible { background: var(--accent-wash); }
@@ -1103,7 +1233,7 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 .queue-tray__chevron { width: 18px; height: 18px; display: grid; place-items: center; color: var(--faint); transition: transform 160ms ease; }
 .queue-tray__chevron svg { width: 14px; height: 14px; }
 .queue-tray.is-collapsed .queue-tray__chevron { transform: rotate(-90deg); }
-.queue-tray__listwrap { display: grid; grid-template-rows: 1fr; overflow: hidden; transition: grid-template-rows 180ms ease; }
+.queue-tray__listwrap { min-height: 0; display: grid; grid-template-rows: 1fr; overflow: hidden; transition: grid-template-rows 180ms ease; }
 .queue-tray.is-collapsed .queue-tray__listwrap { grid-template-rows: 0fr; }
 .queue-tray__list { min-height: 0; max-height: 168px; display: grid; margin: 0; padding: 0 6px 6px; overflow-y: auto; list-style: none; transition: padding-block 180ms ease; }
 .queue-tray.is-collapsed .queue-tray__list { padding-block: 0; }
@@ -1127,9 +1257,71 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 .queue-tray__note { margin: 0; padding: 5px 12px 8px; color: var(--muted); font-size: var(--fs-9, 10px); line-height: 1.4; }
 @keyframes queue-tray-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
-  .queue-tray, .queue-tray__item { animation: none; }
+  .session-dock, .queue-tray, .queue-tray__item { animation: none; }
   .queue-tray.is-busy .queue-tray__state i { animation: none; }
   .queue-tray__chevron, .queue-tray__listwrap, .queue-tray__list { transition: none; }
+}
+
+/* ---------- 本轮文件栏 ----------
+   输入区上方、托盘之下：本轮 Agent 改动过的文件与增删行数（Cursor 原生 “N Files” 栏的拾光版）。
+   与托盘同一尺寸语言（36px 头部、圆角 12、与输入区同宽），但边框是实线——虚线在这里专指
+   「还不是对话记录」，而这些文件是已经发生的事实。行：头部 / 列表（被停靠区压缩时列表滚动、头部不动）。 */
+.turn-files { min-width: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); margin: 0 16px 8px; color: var(--text); background: var(--surface); border: var(--border-width-regular) solid var(--line-strong); border-radius: 12px; animation: turn-files-in 160ms ease; }
+.turn-files__head { display: flex; align-items: center; gap: 8px; min-height: 36px; padding-right: 6px; }
+.turn-files__toggle { min-width: 0; flex: 1 1 auto; display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 6px 8px 6px 9px; color: var(--text-soft); background: transparent; border: 0; border-radius: 11px 0 0 11px; font: inherit; text-align: left; cursor: pointer; }
+.turn-files__toggle:hover, .turn-files__toggle:focus-visible { background: var(--accent-wash); }
+.turn-files__toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.turn-files__chevron { width: 18px; height: 18px; flex: 0 0 auto; display: grid; place-items: center; color: var(--faint); transition: transform 160ms ease; }
+.turn-files__chevron svg { width: 14px; height: 14px; }
+.turn-files.is-collapsed .turn-files__chevron { transform: rotate(-90deg); }
+.turn-files__title { flex: 0 0 auto; display: inline-flex; align-items: baseline; gap: 4px; color: var(--text); font-size: var(--fs-11); font-weight: 600; white-space: nowrap; }
+.turn-files__title b { font: 700 var(--fs-11)/1 var(--mono); }
+/* 「上一轮」保持态：头部挂标签、整栏降色——它是上一轮的事实，不是这一轮正在发生的。 */
+.turn-files__scope { flex: 0 0 auto; padding: 2px 6px; color: var(--muted); background: var(--surface-soft); border-radius: 999px; font-size: var(--fs-9, 10px); font-style: normal; font-weight: 600; line-height: 1; white-space: nowrap; }
+.turn-files.is-previous .turn-files__title { color: var(--text-soft); }
+.turn-files.is-previous .turn-files__list { opacity: .78; }
+/* 合计与行内增删同一写法：绿 + / 红 −，等宽数字；估算值前置 ≈。 */
+.turn-files__totals, .turn-files__counts { flex: 0 0 auto; display: inline-flex; align-items: baseline; gap: 6px; font: 600 var(--fs-10)/1 var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.turn-files__totals b, .turn-files__counts b { color: var(--color-text-success); font-weight: 600; }
+.turn-files__totals em, .turn-files__counts em { color: var(--red); font-style: normal; }
+.turn-files__totals small, .turn-files__counts small { color: var(--muted); font-size: var(--fs-10); }
+.turn-files__totals small { margin-right: -2px; }
+.turn-files__aside { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; }
+/* 转圈：与名册状态行同一枚 11px 缺角圆环，走强调色；只在 Agent 仍在处理本轮消息时出现。 */
+.turn-files__spinner { box-sizing: border-box; width: 11px; height: 11px; border-radius: 50%; border: 1.5px solid color-mix(in srgb, var(--accent) 28%, transparent); border-top-color: var(--accent); animation: rail-activity-spin 900ms linear infinite; }
+.turn-files__review { min-height: 26px; padding: 0 11px; color: var(--text-soft); background: var(--surface); border: var(--border-width-regular) solid var(--line); border-radius: 7px; font: inherit; font-size: var(--fs-11); font-weight: 600; line-height: 1; cursor: pointer; }
+.turn-files__review:hover, .turn-files__review:focus-visible { color: var(--color-text-info); border-color: var(--color-border-info); background: var(--color-background-info); }
+.turn-files__review:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* 列表常驻挂载，收起走 grid-rows 过渡（与托盘对称）。 */
+.turn-files__listwrap { min-height: 0; display: grid; grid-template-rows: 1fr; overflow: hidden; transition: grid-template-rows 180ms ease; }
+.turn-files.is-collapsed .turn-files__listwrap { grid-template-rows: 0fr; }
+.turn-files__list { min-height: 0; max-height: 176px; display: grid; margin: 0; padding: 0 6px 6px; overflow-y: auto; list-style: none; transition: padding-block 180ms ease; }
+.turn-files.is-collapsed .turn-files__list { padding-block: 0; }
+.turn-files__item { border-top: var(--border-width-regular) solid var(--line-faint); animation: turn-files-in 160ms ease; }
+.turn-files__row { width: 100%; min-height: 30px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 9px; padding: 4px 6px 4px 4px; color: var(--text); background: transparent; border: 0; border-radius: 7px; font: inherit; text-align: left; cursor: pointer; }
+.turn-files__row:disabled { cursor: default; }
+.turn-files__row:not(:disabled):hover, .turn-files__row:focus-visible { background: var(--accent-wash); }
+.turn-files__row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* 语言徽标：等宽小字、浅底，不染色相——文件类型不是状态。 */
+.turn-files__badge { width: 30px; height: 20px; display: grid; place-items: center; color: var(--muted); background: var(--surface-soft); border-radius: 5px; font: 700 var(--fs-9, 10px)/1 var(--mono); font-style: normal; letter-spacing: .02em; }
+/* 文件名：主干从尾部截断、扩展名永不截断、目录跟在其后从头部截断（窄栏先牺牲目录）。 */
+.turn-files__name { min-width: 0; display: flex; align-items: baseline; gap: 7px; overflow: hidden; }
+.turn-files__name strong { min-width: 0; flex: 0 1 auto; display: inline-flex; overflow: hidden; color: var(--text); font-size: var(--fs-11); font-weight: 600; white-space: nowrap; }
+.turn-files__name strong > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.turn-files__name strong > b { flex: 0 0 auto; font-weight: 600; }
+.turn-files__name small { min-width: 0; flex: 1 1 auto; overflow: hidden; direction: rtl; color: var(--muted); font: 500 var(--fs-10)/1 var(--mono); text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.turn-files__name small bdi { unicode-bidi: plaintext; }
+.turn-files__status { padding: 1px 5px; color: var(--muted); background: var(--surface-soft); border-radius: 4px; font: 700 var(--fs-9, 10px)/1 var(--mono); font-style: normal; }
+.turn-files__item.is-deleted .turn-files__status { color: var(--red); background: var(--red-soft); }
+.turn-files__item.is-added .turn-files__status, .turn-files__item.is-untracked .turn-files__status { color: var(--color-text-success); background: var(--color-background-success); }
+.turn-files__item.is-deleted .turn-files__name strong { color: var(--text-soft); text-decoration: line-through; }
+.turn-files__item.is-estimated .turn-files__counts { opacity: .72; }
+/* 中栏有 680px 下限（SESSION_CONTENT_MIN_WIDTH），栏最窄 648px：目录列用 rtl 省略号从头截断即可，不需要按宽度整列收起。 */
+@keyframes turn-files-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .turn-files, .turn-files__item { animation: none; }
+  .turn-files__spinner { animation: none; border-top-color: color-mix(in srgb, var(--accent) 28%, transparent); border-right-color: var(--accent); }
+  .turn-files__chevron, .turn-files__listwrap, .turn-files__list { transition: none; }
 }
 
 /* ---------- 消息工作台 ---------- */
@@ -1475,14 +1667,6 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 .menu-select__check svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .menu-select__empty { padding: 10px; color: var(--faint); font-size: var(--fs-10); text-align: center; }
 
-.range-field { flex: 1 1 130px; min-width: 0; display: inline-flex; align-items: center; gap: 8px; }
-.range-field input[type="range"] { -webkit-appearance: none; appearance: none; flex: 1 1 auto; min-width: 0; height: 4px; margin: 0; background: linear-gradient(to right, var(--accent) var(--range-fill, 0%), var(--line) var(--range-fill, 0%)); border-radius: var(--border-radius-full); outline: none; cursor: pointer; }
-.range-field input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 14px; height: 14px; background: var(--color-background-primary); border: 2px solid var(--accent); border-radius: 50%; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); transition: transform 120ms ease; }
-.range-field input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
-.range-field input[type="range"]:disabled { opacity: 0.5; cursor: not-allowed; }
-.range-field__value { flex: none; min-width: 46px; color: var(--text); font: 600 var(--fs-10)/1 var(--mono); font-variant-numeric: tabular-nums; text-align: right; }
-.range-field__value i { color: var(--muted); font-style: normal; font-weight: 400; }
-
 /* 数值步进输入：− / 数字框 / + 一体的胶囊控件（倒计时等「确切数值」场景替代滑杆）。 */
 .stepper-field { flex: none; display: inline-flex; align-items: stretch; background: var(--canvas); border: var(--border-width-regular) solid var(--line); border-radius: 8px; overflow: hidden; transition: border-color 120ms ease, box-shadow 120ms ease; }
 .stepper-field:focus-within { border-color: var(--accent-border-strong); box-shadow: 0 0 0 3px color-mix(in srgb, var(--anthropic-orange) 10%, transparent); }
@@ -1662,7 +1846,7 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
   .workspace-composer { margin: 0 10px 10px; }
   .composer-topbar { gap: 8px; padding-inline: 9px; }
   .composer-agent-chip { max-width: min(230px, 58vw); }
-  .queue-tray { margin-inline: 10px; }
+  .queue-tray, .turn-files { margin-inline: 10px; }
   .composer-duration { padding-inline: 8px; }
   .workspace-composer textarea { padding: 10px 12px 7px; }
   .composer-controls { gap: 7px; padding: 5px 8px 7px; }

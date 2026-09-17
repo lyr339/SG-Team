@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { formatCostUsd, formatTokenCount } from '../../../domain/cursor-usage'
 import { AgentAvatar } from '../AgentAvatar'
 import { formatClock, formatRelativeClock, formatFullClock } from '../format'
+import { ChevronDownIcon } from '../UiIcons'
 import type { SettingsPageProps } from './settings-view'
 import {
   STATS_HISTORY_SEAT,
@@ -20,7 +21,9 @@ import {
 
 type StatsProps = Pick<SettingsPageProps, 'usageSnapshot' | 'statsSeats' | 'statsGroups'> & { active?: boolean }
 
-const TABLE_ROW_CAP = 20
+// 明细表在卡片内翻页：每行含头像与两行文字约 62px，8 行一页把卡片高度压在一屏内，
+// 也恰好容下常见的 8 个席位——多数时候不出现翻页条。
+const TABLE_PAGE_SIZE = 8
 // 缺省引用恒定：props 缺席时不因 {} / [] 的新建引用而击穿 useMemo。
 const EMPTY_USAGE: NonNullable<SettingsPageProps['usageSnapshot']> = {}
 const EMPTY_SEATS: NonNullable<SettingsPageProps['statsSeats']> = []
@@ -67,11 +70,14 @@ export function SettingsStats({ usageSnapshot, statsSeats, statsGroups, active }
   const [metric, setMetric] = useState<StatsMetric>('cost')
   const [seatKey, setSeatKey] = useState<string>()
   const [sort, setSort] = useState<{ key: StatsSortKey; direction: 'asc' | 'desc' }>({ key: 'cost', direction: 'desc' })
+  const [pageIndex, setPageIndex] = useState(0)
   const [activeBucket, setActiveBucket] = useState<number>()
   // 光谱带 hover 悬浮卡：直接持有段对象（而非索引）——hover 期间 usage 推送重算 spectrum 也不会越界；
   // x 为段中心相对容器的水平百分比（hover 时实测，跟随 flexGrow 动画）。
   const [hoverSegment, setHoverSegment] = useState<{ segment: StatsSpectrumSegment; index: number; x: number }>()
   const spectrumRef = useRef<HTMLDivElement>(null)
+  const prevPageRef = useRef<HTMLButtonElement>(null)
+  const nextPageRef = useRef<HTMLButtonElement>(null)
 
   // 页级度量：一把尺子量全页——光谱带、节奏柱、模型条与明细默认排序全部跟随。
   const metricOf = (value: { costUsd: number; tokens: number }): number => (metric === 'cost' ? value.costUsd : value.tokens)
@@ -100,19 +106,32 @@ export function SettingsStats({ usageSnapshot, statsSeats, statsGroups, active }
   const tokensValue = useAnimatedNumber(view.totals.tokens, animate)
 
   const sortedRows = useMemo(() => sortStatsRows(view.rows, sort.key, sort.direction), [view.rows, sort])
-  const shownRows = sortedRows.slice(0, TABLE_ROW_CAP)
-  const foldedRows = sortedRows.slice(TABLE_ROW_CAP)
-  const foldedCost = foldedRows.reduce((sum, row) => sum + row.costUsd, 0)
+  // 页码在渲染时夹紧而非用 effect 回写：筛选 / 换范围让行数缩水时，当前页直接落到最后一页，不多渲染一帧。
+  const pageCount = Math.max(1, Math.ceil(sortedRows.length / TABLE_PAGE_SIZE))
+  const page = Math.min(pageIndex, pageCount - 1)
+  const pageRows = sortedRows.slice(page * TABLE_PAGE_SIZE, (page + 1) * TABLE_PAGE_SIZE)
   // 成本列数据条的分母：全量行的最大成本（不只当前页），条宽跨页可比。
   const maxRowCost = useMemo(() => view.rows.reduce((max, row) => Math.max(max, row.costUsd), 0), [view.rows])
 
   const filteredSeat = seatKey ? view.seatGroups.find((group) => group.key === seatKey) ?? (seatKey === STATS_HISTORY_SEAT.key ? STATS_HISTORY_SEAT : undefined) : undefined
   const savingsVisible = view.totals.savingsUsd > 0 && view.totals.savingsRatio !== undefined
 
+  // 换排序 / 范围 / 席位筛选都回到第一页：数据集变了，停在旧页码没有意义。
   const toggleSort = (key: StatsSortKey): void => {
     setSort((previous) => previous.key === key
       ? { key, direction: previous.direction === 'desc' ? 'asc' : 'desc' }
       : { key, direction: 'desc' })
+    setPageIndex(0)
+  }
+  const selectSeat = (key: string | undefined): void => {
+    setSeatKey(key)
+    setPageIndex(0)
+  }
+  const goToPage = (next: number): void => {
+    // 翻到两端时本按钮会变 disabled，焦点会掉回 body：先把焦点交给对侧，键盘可以一路翻到底。
+    if (next === 0) nextPageRef.current?.focus()
+    else if (next === pageCount - 1) prevPageRef.current?.focus()
+    setPageIndex(next)
   }
 
   const onBarsKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
@@ -129,9 +148,9 @@ export function SettingsStats({ usageSnapshot, statsSeats, statsGroups, active }
     else if (event.key === 'Escape') setActiveBucket(undefined)
   }
 
-  // 数字列表头右对齐（is-num），与单元格的 tabular-nums 右对齐同轴。
-  const sortHeader = (key: StatsSortKey, label: string, numeric = false): React.JSX.Element => (
-    <th className={numeric ? 'is-num' : undefined} aria-sort={sort.key === key ? (sort.direction === 'desc' ? 'descending' : 'ascending') : undefined}>
+  // 全表左对齐：表头文字与单元格共用左缘，排序箭头拖在标签之后，不影响对齐轴。
+  const sortHeader = (key: StatsSortKey, label: string): React.JSX.Element => (
+    <th aria-sort={sort.key === key ? (sort.direction === 'desc' ? 'descending' : 'ascending') : undefined}>
       <button type="button" className={`stats-table__sort${sort.key === key ? ' is-active' : ''}`} onClick={() => toggleSort(key)}>
         {label}
         <i aria-hidden="true" className={sort.key === key && sort.direction === 'asc' ? 'is-asc' : undefined} />
@@ -162,7 +181,7 @@ export function SettingsStats({ usageSnapshot, statsSeats, statsGroups, active }
               type="button"
               className={range === option.key ? 'is-active' : undefined}
               aria-pressed={range === option.key}
-              onClick={() => { setRange(option.key); setActiveBucket(undefined) }}
+              onClick={() => { setRange(option.key); setActiveBucket(undefined); setPageIndex(0) }}
             >
               {option.label}
             </button>
@@ -179,6 +198,7 @@ export function SettingsStats({ usageSnapshot, statsSeats, statsGroups, active }
                 setMetric(option.key)
                 // 度量即默认排序：切到哪把尺子，明细就按哪把尺子降序（用户随后可自行改排）。
                 setSort({ key: option.key === 'cost' ? 'cost' : 'tokens', direction: 'desc' })
+                setPageIndex(0)
               }}
             >
               {option.label}
@@ -218,7 +238,7 @@ export function SettingsStats({ usageSnapshot, statsSeats, statsGroups, active }
                 onMouseEnter={(event) => showSegmentTip(event.currentTarget)}
                 onFocus={(event) => showSegmentTip(event.currentTarget)}
                 onBlur={() => setHoverSegment(undefined)}
-                onClick={() => setSeatKey((previous) => previous === segment.seat.key ? undefined : segment.seat.key)}
+                onClick={() => selectSeat(seatKey === segment.seat.key ? undefined : segment.seat.key)}
               >
                 <span className="stats-visually-hidden">{segment.seat.label} {formatMetric(segment)}，占比 {Math.round(share * 100)}%</span>
               </button>
@@ -268,7 +288,7 @@ export function SettingsStats({ usageSnapshot, statsSeats, statsGroups, active }
           <span className="stats-ledger__cumulative">累计 {formatCostUsd(view.cumulative.costUsd)} · {formatTokenCount(view.cumulative.tokens)} tokens</span>
         </p>
         {filteredSeat ? (
-          <button type="button" className="stats-filter-chip" onClick={() => setSeatKey(undefined)}>
+          <button type="button" className="stats-filter-chip" onClick={() => selectSeat(undefined)}>
             仅看 {filteredSeat.label}{filteredSeat.sub ? ` · ${filteredSeat.sub}` : ''}
             <i aria-hidden="true">×</i>
           </button>
@@ -498,48 +518,66 @@ export function SettingsStats({ usageSnapshot, statsSeats, statsGroups, active }
         {view.rangeEmpty ? (
           <p className="stats-card__empty">此范围内没有用量</p>
         ) : (
-          <table className="stats-table">
-            <thead>
-              <tr>
-                <th>会话</th>
-                <th>模型</th>
-                {sortHeader('turns', '回合', true)}
-                {sortHeader('tokens', 'Tokens', true)}
-                {sortHeader('cost', '成本', true)}
-                <th>质量</th>
-                {sortHeader('lastTurnAt', '最后活动')}
-              </tr>
-            </thead>
-            <tbody>
-              {shownRows.map((row) => (
-                <tr key={row.composerId}>
-                  <td>
-                    <span className="stats-table__seat">
-                      <AgentAvatar avatarId={row.avatarId} name={row.title} online={row.online} size="sm" />
-                      <span className="stats-table__seat-name">
-                        <strong>{row.title}</strong>
-                        <small>{row.sub}</small>
+          <div className="stats-table__scroll">
+            <table className="stats-table">
+              <thead>
+                <tr>
+                  <th>会话</th>
+                  <th>模型</th>
+                  {sortHeader('turns', '回合')}
+                  {sortHeader('tokens', 'Tokens')}
+                  {sortHeader('cost', '成本')}
+                  <th>质量</th>
+                  {sortHeader('lastTurnAt', '最后活动')}
+                </tr>
+              </thead>
+              {/* key={page} 让换页的 8 行整体重挂一次，走 stats-page-in 淡入而不是硬切。 */}
+              <tbody key={page}>
+                {pageRows.map((row) => (
+                  <tr key={row.composerId}>
+                    <td>
+                      <span className="stats-table__seat">
+                        <AgentAvatar avatarId={row.avatarId} name={row.title} online={row.online} size="sm" />
+                        <span className="stats-table__seat-name">
+                          <strong>{row.title}</strong>
+                          <small>{row.sub}</small>
+                        </span>
                       </span>
-                    </span>
-                  </td>
-                  <td className="stats-table__model" title={row.modelLabel}>{row.modelLabel}</td>
-                  <td className="stats-table__num">{row.turns}</td>
-                  <td className="stats-table__num" title={`Input ${formatTokenCount(row.freshInput)} · Output ${formatTokenCount(row.output)} · Cache Write ${formatTokenCount(row.cacheWrite)} · Cache Read ${formatTokenCount(row.cacheRead)}`}>
-                    {formatTokenCount(row.tokens)}
-                  </td>
-                  <td className="stats-table__num is-cost" style={{ '--cost-share': `${maxRowCost > 0 ? row.costUsd / maxRowCost * 100 : 0}%` } as React.CSSProperties}>{formatCostUsd(row.costUsd)}</td>
-                  <td><span className={`stats-table__quality is-${row.quality}`}>{STATS_QUALITY_LABEL[row.quality]}</span></td>
-                  <td className="stats-table__time" title={formatFullClock(row.lastTurnAt)}>{formatRelativeClock(row.lastTurnAt)}</td>
-                </tr>
-              ))}
-              {foldedRows.length > 0 ? (
-                <tr className="stats-table__rest">
-                  <td colSpan={7}>其余 {foldedRows.length} 个会话 · {formatCostUsd(foldedCost)}</td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
+                    </td>
+                    <td className="stats-table__model" title={row.modelLabel}>{row.modelLabel}</td>
+                    <td className="stats-table__num">{row.turns}</td>
+                    <td className="stats-table__num" title={`Input ${formatTokenCount(row.freshInput)} · Output ${formatTokenCount(row.output)} · Cache Write ${formatTokenCount(row.cacheWrite)} · Cache Read ${formatTokenCount(row.cacheRead)}`}>
+                      {formatTokenCount(row.tokens)}
+                    </td>
+                    <td className="stats-table__num is-cost" style={{ '--cost-share': `${maxRowCost > 0 ? row.costUsd / maxRowCost * 100 : 0}%` } as React.CSSProperties}>{formatCostUsd(row.costUsd)}</td>
+                    <td><span className={`stats-table__quality is-${row.quality}`}>{STATS_QUALITY_LABEL[row.quality]}</span></td>
+                    <td className="stats-table__time" title={formatFullClock(row.lastTurnAt)}>{formatRelativeClock(row.lastTurnAt)}</td>
+                  </tr>
+                ))}
+                {/* 末页补位：不足一页时填等高空行，每页高度恒定，翻页不会把卡片抽掉两百多像素。
+                    行高由里面那枚真实尺寸的头像撑出，不在 CSS 里另抄一份行高常量。 */}
+                {pageCount > 1 ? Array.from({ length: TABLE_PAGE_SIZE - pageRows.length }, (_, index) => (
+                  <tr key={`pad-${index}`} className="stats-table__pad" aria-hidden="true">
+                    <td colSpan={7}><i className="agent-avatar agent-avatar--sm" /></td>
+                  </tr>
+                )) : null}
+              </tbody>
+            </table>
+          </div>
         )}
+        {pageCount > 1 ? (
+          <nav className="stats-pager" aria-label="会话明细翻页">
+            <span aria-live="polite">第 {page + 1} / {pageCount} 页</span>
+            <span className="stats-pager__nav">
+              <button ref={prevPageRef} type="button" aria-label="上一页" disabled={page === 0} onClick={() => goToPage(page - 1)}>
+                <ChevronDownIcon className="stats-pager__chevron is-prev" />
+              </button>
+              <button ref={nextPageRef} type="button" aria-label="下一页" disabled={page >= pageCount - 1} onClick={() => goToPage(page + 1)}>
+                <ChevronDownIcon className="stats-pager__chevron is-next" />
+              </button>
+            </span>
+          </nav>
+        ) : null}
       </section>
     </div>
   )

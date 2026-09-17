@@ -73,6 +73,22 @@ function parameterMap(selection: Pick<CursorModelSelection, 'parameters'>): Map<
   return new Map(selection.parameters.map((parameter) => [parameter.id, parameter.value]))
 }
 
+/** 两份选择是否指向同一个模型、同一组参数（参数顺序无关；MAX Mode 缺省视为关）。 */
+export function sameCursorModelSelection(
+  left: CursorModelSelection | undefined,
+  right: CursorModelSelection | undefined
+): boolean {
+  if (!left || !right) return left === right
+  if (left.modelId !== right.modelId || (left.maxMode === true) !== (right.maxMode === true)) return false
+  const leftValues = parameterMap(left)
+  const rightValues = parameterMap(right)
+  if (leftValues.size !== rightValues.size) return false
+  for (const [id, value] of leftValues) {
+    if (rightValues.get(id) !== value) return false
+  }
+  return true
+}
+
 function selectionFromVariant(
   selection: CursorModelSelection,
   option: CursorModelOption,
@@ -183,7 +199,9 @@ export function cursorModelSelectionSummary(
   selection: CursorModelSelection | undefined,
   option: CursorModelOption | undefined
 ): string {
-  if (!selection || !option) return '使用 Cursor 当前配置'
+  if (!selection) return '使用 Cursor 当前配置'
+  // 席位存着一份配置，但这个模型已经不在 Cursor 的模型目录里了：说清楚，别假装它还生效。
+  if (!option) return '该模型已不在 Cursor 模型目录，请重新选择'
   const parts = option.parameterDefinitions.flatMap((definition) => {
     const value = cursorModelParameterValue(selection, option, definition)
     const valueDefinition = definition.values.find((candidate) => candidate.value === value)

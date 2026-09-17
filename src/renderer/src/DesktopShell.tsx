@@ -14,6 +14,8 @@ import { BrandMark } from './BrandMark'
 import { ResizableColumns, useCompactLayout } from './ResizableColumns'
 import { AppearanceSettings } from './AppearanceSettings'
 import { WorkspaceMenu } from './WorkspaceMenu'
+import { UpdateReminder, useAppUpdateStatus } from './UpdateReminder'
+import { subscribeReviewFocus } from './inspector/review-focus-bus'
 
 /** 会话（工作区）/ 运行（团队或独立批次的控制）/ 账号与 Cursor（右上角设置入口，不在主导航里）。 */
 export type AppModule = 'sessions' | 'run' | 'account'
@@ -36,11 +38,14 @@ interface DesktopShellProps {
   colorMode: 'system' | 'light' | 'dark'
   /** 主题色预设 id（缺省拾光橙）；未传 onAccentChange 时弹层不出现主题色行。 */
   accent?: string
+  /** 背景预设 id（缺省折光）；未传 onBackgroundChange 时弹层不出现背景行。 */
+  background?: string
   onModuleChange: (module: AppModule) => void
   onOpenProjectConfiguration: () => void
   onCardOpacityChange: (value: number) => void
   onColorModeChange: (value: 'system' | 'light' | 'dark') => void
   onAccentChange?: (accent: string) => void
+  onBackgroundChange?: (background: string) => void
   children: ReactNode
 }
 
@@ -102,11 +107,13 @@ export function DesktopShell({
   cardOpacity,
   colorMode,
   accent,
+  background,
   onModuleChange,
   onOpenProjectConfiguration,
   onCardOpacityChange,
   onColorModeChange,
   onAccentChange,
+  onBackgroundChange,
   children
 }: DesktopShellProps): React.JSX.Element {
   const [showConnection, setShowConnection] = useState(false)
@@ -119,6 +126,13 @@ export function DesktopShell({
   })
   const popoverRef = useRef<HTMLElement>(null)
   const appearanceRef = useRef<HTMLDivElement>(null)
+  // 软件更新是手动组件：这里只消费「该提醒的版本号」——齿轮角标 + 右下角小提醒框，不弹窗、不阻塞。
+  const appUpdateStatus = useAppUpdateStatus()
+  const updateReminderVersion = appUpdateStatus?.reminderVersion
+  const openUpdateSettings = (): void => {
+    try { window.location.hash = '#account:update' } catch { /* 受限环境忽略 */ }
+    onModuleChange('account')
+  }
   // 顶栏在线统计只按团队成员口径（备用/未编入通道不计入，避免 1/4 式困惑）
   const teamSessions = teamChannelIds?.length
     ? snapshot.sessions.filter((session) => teamChannelIds.includes(session.channelId))
@@ -142,6 +156,17 @@ export function DesktopShell({
     setSessionSidebarCollapsed(!value)
     try { localStorage.setItem(SESSION_SIDEBAR_COLLAPSED_KEY, value ? '0' : '1') } catch { /* 当前窗口仍然生效。 */ }
   }
+
+  // 中栏本轮文件栏的「审查」：右栏收着就展开（标签与范围的切换由右栏自己订阅同一信号处理）。
+  // rightPanel 是每次渲染新建的 render prop，订阅只跟随「有没有右栏」这个布尔。
+  const hasRightPanel = Boolean(rightPanel)
+  useEffect(() => {
+    if (!hasRightPanel) return undefined
+    return subscribeReviewFocus(() => {
+      setShowInspector(true)
+      try { localStorage.setItem(INSPECTOR_OPEN_KEY, '1') } catch { /* 当前窗口仍然生效。 */ }
+    })
+  }, [hasRightPanel])
 
   useEffect(() => {
     const handler = (event: KeyboardEvent): void => {
@@ -217,11 +242,14 @@ export function DesktopShell({
           <button
             className={`account-button ${activeModule === 'account' ? 'is-active' : ''}`}
             onClick={() => onModuleChange(activeModule === 'account' ? 'sessions' : 'account')}
-            title={`${MODULE_LABELS.account} ${MODULE_SWITCH_MODIFIER}${MODULE_ORDER.indexOf('account') + 1}`}
+            title={updateReminderVersion
+              ? `${MODULE_LABELS.account} · 拾光 ${updateReminderVersion} 可用`
+              : `${MODULE_LABELS.account} ${MODULE_SWITCH_MODIFIER}${MODULE_ORDER.indexOf('account') + 1}`}
             aria-label={MODULE_LABELS.account}
             aria-pressed={activeModule === 'account'}
           >
             <GearIcon />
+            {updateReminderVersion ? <i className="account-button__dot" aria-label={`拾光 ${updateReminderVersion} 可用`} /> : null}
           </button>
           {activeModule === 'sessions' ? (
             <button
@@ -263,9 +291,11 @@ export function DesktopShell({
                 cardOpacity={cardOpacity}
                 colorMode={colorMode}
                 accent={accent}
+                background={background}
                 onCardOpacityChange={onCardOpacityChange}
                 onColorModeChange={onColorModeChange}
                 onAccentChange={onAccentChange}
+                onBackgroundChange={onBackgroundChange}
                 onClose={() => setShowAppearance(false)}
               />
             ) : null}
@@ -349,6 +379,7 @@ export function DesktopShell({
           </ResizableColumns>
         )}
       </div>
+      <UpdateReminder status={appUpdateStatus} onOpen={openUpdateSettings} />
     </div>
   )
 }

@@ -76,10 +76,15 @@ jobs:
           name: pack-win-log
           path: pack-win.log
           retention-days: 7
+      # latest.yml + .blockmap 是应用内更新（electron-updater）的更新源：客户端经 releases.atom 找到最新
+      # tag，再从 releases/download/<tag>/latest.yml 读版本与 sha512；blockmap 让下载只取差分块。
       - uses: actions/upload-artifact@v4
         with:
           name: shiguang-windows-x64
-          path: release/*.exe
+          path: |
+            release/*.exe
+            release/*.exe.blockmap
+            release/latest.yml
           if-no-files-found: error
           retention-days: 14
 
@@ -95,6 +100,14 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
+      # mac 自更新的更新源：静态清单登记本版每个产物的 sha512 / 大小与发布说明，随资产一起上传；
+      # 客户端经 releases/latest/download/update-manifest.json 取（不计 REST 限额）。Windows 仍读 latest.yml。
+      - name: 生成更新清单
+        run: |
+          node scripts/update-manifest.mjs \
+            --version "${GITHUB_REF_NAME#v}" --tag "$GITHUB_REF_NAME" \
+            --notes .github/release-notes.md --assets artifacts --out artifacts/update-manifest.json \
+            --repo "$GITHUB_REPOSITORY"
       - name: 建 Release（已存在则只覆盖上传产物）
         env:
           GH_TOKEN: ${{ github.token }}

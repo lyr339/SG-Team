@@ -38,6 +38,11 @@ export function SunIcon(props: IconProps): React.JSX.Element {
   return <Icon {...props}><circle cx="12" cy="12" r="4" {...stroke} /><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4" {...stroke} /></Icon>
 }
 
+/** 叠放的图层：一套配置铺到所有席位。 */
+export function LayersIcon(props: IconProps): React.JSX.Element {
+  return <Icon {...props}><path d="m12 4.2 8 4.3-8 4.3-8-4.3 8-4.3Z" {...stroke} /><path d="m4 12.5 8 4.3 8-4.3" {...stroke} /><path d="m4 16.3 8 4.3 8-4.3" {...stroke} /></Icon>
+}
+
 export function ExportIcon(props: IconProps): React.JSX.Element {
   return <Icon {...props}><path d="M12 4v10.5M7.5 10 12 14.5 16.5 10M5 18.5h14" {...stroke} /></Icon>
 }
@@ -61,6 +66,10 @@ export function HandoffIcon(props: IconProps): React.JSX.Element {
 
 export function ChevronDownIcon(props: IconProps): React.JSX.Element {
   return <Icon {...props}><path d="m6.5 9 5.5 5.5L17.5 9" {...stroke} /></Icon>
+}
+
+export function MoreIcon(props: IconProps): React.JSX.Element {
+  return <Icon {...props}><circle cx="5.5" cy="12" r="1.5" fill="currentColor" /><circle cx="12" cy="12" r="1.5" fill="currentColor" /><circle cx="18.5" cy="12" r="1.5" fill="currentColor" /></Icon>
 }
 
 export function SettingsIcon(props: IconProps): React.JSX.Element {

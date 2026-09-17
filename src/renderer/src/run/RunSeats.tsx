@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import type { AgentLaunchPlan } from '../../../domain/agent-launch'
 import type { SessionWarmupRun } from '../../../domain/session-warmup'
 import type { CdpAutoHealEvent } from '../../../domain/cursor-cdp'
@@ -8,6 +8,9 @@ import { formatRelativeTime } from '../format'
 import { CursorModelConfigDialog } from '../lobby/CursorModelConfigDialog'
 import { ToggleSwitch } from '../lobby/ToggleSwitch'
 import { SEAT_STATE_LABEL, type RunSeatState } from './run-view'
+
+/** 统一配置落地后行内光晕的时长：最后一行的延迟 + 动画本身（见 run.css 的 run-seat-sync）。 */
+const SYNC_PULSE_MS = 1_600
 
 export interface RunSeatRow {
   channelId: string
@@ -19,6 +22,8 @@ export interface RunSeatRow {
   lastSeenAt?: number
   /** 本次创建的目标（未待命 / 待创建）。 */
   pending: boolean
+  /** 与批次「会话配置」不同的席位：行内标「单独配置」，可就地恢复。 */
+  overridden?: boolean
 }
 
 interface RunSeatsProps {
@@ -42,6 +47,14 @@ interface RunSeatsProps {
   onRunWarmup?: () => void
   onCreate: () => void
   onModelSave: (channelId: string, selection: CursorModelSelection) => Promise<void> | void
+  /** 一份配置写到多个席位（单席弹层「同时应用到其余席位」）；缺省时逐席位调用 onModelSave。 */
+  onModelSaveAll?: (channelIds: string[], selection: CursorModelSelection) => Promise<void> | void
+  /** 把「单独配置」的席位恢复为批次的统一配置；不提供时行内只标记、不提供恢复。 */
+  onModelReset?: (channelId: string) => Promise<void> | void
+  /** 恢复动作的说明（会恢复成哪一套配置），作为「单独配置」标的悬停提示。 */
+  restoreHint?: string
+  /** 页面上一次把统一配置铺到全部席位的时刻：变化时每一行泛一次光晕作确认。 */
+  syncedAt?: number
   onEnableCdp?: () => void
   onToggleAutoHeal?: (enabled: boolean) => void
   onCancelCountdown?: () => void
@@ -49,7 +62,8 @@ interface RunSeatsProps {
 
 /**
  * 席位区：一个列表——通道、名字 / 组内角色、模型、运行态。
- * 点击一行改该席位下一次创建会话用的模型；底部一个创建按钮只针对未待命席位。
+ * 点击一行改该席位下一次创建会话用的模型，弹层里可顺带同步到其余席位；
+ * 与批次统一配置不同的席位标「单独配置」，点 × 恢复；底部一个创建按钮只针对未待命席位。
  */
 export function RunSeats({
   rows,
@@ -68,6 +82,10 @@ export function RunSeats({
   onRunWarmup,
   onCreate,
   onModelSave,
+  onModelSaveAll,
+  onModelReset,
+  restoreHint,
+  syncedAt,
   onEnableCdp,
   onToggleAutoHeal,
   onCancelCountdown
@@ -76,7 +94,37 @@ export function RunSeats({
   const needsCdp = !launching && Boolean(plan?.items.some((item) => item.code === 'cdp_unavailable'))
   const pendingCount = rows.filter((row) => row.pending).length
   const [countdownLeft, setCountdownLeft] = useState(0)
-  const [editingChannel, setEditingChannel] = useState<string>()
+  const [editing, setEditing] = useState<string>()
+  const [syncPulse, setSyncPulse] = useState(false)
+  const seenSyncedAt = useRef(syncedAt)
+  const configurable = !launching && cursorModels.length > 0
+  // 两席起才谈得上「同步其余席位」；运行结束后席位只作记录，不再提供。
+  const syncable = configurable && !ended && rows.length > 1
+  const channelIds = rows.map((row) => row.channelId)
+  const fallbackSelection = cursorModelSelectionFromOption(cursorModels.find((model) => model.selected) ?? cursorModels[0])
+
+  useEffect(() => {
+    if (!syncPulse) return
+    const timer = setTimeout(() => setSyncPulse(false), SYNC_PULSE_MS)
+    return () => clearTimeout(timer)
+  }, [syncPulse])
+
+  // 批次「会话配置」在页面层落地：这里只负责把确认光晕放出来（挂载时已有的时刻不算）。
+  useEffect(() => {
+    if (syncedAt === undefined || syncedAt === seenSyncedAt.current) return
+    seenSyncedAt.current = syncedAt
+    setSyncPulse(true)
+  }, [syncedAt])
+
+  /** 一份配置写到所有席位；成功后行内自上而下泛一次光晕作确认。 */
+  const saveForAll = async (selection: CursorModelSelection): Promise<void> => {
+    if (onModelSaveAll) {
+      await onModelSaveAll(channelIds, selection)
+    } else {
+      for (const channelId of channelIds) await onModelSave(channelId, selection)
+    }
+    setSyncPulse(true)
+  }
 
   useEffect(() => {
     if (cdpAutoHealEvent?.phase !== 'countdown') {
@@ -106,15 +154,15 @@ export function RunSeats({
           return (
             <li
               key={row.channelId}
-              className={`run-seat${row.pending ? ' is-pending' : ''}${row.state ? ` is-${row.state}` : ''}`}
+              className={`run-seat${row.pending ? ' is-pending' : ''}${row.state ? ` is-${row.state}` : ''}${syncPulse ? ' is-synced' : ''}`}
               style={{ '--seat-index': Math.min(index, 8) } as CSSProperties}
             >
               <button
                 type="button"
                 aria-label={`配置 CH-${row.channelId} 会话`}
                 className="run-seat__main"
-                disabled={launching || !cursorModels.length}
-                onClick={() => setEditingChannel(row.channelId)}
+                disabled={!configurable}
+                onClick={() => setEditing(row.channelId)}
               >
                 <b className="run-seat__channel">CH-{row.channelId}</b>
                 <span className="run-seat__who">
@@ -127,6 +175,20 @@ export function RunSeats({
                 </span>
                 <i aria-hidden="true">›</i>
               </button>
+              {row.overridden ? (
+                // 可撤销的标：这一席与批次统一配置不同；× 就地恢复。按钮不能嵌在行主按钮里，所以是行的兄弟节点。
+                <em className="run-seat__override" title={restoreHint}>
+                  <span>单独配置</span>
+                  {onModelReset ? (
+                    <button
+                      type="button"
+                      aria-label={`恢复 CH-${row.channelId} 为统一配置`}
+                      disabled={!configurable || busy}
+                      onClick={() => void onModelReset(row.channelId)}
+                    >×</button>
+                  ) : null}
+                </em>
+              ) : null}
               <span className="run-seat__state">
                 {progress && (launching || progress.stage === 'failed') ? (
                   <em className={`run-seat__progress is-${progress.stage}`} title={progress.message}>{progress.message}</em>
@@ -222,16 +284,14 @@ export function RunSeats({
         </span>
       </footer>
 
-      {editingChannel ? (
+      {editing ? (
         <CursorModelConfigDialog
-          channelId={editingChannel}
+          scope={{ kind: 'seat', channelId: editing, othersCount: syncable ? rows.length - 1 : 0 }}
           disabled={launching}
           models={cursorModels}
-          selection={selections[editingChannel] ?? cursorModelSelectionFromOption(
-            cursorModels.find((model) => model.selected) ?? cursorModels[0]
-          )}
-          onSave={(selection) => onModelSave(editingChannel, selection)}
-          onClose={() => setEditingChannel(undefined)}
+          selection={selections[editing] ?? fallbackSelection}
+          onSave={(selection, { applyToAll }) => (applyToAll ? saveForAll(selection) : onModelSave(editing, selection))}
+          onClose={() => setEditing(undefined)}
         />
       ) : null}
     </section>

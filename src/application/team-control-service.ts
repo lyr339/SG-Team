@@ -288,25 +288,17 @@ export class TeamControlService {
   }
 
   /**
-   * 换席重建前原子轮换绑定键与会话令牌。默认只对离线席位开放；`allowIdleOnline` 供席位
-   * 自动轮换使用——席位在线但正待命（长轮询中、队列为空、无待回复）时也允许：旧会话在
-   * 下一轮取队列复核围栏时退出（ChannelMessageService 逐轮复核），不会取走之后的消息。
-   * 有在途执行（processing / 待同步回复）一律拒绝。
+   * 换席重建前原子轮换绑定键与会话令牌。只对离线席位开放：在线席位（含待命中的长轮询）
+   * 与有在途执行（processing / 待同步回复）的席位一律拒绝——换掉一个还活着的会话是用户的
+   * 显式操作（结束 / 交接），不由重建路径代劳。
    */
-  prepareComposerRelaunch(channelId: string, options: { allowIdleOnline?: boolean } = {}): string | undefined {
+  prepareComposerRelaunch(channelId: string): string | undefined {
     const snapshot = this.getSnapshot()
     const member = snapshot.members.find((candidate) => (
       (candidate.binding?.channelId ?? candidate.slot.channelId) === channelId
     ))
     if (!member?.binding || !member.runtime || hasInFlightExecution(member.runtime)) return undefined
-    if (member.runtime.online) {
-      const idle = options.allowIdleOnline === true
-        && member.runtime.waiting
-        && member.runtime.queueDepth === 0
-        && member.runtime.pendingOutboundId === undefined
-        && member.runtime.awaitingUser !== true
-      if (!idle) return undefined
-    }
+    if (member.runtime.online) return undefined
     const bindingKey = randomUUID()
     const changed = this.repository.prepareComposerRelaunch({
       runId: member.binding.runId,

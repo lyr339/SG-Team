@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { WorkspaceReviewFileDiff, WorkspaceReviewSummary } from '../src/domain/workspace-review'
 import { buildFileQuote, buildHunkQuote, ReviewPanel, splitPath } from '../src/renderer/src/inspector/ReviewPanel'
+import { requestReviewFocus } from '../src/renderer/src/inspector/review-focus-bus'
 
 const hunk: WorkspaceReviewFileDiff['hunks'][number] = {
   header: '@@ -10,3 +10,3 @@ function login()',
@@ -216,6 +217,40 @@ describe('ReviewPanel', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('a review-focus request from the turn-files bar switches to the turn scope and expands + highlights the named file', async () => {
+    const api = installApi()
+    const root = createRoot(container)
+    await act(async () => root.render(<ReviewPanel workspaceKey="ws" turnPaths={['src/login.tsx', 'src/theme.ts']} />))
+    // 默认范围「未提交」，首个文件展开、第二个收起。
+    expect(localStorage.getItem('sg-team.inspector:review-scope')).toBe('uncommitted')
+    expect(container.querySelector('.review-file[data-path="src/theme.ts"]')!.className).not.toContain('is-open')
+
+    await act(async () => requestReviewFocus({ path: 'src/theme.ts' }))
+    // 范围切到「本轮」（摘要按范围重拉后仍是同一批文件），目标文件被展开、读取差异并短暂高亮。
+    expect(localStorage.getItem('sg-team.inspector:review-scope')).toBe('turn')
+    expect(container.querySelector<HTMLButtonElement>('.inspector-review__scope > button[aria-pressed="true"]')!.textContent).toContain('本轮')
+    const target = container.querySelector('.review-file[data-path="src/theme.ts"]')!
+    expect(target.className).toContain('is-open')
+    expect(target.className).toContain('is-revealed')
+    expect(api.getWorkspaceReviewFile).toHaveBeenCalledWith({ path: 'src/theme.ts', scope: 'uncommitted' })
+
+    // 不带路径：只切范围，不改展开集合。
+    await act(async () => {
+      const scopeButtons = Array.from(container.querySelectorAll<HTMLButtonElement>('.inspector-review__scope > button'))
+      scopeButtons[0]!.click()
+    })
+    expect(localStorage.getItem('sg-team.inspector:review-scope')).toBe('uncommitted')
+    await act(async () => requestReviewFocus())
+    expect(localStorage.getItem('sg-team.inspector:review-scope')).toBe('turn')
+
+    // 文件栏处于「上一轮」保持态时请求「未提交」范围（那时右栏的「本轮」是空的）：切过去并定位同一文件。
+    await act(async () => requestReviewFocus({ path: 'src/login.tsx', scope: 'uncommitted' }))
+    expect(localStorage.getItem('sg-team.inspector:review-scope')).toBe('uncommitted')
+    expect(container.querySelector<HTMLButtonElement>('.inspector-review__scope > button[aria-pressed="true"]')!.textContent).toContain('未提交')
+    expect(container.querySelector('.review-file[data-path="src/login.tsx"]')!.className).toContain('is-revealed')
+    await act(async () => root.unmount())
   })
 
   it('splits paths so the extension survives truncation', () => {

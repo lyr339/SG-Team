@@ -754,7 +754,51 @@ function lastTranscriptAction(text: string): TranscriptAction | undefined {
   return undefined
 }
 
-function lastTranscriptAssistantText(text: string): string | undefined {
+/** 条目内 tool_use 的结构证据：是否含业务工具（非内部协议）、内部协议工具、record_reply 同步调用。 */
+function transcriptEntryToolFacts(content: unknown[]): {
+  hasBusinessTool: boolean
+  hasInternalTool: boolean
+  hasRecordReply: boolean
+} {
+  let hasBusinessTool = false
+  let hasInternalTool = false
+  let hasRecordReply = false
+  for (const raw of content) {
+    const item = recordOf(raw)
+    if (item?.type !== 'tool_use') continue
+    // 判定用动态工具名（CallDynamicTool/CallMcpTool/GetDynamicTools 的 input.toolName），
+    // 与 lastTranscriptAssistantProcess 的内部协议过滤同一口径。
+    const name = boundedString(recordOf(item.input)?.toolName, 160) ?? boundedString(item.name, 160) ?? 'tool'
+    if (isCursorInternalToolName(name)) {
+      hasInternalTool = true
+      const lower = name.trim().toLowerCase()
+      if (lower === 'record_reply' || lower.endsWith('-record_reply') || lower.endsWith('_record_reply')) {
+        hasRecordReply = true
+      }
+    } else {
+      hasBusinessTool = true
+    }
+  }
+  return { hasBusinessTool, hasInternalTool, hasRecordReply }
+}
+
+interface TranscriptReply {
+  text: string
+  /** 回复正文所在转录行（0 基）；过程提取器据此跳过同一句，同文不得既进过程又进正文。 */
+  lineIndex: number
+}
+
+/**
+ * 定位最后一条「可作最终回复」的 Assistant 文本。JSONL 转录不区分 reasoning 与
+ * text（思考摘要与工具前导语都以 text 项落盘，Cursor 原生气泡里它们是 thinking），
+ * 只能按条目结构判定正文身份：
+ * - 条目含业务工具调用 → 文本是工具前导语/思考摘要，属于过程，向前继续找
+ *  （2026-09-16 截图事故：进行中回合的前导语被当成完整回复，与过程卡 Thought 同文双渲染）；
+ * - 条目只含内部协议调用 → 仅同条目出现 record_reply（同步动作本身，含被门禁拒绝的调用）
+ *   才是回复正文；只挂 check_messages 的文本是轮询前的协议相位思考；
+ * - 无工具条目的文本即最终回复。
+ */
+function lastTranscriptReply(text: string): TranscriptReply | undefined {
   const lines = text.split(/\r?\n/)
   let lastUserLine = -1
   for (let index = lines.length - 1; index >= 0; index -= 1) {
@@ -775,6 +819,9 @@ function lastTranscriptAssistantText(text: string): string | undefined {
     if (entry?.role !== 'assistant') continue
     const message = recordOf(entry.message)
     const content = Array.isArray(message?.content) ? message.content : []
+    const facts = transcriptEntryToolFacts(content)
+    if (facts.hasBusinessTool) continue
+    if (facts.hasInternalTool && !facts.hasRecordReply) continue
     const pieces = content.flatMap((raw) => {
       const item = recordOf(raw)
       const value = item?.type === 'text' && typeof item.text === 'string'
@@ -782,7 +829,7 @@ function lastTranscriptAssistantText(text: string): string | undefined {
         : undefined
       return value ? [value] : []
     })
-    if (pieces.length) return pieces.join('\n\n').slice(0, 100_000)
+    if (pieces.length) return { text: pieces.join('\n\n').slice(0, 100_000), lineIndex: index }
   }
   return undefined
 }
@@ -792,7 +839,7 @@ function lastTranscriptAssistantText(text: string): string | undefined {
  * 消息之后、最终纯文本回复之前的 Assistant 文本与工具调用，恢复图形化过程；实时
  * 生成期仍由 CDP 原生流优先，转录只负责冷启动兜底。
  */
-function lastTranscriptAssistantProcess(text: string): ProcessBlock[] | undefined {
+function lastTranscriptAssistantProcess(text: string, replyLineIndex?: number): ProcessBlock[] | undefined {
   const entries = text.split(/\r?\n/).flatMap((line, lineIndex) => {
     try {
       const value = recordOf(JSON.parse(line))
@@ -814,15 +861,15 @@ function lastTranscriptAssistantProcess(text: string): ProcessBlock[] | undefine
     if (!entry || entry.value.role !== 'assistant') continue
     const message = recordOf(entry.value.message)
     const content = Array.isArray(message?.content) ? message.content : []
-    const hasTool = content.some((raw) => recordOf(raw)?.type === 'tool_use')
     for (let itemIndex = 0; itemIndex < content.length && blocks.length < 80; itemIndex += 1) {
       const item = recordOf(content[itemIndex])
       if (!item) continue
       const id = `transcript:${entry.lineIndex}:${itemIndex}`
       if (item.type === 'text' && typeof item.text === 'string') {
-        // 最后一条无工具 Assistant 文本是最终回复，由 lastAssistantResponse 展示；
-        // 带工具的文本及此前 Assistant 文本才属于 Cursor 过程。
-        if (index === lastAssistantIndex && !hasTool) continue
+        // 最终回复正文由 lastAssistantResponse 展示（lastTranscriptReply 判定的那一行），
+        // 这里跳过——同一句不得既进过程又进正文；其余 Assistant 文本（工具前导语 /
+        // 思考摘要）属于 Cursor 过程。
+        if (entry.lineIndex === replyLineIndex) continue
         const value = sanitizeModelDisplayText(item.text.slice(0, 100_000)).text
         if (value) blocks.push({ kind: 'thinking', id, text: value, status: 'done', timingEstimated: true })
         continue
@@ -865,8 +912,9 @@ function extractTranscriptSignals(text: string): TranscriptSignals {
     signals.channelIds.add(match[1]!)
   }
   signals.lastAction = lastTranscriptAction(text)
-  signals.lastAssistantText = lastTranscriptAssistantText(text)
-  signals.lastAssistantProcess = lastTranscriptAssistantProcess(text)
+  const reply = lastTranscriptReply(text)
+  signals.lastAssistantText = reply?.text
+  signals.lastAssistantProcess = lastTranscriptAssistantProcess(text, reply?.lineIndex)
   return signals
 }
 

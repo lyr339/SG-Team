@@ -209,11 +209,11 @@ describe('缓存写入桶按厂商口径拆分（2026-09-15 官方核对：只�
     expect(upgradeUsageEstimate(claude)).toBe(claude)
   })
 
-  it('usageHasCacheWriteBucket / cursorUsageDetail：无桶厂商不呈现 Cache Write；有桶、混合模型或 Cursor 精确结算带写入时呈现', () => {
+  it('usageHasCacheWriteBucket / cursorUsageDetail：无桶厂商的 Cache Write 写 —；有桶、混合模型或 Cursor 精确结算带写入时写数字', () => {
     const base = { inputTokens: 1000, outputTokens: 10, cacheReadTokens: 800, cacheWriteTokens: 0, estimatedCostUsd: .001, exact: false, at: 1 }
     const kimi = projectUsage('k', { turns: { g1: { ...base, price: priceForModel('kimi-k3') } } })
     expect(usageHasCacheWriteBucket(kimi)).toBe(false)
-    expect(cursorUsageDetail(kimi)).toBe('Tokens 1K · Cost $0.001 · Input 200 · Output 10 · Cache Read 800')
+    expect(cursorUsageDetail(kimi)).toBe('Tokens 1K · Cost $0.001 · Input 200 · Output 10 · Cache Write — · Cache Read 800')
     const claude = projectUsage('c', { turns: { g1: { ...base, cacheWriteTokens: 50, price: priceForModel('claude-sonnet-4-5') } } })
     expect(usageHasCacheWriteBucket(claude)).toBe(true)
     expect(cursorUsageDetail(claude)).toBe('Tokens 1K · Cost $0.001 · Input 150 · Output 10 · Cache Write 50 · Cache Read 800')

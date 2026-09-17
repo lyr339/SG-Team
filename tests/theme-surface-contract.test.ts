@@ -30,7 +30,7 @@ describe('theme surface contracts', () => {
     // 不抢层级），虚线外框表达「还不是对话记录」，宽度与输入区一致（同 16px 侧边距）。
     expect(styles).not.toContain('.composer-queue-popover')
     expect(styles).not.toContain('.composer-queue-status')
-    expect(styles).toMatch(/\.workspace-main\s*\{[^}]*grid-template-rows:\s*auto auto minmax\(0, 1fr\) auto auto/)
+    expect(styles).toMatch(/\.workspace-main\s*\{[^}]*grid-template-rows:\s*auto auto minmax\(var\(--timeline-floor\), 1fr\) auto auto;/)
     expect(styles).toMatch(/\.queue-tray\s*\{[^}]*border:[^;]*dashed/)
     expect(styles).toMatch(/\.queue-tray\s*\{[^}]*margin:\s*0 16px/)
     expect(styles).not.toMatch(/\.queue-tray\s*\{[^}]*position:\s*absolute/)
@@ -39,6 +39,52 @@ describe('theme surface contracts', () => {
     expect(styles).not.toContain('.chat-state.is-queued')
     // 动效尊重系统减弱设置。
     expect(styles).toMatch(/prefers-reduced-motion: reduce\)\s*\{[^}]*\.queue-tray, \.queue-tray__item\s*\{\s*animation:\s*none/)
+  })
+
+  it('docks the turn-files bar under the tray and above the composer as a plain in-flow block with a solid frame', () => {
+    // 与托盘同一尺寸语言（同侧边距、同圆角、流内块），但实线边框：这些文件是已经发生的事实，不是「尚未进入对话」。
+    expect(styles).toMatch(/\.turn-files\s*\{[^}]*margin:\s*0 16px/)
+    expect(styles).toMatch(/\.turn-files\s*\{[^}]*border:[^;]*solid/)
+    expect(styles).toMatch(/\.turn-files\s*\{[^}]*border-radius:\s*12px/)
+    expect(styles).not.toMatch(/\.turn-files\s*\{[^}]*position:\s*absolute/)
+    expect(styles).not.toMatch(/\.turn-files\s*\{[^}]*z-index/)
+    // 增删数：绿 + / 红 −，等宽数字；折叠走 grid-rows 过渡。
+    expect(styles).toMatch(/\.turn-files__totals b, \.turn-files__counts b\s*\{[^}]*color:\s*var\(--color-text-success\)/)
+    expect(styles).toMatch(/\.turn-files__totals em, \.turn-files__counts em\s*\{[^}]*color:\s*var\(--red\)/)
+    expect(styles).toMatch(/\.turn-files\.is-collapsed \.turn-files__listwrap\s*\{\s*grid-template-rows:\s*0fr/)
+    // 窄栏与托盘同步收边距。
+    expect(styles).toMatch(/\.queue-tray, \.turn-files\s*\{\s*margin-inline:\s*10px/)
+    // 目录列从头截断（rtl + 省略号），文件名主干截断而扩展名不截断：中栏有 680px 下限，不按宽度整列收起。
+    expect(styles).toMatch(/\.turn-files__name small\s*\{[^}]*direction:\s*rtl[^}]*text-overflow:\s*ellipsis/)
+    expect(styles).toMatch(/\.turn-files__name strong > b\s*\{[^}]*flex:\s*0 0 auto/)
+    // reduced-motion：进场动画、转圈与折叠过渡全部关闭。
+    expect(styles).toMatch(/prefers-reduced-motion: reduce\)\s*\{[^}]*\.turn-files, \.turn-files__item\s*\{\s*animation:\s*none/)
+    expect(styles).toMatch(/@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\.turn-files__spinner\s*\{[^}]*animation:\s*none/)
+    expect(styles).toMatch(/@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\.turn-files__chevron, \.turn-files__listwrap, \.turn-files__list\s*\{\s*transition:\s*none/)
+    // 「上一轮」保持态：头部标签 + 整栏降色。
+    expect(styles).toMatch(/\.turn-files\.is-previous \.turn-files__list\s*\{\s*opacity:/)
+    expect(styles).toMatch(/\.turn-files__scope\s*\{[^}]*border-radius:\s*999px/)
+  })
+
+  it('gives the timeline a floor and lets the dock (tray + turn-files) shrink and merge instead', () => {
+    // 时间线下限：900 高给 240，680 高（窗口下限）给 144——输入区拖到上限时仍放得下，永不把输入区顶出窗口。
+    expect(styles).toMatch(/\.workspace-main\s*\{[^}]*--timeline-floor:\s*min\(240px, calc\(55vh - 230px\)\)/)
+    // 停靠区与两段都可收缩（min-height: 0），段内列表行 minmax(0, 1fr) 让列表滚动、头部不动。
+    expect(styles).toMatch(/\.session-dock\s*\{[^}]*min-height:\s*0/)
+    expect(styles).toMatch(/\.session-dock > \.queue-tray, \.session-dock > \.turn-files\s*\{\s*min-height:\s*0/)
+    expect(styles).toMatch(/\.queue-tray\s*\{[^}]*grid-template-rows:\s*auto minmax\(0, 1fr\) auto/)
+    expect(styles).toMatch(/\.turn-files\s*\{[^}]*grid-template-rows:\s*auto minmax\(0, 1fr\)/)
+    expect(styles).toMatch(/\.queue-tray__listwrap\s*\{[^}]*min-height:\s*0/)
+    expect(styles).toMatch(/\.turn-files__listwrap\s*\{[^}]*min-height:\s*0/)
+    expect(styles).toMatch(/\.queue-tray__list\s*\{[^}]*overflow-y:\s*auto/)
+    expect(styles).toMatch(/\.turn-files__list\s*\{[^}]*overflow-y:\s*auto/)
+    // 两段同时在场：共用一个实线外框，段自己的外框与边距归零，两段之间一条虚线分界。
+    const merged = String.raw`\.session-dock:has\(> \.queue-tray\):has\(> \.turn-files\)`
+    expect(styles).toMatch(new RegExp(`${merged}\\s*\\{[^}]*margin:\\s*0 16px 8px[^}]*border:[^;]*solid[^}]*border-radius:\\s*12px`))
+    expect(styles).toMatch(new RegExp(`${merged} > \\.queue-tray,\\s*${merged} > \\.turn-files\\s*\\{[^}]*margin:\\s*0;[^}]*border:\\s*0;[^}]*border-radius:\\s*0`))
+    expect(styles).toMatch(new RegExp(`${merged} > \\.turn-files\\s*\\{\\s*border-top:[^;]*dashed`))
+    // 停靠区的进场动画同样尊重减弱动效。
+    expect(styles).toMatch(/prefers-reduced-motion: reduce\)\s*\{[^}]*\.session-dock, \.queue-tray, \.queue-tray__item\s*\{\s*animation:\s*none/)
   })
 
   it('uses the cool Orbit palette instead of the former yellow parchment palette', () => {
@@ -88,20 +134,35 @@ describe('theme surface contracts', () => {
   })
 
   it('keeps the session roster on the inspector language: one frame, hairlines, accent only for selection', () => {
-    // 行不再自带边框 / 阴影；选中态 = 左缘 2px 信号橙 + 底色；状态色只在 --rail-state 驱动的状态点上。
+    // 行不再自带边框 / 阴影；选中态 = 左缘光刃（亮→深渐变 + --accent-glow 余晖）+ 自左缘晕开的淡橙；
+    // 状态色只在 --rail-state 驱动的状态点上；选中底色与 hover 的中性灰不再共享（区分度的根因约束）。
     expect(styles).toMatch(/\.session-row\s*\{[^}]*background:\s*transparent;\s*border:\s*0;/s)
-    expect(styles).toMatch(/\.session-row::before\s*\{[^}]*width:\s*2px;[^}]*background:\s*var\(--accent\)/s)
-    expect(styles).toMatch(/\.session-row\.is-waiting\s*\{\s*--rail-state:\s*var\(--color-text-success\)/)
-    expect(styles).toMatch(/\.session-row\.is-active\s*\{\s*--rail-state:\s*var\(--color-text-info\)/)
-    expect(styles).toMatch(/\.session-row\.is-attention\s*\{\s*--rail-state:\s*var\(--color-text-warning\)/)
+    expect(styles).toMatch(/\.session-row::before\s*\{[^}]*width:\s*3px;[^}]*background:\s*linear-gradient\(to bottom, var\(--accent-bright\), var\(--accent-deep\)\)[^}]*box-shadow:[^}]*var\(--accent-glow\)/s)
+    expect(styles).toMatch(/\.session-row\.is-selected\s*\{\s*background:\s*linear-gradient\(to right, color-mix\(in srgb, var\(--accent\) 7%, transparent\), transparent\)/)
+    expect(styles).not.toMatch(/\.session-row\.is-selected\s*\{[^}]*var\(--surface-soft\)/)
+    expect(styles).toContain('--accent-glow: light-dark(')
+    // 四色状态灯：待命绿 · 干活琥珀（独立信号色，不是主题橙）· 需关注蓝 · 离线红；分组书签脊同一映射。
+    for (const scope of ['session-row', 'session-group']) {
+      expect(styles).toMatch(new RegExp(`\\.${scope}\\.is-waiting\\s*\\{\\s*--rail-state:\\s*var\\(--color-text-success\\)`))
+      expect(styles).toMatch(new RegExp(`\\.${scope}\\.is-active\\s*\\{\\s*--rail-state:\\s*var\\(--signal-busy\\)`))
+      expect(styles).toMatch(new RegExp(`\\.${scope}\\.is-attention\\s*\\{\\s*--rail-state:\\s*var\\(--color-text-info\\)`))
+      expect(styles).toMatch(new RegExp(`\\.${scope}\\.is-offline\\s*\\{\\s*--rail-state:\\s*var\\(--color-text-danger\\)`))
+    }
+    expect(styles).toContain('--signal-busy: light-dark(')
+    expect(styles).not.toMatch(/--signal-busy:[^;]*var\(--accent/)
+    // 呼吸灯呼吸的是光晕（box-shadow 2 → 4px），灯芯不闪（块内不得出现 opacity）。
+    const pulse = /@keyframes rail-pulse \{([\s\S]*?)\n\}/.exec(styles)?.[1] ?? ''
+    expect(pulse).toContain('box-shadow: 0 0 0 4px')
+    expect(pulse).not.toContain('opacity')
     expect(styles).toMatch(/\.session-list__slot \+ \.session-list__slot\s*\{[^}]*border-top:\s*1px solid var\(--color-border-tertiary\)/)
     // 名册正文有阅读面下限（透明卡片模式下仍可读）；吸顶分组标题实底，滚过的行不会透出来。
     expect(styles).toMatch(/\.session-pane\s*\{[^}]*--rail-reading-opacity:\s*max\(0\.92, var\(--card-opacity\)\)/s)
     expect(styles).toMatch(/\.session-list\s*\{[^}]*var\(--rail-reading-opacity\)/s)
     expect(styles).toMatch(/\.session-group__header\s*\{[^}]*position:\s*sticky[^}]*background:\s*var\(--surface-solid\)/s)
-    // 上下文光环：三档天色；reduced-motion 下脉冲与弧长过渡都关闭。
+    // 上下文光环：三档天色；reduced-motion 下脉冲与弧长过渡都关闭，光刃的生长过渡也直接落位。
     expect(styles).toMatch(/\.session-row__ring\.is-dusk \.session-row__ring-arc\s*\{\s*stroke:\s*var\(--sky-dusk\)/)
     expect(styles).toMatch(/@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\.session-row\.is-active \.session-row__state > i\s*\{\s*animation:\s*none/)
+    expect(styles).toMatch(/@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\.session-row::before[^{]*\{\s*transition:\s*none/)
     expect(styles).not.toContain('.rail-session-card')
     expect(styles).not.toContain('.session-filters')
   })

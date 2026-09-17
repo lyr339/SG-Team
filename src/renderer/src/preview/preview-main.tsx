@@ -6,13 +6,25 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { AccountAutomationRun } from '../../../domain/account-automation'
 import { parseCursorAccountCard } from '../../../domain/cursor-account-card'
-import type { ConversationEntry } from '../../../domain/conversation-entry'
-import { AGENT_AVATAR_IDS, createConfiguredTeamBundle, emptyTeamControlSnapshot } from '../../../domain/team-control'
+import type { ConversationEntry, ProcessBlock } from '../../../domain/conversation-entry'
+import { AGENT_AVATAR_IDS, TEAM_ROLE_TEMPLATES, createConfiguredTeamBundle, emptyTeamControlSnapshot } from '../../../domain/team-control'
 import type { TeamRunStatus } from '../../../domain/team-control'
 import type { LiveProcessState, LiveStatusLineState, SgDesktopApi } from '../../../shared/desktop-api'
 import type { WorkspaceReviewSummary } from '../../../domain/workspace-review'
 import { estimateTurnCostUsd, estimateUsageFromReference, priceForModel, projectUsage, type CursorUsageSnapshot, type UsageTurn } from '../../../domain/cursor-usage'
 import { CURSOR_STORAGE_CATALOG, buildCleanupPlan, type CursorStorageScan } from '../../../domain/cursor-storage-cleanup'
+import {
+  APP_UPDATE_SNOOZE_MS,
+  appUpdateReminderVersion,
+  evaluateUpdateGate,
+  normalizeAppUpdateSettings,
+  type AppUpdateApplyResult,
+  type AppUpdateBackupInfo,
+  type AppUpdateRelease,
+  type AppUpdateSettings,
+  type AppUpdateState,
+  type AppUpdateStatus
+} from '../../../domain/app-update'
 import { formatFileSize } from '../../../shared/format-file-size'
 import { App } from '../App'
 import { applyAppearancePreferences, readAppearancePreferences } from '../appearance-preferences'
@@ -28,6 +40,7 @@ import '../styles.css'
 import '../lobby/lobby.css'
 import '../settings/settings.css'
 import '../settings/stats.css'
+import '../settings/update.css'
 import '../run/run.css'
 import '../controls.css'
 import '../workspace-inspector.css'
@@ -43,8 +56,8 @@ const manualHandoffMode = previewParameters.get('handoff') === '1'
 const offlineSessionsPreviewMode = previewParameters.get('offlineSessions') === '1'
 const messageFormatPreviewMode = previewParameters.get('messageFormat') === '1'
 const requestedRunStatus = previewParameters.get('runStatus')
-// 账号自动化走查场景：?automation=countdown|processing|importing|deleting|done|failed|cancelled
-const automationScene = (['countdown', 'processing', 'importing', 'deleting', 'done', 'failed', 'cancelled'] as const)
+// 账号自动化走查场景：?automation=countdown|processing|hardening-countdown|importing|deleting|cleaning|done|failed|cancelled
+const automationScene = (['countdown', 'processing', 'hardening-countdown', 'importing', 'deleting', 'cleaning', 'done', 'failed', 'cancelled'] as const)
   .find((phase) => phase === previewParameters.get('automation'))
 const previewNow = Date.now()
 const automationSceneRun: AccountAutomationRun | undefined = automationScene ? ({
@@ -53,10 +66,18 @@ const automationSceneRun: AccountAutomationRun | undefined = automationScene ? (
     phase: 'processing', message: '奥仔：正在提交 Session Token 处理…', planId: 'preview-plan', startedAt: previewNow - 12_000,
     handover: { accountId: 'preview-acc-2', label: 'spare@example.com', status: 'preparing', message: '票据已就绪，等待退款完成', startedAt: previewNow - 10_000 }
   },
+  'hardening-countdown': {
+    phase: 'hardening-countdown', message: '奥仔已完成，将在 4s 后加固当前账号（可取消）', remainingSec: 4, planId: 'preview-plan', startedAt: previewNow - 24_000,
+    handover: { accountId: 'preview-acc-2', label: 'spare@example.com', status: 'preparing', message: '票据已就绪，3.5s 后切换', startedAt: previewNow - 10_000 }
+  },
   importing: { phase: 'importing', message: '会话已失效，正在刷新浏览器会话获取新 Token…', planId: 'preview-plan', startedAt: previewNow - 26_000 },
   deleting: {
     phase: 'deleting', message: '奥仔已完成，正在刷新浏览器会话并秒级加固账号…', planId: 'preview-plan', startedAt: previewNow - 31_000,
     handover: { accountId: 'preview-acc-2', label: 'spare@example.com', status: 'switching', message: '等待 Cursor 接收并确认', startedAt: previewNow - 8_000 }
+  },
+  cleaning: {
+    phase: 'cleaning', message: '账号已加固，正在清理浏览器环境并轮换指纹…', planId: 'preview-plan', startedAt: previewNow - 40_000,
+    handover: { accountId: 'preview-acc-2', label: 'spare@example.com', status: 'done', message: 'Cursor 已完成接手', startedAt: previewNow - 12_000, finishedAt: previewNow - 10_000 }
   },
   done: {
     phase: 'done', message: '自动化完成：已处理、账号已加固（浏览器会话内秒级执行）、本地记录已移除', planId: 'preview-plan', startedAt: previewNow - 47_000, finishedAt: previewNow - 5_000,
@@ -128,26 +149,39 @@ if (previewRunStatus && initialTeam.activeRun) {
     blockers: ['Agent MCP 尚未接入全部本轮通道']
   }
 }
-// 运行页独立批次走查：?independent=live|mixed|ended|groups
-//（席位形态：全部待命 / 待命+执行中+离线+待确认 / 已结束 / 会话池里两个协作组 + 一个刚解散的组）。
-const independentScene = (['live', 'mixed', 'ended', 'groups'] as const).find((scene) => scene === previewParameters.get('independent'))
+// 运行页独立批次走查：?independent=live|mixed|spread|ended|groups
+//（席位形态：全部待命 / 待命+执行中+离线+待确认（CH-2 单独配置了另一模型）/ 各席配置分叉、没有多数 /
+//  已结束 / 会话池里两个协作组 + 一个刚解散的组）。
+const independentScene = (['live', 'mixed', 'spread', 'ended', 'groups'] as const).find((scene) => scene === previewParameters.get('independent'))
 if (independentScene && initialTeam.activeRun) {
   const solo = initialTeam.members.find((member) => member.slot.solo === true)!
   const shapes = independentScene === 'live'
     ? ['waiting', 'waiting', 'waiting'] as const
     : independentScene === 'groups'
       ? ['waiting', 'working', 'waiting', 'offline', 'waiting'] as const
-      : ['waiting', 'working', 'offline', 'unconfirmed'] as const
+      : independentScene === 'spread'
+        ? ['waiting', 'waiting', 'working', 'waiting'] as const
+        : ['waiting', 'working', 'offline', 'unconfirmed'] as const
   const status = independentScene === 'ended' ? 'completed' as const : 'running' as const
   const run = { ...initialTeam.activeRun, name: 'wedge-demo · 独立批次 #3', templateId: 'independent-session-v1', status }
   initialTeam.activeRun = run
   initialTeam.runs = [run]
+  // 目录里的 Claude Fable 5（默认参数）：mixed 场景只给 CH-2，spread 场景给 CH-3 / CH-4（2 : 2，没有多数）。
+  const fable = desktopSnapshot.cursorModels?.find((model) => model.modelId === 'claude-fable-5')
+  const fableSelection = fable ? { modelId: fable.modelId, displayName: fable.displayName, parameters: structuredClone(fable.parameters), maxMode: false } : undefined
+  const divergedChannels = independentScene === 'mixed' ? ['2'] : independentScene === 'spread' ? ['3', '4'] : []
   initialTeam.members = shapes.map((shape, index) => {
     const channelId = String(index + 1)
     const base = { channelId, queueDepth: 0, lastSeenAt: previewNow - (index + 1) * 40_000, healthEvidence: [], workingFiles: [] }
     return {
       ...solo,
-      slot: { ...solo.slot, id: `slot:solo-${channelId}`, name: `独立席 ${channelId}`, channelId },
+      slot: {
+        ...solo.slot,
+        id: `slot:solo-${channelId}`,
+        name: `独立席 ${channelId}`,
+        channelId,
+        ...(divergedChannels.includes(channelId) && fableSelection ? { modelSelection: fableSelection } : {})
+      },
       binding: solo.binding ? { ...solo.binding, channelId } : undefined,
       runtime: shape === 'unconfirmed'
         ? undefined
@@ -402,6 +436,95 @@ if (previewParameters.get('queued') === '1') {
   }
   state.desktop.sessions = state.desktop.sessions.map((session) => session.channelId === '2'
     ? { ...session, status: 'running', connectionPhase: 'processing', waiting: false, online: true, deliveryMode: 'queued', queueDepth: 3 }
+    : session)
+}
+// 本轮文件栏走查：?turnfiles=1 —— Agent 正在处理一条消息，已经改了三个文件（Git 已看到）、正在写第四个
+//（Git 还没看到 → 按过程块估算），另有一个与本轮无关的未提交文件不该出现在栏里。可与 ?queued=1 叠加看两条栏。
+// ?turnfiles=previous —— 上一轮的四个编辑已随回复落库，新消息刚被取走、Agent 在想还没动手：栏保住上一轮并标「上一轮」。
+const turnFilesScene = (['1', 'previous'] as const).find((mode) => mode === previewParameters.get('turnfiles'))
+if (turnFilesScene) {
+  const askedAt = previewNow - 4 * 60_000
+  const previousTurn = turnFilesScene === 'previous'
+  const editBlocks = (status: 'done' | 'running'): ProcessBlock[] => [
+    { kind: 'tool', id: 'tf-edit-1', toolName: 'edit_file_v2', toolKind: 'edit', toolCase: 'editToolCall', summary: 'src/domain/team-control.ts', hint: '+18 −20', status: 'done', startedAt: askedAt + 30_000 },
+    { kind: 'tool', id: 'tf-edit-2', toolName: 'edit_file_v2', toolKind: 'edit', toolCase: 'editToolCall', summary: 'src/mcp/index.ts', hint: '+22 −37', status: 'done', startedAt: askedAt + 70_000 },
+    { kind: 'tool', id: 'tf-edit-3', toolName: 'edit_file_v2', toolKind: 'edit', toolCase: 'editToolCall', summary: 'src/application/team-failover-service.ts', hint: '+27 −318', status: 'done', startedAt: askedAt + 120_000 },
+    // &deep=1：再加一条深路径 + 长文件名（新建文件，Git 摘要里是 untracked），走查目录列从头截断、扩展名不截断。
+    ...(previewParameters.get('deep') === '1'
+      ? [{
+          kind: 'tool' as const, id: 'tf-edit-deep', toolName: 'write_file_v2', toolKind: 'write' as const, toolCase: 'writeToolCall',
+          summary: 'src/renderer/src/features/very-long-feature-module-name/components/nested/deeper/TurnFilesBarAccessibilityRegressionHarness.test.tsx',
+          hint: '+164 −0', status: 'done' as const, startedAt: askedAt + 150_000
+        }]
+      : []),
+    { kind: 'tool', id: 'tf-edit-4', toolName: 'edit_file_v2', toolKind: 'edit', toolCase: 'editToolCall', summary: 'src/application/team-handoff-service.ts', hint: '+9 −15', status, startedAt: status === 'running' ? previewNow - 9_000 : askedAt + 150_000 }
+  ]
+  // 过程块按「最近一条已投递用户消息」归属回合：基础夹具里最近 5 分钟的历史（e7–e11，含一条
+  // 与本轮提问同一分钟投递的用户消息）会抢走块的锚点，让本轮只剩打字占位。这一场景只保留提问
+  // 一分钟之前的历史；?queued=1 追加在提问之后的未投递消息照常保留（它们本就不进时间线）。
+  const history = (state.desktop.conversations['2'] ?? []).filter((entry) => (
+    entry.timestamp < askedAt - 60_000 || (entry.role === 'user' && entry.deliveredAt === undefined && entry.timestamp > askedAt)
+  ))
+  state.desktop.conversations = {
+    ...state.desktop.conversations,
+    '2': [
+      ...history.map((entry) => (
+        entry.role === 'user' && entry.deliveredAt === undefined && entry.timestamp < askedAt
+          ? { ...entry, deliveredAt: entry.timestamp + 1_000 }
+          : entry
+      )),
+      {
+        id: 'outbox:turnfiles-1', channelId: '2', role: 'user', source: 'desktop', status: 'complete',
+        timestamp: askedAt, deliveredAt: askedAt + 800,
+        text: '把团队 run 的创建 / 启动路径退役掉：failover 不再接管席位，handoff 在会话池里拒绝角色迁移。'
+      },
+      ...(previousTurn
+        ? [
+            {
+              id: 'reply:turnfiles-1', channelId: '2', role: 'assistant', source: 'cursor', status: 'complete',
+              timestamp: askedAt + 170_000, replyToEntryId: 'outbox:turnfiles-1', turn: 'cursor:preview-turnfiles-turn:virtual:outbox:turnfiles-1',
+              text: '退役完成：`team-control.ts` 收掉了 run 创建 / 启动的状态分支，`team-failover-service.ts` 不再接管席位，`team-handoff-service.ts` 在池 run 里直接拒绝角色迁移；MCP 入口同步删掉两个死参数。typecheck 与相关测试通过。',
+              processBlocks: [
+                { kind: 'thinking', id: 'tf-think', text: '先收 domain 的状态枚举，再删 failover 的接管分支，最后让 handoff 在池 run 里直接拒绝。', status: 'done', durationMs: 6_200, startedAt: askedAt + 2_000 },
+                ...editBlocks('done')
+              ]
+            } satisfies ConversationEntry,
+            {
+              id: 'outbox:turnfiles-2', channelId: '2', role: 'user', source: 'desktop', status: 'complete',
+              timestamp: previewNow - 22_000, deliveredAt: previewNow - 20_000,
+              text: '继续：给 handoff 的拒绝分支补上测试，顺手把 ARCHITECTURE 的记录写了。'
+            } satisfies ConversationEntry
+          ]
+        : [])
+    ]
+  }
+  state.desktop.liveProcess = {
+    ...(state.desktop.liveProcess ?? {}),
+    '2': previousTurn
+      ? {
+          // 新回合刚开始：只有一个还在想的 thinking 块，没有任何编辑 → 文件栏保住上一轮。
+          turn: 'cursor:preview-turnfiles-turn',
+          startedAt: previewNow - 15_000,
+          updatedAt: previewNow - 400,
+          generating: true,
+          blocks: [
+            { kind: 'thinking', id: 'tf-think-2', text: '拒绝分支有两条路径：池 run 内迁移与跨 run 迁移，测试分别覆盖……', status: 'running', startedAt: previewNow - 15_000 }
+          ]
+        }
+      : {
+          turn: 'cursor:preview-turnfiles-turn',
+          startedAt: askedAt + 2_000,
+          updatedAt: previewNow - 600,
+          generating: true,
+          blocks: [
+            { kind: 'thinking', id: 'tf-think', text: '先收 domain 的状态枚举，再删 failover 的接管分支，最后让 handoff 在池 run 里直接拒绝。', status: 'done', durationMs: 6_200, startedAt: askedAt + 2_000 },
+            ...editBlocks('running')
+          ]
+        }
+  }
+  state.desktop.liveAgentResponses = undefined
+  state.desktop.sessions = state.desktop.sessions.map((session) => session.channelId === '2'
+    ? { ...session, status: 'running', connectionPhase: 'processing', waiting: false, online: true, deliveryMode: 'queued', queueDepth: previewParameters.get('queued') === '1' ? 3 : 0 }
     : session)
 }
 // 计划页长清单走查：?plan=long —— 真实颗粒度的 10 项技术任务：多行长文本、路径 token、
@@ -667,6 +790,73 @@ function previewStorageScan(olderThanDays = 90): CursorStorageScan {
   }
 }
 
+/**
+ * 软件更新走查：?update=idle（默认）| up_to_date | available | downloading | downloaded | failed | offline | unsupported。
+ * `available` 场景会让顶栏出现小提醒与齿轮角标；下载在预览里用假进度跑完。
+ */
+const previewUpdateScene = previewParameters.get('update') ?? 'idle'
+const previewUpdateRelease: AppUpdateRelease = {
+  version: '0.3.3',
+  releaseDate: new Date(previewNow - 5 * 3_600_000).toISOString(),
+  releaseName: '拾光 v0.3.3',
+  releaseNotes: '## v0.3.3 更新\n- **软件更新**：设置页新增「软件更新」，Windows 可在应用内下载安装\n- 会话名册分组条改为书签形态\n- 修复用量弹层 Cache Write 行在无该桶模型下消失的问题',
+  sizeBytes: 116_467_543,
+  releaseUrl: 'https://github.com/lyr339/SG-Team/releases/tag/v0.3.3'
+}
+function previewUpdateInitialState(): AppUpdateState {
+  switch (previewUpdateScene) {
+    case 'up_to_date': return { phase: 'up_to_date', checkedAt: previewNow - 12 * 60_000 }
+    case 'available': return { phase: 'available', release: previewUpdateRelease, checkedAt: previewNow - 2 * 60_000 }
+    case 'downloading': return { phase: 'downloading', release: previewUpdateRelease, receivedBytes: 48_300_000, totalBytes: 116_467_543, bytesPerSecond: 3_200_000, startedAt: previewNow - 15_000 }
+    case 'downloaded': return { phase: 'downloaded', release: previewUpdateRelease, filePath: 'C:\\Users\\demo\\AppData\\Local\\shiguang-team-updater\\pending\\ShiGuang-Setup-0.3.3.exe', downloadedAt: previewNow - 60_000 }
+    case 'failed': return { phase: 'failed', step: 'download', message: 'sha512 checksum mismatch, expected 5f2a… got 91c0…', at: previewNow - 30_000, release: previewUpdateRelease }
+    // 网络类检查失败：中性呈现 + 退避重试的说明（真机上直连 GitHub 抽风的常态）。
+    case 'offline': return { phase: 'idle', lastCheckedAt: previewNow - 3 * 60_000, lastError: 'net::ERR_CONNECTION_CLOSED', lastErrorKind: 'network' }
+    case 'unsupported': return { phase: 'unsupported', reason: '此平台的应用内更新尚未提供：请到发布页下载新版后手动替换。' }
+    default: return { phase: 'idle', lastCheckedAt: previewNow - 3 * 3_600_000 }
+  }
+}
+let previewUpdateState: AppUpdateState = previewUpdateInitialState()
+/** 经函数读取以躲开 TS 对模块级 let 的控制流收窄（下载循环里状态会被取消按钮改写）。 */
+const currentPreviewUpdateState = (): AppUpdateState => previewUpdateState
+let previewUpdateSettings: AppUpdateSettings = { autoCheck: true, checkIntervalHours: 6 }
+const updateListeners = new Set<Listener<AppUpdateStatus>>()
+/**
+ * mac 分支的走查参数：?updated=1（Windows `--updated` 提示）| applied | rolled_back | apply_failed（脚本结果横幅）；
+ * ?rollback=1 让卡片底部出现「回滚到 0.3.1」。
+ */
+const previewUpdatedParam = previewParameters.get('updated')
+let previewApplyResult: AppUpdateApplyResult | undefined = previewUpdatedParam === 'applied'
+  ? { status: 'applied', from: '0.3.1', to: '0.3.2', backupDir: '/Users/demo/Library/Application Support/sg-team/updates/backup/0.3.1-1789560000000' }
+  : previewUpdatedParam === 'rolled_back'
+    ? { status: 'rolled_back', from: '0.3.2', to: '0.3.1' }
+    : previewUpdatedParam === 'apply_failed'
+      ? { status: 'apply_failed', from: '0.3.1', to: '0.3.2', reason: 'codesign_failed' }
+      : undefined
+const previewRollback: AppUpdateBackupInfo | undefined = previewParameters.get('rollback') === '1'
+  ? { version: '0.3.1', createdAt: previewNow - 26 * 3_600_000, dir: '/Users/demo/Library/Application Support/sg-team/updates/backup/0.3.1-1789560000000' }
+  : undefined
+function previewUpdateStatus(): AppUpdateStatus {
+  const reminderVersion = appUpdateReminderVersion(previewUpdateState, previewUpdateSettings, Date.now())
+  const release = 'release' in previewUpdateState ? previewUpdateState.release : undefined
+  return {
+    currentVersion: '0.3.2',
+    state: previewUpdateState,
+    settings: previewUpdateSettings,
+    ...(reminderVersion ? { reminderVersion } : {}),
+    launchedAfterUpdate: previewUpdatedParam === '1',
+    ...(previewApplyResult ? { applyResult: previewApplyResult } : {}),
+    ...(previewRollback ? { rollback: previewRollback } : {}),
+    releaseUrl: release?.releaseUrl ?? 'https://github.com/lyr339/SG-Team/releases/tag/v0.3.2'
+  }
+}
+function pushUpdate(next: AppUpdateState = previewUpdateState): AppUpdateStatus {
+  previewUpdateState = next
+  const status = previewUpdateStatus()
+  for (const listener of updateListeners) listener(structuredClone(status))
+  return status
+}
+
 function pushDesktop(): void {
   state.desktop = { ...state.desktop, updatedAt: Date.now() }
   for (const listener of desktopListeners) listener(structuredClone(state.desktop))
@@ -833,8 +1023,6 @@ const api: SgDesktopApi = {
   enableCursorCdp: async () => ({ ok: true, message: 'Cursor 已重启并启用会话创建端口（9333）' }),
   getCursorCdpSettings: async () => ({ autoHealEnabled: false }),
   saveCursorCdpSettings: async (settings) => settings,
-  getSeatRotationSettings: async () => ({ enabled: true, bubbleThreshold: 400 }),
-  saveSeatRotationSettings: async (settings) => settings,
   getCursorUpdatePreferences: async () => ({
     settingsPath: '/Users/demo/Library/Application Support/Cursor/User/settings.json',
     updateMode: undefined,
@@ -875,6 +1063,76 @@ const api: SgDesktopApi = {
   revealCursorStorage: async () => {},
   cancelCdpAutoHealCountdown: async () => {},
   onCdpAutoHealEvent: () => () => {},
+  getAppUpdateStatus: async () => previewUpdateStatus(),
+  checkAppUpdate: async () => {
+    if (previewUpdateState.phase === 'unsupported') return previewUpdateStatus()
+    const release = 'release' in previewUpdateState ? previewUpdateState.release : undefined
+    pushUpdate({ phase: 'checking', startedAt: Date.now(), ...(release ? { release } : {}) })
+    await new Promise((resolve) => setTimeout(resolve, 700))
+    return pushUpdate(previewUpdateScene === 'idle' || previewUpdateScene === 'up_to_date'
+      ? { phase: 'up_to_date', checkedAt: Date.now() }
+      : { phase: 'available', release: previewUpdateRelease, checkedAt: Date.now() })
+  },
+  downloadAppUpdate: async () => {
+    if (previewUpdateState.phase !== 'available') return previewUpdateStatus()
+    const release = previewUpdateState.release
+    const total = release.sizeBytes ?? 100_000_000
+    pushUpdate({ phase: 'downloading', release, receivedBytes: 0, totalBytes: total, startedAt: Date.now() })
+    for (let step = 1; step <= 20; step += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 120))
+      const live = currentPreviewUpdateState()
+      if (live.phase !== 'downloading') return previewUpdateStatus()
+      pushUpdate({ ...live, receivedBytes: Math.round(total * step / 20), bytesPerSecond: 4_800_000 })
+    }
+    return pushUpdate({ phase: 'downloaded', release, filePath: 'C:\\Users\\demo\\AppData\\Local\\shiguang-team-updater\\pending\\ShiGuang-Setup-0.3.3.exe', downloadedAt: Date.now() })
+  },
+  cancelAppUpdateDownload: async () => previewUpdateState.phase === 'downloading'
+    ? pushUpdate({ phase: 'available', release: previewUpdateState.release, checkedAt: Date.now() })
+    : previewUpdateStatus(),
+  installAppUpdate: async ({ confirmed }) => {
+    if (previewUpdateState.phase !== 'downloaded') return { gate: { verdict: 'allow' as const }, status: previewUpdateStatus() }
+    const gate = evaluateUpdateGate({ onlineSeats: state.desktop.sessions.filter((session) => session.online).length, sessionLaunchRunning: false })
+    if (gate.verdict === 'block' || (gate.verdict === 'confirm' && !confirmed)) return { gate, status: previewUpdateStatus() }
+    return { gate, status: pushUpdate({ phase: 'installing', release: previewUpdateState.release, startedAt: Date.now() }) }
+  },
+  rollbackAppUpdate: async ({ confirmed }) => {
+    if (!previewRollback) return { gate: { verdict: 'allow' as const }, status: previewUpdateStatus() }
+    const gate = evaluateUpdateGate({ onlineSeats: state.desktop.sessions.filter((session) => session.online).length, sessionLaunchRunning: false })
+    if (gate.verdict === 'block' || !confirmed) return { gate, status: previewUpdateStatus() }
+    return { gate, status: pushUpdate({ phase: 'rolling_back', targetVersion: previewRollback.version, startedAt: Date.now() }) }
+  },
+  dismissAppUpdateApplyResult: async () => {
+    previewApplyResult = undefined
+    return pushUpdate()
+  },
+  skipAppUpdate: async () => {
+    const release = 'release' in previewUpdateState ? previewUpdateState.release : undefined
+    if (release) previewUpdateSettings = { ...previewUpdateSettings, skippedVersion: release.version }
+    return pushUpdate()
+  },
+  unskipAppUpdate: async () => {
+    const { skippedVersion: _skipped, ...rest } = previewUpdateSettings
+    previewUpdateSettings = rest
+    return pushUpdate()
+  },
+  snoozeAppUpdate: async () => {
+    previewUpdateSettings = { ...previewUpdateSettings, snoozedUntil: Date.now() + APP_UPDATE_SNOOZE_MS }
+    return pushUpdate()
+  },
+  dismissAppUpdateFailure: async () => previewUpdateState.phase === 'failed'
+    ? pushUpdate(previewUpdateState.release
+        ? { phase: 'available', release: previewUpdateState.release, checkedAt: Date.now() }
+        : { phase: 'idle', lastCheckedAt: Date.now() })
+    : previewUpdateStatus(),
+  saveAppUpdateSettings: async (settings) => {
+    previewUpdateSettings = normalizeAppUpdateSettings(settings)
+    return pushUpdate()
+  },
+  openAppUpdateReleasePage: async () => true,
+  onAppUpdateStatus: (listener) => {
+    updateListeners.add(listener)
+    return () => { updateListeners.delete(listener) }
+  },
   getAccountAutomationSettings: async () => ({ enabled: Boolean(automationSceneRun), delaySec: 10, postProcessDelaySec: 10 }),
   saveAccountAutomationSettings: async (settings) => settings,
   getAccountAutomationRun: async () => automationSceneRun ?? { phase: 'idle' as const, message: '', startedAt: 0 },
@@ -1297,6 +1555,25 @@ const api: SgDesktopApi = {
     }
     if (reviewScene === 'error') {
       return { ...base, state: 'error', additions: 0, deletions: 0, files: [], liveUpdates: false, detail: 'git status 退出码 128：fatal: not a git repository (or any of the parent directories)' }
+    }
+    if (turnFilesScene) {
+      // 前三个是本轮改过且 Git 已看到的；App.tsx 是与本轮无关的未提交改动（栏里不该出现）；
+      // 正在写的 team-handoff-service.ts 故意不在这里 → 栏上那一行回退到过程块估算。
+      const files: WorkspaceReviewSummary['files'] = [
+        { path: 'src/domain/team-control.ts', status: 'modified', staged: false, unstaged: true, additions: 18, deletions: 20 },
+        { path: 'src/mcp/index.ts', status: 'modified', staged: false, unstaged: true, additions: 22, deletions: 37 },
+        { path: 'src/application/team-failover-service.ts', status: 'modified', staged: false, unstaged: true, additions: 27, deletions: 318 },
+        ...(previewParameters.get('deep') === '1'
+          ? [{ path: 'src/renderer/src/features/very-long-feature-module-name/components/nested/deeper/TurnFilesBarAccessibilityRegressionHarness.test.tsx', status: 'untracked' as const, staged: false, unstaged: true, additions: 164, deletions: 0 }]
+          : []),
+        { path: 'src/renderer/src/App.tsx', status: 'modified', staged: false, unstaged: true, additions: 3, deletions: 1 }
+      ]
+      return {
+        ...base, state: 'ready',
+        additions: files.reduce((total, file) => total + (file.additions ?? 0), 0),
+        deletions: files.reduce((total, file) => total + (file.deletions ?? 0), 0),
+        files
+      }
     }
     if (reviewScene === 'many') {
       const files: WorkspaceReviewSummary['files'] = [

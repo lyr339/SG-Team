@@ -89,16 +89,8 @@ export class SessionHandoffService {
   /**
    * 用已解析好的来源上下文投递。成员身份迁移（transferMembershipWithContext）在迁移前解析、
    * 迁移成功后才投递：迁移不改写绑定，但失败时不能留下投递副作用，解析失败也不拦迁移。
-   *
-   * `options.holdSessionToken`：显式指定保持位令牌（席位自动轮换：令牌已经换过，现任令牌属于
-   * 新会话，必须用轮换前记下的旧令牌做保持位，才能「旧会话取不到、新会话能取」）。
    */
-  deliverFrom(
-    source: SessionHandoffContext,
-    target: SessionHandoffTarget,
-    note?: string,
-    options: { holdSessionToken?: string } = {}
-  ): SessionHandoffResult {
+  deliverFrom(source: SessionHandoffContext, target: SessionHandoffTarget, note?: string): SessionHandoffResult {
     if (!source.composerId || !source.transcript) {
       throw new Error(`CH-${source.channelId} 尚未绑定 Cursor Composer，找不到它的上下文文档`)
     }
@@ -112,8 +104,7 @@ export class SessionHandoffService {
       throw new Error(`CH-${targetChannelId} 不在当前运行中`)
     }
     const issuedAt = this.now()
-    const explicitHold = target.kind === 'self' ? options.holdSessionToken?.trim() || undefined : undefined
-    const held = explicitHold !== undefined || (target.kind === 'self' && source.holdSupported)
+    const held = target.kind === 'self' && source.holdSupported
     const team = this.ports.team.getSnapshot()
     const recordPath = this.writeRecord(source, issuedAt, team)
     // 接收方是否团队席位按目标通道此刻的角色判断：本会话 = 来源自己的角色；
@@ -134,7 +125,7 @@ export class SessionHandoffService {
     const accepted = this.ports.sessions.sendMessage({
       channelId: targetChannelId,
       text,
-      ...(explicitHold !== undefined ? { holdSessionToken: explicitHold } : held ? { holdUntilNewSession: true } : {})
+      ...(held ? { holdUntilNewSession: true } : {})
     })
     return {
       targetChannelId,

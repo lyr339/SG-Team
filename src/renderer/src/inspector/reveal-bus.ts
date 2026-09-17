@@ -84,7 +84,8 @@ export function revealAfterPaint(viewport: () => HTMLElement | null, target: Rev
   })
 }
 
-function cssEscape(value: string): string {
+/** 属性选择器里的字面值转义（`CSS.escape` 缺席的环境退回只转义引号与反斜杠）。 */
+export function cssEscape(value: string): string {
   return typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
     ? CSS.escape(value)
     : value.replace(/["\\]/g, '\\$&')

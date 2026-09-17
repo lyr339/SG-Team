@@ -30,8 +30,10 @@ import type { AgentLaunchPlan, AgentLaunchRequest } from '../../domain/agent-lau
 import type { SessionWarmupRun } from '../../domain/session-warmup'
 import type { AccountAutomationRun, AccountAutomationSettings } from '../../domain/account-automation'
 import type { CdpAutoHealEvent } from '../../domain/cursor-cdp'
-import { DEFAULT_SEAT_ROTATION_SETTINGS, type SeatRotationSettings } from '../../domain/seat-rotation'
 import type { MessageAttachment } from '../../domain/conversation-entry'
+import type { WorkspaceReviewSummary } from '../../domain/workspace-review'
+import { requestReviewFocus, type ReviewFocusRequest } from './inspector/review-focus-bus'
+import { buildTurnFilesView, sameTurnFilesView, type TurnFilesView } from './turn-files-view'
 import { mergeDesktopSnapshot, snapshotGaps } from './snapshot-sharing'
 import { userFacingErrorMessage } from './error-message'
 import { resolveRuntimeLaunchGate } from './lobby/runtime-account-gate'
@@ -166,8 +168,6 @@ export function App(): React.JSX.Element {
   const [sessionWarmupEnabled, setSessionWarmupEnabled] = useState<boolean>(() => readSessionWarmupEnabled())
   const [accountAutomationSettings, setAccountAutomationSettings] = useState<AccountAutomationSettings>({ enabled: false, delaySec: 30, postProcessDelaySec: 30 })
   const [accountAutomationRun, setAccountAutomationRun] = useState<AccountAutomationRun | undefined>(undefined)
-  // 席位自动轮换设置（结果不在这里：轮换进度与结论投影在会话快照 seatRotation 上）。
-  const [seatRotationSettings, setSeatRotationSettings] = useState<SeatRotationSettings>({ ...DEFAULT_SEAT_ROTATION_SETTINGS })
   // 指纹浏览器窗口列表（账号自动化链的浏览器宿主；用户按当次网络选「代理/直连」窗口。
   // 提供方恒 RoxyBrowser，与平台无关）
   const [bitProfiles, setBitProfiles] = useState<Array<{ id: string; name: string; seq?: number }>>([])
@@ -360,9 +360,6 @@ export function App(): React.JSX.Element {
       .catch(() => {})
     void window.sgDesktop.getAccountAutomationSettings()
       .then(setAccountAutomationSettings)
-      .catch(() => {})
-    void window.sgDesktop.getSeatRotationSettings()
-      .then(setSeatRotationSettings)
       .catch(() => {})
     void window.sgDesktop.getAccountAutomationRun()
       .then((run) => { if (run.phase !== 'idle') setAccountAutomationRun(run) })
@@ -897,6 +894,27 @@ export function App(): React.JSX.Element {
       return { ...current, [workspaceChannelId]: existing ? `${existing}\n\n${text}` : text }
     })
   }, [workspaceChannelId])
+  // 输入区上方的本轮文件栏：右栏审查页已经在算的「本轮」范围 + 它读到的 Git 摘要，投影成一份视图。
+  // 摘要由右栏镜像过来（不重复拉取）；过程流 ~10Hz 推送时按内容等价复用上一份对象，让栏的 memo 边界生效。
+  const [workspaceReviewSummary, setWorkspaceReviewSummary] = useState<WorkspaceReviewSummary>()
+  const workspaceEntries = workspaceChannelId ? snapshot.conversations[workspaceChannelId] : undefined
+  const workspaceLiveProcess = workspaceChannelId ? snapshot.liveProcess?.[workspaceChannelId] : undefined
+  const workspaceWorking = selectedSession?.status === 'running'
+  const turnFilesRef = useRef<TurnFilesView | undefined>(undefined)
+  const workspaceTurnFiles = useMemo(() => {
+    if (!workspaceEntries) return undefined
+    const next = buildTurnFilesView({
+      entries: workspaceEntries,
+      liveProcess: workspaceLiveProcess,
+      summary: workspaceReviewSummary,
+      workspacePath: activeWorkspace?.path,
+      working: workspaceWorking
+    })
+    const reused = sameTurnFilesView(turnFilesRef.current, next) ? turnFilesRef.current! : next
+    turnFilesRef.current = reused
+    return reused
+  }, [activeWorkspace?.path, workspaceEntries, workspaceLiveProcess, workspaceReviewSummary, workspaceWorking])
+  const handleReviewTurnFiles = useCallback((request: ReviewFocusRequest): void => requestReviewFocus(request), [])
   // 「交接」三态：离线入组席位 → 成员身份迁移（可附带上下文）；其余在运行中的席位（独立或入组、
   // 在线或离线）→ 上下文交接；运行已结束 / 非本轮席位 → 禁用并说明原因。
   const handoffEntry = resolveHandoffEntry({ member: selectedMember, run: teamControl.activeRun })
@@ -1318,14 +1336,6 @@ export function App(): React.JSX.Element {
     },
     onCancelAutomation: () => {
       void window.sgDesktop.cancelAccountAutomation().catch(() => {})
-    },
-    seatRotationSettings,
-    onSaveSeatRotationSettings: (settings) => {
-      // 乐观更新：滑杆拖动即时反馈；主进程归一化后的值回写覆盖。
-      setSeatRotationSettings(settings)
-      void window.sgDesktop.saveSeatRotationSettings(settings)
-        .then(setSeatRotationSettings)
-        .catch((reason: unknown) => setTeamNotice(`席位自动轮换设置未保存：${userFacingErrorMessage(reason)}`))
     }
   }
 
@@ -1352,6 +1362,7 @@ export function App(): React.JSX.Element {
           workspacePath={activeWorkspace?.path}
           hidden={!visible}
           onQuoteToComposer={handleWorkspaceQuote}
+          onReviewSummary={setWorkspaceReviewSummary}
           onClose={close}
         />
       ) : undefined}
@@ -1362,10 +1373,12 @@ export function App(): React.JSX.Element {
       cardOpacity={appearance.cardOpacity}
       colorMode={appearance.colorMode}
       accent={appearance.accent}
+      background={appearance.background}
       onModuleChange={changeModule}
       onCardOpacityChange={(cardOpacity) => changeAppearance({ cardOpacity })}
       onColorModeChange={(colorMode) => changeAppearance({ colorMode })}
       onAccentChange={(accent) => changeAppearance({ accent })}
+      onBackgroundChange={(background) => changeAppearance({ background })}
       onOpenProjectConfiguration={() => changeModule('run')}
     >
       {activeModule === 'account' ? (
@@ -1457,6 +1470,8 @@ export function App(): React.JSX.Element {
           liveAgentResponse={snapshot.liveAgentResponses?.[selectedSession.channelId]}
           nativeProcessStream={snapshot.nativeProcessStream}
           questionActions={workspaceQuestionActions}
+          turnFiles={workspaceTurnFiles}
+          onReviewTurnFiles={handleReviewTurnFiles}
           onSend={handleWorkspaceSend}
         />
       ) : (

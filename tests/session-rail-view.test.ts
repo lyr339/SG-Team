@@ -36,11 +36,15 @@ describe('session-rail-view 分组与色调', () => {
     expect(sessionRailGroupOf(facts({ status: 'idle', waiting: false, connectionPhase: '' }))).toBe('attention')
   })
 
-  it('状态词：离线统一「已离线」，其余沿用全局状态文案', () => {
+  it('状态词：离线统一「已离线」，其余沿用全局状态文案；一律三个字', () => {
     expect(sessionRailStateLabel(facts({ online: false, status: 'reviving' }))).toBe('已离线')
-    expect(sessionRailStateLabel(facts({ status: 'running', waiting: false, connectionPhase: 'processing', awaitingUser: true }))).toBe('等待回答')
-    expect(sessionRailStateLabel(facts({ status: 'blocked' }))).toBe('等待拍板')
+    expect(sessionRailStateLabel(facts({ status: 'running', waiting: false, connectionPhase: 'processing', awaitingUser: true }))).toBe('待回答')
+    expect(sessionRailStateLabel(facts({ status: 'blocked' }))).toBe('待拍板')
+    expect(sessionRailStateLabel(facts({ status: 'running', waiting: false, connectionPhase: 'processing' }))).toBe('干活中')
     expect(sessionRailStateLabel(facts())).toBe('待命中')
+    for (const status of ['starting', 'idle', 'running', 'waiting', 'review', 'blocked', 'reviving', 'stopped'] as const) {
+      expect(sessionRailStateLabel(facts({ status, online: true, waiting: status === 'waiting', connectionPhase: 'processing' }))).toHaveLength(3)
+    }
   })
 })
 

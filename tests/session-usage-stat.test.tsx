@@ -47,7 +47,7 @@ it('参考比例的数字在运行、中断及重开面板后完整呈现；标�
   tracker.dispose()
 })
 
-it('无缓存写入桶的厂商（Kimi K3）不渲染 Cache Write 行；三段之和仍为总 token，aria 明细同步省略', async () => {
+it('无缓存写入桶的厂商（Kimi K3）：Cache Write 行保留、行序不变，数值为 — 而不是 0；分段条无该段；其余三段之和仍为总 token', async () => {
   const tracker = new CursorUsageTracker()
   tracker.recordRequestSample({ composerId: 'c', generationId: 'g', modelId: 'kimi-k3', used: 278120, occurredAt: 1 })
   const usage = tracker.getSnapshot().c!
@@ -56,12 +56,30 @@ it('无缓存写入桶的厂商（Kimi K3）不渲染 Cache Write 行；三段�
   await act(async () => host.querySelector<HTMLButtonElement>('.session-usage')!.click())
   const dialog = document.querySelector<HTMLElement>('.usage-popover')!
   const rows = Array.from(dialog.querySelectorAll('li'))
-  expect(rows.map((row) => row.querySelector('span')!.textContent)).toEqual(['Input', 'Output', 'Cache Read'])
-  expect(rows.reduce((sum, row) => sum + Number(row.querySelector('b')!.title.replaceAll(',', '')), 0)).toBe(totalUsageTokens(usage))
+  expect(rows.map((row) => row.querySelector('span')!.textContent)).toEqual(['Input', 'Output', 'Cache Write', 'Cache Read'])
+  const cacheWrite = rows[2]!
+  expect(cacheWrite.classList.contains('is-unavailable')).toBe(true)
+  expect(cacheWrite.querySelector('b')!.textContent).toBe('—')
+  expect(cacheWrite.querySelector('b')!.title).toBe('This model has no separate cache-write bucket')
+  const numeric = rows.filter((row) => row !== cacheWrite)
+  expect(numeric.every((row) => !row.classList.contains('is-unavailable'))).toBe(true)
+  expect(numeric.reduce((sum, row) => sum + Number(row.querySelector('b')!.title.replaceAll(',', '')), 0)).toBe(totalUsageTokens(usage))
   expect(dialog.querySelectorAll('.usage-breakdown-bar i.is-cachewrite')).toHaveLength(0)
-  expect(host.querySelector('.session-usage')!.getAttribute('aria-label')).not.toContain('Cache Write')
+  // aria 明细与列表同形：四项恒在，无桶写 —
+  expect(host.querySelector('.session-usage')!.getAttribute('aria-label')).toContain('Cache Write — · Cache Read')
   expect(dialog.textContent).not.toMatch(/[\u4e00-\u9fff]/)
   tracker.dispose()
+})
+
+it('有缓存写入桶的厂商写入恰为 0 时显示 0（观测值），不是 —', async () => {
+  const usage = { composerId: 'c', turns: 1, inputTokens: 100, outputTokens: 5, cacheReadTokens: 20, cacheWriteTokens: 0, estimatedCostUsd: 0.02, lastTurnAt: 1, pricedModel: 'Claude Fable 5.1', quality: 'exact' as const }
+  await act(async () => root.render(<SessionUsageStat usage={usage} />))
+  await act(async () => host.querySelector<HTMLButtonElement>('.session-usage')!.click())
+  const rows = Array.from(document.querySelectorAll<HTMLElement>('.usage-popover li'))
+  expect(rows.map((row) => row.querySelector('span')!.textContent)).toEqual(['Input', 'Output', 'Cache Write', 'Cache Read'])
+  expect(rows[2]!.classList.contains('is-unavailable')).toBe(false)
+  expect(rows[2]!.querySelector('b')!.textContent).toBe('0')
+  expect(host.querySelector('.session-usage')!.getAttribute('aria-label')).toContain('Cache Write 0 · Cache Read')
 })
 
 it('空状态及精确零输出仍为正常 UI；不渲染中文或结算说明', async () => {

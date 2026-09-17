@@ -36,14 +36,14 @@ const INSPECTOR_WIDTH_KEY = 'sg-team.layout:v1:shell.workspace-inspector'
 const REVIEW_SCOPE_KEY = 'sg-team.inspector:review-scope'
 const APPEARANCE_KEY = 'shiguang.appearance.v1'
 
-/** 基础存储：右栏展开、CH-2 会话、默认宽度；accent 为主题色预设 id（缺省拾光橙）。 */
-function baseStorage({ tab = 'review', width = 420, cardOpacity = 0.9, colorMode = 'light', scope = 'uncommitted', accent = 'sg-orange' } = {}) {
+/** 基础存储：右栏展开、CH-2 会话、默认宽度；accent / background 为主题色 / 背景预设 id（缺省拾光橙 / 折光）。 */
+function baseStorage({ tab = 'review', width = 420, cardOpacity = 0.9, colorMode = 'light', scope = 'uncommitted', accent = 'sg-orange', background = 'refraction' } = {}) {
   return {
     [INSPECTOR_OPEN_KEY]: '1',
     [INSPECTOR_TAB_KEY]: tab,
     [INSPECTOR_WIDTH_KEY]: JSON.stringify([width]),
     [REVIEW_SCOPE_KEY]: scope,
-    [APPEARANCE_KEY]: JSON.stringify({ cardOpacity, colorMode, accent }),
+    [APPEARANCE_KEY]: JSON.stringify({ cardOpacity, colorMode, accent, background }),
     'shiguang.lastSessionChannel.v1': '2'
   }
 }
@@ -218,7 +218,7 @@ const scenes = [
     actions: [{
       label: 'grid-template-columns 采样（页面内计时，0/60/120/180/320ms）',
       probe: `new Promise((done) => {
-        const dock = document.querySelector('.workspace-dock')
+        const dock = document.querySelector('.session-dock')
         const read = () => getComputedStyle(dock).gridTemplateColumns
         const samples = []
         document.querySelector('[aria-label="展开右侧工作区"]').click()
@@ -243,7 +243,38 @@ const scenes = [
     { name: `run-independent-ended-${suffix}`, run: true, query: 'independent=ended', colorScheme: colorMode, storage: baseStorage({ colorMode }) },
     // 会话池 · 协作组（阶段 1 最小 UI）：两个 active 组（一个 attention）+ 一个刚解散的组 + 一个独立席位；以及打开建组抽屉。
     { name: `run-independent-groups-${suffix}`, run: true, query: 'independent=groups', colorScheme: colorMode, storage: baseStorage({ colorMode }) },
-    { name: `run-independent-groups-drawer-${suffix}`, run: true, query: 'independent=groups', colorScheme: colorMode, storage: baseStorage({ colorMode }), actions: [{ click: '.run-groups > .run-section-head .run-link' }, { wait: 300 }] }
+    { name: `run-independent-groups-drawer-${suffix}`, run: true, query: 'independent=groups', colorScheme: colorMode, storage: baseStorage({ colorMode }), actions: [{ click: '.run-groups > .run-section-head .run-link' }, { wait: 300 }] },
+    // 会话配置（批次属性）：配置中点「修改」打开的统一弹层 / 换成 Claude Fable 5 并应用后的行内光晕（约 300ms 处）/
+    // 单席弹层页脚勾上「同时应用到其余席位」/ 单席改动后的「单独配置」标与批次行的注脚；运行中各席分叉、没有多数时的分布 + 「统一」。
+    { name: `run-batch-config-dialog-${suffix}`, run: true, query: 'setup=1', colorScheme: colorMode, storage: baseStorage({ colorMode }), clip: null, actions: [{ click: '.run-mode-switch button[aria-checked="false"]' }, { wait: 300 }, { click: '.run-batch-config__action' }, { wait: 350 }] },
+    {
+      name: `run-batch-config-applied-${suffix}`, run: true, query: 'setup=1', colorScheme: colorMode, storage: baseStorage({ colorMode }),
+      actions: [
+        { click: '.run-mode-switch button[aria-checked="false"]' }, { wait: 300 },
+        { click: '.run-batch-config__action' }, { wait: 300 },
+        { click: '.cursor-model-dialog .menu-select__button' }, { wait: 200 },
+        { eval: `[...document.querySelectorAll('.menu-select__menu [role="option"] button')].find((button) => button.textContent.includes('Claude Fable 5'))?.click()` }, { wait: 200 },
+        { eval: `[...document.querySelectorAll('.cursor-model-dialog footer button')].find((button) => button.textContent.startsWith('应用到'))?.click()` }, { wait: 300 }
+      ]
+    },
+    {
+      name: `run-seat-dialog-sync-${suffix}`, run: true, query: 'setup=1', colorScheme: colorMode, storage: baseStorage({ colorMode }), clip: null,
+      actions: [
+        { click: '.run-mode-switch button[aria-checked="false"]' }, { wait: 300 },
+        { click: 'button[aria-label="配置 CH-2 会话"]' }, { wait: 300 },
+        { click: '.cursor-model-dialog footer .toggle-switch' }, { wait: 250 }
+      ]
+    },
+    {
+      name: `run-seat-override-${suffix}`, run: true, query: 'setup=1', colorScheme: colorMode, storage: baseStorage({ colorMode }),
+      actions: [
+        { click: '.run-mode-switch button[aria-checked="false"]' }, { wait: 300 },
+        { click: 'button[aria-label="配置 CH-2 会话"]' }, { wait: 300 },
+        { click: 'button[aria-label="CH-2 弹层Fast Off"]' }, { wait: 150 },
+        { eval: `[...document.querySelectorAll('.cursor-model-dialog footer button')].find((button) => button.textContent === '保存')?.click()` }, { wait: 500 }
+      ]
+    },
+    { name: `run-independent-spread-${suffix}`, run: true, query: 'independent=spread', colorScheme: colorMode, storage: baseStorage({ colorMode }) }
   ]),
   // 切换模式的确认面（团队 → 独立，仍有在线席位）。
   { name: 'run-switch-sheet', run: true, colorScheme: 'light', storage: baseStorage(), actions: [{ click: '.run-mode-switch button[aria-checked="false"]' }, { wait: 300 }] },
@@ -258,6 +289,16 @@ const scenes = [
     { name: `run-independent-mixed-w${width}`, run: true, width, height: 820, query: 'independent=mixed', colorScheme: 'dark', storage: baseStorage({ colorMode: 'dark' }), clip: null }
   ]),
   { name: 'run-start-independent-w600', run: true, width: 600, height: 900, query: 'setup=1', colorScheme: 'light', storage: baseStorage(), clip: null, actions: [{ click: '.run-mode-switch button[aria-checked="false"]' }, { wait: 300 }] },
+  // 窄窗里的「单独配置」标：席位行折成两行后，标与运行态徽标仍在同一行、不挤掉模型摘要。
+  {
+    name: 'run-seat-override-w600', run: true, width: 600, height: 1400, query: 'setup=1', colorScheme: 'light', storage: baseStorage(), clip: '.run-seats',
+    actions: [
+      { click: '.run-mode-switch button[aria-checked="false"]' }, { wait: 300 },
+      { click: 'button[aria-label="配置 CH-2 会话"]' }, { wait: 300 },
+      { click: 'button[aria-label="CH-2 弹层Fast Off"]' }, { wait: 150 },
+      { eval: `[...document.querySelectorAll('.cursor-model-dialog footer button')].find((button) => button.textContent === '保存')?.click()` }, { wait: 500 }
+    ]
+  },
   { name: 'run-compose-w720', run: true, width: 720, height: 900, colorScheme: 'light', storage: baseStorage(), clip: null, actions: [{ click: '.run-mode-switch button[aria-checked="false"]' }, { wait: 300 }, { click: '.run-sheet__confirm' }, { wait: 400 }] },
   // 头部控件位置守恒：切换模式 → 确认 → 进入配置态，分段控件、两个动作按钮和头部高度必须一个像素都不动。
   {
@@ -299,6 +340,13 @@ const scenes = [
     ['light', 'dark'].map(colorScheme => ({
       name: `settings-${group}-${colorScheme}`, hash: `account:${group}`,
       width: 1440, height: 900, colorScheme, storage: baseStorage({ colorMode: colorScheme }), clip: null
+    }))
+  ),
+  // 自动化运行卡：每个相位一张整页 + 一张卡片特写（空闲态已在 settings-automation-* 覆盖）。
+  ...['countdown', 'processing', 'hardening-countdown', 'importing', 'deleting', 'cleaning', 'done', 'failed', 'cancelled'].flatMap(phase =>
+    ['light', 'dark'].map(colorScheme => ({
+      name: `settings-automation-run-${phase}-${colorScheme}`, hash: 'account:automation', query: `automation=${phase}`,
+      width: 1440, height: 900, colorScheme, storage: baseStorage({ colorMode: colorScheme }), clip: '.automation-run'
     }))
   ),
   ...['light', 'dark'].flatMap(colorMode => [1180, 1440, 380].map(width => ({
@@ -354,6 +402,16 @@ const scenes = [
     storage: baseStorage({ colorMode: 'dark', accent: 'luoshen-violet' }), clip: null,
     actions: [{ wait: 250 }, { click: '.stats-spectrum__segment:nth-child(2)' }, { wait: 300 }]
   },
+  // 背景预设：外观弹层的缩略卡行（极光选中），以及三套非默认背景在会话页上的整页效果（浅 / 深）。
+  ...['light', 'dark'].map(colorMode => ({
+    name: `appearance-background-popover-${colorMode}`, width: 1440, height: 900, colorScheme: colorMode,
+    storage: baseStorage({ colorMode, background: 'aurora' }), clip: '.appearance-popover',
+    actions: [{ wait: 250 }, { click: '.appearance-button' }, { wait: 250 }]
+  })),
+  ...['aurora', 'mesh', 'prism'].flatMap(background => ['light', 'dark'].map(colorMode => ({
+    name: `background-${background}-${colorMode}`, width: 1440, height: 900, colorScheme: colorMode,
+    storage: baseStorage({ colorMode, background }), clip: null
+  }))),
   { name: 'settings-maintenance-compatible-pump', hash: 'account:maintenance', query: 'pump=external', width: 1440, height: 900, colorScheme: 'dark', storage: baseStorage({ colorMode: 'dark' }), clip: null },
   { name: 'settings-maintenance-missing-pump', hash: 'account:maintenance', query: 'pump=missing', width: 1440, height: 900, colorScheme: 'light', storage: baseStorage({ colorMode: 'light' }), clip: null },
   // 存储清理：Cursor 已退出（全部可清，默认预选含缓存/日志；高窗一次看全八项）、勾上对话历史后的
@@ -364,6 +422,133 @@ const scenes = [
     actions: [{ wait: 600 }, { click: '[data-item="chat-history"] input[type="checkbox"]' }, { click: '.storage-cleanup__button.is-primary' }, { wait: 120 }]
   },
   { name: 'settings-cleanup-empty-dark', hash: 'account:cleanup', query: 'cleanup=empty', width: 1440, height: 900, colorScheme: 'dark', storage: baseStorage({ colorMode: 'dark' }), clip: null },
+  // 软件更新（手动组件）：状态卡的每个相位（?update=…）× 深浅色；已就绪时点「安装并重启」出现门禁确认块；
+  // 有新版时会话页右下角的小提醒框与齿轮角标（geometry probe：不遮挡输入框、齿轮上有角标）。
+  ...['idle', 'up_to_date', 'available', 'downloading', 'downloaded', 'failed', 'offline', 'unsupported'].flatMap(phase =>
+    ['light', 'dark'].map(colorScheme => ({
+      name: `settings-update-${phase.replaceAll('_', '-')}-${colorScheme}`, hash: 'account:update', query: `update=${phase}`,
+      width: 1440, height: 900, colorScheme, storage: baseStorage({ colorMode: colorScheme }), clip: null,
+      // 一行设置的几何：没有圆点、没有内卡 / 英雄行 / 大号数字；行直接住在区块正文里，标签字号与维护页的行一致；
+      // 操作在文案右侧且不与文案重叠、不出正文、按钮不折行；胶囊（如有）在区块头里、单行。
+      actions: [{ wait: 200 }, { label: '版本状态行', probe: `(() => {
+        if (document.querySelector('.app-update__dot, .app-update__card, .app-update__hero, .app-update__number, .app-update__eyebrow')) throw new Error('版本状态不该再有圆点 / 内卡 / 英雄行 / 大号数字')
+        const row = document.querySelector('.app-update__row')
+        if (!row || !row.classList.contains('settings-row')) throw new Error('版本状态不是 settings-row')
+        const body = row.closest('.settings-section__body').getBoundingClientRect()
+        const copy = row.querySelector('.settings-row__copy').getBoundingClientRect()
+        const title = row.querySelector('.app-update__title')
+        if (!title || !title.textContent.trim()) throw new Error('状态行缺标签')
+        const titleSize = parseFloat(getComputedStyle(title).fontSize)
+        if (titleSize > 14) throw new Error('标签字号过大（又成英雄行了）：' + titleSize)
+        const actions = row.querySelector('.app-update__actions')
+        if (actions) {
+          const box = actions.getBoundingClientRect()
+          if (box.left < copy.right - 1) throw new Error('操作与文案横向重叠')
+          if (box.right > body.right + 1 || box.left < body.left - 1) throw new Error('操作出了区块正文')
+          for (const button of actions.querySelectorAll('button')) {
+            if (button.getBoundingClientRect().height > 34) throw new Error('操作按钮换行了：' + button.textContent)
+          }
+        }
+        for (const divided of document.querySelectorAll('.app-update .settings-row--divided')) {
+          const box = divided.getBoundingClientRect()
+          if (box.left < body.left - 1 || box.right > body.right + 1) throw new Error('分隔行溢出区块正文')
+        }
+        const badge = document.querySelector('.app-update__badge')
+        if (badge) {
+          const head = badge.closest('.settings-section__head').getBoundingClientRect()
+          const box = badge.getBoundingClientRect()
+          if (box.top < head.top || box.bottom > head.bottom) throw new Error('胶囊出了区块头')
+          if (box.height > 22) throw new Error('胶囊折行了：' + badge.textContent)
+        }
+        return { title: title.textContent, badge: badge ? badge.textContent : null, actions: actions ? actions.querySelectorAll('button').length : 0, rows: document.querySelectorAll('.app-update .settings-row').length }
+      })()` }]
+    }))
+  ),
+  {
+    name: 'settings-update-confirm-light', hash: 'account:update', query: 'update=downloaded', width: 1440, height: 900, colorScheme: 'light', storage: baseStorage({ colorMode: 'light' }), clip: '.app-update',
+    actions: [{ wait: 200 }, { click: '.app-update__button.is-primary' }, { wait: 200 }, { label: '门禁确认块', probe: `(() => {
+      const confirm = document.querySelector('.app-update__confirm')
+      if (!confirm) throw new Error('未出现门禁确认块')
+      if (!confirm.textContent.includes('席位在线')) throw new Error('确认文案缺少在线席位后果')
+      if (document.querySelectorAll('.app-update__row .app-update__actions').length) throw new Error('确认块出现时普通操作按钮应收起')
+      if (document.querySelector('.app-update__dot, .app-update__hero, .app-update__number')) throw new Error('版本状态不该再有圆点 / 英雄行')
+      const title = document.querySelector('.app-update__title')?.textContent
+      if (title !== '新版本 0.3.3') throw new Error('确认时标签应仍是新版本：' + title)
+      const row = document.querySelector('.app-update__row').getBoundingClientRect()
+      if (confirm.getBoundingClientRect().top < row.bottom - 1) throw new Error('确认块应在状态行之下')
+      // 打开它的按钮已经卸载：真浏览器里焦点必须落在确认块的主按钮上，否则会掉回 body。
+      const primary = confirm.querySelector('.app-update__button.is-primary')
+      if (document.activeElement !== primary) throw new Error('确认块打开后焦点应在主按钮上，实际在：' + document.activeElement.tagName)
+      if (confirm.classList.contains('is-danger') || primary.classList.contains('is-danger')) throw new Error('装个新版不是破坏性操作，不该用危险色')
+      return { text: confirm.textContent.slice(0, 60), title, focused: primary.textContent }
+    })()` }]
+  },
+  // 自定义更新源展开：提示、镜像预设胶囊、输入 + 保存一行；点预设只填入输入框（保存按钮亮起、胶囊不亮）。
+  ...['light', 'dark'].map(colorScheme => ({
+    name: `settings-update-advanced-${colorScheme}`, hash: 'account:update', query: 'update=idle', width: 1440, height: 900, colorScheme, storage: baseStorage({ colorMode: colorScheme }), clip: '.app-update__settings',
+    actions: [{ wait: 200 }, { click: '.app-update__advanced > summary' }, { wait: 200 }, { click: '.app-update__preset' }, { wait: 100 }, { label: '自定义源排版', probe: `(() => {
+      const details = document.querySelector('.app-update__advanced')
+      if (!details?.open) throw new Error('点 summary 后未展开')
+      const body = details.closest('.settings-section__body').getBoundingClientRect()
+      const feed = document.querySelector('.app-update__feed').getBoundingClientRect()
+      const input = document.querySelector('.app-update__feed-input')
+      const save = [...document.querySelectorAll('.app-update__feed button')].find((node) => node.textContent === '保存')
+      if (feed.right > body.right + 1 || feed.left < body.left - 1) throw new Error('输入行溢出区块正文')
+      if (Math.abs(input.getBoundingClientRect().height - save.getBoundingClientRect().height) > 1) throw new Error('输入框与保存按钮不等高')
+      if (!input.value.startsWith('https://gh-proxy.com/')) throw new Error('点预设后输入框未填入镜像地址')
+      if (save.disabled) throw new Error('填入预设后保存按钮应可点')
+      if (document.querySelector('.app-update__preset').classList.contains('is-active')) throw new Error('未保存时胶囊不该点亮')
+      const chip = document.querySelector('.app-update__preset').getBoundingClientRect()
+      const line = document.querySelector('.app-update__feed-presets').getBoundingClientRect()
+      if (chip.top < line.top - 1 || chip.bottom > line.bottom + 1) throw new Error('预设胶囊撑破了所在行')
+      return { inputWidth: Math.round(input.getBoundingClientRect().width), chipHeight: Math.round(chip.height) }
+    })()` }]
+  })),
+  // mac 分支：辅助脚本结果横幅（applied 绿 / apply_failed 红 alert）与回滚脚注 → 确认块（含数据回退警告）。
+  { name: 'settings-update-applied-light', hash: 'account:update', query: 'update=idle&updated=applied', width: 1440, height: 900, colorScheme: 'light', storage: baseStorage({ colorMode: 'light' }), clip: '.app-update' },
+  { name: 'settings-update-apply-failed-dark', hash: 'account:update', query: 'update=idle&updated=apply_failed', width: 1440, height: 900, colorScheme: 'dark', storage: baseStorage({ colorMode: 'dark' }), clip: '.app-update' },
+  {
+    name: 'settings-update-rollback-confirm-light', hash: 'account:update', query: 'update=idle&rollback=1', width: 1440, height: 900, colorScheme: 'light', storage: baseStorage({ colorMode: 'light' }), clip: '.app-update',
+    actions: [{ wait: 200 }, { label: '备份行', probe: `(() => {
+      const row = document.querySelector('.app-update__rollback')
+      if (!row || !row.classList.contains('settings-row--divided')) throw new Error('备份应是 hairline 之下独立的一行设置')
+      const copy = row.querySelector('.settings-row__copy').getBoundingClientRect()
+      const button = row.querySelector('button').getBoundingClientRect()
+      if (button.left < copy.right - 1) throw new Error('回滚按钮与说明横向重叠')
+      const status = document.querySelector('.app-update__row').getBoundingClientRect()
+      if (row.getBoundingClientRect().top < status.bottom - 1) throw new Error('备份行应在状态行之下')
+      return { text: row.textContent.slice(0, 40) }
+    })()` }, { click: '.app-update__rollback button' }, { wait: 200 }, { label: '回滚确认块', probe: `(() => {
+      const confirm = document.querySelector('.app-update__confirm')
+      if (!confirm) throw new Error('点击回滚后未出现确认块')
+      if (!confirm.textContent.includes('回滚会退出拾光')) throw new Error('确认块缺少数据回退警告')
+      if (document.querySelector('.app-update__rollback')) throw new Error('确认块出现时备份行应收起')
+      // 回滚会用旧库快照覆盖当前库：确认块与主按钮都必须是危险色，跟「安装新版」那块一眼分得开。
+      const primary = confirm.querySelector('.app-update__button.is-primary')
+      if (!confirm.classList.contains('is-danger')) throw new Error('回滚确认块应走危险色')
+      if (!primary.classList.contains('is-danger')) throw new Error('回滚的主按钮应走危险色')
+      if (document.activeElement !== primary) throw new Error('确认块打开后焦点应在主按钮上，实际在：' + document.activeElement.tagName)
+      return { text: confirm.textContent.slice(0, 60), background: getComputedStyle(confirm).backgroundColor, focused: primary.textContent }
+    })()` }]
+  },
+  ...['light', 'dark'].map(colorScheme => ({
+    name: `update-reminder-${colorScheme}`, query: 'update=available', width: 1440, height: 900, colorScheme, storage: baseStorage({ colorMode: colorScheme }), clip: null,
+    actions: [{ wait: 300 }, { label: '小提醒框几何', probe: `(() => {
+      const toast = document.querySelector('.update-reminder')
+      if (!toast) throw new Error('有新版时未出现小提醒框')
+      const box = toast.getBoundingClientRect()
+      if (box.width > 440) throw new Error('小提醒框过宽：' + box.width)
+      if (box.right > window.innerWidth || box.bottom > window.innerHeight) throw new Error('小提醒框溢出视口')
+      const composer = document.querySelector('.composer textarea, .composer-workbench textarea, textarea')
+      if (composer) {
+        const c = composer.getBoundingClientRect()
+        if (box.left < c.right && box.right > c.left && box.top < c.bottom && box.bottom > c.top) throw new Error('小提醒框遮住了输入框')
+      }
+      if (!document.querySelector('.account-button__dot')) throw new Error('齿轮上没有新版角标')
+      if (document.activeElement === toast || toast.contains(document.activeElement)) throw new Error('小提醒框不应抢焦点')
+      return { width: Math.round(box.width), height: Math.round(box.height) }
+    })()` }]
+  })),
   { name: 'account-page', hash: 'account', width: 1440, height: 900, colorScheme: 'light', storage: baseStorage(), clip: null },
 
   // ---------- 会话侧栏（名册）：右栏收起，特写裁 .session-pane ----------
@@ -432,12 +617,64 @@ const scenes = [
   {
     name: 'sessions-rail-collapsing', rail: true, query: 'sessions=many', colorScheme: 'light', storage: railStorage(), clip: null,
     actions: [{
-      label: '分组折叠 grid-template-rows 采样（0/60/120/200/320ms）',
-      probe: `new Promise((done) => {
+      label: '分组折叠：列表 grid-template-rows 采样，组条几何恒定、被点组条原地不动（0/60/120/200/320ms）',
+      probe: `new Promise((done, fail) => {
         const samples = []
-        document.querySelector('.session-group.is-waiting .session-group__header').click()
+        const list = document.querySelector('.session-list')
+        const header = document.querySelector('.session-group.is-waiting .session-group__header')
         const slot = () => document.querySelector('.session-group.is-waiting .inspector-collapsible')
-        for (const at of [0, 60, 120, 200, 320]) setTimeout(() => { samples.push(at + 'ms ' + getComputedStyle(slot()).gridTemplateRows); if (at === 320) done(samples) }, at)
+        const headerTop = () => header.getBoundingClientRect().top - list.getBoundingClientRect().top
+        const top0 = headerTop()
+        header.click()
+        for (const at of [0, 60, 120, 200, 320]) setTimeout(() => {
+          const rect = header.getBoundingClientRect()
+          samples.push(at + 'ms rows=' + getComputedStyle(slot()).gridTemplateRows + ' header=' + rect.height.toFixed(1) + 'px top=' + headerTop().toFixed(1))
+          if (Math.abs(rect.height - 32) > 0.5) return fail(new Error('组条高度在折叠中变化: ' + rect.height))
+          if (Math.abs(headerTop() - top0) > 0.5) return fail(new Error('未滚动时被点的组条不该移动: ' + headerTop() + ' vs ' + top0))
+          if (at === 320) {
+            if (getComputedStyle(slot()).gridTemplateRows !== '0px') return fail(new Error('折叠未收口: ' + getComputedStyle(slot()).gridTemplateRows))
+            if (!slot().querySelector('.session-row')) return fail(new Error('折叠后行被卸载（应 keepMounted）'))
+            done(samples)
+          }
+        }, at)
+      })`
+    }, { wait: 40 }]
+  },
+  {
+    // 滚动后折叠被钉住的组：scrollTop 与列表收缩同步缓动到终态，组条不飞走、不跳格。
+    name: 'sessions-rail-collapse-anchored', rail: true, width: 1180, height: 620, query: 'sessions=many', colorScheme: 'light', storage: railStorage(), clip: null,
+    actions: [{
+      label: '钉住的组条折叠：滚动锚定采样（0/60/120/200/320ms）',
+      probe: `new Promise((done, fail) => {
+        const list = document.querySelector('.session-list')
+        const section = document.querySelector('.session-group.is-attention')
+        const header = section.querySelector('.session-group__header')
+        const body = section.querySelector('.inspector-collapsible')
+        list.scrollTop = section.offsetTop + 60
+        requestAnimationFrame(() => {
+          const start = list.scrollTop
+          if (start <= section.offsetTop) return fail(new Error('场景前提不成立：组条未被钉住 ' + start + ' ≤ ' + section.offsetTop))
+          const nextMax = Math.max(0, list.scrollHeight - body.getBoundingClientRect().height - list.clientHeight)
+          const expected = Math.max(0, Math.min(start, nextMax, section.offsetTop))
+          const headerTop = () => header.getBoundingClientRect().top - list.getBoundingClientRect().top
+          const samples = []
+          let previousTop = headerTop()
+          header.click()
+          for (const at of [0, 60, 120, 200, 320]) setTimeout(() => {
+            const top = headerTop()
+            const rect = header.getBoundingClientRect()
+            samples.push(at + 'ms scrollTop=' + list.scrollTop.toFixed(1) + ' headerTop=' + top.toFixed(1))
+            if (Math.abs(rect.height - 32) > 0.5) return fail(new Error('组条高度变化: ' + rect.height))
+            if (top < -0.5 || rect.bottom > list.getBoundingClientRect().bottom + 0.5) return fail(new Error('被点的组条被推出可视区: top=' + top))
+            if (top < previousTop - 0.5) return fail(new Error('组条反向移动（先下后上 / 先上后下）: ' + previousTop + ' → ' + top))
+            if (top - previousTop > 15) return fail(new Error('组条单帧跳格 ' + (top - previousTop).toFixed(1) + 'px'))
+            previousTop = top
+            if (at === 320) {
+              if (Math.abs(list.scrollTop - expected) > 1) return fail(new Error('终态 scrollTop ' + list.scrollTop + ' ≠ 预期 ' + expected))
+              done(samples)
+            }
+          }, at)
+        })
       })`
     }, { wait: 40 }]
   },
@@ -560,12 +797,17 @@ const scenes = [
           if (!tray || !timeline || !composer) return { found: false }
           const trayBox = tray.getBoundingClientRect()
           const composerBox = composer.getBoundingClientRect()
+          // 基础夹具的实时过程里有两条编辑 → 文件栏同在：外框在停靠区上，托盘自己缩在框内 1px 边框之内。
+          const dock = tray.closest('.session-dock')
+          const frame = dock && dock.querySelector(':scope > .turn-files') ? dock : tray
+          const frameBox = frame.getBoundingClientRect()
           const bubbles = Array.from(document.querySelectorAll('.chat-row--mine')).map((row) => row.textContent ?? '')
           return {
             found: true,
             belowTimeline: trayBox.top >= timeline.getBoundingClientRect().bottom - 1,
             aboveComposer: trayBox.bottom <= composerBox.top + 1,
-            sameWidthAsComposer: Math.abs(trayBox.left - composerBox.left) < 1 && Math.abs(trayBox.right - composerBox.right) < 1,
+            merged: frame !== tray,
+            sameWidthAsComposer: Math.abs(frameBox.left - composerBox.left) < 1 && Math.abs(frameBox.right - composerBox.right) < 1,
             depth: tray.getAttribute('data-queue-depth'),
             items: tray.querySelectorAll('.queue-tray__item').length,
             heldItems: tray.querySelectorAll('.queue-tray__item.is-held').length,
@@ -580,6 +822,203 @@ const scenes = [
   {
     name: 'session-queue-tray-collapsed', width: 1440, height: 900, colorScheme: 'light', query: 'queued=1', storage: railStorage(), clip: '.queue-tray',
     actions: [{ click: '.queue-tray__head' }, { wait: 200 }]
+  },
+  // 本轮文件栏：Agent 改了三个文件（Git 已看到）、正在写第四个（按过程块估算），与本轮无关的未提交文件不出现。
+  // 探针核对：栏在时间线之下、输入区之上、与输入区同宽；四行、合计、估算标记、转圈、审查入口；无关文件缺席。
+  ...['light', 'dark'].map((colorMode) => ({
+    name: `session-turn-files-${colorMode}`, width: 1440, height: 900, colorScheme: colorMode, query: 'turnfiles=1',
+    storage: railStorage({ colorMode }), clip: null,
+    actions: [
+      { wait: 400 },
+      {
+        label: '文件栏结构',
+        probe: `(() => {
+          const bar = document.querySelector('.turn-files')
+          const timeline = document.querySelector('.workspace-timeline-wrap')
+          const composer = document.querySelector('.workspace-composer')
+          if (!bar || !timeline || !composer) return { found: false }
+          const barBox = bar.getBoundingClientRect()
+          const composerBox = composer.getBoundingClientRect()
+          const rows = Array.from(bar.querySelectorAll('.turn-files__item')).map((row) => ({
+            path: row.getAttribute('data-path'),
+            counts: row.querySelector('.turn-files__counts')?.textContent ?? '',
+            estimated: row.classList.contains('is-estimated')
+          }))
+          return {
+            found: true,
+            belowTimeline: barBox.top >= timeline.getBoundingClientRect().bottom - 1,
+            aboveComposer: barBox.bottom <= composerBox.top + 1,
+            sameWidthAsComposer: Math.abs(barBox.left - composerBox.left) < 1 && Math.abs(barBox.right - composerBox.right) < 1,
+            headHeight: Math.round(bar.querySelector('.turn-files__head').getBoundingClientRect().height),
+            count: bar.getAttribute('data-file-count'),
+            title: bar.querySelector('.turn-files__title')?.textContent ?? '',
+            totals: bar.querySelector('.turn-files__totals')?.textContent ?? '',
+            spinner: Boolean(bar.querySelector('.turn-files__spinner')),
+            review: bar.querySelector('.turn-files__review')?.textContent ?? '',
+            rows,
+            unrelatedAbsent: !rows.some((row) => row.path.endsWith('App.tsx')),
+            noStop: !/Stop|中止/.test(bar.textContent ?? '')
+          }
+        })()`
+      }
+    ]
+  })),
+  {
+    name: 'session-turn-files-collapsed', width: 1440, height: 900, colorScheme: 'light', query: 'turnfiles=1', storage: railStorage(), clip: '.turn-files',
+    actions: [{ wait: 300 }, { click: '.turn-files__toggle' }, { wait: 220 }, {
+      label: '折叠后列表仍挂载且 inert',
+      probe: `(() => {
+        const bar = document.querySelector('.turn-files')
+        return {
+          collapsed: bar.classList.contains('is-collapsed'),
+          inert: bar.querySelector('.turn-files__listwrap').hasAttribute('inert'),
+          rowsMounted: bar.querySelectorAll('.turn-files__item').length,
+          listHeight: Math.round(bar.querySelector('.turn-files__listwrap').getBoundingClientRect().height),
+          headHeight: Math.round(bar.querySelector('.turn-files__head').getBoundingClientRect().height)
+        }
+      })()`
+    }]
+  },
+  // 托盘 + 文件栏同时在场：共用一个实线外框（两段自己的外框归零、中间一条虚线分界）、托盘在上；
+  // 文件栏让位——只留头部（计数 / 合计 / 审查），不转圈。中栏有 680px 下限，栏最窄 648px，目录列始终保留。
+  {
+    name: 'session-turn-files-with-tray-narrow', width: 980, height: 820, colorScheme: 'dark', query: 'turnfiles=1&queued=1',
+    storage: railStorage({ colorMode: 'dark' }), clip: '.session-dock',
+    actions: [{ wait: 400 }, {
+      label: '托盘与文件栏合框',
+      probe: `(() => {
+        const dock = document.querySelector('.session-dock')
+        const tray = document.querySelector('.queue-tray')
+        const bar = document.querySelector('.turn-files')
+        const composer = document.querySelector('.workspace-composer')
+        if (!dock || !tray || !bar || !composer) return { found: false }
+        const trayBox = tray.getBoundingClientRect()
+        const barBox = bar.getBoundingClientRect()
+        const dockStyle = getComputedStyle(dock)
+        return {
+          found: true,
+          trayAboveBar: trayBox.bottom <= barBox.top + 1,
+          barAboveComposer: barBox.bottom <= composer.getBoundingClientRect().top + 1,
+          merged: dockStyle.borderTopStyle === 'solid' && getComputedStyle(tray).borderTopStyle === 'none' && getComputedStyle(bar).borderBottomStyle === 'none',
+          divider: getComputedStyle(bar).borderTopStyle,
+          sameWidthAsComposer: Math.abs(dock.getBoundingClientRect().left - composer.getBoundingClientRect().left) < 1,
+          barYielding: bar.classList.contains('is-yielding') && bar.classList.contains('is-collapsed'),
+          barHeight: Math.round(barBox.height),
+          spinner: Boolean(bar.querySelector('.turn-files__spinner')),
+          headText: bar.querySelector('.turn-files__head')?.textContent ?? '',
+          barWidth: Math.round(barBox.width),
+          names: Array.from(bar.querySelectorAll('.turn-files__name strong')).map((el) => el.textContent)
+        }
+      })()`
+    }]
+  },
+  // 窗口下限 1440×680、托盘 3 条 + 文件栏 4 个：时间线保住下限（144px），停靠区收缩而不是时间线；
+  // 文件栏让位后托盘完整可见（列表不用滚）；输入区完整在窗内。再手动展开文件栏：两段分摊剩余空间、各自滚动。
+  {
+    name: 'session-dock-min-height', width: 1440, height: 680, colorScheme: 'light', query: 'turnfiles=1&queued=1',
+    storage: railStorage(), clip: null,
+    actions: [{ wait: 400 }, {
+      label: '窗口下限的纵向预算',
+      probe: `(() => {
+        const h = (sel) => Math.round(document.querySelector(sel)?.getBoundingClientRect().height ?? -1)
+        const trayList = document.querySelector('.queue-tray__list')
+        const composer = document.querySelector('.workspace-composer').getBoundingClientRect()
+        return {
+          timeline: h('.workspace-timeline-wrap'),
+          floorKept: h('.workspace-timeline-wrap') >= 144,
+          dock: h('.session-dock'), tray: h('.queue-tray'), bar: h('.turn-files'),
+          trayListScrolls: trayList ? trayList.scrollHeight > trayList.clientHeight + 1 : null,
+          barCollapsed: document.querySelector('.turn-files').classList.contains('is-collapsed'),
+          composerInsideViewport: composer.bottom <= innerHeight
+        }
+      })()`
+    }, { click: '.turn-files__toggle' }, { wait: 300 }, {
+      label: '手动展开文件栏后',
+      probe: `(() => {
+        const h = (sel) => Math.round(document.querySelector(sel)?.getBoundingClientRect().height ?? -1)
+        const scrolls = (sel) => { const el = document.querySelector(sel); return el ? el.scrollHeight > el.clientHeight + 1 : null }
+        return {
+          timeline: h('.workspace-timeline-wrap'),
+          floorKept: h('.workspace-timeline-wrap') >= 144,
+          tray: h('.queue-tray'), bar: h('.turn-files'),
+          trayListScrolls: scrolls('.queue-tray__list'), barListScrolls: scrolls('.turn-files__list'),
+          trayHeadVisible: h('.queue-tray__head') >= 36, barHeadVisible: h('.turn-files__head') >= 36,
+          composerInsideViewport: document.querySelector('.workspace-composer').getBoundingClientRect().bottom <= innerHeight
+        }
+      })()`
+    }]
+  },
+  // 「上一轮」保持：新消息刚被取走、Agent 还在想：栏保住上一轮的四个文件并标「上一轮」、降色；审查走「未提交」范围。
+  {
+    name: 'session-turn-files-previous', width: 1440, height: 900, colorScheme: 'light', query: 'turnfiles=previous',
+    storage: railStorage(), clip: '.turn-files',
+    actions: [{ wait: 400 }, {
+      label: '上一轮保持态',
+      probe: `(() => {
+        const bar = document.querySelector('.turn-files')
+        if (!bar) return { found: false }
+        return {
+          found: true,
+          scope: bar.getAttribute('data-scope'),
+          previous: bar.classList.contains('is-previous'),
+          label: bar.querySelector('.turn-files__scope')?.textContent ?? '',
+          count: bar.getAttribute('data-file-count'),
+          working: bar.classList.contains('is-working'),
+          listOpacity: getComputedStyle(bar.querySelector('.turn-files__list')).opacity,
+          reviewTitle: bar.querySelector('.turn-files__review')?.getAttribute('title') ?? '',
+          // 时间线：上一轮回复已落库、新消息在下、新回合的思考块在其后。
+          replyBeforeNewMessage: (document.body.textContent ?? '').indexOf('退役完成') < (document.body.textContent ?? '').indexOf('继续：给 handoff')
+        }
+      })()`
+    }]
+  },
+  // 最窄中栏（名册 + 右栏都展开、窗口 1440 下限）：栏 648px；深路径的目录列从头截断、文件名扩展名不截断、行不横向溢出。
+  {
+    name: 'session-turn-files-narrow-pane', width: 1440, height: 820, colorScheme: 'dark', query: 'turnfiles=1&deep=1',
+    storage: { ...baseStorage({ colorMode: 'dark', tab: 'plan' }), [SESSION_RAIL_WIDTH_KEY]: JSON.stringify([400]) }, clip: '.turn-files',
+    actions: [{ wait: 400 }, {
+      label: '窄栏深路径截断',
+      probe: `(() => {
+        const bar = document.querySelector('.turn-files')
+        if (!bar) return { found: false }
+        const rows = Array.from(bar.querySelectorAll('.turn-files__row'))
+        const deep = rows.find((row) => (row.getAttribute('title') ?? '').includes('very-long-feature-module-name'))
+        const dir = deep?.querySelector('.turn-files__name small')
+        const ext = deep?.querySelector('.turn-files__name strong > b')
+        return {
+          found: true,
+          barWidth: Math.round(bar.getBoundingClientRect().width),
+          deepRow: Boolean(deep),
+          dirTruncated: dir ? dir.scrollWidth > dir.clientWidth + 1 : null,
+          extVisible: ext ? ext.getBoundingClientRect().right <= bar.getBoundingClientRect().right : null,
+          extText: ext?.textContent ?? '',
+          noOverflow: rows.every((row) => row.scrollWidth <= row.clientWidth + 1),
+          counts: Array.from(bar.querySelectorAll('.turn-files__counts')).map((el) => el.textContent)
+        }
+      })()`
+    }]
+  },
+  // 点「审查」：右栏展开并切到「变更」标签、范围切到「本轮」；点某一行：该文件在右栏被展开高亮。
+  {
+    name: 'session-turn-files-review', width: 1440, height: 900, colorScheme: 'light', query: 'turnfiles=1',
+    storage: { ...railStorage(), 'sg-team.layout:v1:workspace-inspector:open': '0', 'sg-team.inspector:active-tab': 'plan', 'sg-team.inspector:review-scope': 'uncommitted' },
+    clip: null,
+    actions: [{ wait: 400 }, { click: '[data-path="src/mcp/index.ts"] .turn-files__row' }, { wait: 500 }, {
+      label: '右栏定位',
+      probe: `(() => {
+        const inspector = document.querySelector('.workspace-inspector-pane')
+        const active = document.querySelector('.inspector-tab.is-active')
+        const scope = document.querySelector('.inspector-review__scope > button[aria-pressed="true"]')
+        const file = document.querySelector('.review-file[data-path="src/mcp/index.ts"]')
+        return {
+          inspectorVisible: inspector ? !inspector.hasAttribute('inert') : false,
+          activeTab: active?.textContent ?? '',
+          scope: scope?.textContent ?? '',
+          fileOpen: file?.classList.contains('is-open') ?? false,
+          listedFiles: Array.from(document.querySelectorAll('.review-file')).map((el) => el.getAttribute('data-path'))
+        }
+      })()`
+    }]
   },
   {
     name: 'session-process-group-expanded', width: 1440, height: 1200, colorScheme: 'light', storage: railStorage(), clip: '.chat-row--process:has(.cursor-native-group)',

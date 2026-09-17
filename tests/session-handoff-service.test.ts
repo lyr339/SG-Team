@@ -237,22 +237,6 @@ describe('SessionHandoffService', () => {
     const { service } = harness({ sessionToken: 'seat-A' })
     expect(() => service.deliver({ sourceChannelId: '2', target: { kind: 'self' } })).toThrowError(/尚未绑定 Cursor Composer/)
   })
-
-  it('席位自动轮换：用轮换前记下的旧令牌做显式保持位，而不是按现任令牌换算', () => {
-    // 轮换后现任令牌已属于新会话；若仍按 holdUntilNewSession 换算，会把新会话自己挡在外面。
-    const { service, sent } = harness({ sessionToken: 'seat-NEW' })
-    const source = service.context('1')
-    const result = service.deliverFrom(source, { kind: 'self' }, '自动轮换', { holdSessionToken: 'seat-OLD' })
-    expect(result.held).toBe(true)
-    expect(sent).toHaveLength(1)
-    expect(sent[0]).toMatchObject({ channelId: '1', holdSessionToken: 'seat-OLD' })
-    expect(sent[0]?.holdUntilNewSession).toBeUndefined()
-    expect(sent[0]?.text).toContain('交接说明：自动轮换')
-    // 非 self 目标忽略显式令牌：其他通道的会话不存在「新旧」之分
-    service.deliverFrom(source, { kind: 'channel', channelId: '2' }, undefined, { holdSessionToken: 'seat-OLD' })
-    expect(sent[1]?.holdSessionToken).toBeUndefined()
-    expect(sent[1]?.holdUntilNewSession).toBeUndefined()
-  })
 })
 
 describe('SessionHandoffService · 团队席位', () => {

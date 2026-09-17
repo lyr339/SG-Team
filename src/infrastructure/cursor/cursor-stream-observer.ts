@@ -81,7 +81,7 @@ export const CURSOR_PROCESS_BINDING_NAME = 'sgTeamProcess'
  * 定位成功后观察器顺手对晴天补丁运行时缴械（cursor-legacy-patch-disarm.ts：停其 8 个
  * 后台轮询、拆掉桥方法的 trace 包装），零文件修改；hook 版本不变。
  * v34（2026-09-13）：每帧携带 `bubbleCount`（整个 composer 的气泡数，读自已在遍历的
- * fullConversationHeadersOnly，零额外成本；小帧同样携带）。它是席位自动轮换的阈值事实：
+ * fullConversationHeadersOnly，零额外成本；小帧同样携带）。它是会话体积事实（名册悬停详情）：
  * 持续会话的回合永不结束，Cursor 每次写入的持久化与重分组成本随气泡数线性增长。
  * v35（2026-09-15）：`generateImageToolCall` 进呈现表——kind=image、对象为请求文件名，结果的
  * 本地路径进结构化 `image` 字段（此前落到 other 类：卡片只剩 `generate_image` 原始名，
@@ -1034,7 +1034,7 @@ export const CURSOR_STREAM_HOOK_EXPRESSION = `(() => {
       composerStatus: composerStatus || undefined,
       statusLine,
       // 会话体积事实（v34）：整个 composer 的气泡数。持续会话的 Cursor 回合永不结束，
-      // 气泡只增不减，Cursor 每次写入的成本随之线性增长——席位自动轮换以它为阈值。
+      // 气泡只增不减，Cursor 每次写入的成本随之线性增长——名册悬停详情据此提示会话体积。
       bubbleCount: headers.length,
       awaitingUser: awaitingUserDecision(data),
       response,

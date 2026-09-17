@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentSession } from '../src/domain/agent-session'
 import type { ConversationEntry } from '../src/domain/conversation-entry'
-import { QueuedMessageTray, queuePreview, queueTrayState } from '../src/renderer/src/QueuedMessageTray'
+import { QUEUE_TRAY_COLLAPSED_KEY, QueuedMessageTray, queuePreview, queueTrayState } from '../src/renderer/src/QueuedMessageTray'
 
 const session: AgentSession = {
   id: 'session-2', channelId: '2', generation: 1, displayName: '架构实现', roleName: '实现席',
@@ -83,6 +83,7 @@ describe('QueuedMessageTray（待投递托盘）', () => {
 
     beforeEach(() => {
       ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+      localStorage.clear()
       container = document.createElement('div')
       document.body.appendChild(container)
       root = createRoot(container)
@@ -91,6 +92,7 @@ describe('QueuedMessageTray（待投递托盘）', () => {
     afterEach(async () => {
       await act(async () => root.unmount())
       container.remove()
+      localStorage.clear()
     })
 
     it('toggles the list from the header and keeps the header while collapsed', () => {
@@ -108,6 +110,18 @@ describe('QueuedMessageTray（待投递托盘）', () => {
       act(() => { head.click() })
       expect(wrap.hasAttribute('inert')).toBe(false)
       expect(container.querySelector('.queue-tray')?.className).toContain('is-open')
+    })
+
+    it('persists the collapse preference like the turn-files bar below it', async () => {
+      act(() => { root.render(<QueuedMessageTray session={{ ...session, queueDepth: 1 }} entries={[plain]} />) })
+      act(() => { container.querySelector<HTMLButtonElement>('.queue-tray__head')!.click() })
+      expect(localStorage.getItem(QUEUE_TRAY_COLLAPSED_KEY)).toBe('1')
+      await act(async () => root.unmount())
+      root = createRoot(container)
+      act(() => { root.render(<QueuedMessageTray session={{ ...session, queueDepth: 1 }} entries={[plain]} />) })
+      expect(container.querySelector('.queue-tray')?.className).toContain('is-collapsed')
+      act(() => { container.querySelector<HTMLButtonElement>('.queue-tray__head')!.click() })
+      expect(localStorage.getItem(QUEUE_TRAY_COLLAPSED_KEY)).toBe('0')
     })
 
     it('routes withdraw and release to the right entry', () => {

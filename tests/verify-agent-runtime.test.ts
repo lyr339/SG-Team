@@ -241,7 +241,42 @@ describe('证据缺失不再一票否决传输层活性（实机回归：Agent �
     expect(snapshot.sessions[0]?.healthEvidence.join('\n')).toContain('通道租约陈旧')
   })
 
-  it('长任务宽限内（workInProgress）且 MCP 心跳新鲜 → 保持在线（活性未验证）', () => {
+  it('Cursor 持久状态「正在生成」+ 传输层在 check_messages 待命 → 待命中，不被改判干活中（实机回归：名册只剩运行中）', () => {
+    // 会话池里席位常驻长轮询，Cursor 回合永不结束、isGenerating 恒真；转录只在回合结束时落盘
+    // （CH-2 的转录停在启动时的两行，此后处理了 11 条消息）。「正在生成」只是活着的证据，
+    // 忙闲由 presence 相位决定：waiting → 待命中，processing → 干活中。
+    const generatingTelemetry: CursorTelemetrySnapshot = {
+      availability: 'available',
+      composers: [{
+        composerId: 'composer-alpha-123',
+        title: '会话',
+        activity: { state: 'active', channelId: '1', detail: 'Cursor 持久状态确认 Agent 正在生成', observedAt: 90 }
+      }],
+      bindingCandidates: [],
+      updatedAt: 100
+    }
+    const parked = verifyAgentRuntime(bridgeSnapshot(), team('running'), generatingTelemetry)
+    expect(parked.sessions[0]).toMatchObject({ online: true, connected: true, status: 'waiting', waiting: true, runtimeEvidence: 'active', lastAgentActivityAt: 90 })
+    expect(parked.sessions[0]?.healthEvidence).toContain('Cursor 持久状态确认 Agent 正在生成')
+
+    const processing = bridgeSnapshot()
+    processing.sessions[0] = {
+      ...processing.sessions[0]!,
+      status: 'running',
+      waiting: false,
+      connectionPhase: 'processing',
+      pendingOutboundId: 'outbound-1',
+      pendingReplySyncSince: 90
+    }
+    expect(verifyAgentRuntime(processing, team('running'), generatingTelemetry).sessions[0]).toMatchObject({ online: true, status: 'running', waiting: false })
+
+    // keepalive 间隙（server 刻意保持 waiting=true）同样是待命。
+    const keepalive = bridgeSnapshot()
+    keepalive.sessions[0] = { ...keepalive.sessions[0]!, connectionPhase: 'keepalive' }
+    expect(verifyAgentRuntime(keepalive, team('running'), generatingTelemetry).sessions[0]).toMatchObject({ status: 'waiting', waiting: true })
+  })
+
+  it('长任务宽限内（workInProgress）且 MCP 心跳新鲜 → 保持在线（活性未验证），忙闲仍听传输层', () => {
     const graceTelemetry: CursorTelemetrySnapshot = {
       availability: 'available',
       composers: [{
@@ -252,10 +287,15 @@ describe('证据缺失不再一票否决传输层活性（实机回归：Agent �
       bindingCandidates: [],
       updatedAt: 100
     }
-    const snapshot = verifyAgentRuntime(bridgeSnapshot(), team('running'), graceTelemetry)
+    // 传输层说它正在 check_messages 里待命（每秒刷心跳）：转录暂停增长只是会话池里转录冻结的常态，
+    // 不构成「在干活」的证据——status / waiting 原样保留。
+    const parked = verifyAgentRuntime(bridgeSnapshot(), team('running'), graceTelemetry)
+    expect(parked.sessions[0]).toMatchObject({ online: true, connected: true, status: 'waiting', waiting: true })
+    expect(parked.sessions[0]?.healthEvidence.join('\n')).toContain('宽限期内保持在线')
 
-    expect(snapshot.sessions[0]).toMatchObject({ online: true, connected: true, status: 'running' })
-    expect(snapshot.sessions[0]?.healthEvidence.join('\n')).toContain('宽限期内保持在线')
+    const processing = bridgeSnapshot()
+    processing.sessions[0] = { ...processing.sessions[0]!, status: 'running', waiting: false, connectionPhase: 'processing' }
+    expect(verifyAgentRuntime(processing, team('running'), graceTelemetry).sessions[0]).toMatchObject({ online: true, status: 'running', waiting: false })
   })
 
   it('长任务宽限但 MCP 心跳已过期 → UI 可显示离线，但证据仍为 suspected、禁止接管', () => {

@@ -1,0 +1,285 @@
+/* ---------- 设置 › 软件更新 ---------- */
+/* 版本状态与 Cursor 维护页同一语言：settings-row 直接住在区块正文里（不再套一层卡），hairline 分隔；
+   状态色只落在区块头的胶囊、进度条与主按钮上，标签与正文保持炭色。 */
+
+/* 两个容器都直接住在 settings-section__body（自带 12/14 内边距）里：自己不再加一层，否则双重内缩。 */
+.app-update { min-width: 0; display: grid; gap: 6px; }
+
+/* 区块头右侧的状态胶囊：与存储清理页的风险胶囊同一外形（18px 高、全圆角、文字色 + 极淡底）。状态色只在这里。 */
+.app-update__badge {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 7px;
+  color: var(--muted);
+  background: var(--surface-soft);
+  border: 1px solid var(--line-faint);
+  border-radius: var(--border-radius-full);
+  font-size: var(--fs-10);
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+.app-update__badge.is-accent { color: var(--accent-deep); background: var(--accent-wash); border-color: var(--accent-border); }
+.app-update__badge.is-success { color: var(--color-text-success); background: var(--color-background-success); border-color: color-mix(in srgb, var(--color-text-success) 30%, transparent); }
+.app-update__badge.is-info { color: var(--color-text-info); background: var(--color-background-info); border-color: var(--color-border-info); }
+.app-update__badge.is-danger { color: var(--red); background: var(--red-soft); border-color: var(--red-border); }
+/* 忙态胶囊（检查 / 下载 / 安装 / 回滚）：文字前一枚细环在转，代替原来会脉冲的圆点。 */
+.app-update__badge.is-info::before {
+  content: '';
+  width: 9px; height: 9px;
+  margin-right: 6px;
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: app-update-spin 900ms linear infinite;
+}
+@keyframes app-update-spin { to { transform: rotate(360deg); } }
+
+.app-update__updated {
+  margin: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  padding: 9px 12px;
+  color: var(--color-text-success);
+  background: var(--color-background-success);
+  border: 1px solid var(--color-border-success);
+  border-radius: 10px;
+  font-size: var(--fs-11);
+  line-height: 1.5;
+}
+.app-update__updated > button {
+  width: 22px; height: 22px;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  font-size: var(--fs-12);
+  line-height: 1;
+  opacity: .7;
+}
+.app-update__updated > button:hover { opacity: 1; background: color-mix(in srgb, currentColor 10%, transparent); }
+/* mac 脚本结果的失败态（更新失败已恢复 / 回滚失败）：同一横幅，换成危险色。 */
+.app-update__updated.is-danger {
+  color: var(--color-text-danger);
+  background: var(--color-background-danger);
+  border-color: var(--color-border-danger);
+}
+
+/* 版本状态行：左边「拾光 0.3.2」/「新版本 0.3.3」+ 说明，右边操作（与维护页的开关同一位置）。 */
+.app-update__row > .settings-row__copy { gap: 3px; }
+.app-update__title { font-variant-numeric: tabular-nums; }
+.app-update__headline { color: var(--text-soft); overflow-wrap: anywhere; }
+.app-update__detail { overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.app-update__note { color: var(--text-soft); }
+/* 明确失败时状态句用错误色（与维护页的错误行一致）；网络瞬断是 neutral，不报红。 */
+.app-update__row.is-danger .app-update__headline { color: var(--red); }
+.app-update__row > .app-update__actions { justify-content: flex-end; }
+
+/* 下载进度住在说明下面：细条 + 读数一行，不撑满整行。 */
+.app-update__progress { display: flex; align-items: center; gap: 10px; max-width: 420px; margin-top: 5px; }
+.app-update__bar {
+  flex: 1 1 auto;
+  height: 4px;
+  overflow: hidden;
+  background: var(--surface-soft);
+  border-radius: 999px;
+}
+.app-update__bar > i {
+  display: block;
+  height: 100%;
+  background: var(--color-text-info);
+  border-radius: inherit;
+  transition: width 240ms ease-out;
+}
+.app-update__readout { flex: 0 0 auto; color: var(--muted); font-size: var(--fs-10); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* 更新内容：hairline 之下的一行只读信息——标签 + 发布说明的段落与列表。 */
+.app-update__notes > .settings-row__copy { gap: 4px; }
+.app-update__notes p { margin: 0; color: var(--text-soft); font-size: var(--fs-10); line-height: 1.55; overflow-wrap: anywhere; }
+.app-update__notes ul { margin: 0; padding-left: 14px; color: var(--muted); font-size: var(--fs-10); line-height: 1.6; }
+.app-update__notes li { overflow-wrap: anywhere; }
+
+/* mac：旧版备份行——说明在左，「回滚到 x…」在右，与主操作不同行、不抢眼。 */
+.app-update__rollback > .app-update__button { justify-self: end; }
+
+.app-update__confirm {
+  display: grid;
+  gap: 10px;
+  padding: 10px 12px;
+  color: var(--text);
+  background: var(--accent-wash);
+  border: 1px solid var(--accent-border);
+  border-radius: 10px;
+  font-size: var(--fs-11);
+  line-height: 1.55;
+}
+.app-update__confirm > p { margin: 0; }
+/* 回滚会用更新前的库快照覆盖当前库——破坏性与「装个新版」不是一回事，底色与主按钮都换成危险色；
+   正文保持炭色（色彩纪律：只给容器与主按钮上色，不把整段话染红）。 */
+.app-update__confirm.is-danger { background: var(--color-background-danger); border-color: var(--color-border-danger); }
+
+.app-update__error { margin: 0; color: var(--red); font-size: var(--fs-11); line-height: 1.5; }
+.app-update__loading { margin: 0; color: var(--muted); font-size: var(--fs-11); }
+
+.app-update__actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.app-update__button {
+  min-height: 32px;
+  padding: 0 13px;
+  color: var(--text-soft);
+  background: var(--surface-pure);
+  border: 1px solid var(--color-border-tertiary);
+  border-radius: 9px;
+  font-size: var(--fs-11);
+  font-weight: 600;
+  white-space: nowrap;
+  transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
+}
+.app-update__button:hover:not(:disabled) { border-color: var(--accent-border); color: var(--text); }
+.app-update__button:disabled { opacity: .5; cursor: not-allowed; }
+.app-update__button.is-primary { color: var(--accent-deep); background: var(--accent-wash); border-color: var(--accent-border); }
+.app-update__button.is-primary:hover:not(:disabled) { border-color: var(--accent-border-strong); }
+.app-update__button.is-primary.is-danger { color: var(--red); background: var(--red-soft); border-color: var(--red-border); }
+.app-update__button.is-primary.is-danger:hover:not(:disabled) { border-color: var(--red); }
+.app-update__button.is-link { padding: 0 4px; color: var(--muted); background: transparent; border-color: transparent; font-weight: 500; }
+.app-update__button.is-link:hover:not(:disabled) { color: var(--accent-deep); border-color: transparent; text-decoration: underline; }
+
+/* 检查设置 */
+.app-update__settings { min-width: 0; display: grid; }
+.app-update__settings .settings-row--sub .menu-select { width: 160px; }
+/* 间隔选择不是「带色板的模型选择」：藏掉默认灰色 swatch（与账号绑定、清理页同一处理）。 */
+.app-update__settings .menu-select__swatch { display: none; }
+
+.app-update__advanced { padding: 10px 0 2px; }
+.app-update__advanced > summary {
+  color: var(--text-soft);
+  font-size: var(--fs-11);
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+.app-update__advanced > summary::-webkit-details-marker { display: none; }
+.app-update__advanced > summary::before {
+  content: '';
+  display: inline-block;
+  width: 6px; height: 6px;
+  margin: 0 8px 1px 2px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 160ms ease;
+}
+.app-update__advanced[open] > summary::before { transform: rotate(45deg); }
+.app-update__advanced-hint { margin: 8px 0 0; color: var(--muted); font-size: var(--fs-10); line-height: 1.5; }
+.app-update__advanced-hint code { padding: 0 4px; background: var(--surface-soft); border-radius: 4px; font-size: var(--fs-10); }
+/* 预设一句话：正文里嵌一枚可点的胶囊（填入输入框，仍要按「保存」）；已是当前源时点亮为品牌色。 */
+.app-update__feed-presets { margin: 4px 0 0; color: var(--muted); font-size: var(--fs-10); line-height: 1.7; }
+.app-update__preset {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  margin: 0 4px;
+  padding: 0 9px;
+  vertical-align: middle;
+  color: var(--text-soft);
+  background: var(--surface-pure);
+  border: 1px solid var(--color-border-tertiary);
+  border-radius: 999px;
+  font-size: var(--fs-10);
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
+}
+.app-update__preset:hover:not(:disabled) { color: var(--text); border-color: var(--accent-border); }
+.app-update__preset:disabled { opacity: .5; cursor: not-allowed; }
+.app-update__preset.is-active { color: var(--accent-deep); background: var(--accent-wash); border-color: var(--accent-border); }
+.app-update__feed { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; margin-top: 8px; }
+.app-update__feed-input {
+  min-width: 0;
+  min-height: 32px;
+  padding: 0 10px;
+  color: var(--text);
+  background: var(--surface-pure);
+  border: 1px solid var(--color-border-tertiary);
+  border-radius: 9px;
+  font-size: var(--fs-11);
+}
+.app-update__feed-input:focus-visible { outline: 2px solid var(--color-ring-primary); outline-offset: 1px; }
+
+/* 导航角标：品牌色圆点（有新版）。 */
+.settings-nav__dot.is-accent { background: var(--accent); }
+
+/* ---------- 顶栏齿轮角标 ---------- */
+.account-button { position: relative; }
+.account-button__dot {
+  position: absolute;
+  top: 6px; right: 6px;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
+/* ---------- 右下角小提醒框 ---------- */
+.update-reminder {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 60;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px 12px;
+  align-items: center;
+  max-width: 420px;
+  padding: 10px 10px 10px 14px;
+  color: var(--text);
+  background: var(--surface-solid);
+  border: 1px solid var(--color-border-secondary);
+  border-left: 3px solid var(--accent);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  animation: update-reminder-enter 200ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.update-reminder__copy { min-width: 0; display: grid; gap: 2px; }
+.update-reminder__copy > strong { color: var(--text); font-size: var(--fs-12); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.update-reminder__copy > span { color: var(--muted); font-size: var(--fs-10); }
+.update-reminder__actions { display: flex; gap: 6px; }
+.update-reminder__button {
+  min-height: 28px;
+  padding: 0 10px;
+  color: var(--text-soft);
+  background: var(--surface);
+  border: 1px solid var(--color-border-tertiary);
+  border-radius: 8px;
+  font-size: var(--fs-11);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.update-reminder__button:hover { color: var(--text); border-color: var(--accent-border); }
+.update-reminder__button.is-primary { color: var(--accent-deep); background: var(--accent-wash); border-color: var(--accent-border); }
+.update-reminder__close {
+  width: 24px; height: 24px;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  font-size: var(--fs-12);
+  line-height: 1;
+}
+.update-reminder__close:hover { color: var(--text); background: var(--surface-soft); }
+
+@keyframes update-reminder-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .update-reminder { animation: none; }
+  .app-update__bar > i { transition: none; }
+  .app-update__badge.is-info::before { animation: none; border-right-color: currentColor; opacity: .5; }
+}

@@ -33,10 +33,10 @@ export function sessionRailGroupOf(session: RailSessionFacts): SessionRailGroupI
   return 'attention'
 }
 
-/** 行内状态词：离线统一说「已离线」，其余沿用全应用的状态文案。 */
+/** 行内状态词：离线组统一说「已离线」（含 stopped / 终止证据），其余沿用全应用的三字状态文案。 */
 export function sessionRailStateLabel(session: RailSessionFacts): string {
   if (sessionRailGroupOf(session) === 'offline') return '已离线'
-  return session.awaitingUser ? '等待回答' : statusLabel(session.status)
+  return session.awaitingUser ? '待回答' : statusLabel(session.status)
 }
 
 /**

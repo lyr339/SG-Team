@@ -14,7 +14,6 @@ import type { AozaiCardStatus, AozaiProcessResult, AozaiProgressEvent } from '..
 import type { AgentLaunchPlan, AgentLaunchRequest } from '../domain/agent-launch'
 import type { SessionWarmupRun } from '../domain/session-warmup'
 import type { CdpAutoHealEvent, CursorCdpSettings } from '../domain/cursor-cdp'
-import type { SeatRotationSettings } from '../domain/seat-rotation'
 import type { AccountAutomationRun, AccountAutomationSettings } from '../domain/account-automation'
 import type { CursorSwitchPumpOutcome, CursorSwitchPumpStatus } from '../domain/cursor-switch-pump'
 import type { CursorUpdatePreferences, CursorUpdateWriteResult } from '../domain/cursor-update'
@@ -35,6 +34,7 @@ import type {
 } from '../domain/workspace-review'
 import type { SessionHandoffContext, SessionHandoffRequest, SessionHandoffResult } from '../domain/session-handoff'
 import type { CursorStatusLine } from '../domain/cursor-status-line'
+import type { AppUpdateSettings, AppUpdateStatus, UpdateGate } from '../domain/app-update'
 
 export type BridgeConnectionState =
   | 'disconnected'
@@ -371,9 +371,6 @@ export interface SgDesktopApi {
   enableCursorCdp(): Promise<{ ok: boolean; message: string; suggestAutoHeal?: boolean }>
   getCursorCdpSettings(): Promise<CursorCdpSettings>
   saveCursorCdpSettings(settings: CursorCdpSettings): Promise<CursorCdpSettings>
-  /** 席位自动轮换（独立席位到气泡阈值换新 Composer）：开关与阈值。结果经会话快照 `seatRotation` 呈现。 */
-  getSeatRotationSettings(): Promise<SeatRotationSettings>
-  saveSeatRotationSettings(settings: SeatRotationSettings): Promise<SeatRotationSettings>
   getCursorUpdatePreferences(): Promise<CursorUpdatePreferences>
   setCursorAutoUpdateDisabled(disabled: boolean): Promise<CursorUpdateWriteResult>
   /** Cursor 本机存储盘点（只读）；对话历史阈值缺省 90 天。 */
@@ -385,6 +382,29 @@ export interface SgDesktopApi {
   /** 用户取消 auto-heal 倒计时：本次 Cursor 启动不再自动重启。 */
   cancelCdpAutoHealCountdown(): Promise<void>
   onCdpAutoHealEvent(listener: (event: CdpAutoHealEvent) => void): () => void
+  /**
+   * 拾光自更新（手动组件）：主进程只静默检查；发现新版由渲染层按 reminderVersion 出一个不打扰的小提醒；
+   * 下载与安装都由用户显式触发。安装会退出拾光运行安装器（按机安装经一次 UAC），装完自动拉起新版。
+   */
+  getAppUpdateStatus(): Promise<AppUpdateStatus>
+  checkAppUpdate(): Promise<AppUpdateStatus>
+  downloadAppUpdate(): Promise<AppUpdateStatus>
+  cancelAppUpdateDownload(): Promise<AppUpdateStatus>
+  /** 先过门禁：`block` / 未确认的 `confirm` 只返回结论；放行后进程随即退出安装。 */
+  installAppUpdate(input: { confirmed: boolean }): Promise<{ gate: UpdateGate; status: AppUpdateStatus }>
+  /** mac：回滚到更新前的备份（app + 库）。`confirmed: false` 只返回门禁结论，永远不动手。 */
+  rollbackAppUpdate(input: { confirmed: boolean }): Promise<{ gate: UpdateGate; status: AppUpdateStatus }>
+  /** 用户看过「已更新 / 已回滚 / 失败已恢复」的提示后清掉它。 */
+  dismissAppUpdateApplyResult(): Promise<AppUpdateStatus>
+  skipAppUpdate(): Promise<AppUpdateStatus>
+  unskipAppUpdate(): Promise<AppUpdateStatus>
+  /** 稍后：24 小时内不再提醒。 */
+  snoozeAppUpdate(): Promise<AppUpdateStatus>
+  dismissAppUpdateFailure(): Promise<AppUpdateStatus>
+  saveAppUpdateSettings(settings: AppUpdateSettings): Promise<AppUpdateStatus>
+  /** 在系统浏览器打开当前状态对应的发布页。 */
+  openAppUpdateReleasePage(): Promise<boolean>
+  onAppUpdateStatus(listener: (status: AppUpdateStatus) => void): () => void
   getAccountAutomationSettings(): Promise<AccountAutomationSettings>
   saveAccountAutomationSettings(settings: AccountAutomationSettings): Promise<AccountAutomationSettings>
   getAccountAutomationRun(): Promise<AccountAutomationRun>
@@ -523,8 +543,6 @@ export const IPC = {
   sessionWarmupProgress: 'session-warmup:progress',
   cursorCdpGetSettings: 'cursor-cdp:get-settings',
   cursorCdpSaveSettings: 'cursor-cdp:save-settings',
-  seatRotationGetSettings: 'seat-rotation:get-settings',
-  seatRotationSaveSettings: 'seat-rotation:save-settings',
   cursorUpdateGetPreferences: 'cursor-update:get-preferences',
   cursorUpdateSetAutoUpdateDisabled: 'cursor-update:set-auto-update-disabled',
   cursorStorageScan: 'cursor-storage:scan',
@@ -532,6 +550,20 @@ export const IPC = {
   cursorStorageReveal: 'cursor-storage:reveal',
   cursorCdpCancelCountdown: 'cursor-cdp:cancel-countdown',
   cursorCdpAutoHealEvent: 'cursor-cdp:auto-heal-event',
+  appUpdateGetStatus: 'app-update:get-status',
+  appUpdateCheck: 'app-update:check',
+  appUpdateDownload: 'app-update:download',
+  appUpdateCancelDownload: 'app-update:cancel-download',
+  appUpdateInstall: 'app-update:install',
+  appUpdateRollback: 'app-update:rollback',
+  appUpdateDismissApplyResult: 'app-update:dismiss-apply-result',
+  appUpdateSkip: 'app-update:skip',
+  appUpdateUnskip: 'app-update:unskip',
+  appUpdateSnooze: 'app-update:snooze',
+  appUpdateDismissFailure: 'app-update:dismiss-failure',
+  appUpdateSaveSettings: 'app-update:save-settings',
+  appUpdateOpenReleasePage: 'app-update:open-release-page',
+  appUpdateStatus: 'app-update:status',
   cursorUsageGet: 'cursor-usage:get',
   cursorUsageSnapshot: 'cursor-usage:snapshot',
   workspaceReviewGet: 'workspace-review:get',
