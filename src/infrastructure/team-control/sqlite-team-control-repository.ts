@@ -12,7 +12,10 @@ import type { AgentCheckInReceipt } from '../../application/agent-presence'
 import type { TeamControlRepository } from '../../application/team-control-repository'
 import {
   buildGroupRoles,
+  defaultGroupPlanPolicy,
   effectiveGroupLeadSlotId,
+  groupMembersMayPlan,
+  INDEPENDENT_SESSION_TEMPLATE_ID,
   isSessionPoolRun,
   LEAD_ROLE_CAPABILITIES,
   type AgentSlot,
@@ -22,6 +25,7 @@ import {
   type TeamGroupEvent,
   type TeamGroupEventType,
   type TeamGroupMemberConfiguration,
+  type TeamGroupPlanPolicy,
   type TeamGroupStatus,
   type TeamRole,
   type TeamRoleAccent,
@@ -30,31 +34,31 @@ import {
   type TeamWorkspace,
   type WorkspaceTeamBundle
 } from '../../domain/team-control'
-import type { GroupMembershipChange, TeamGroupMutation } from '../../application/team-control-repository'
+import type { GroupMembershipChange, GroupMembershipTransfer, TeamGroupMutation } from '../../application/team-control-repository'
 import type { AssignedAgentSkill } from '../../domain/agent-skill'
 import type { CursorModelSelection } from '../../domain/cursor-model'
 import type { ChannelSessionOwnership } from '../../domain/session-fence'
 import { TaskPoolError } from '../../domain/task-pool'
 import type { ComposerBindingMethod } from '../../domain/cursor-telemetry'
-import type {
-  TeamFailoverRebindResult,
-  TeamFailoverRecord,
-  TeamFailoverStatus
-} from '../../domain/team-failover'
+import type { TeamFailoverRecord, TeamFailoverStatus } from '../../domain/team-failover'
 import {
   ensureAgentRegistrationsSchema,
   replaceWorkspaceAgentRegistrations,
   revokeWorkspaceAgentRegistrations
 } from '../sqlite/agent-registrations'
 
-const TEAM_SCHEMA_VERSION = 8
+const TEAM_SCHEMA_VERSION = 9
 const GROUP_NAME_MAX_LENGTH = 80
 const GROUP_GOAL_MAX_LENGTH = 8_000
 const COMPOSER_ID_PATTERN = /^[a-zA-Z0-9_-]{8,128}$/
 const COMPOSER_BINDING_KEY_PATTERN = /^[a-zA-Z0-9_-]{1,128}$/
 const COMPOSER_BINDING_METHODS = new Set<ComposerBindingMethod>(['launch_marker', 'channel_marker'])
-/** completeRun 的缺省收尾原因：failover 全部离线自动收尾（显式结束/替换由调用方传入）。 */
-const RUN_COMPLETED_ALL_OFFLINE_DETAIL = '本轮所有 Agent 已离线，TeamRun 自动结束'
+/** completeRun 的缺省收尾原因（显式结束/替换由调用方传入）。 */
+const RUN_COMPLETED_DEFAULT_DETAIL = '本轮运行已结束'
+/** v9 迁移把一次性团队 run 归档时写进各绑定 launch_detail 的说明。 */
+const RUN_ARCHIVED_LEGACY_TEAM_DETAIL = 'archived: legacy team run（升级归档，团队 run 已退役）'
+/** v9 迁移把同工作区内被更新 run 取代、却仍标 running 的旧独立 run 归档时的说明。 */
+const RUN_ARCHIVED_STALE_POOL_DETAIL = 'archived: superseded pool run（升级归档，已被更新的运行取代）'
 
 function optionalNumber(value: unknown): number | undefined {
   return value === null || value === undefined ? undefined : numberOf(value)
@@ -93,7 +97,14 @@ function effectiveCapabilities(row: SqliteRow): string[] {
   const templateKey = String(row.template_key ?? '')
   if (optionalString(row.group_id)) {
     const effectiveLead = optionalString(row.group_acting_lead_slot_id) ?? optionalString(row.group_lead_slot_id)
-    if (effectiveLead === slotId) {
+    const membersMayPlan = groupMembersMayPlan({
+      leadSlotId: optionalString(row.group_lead_slot_id),
+      actingLeadSlotId: optionalString(row.group_acting_lead_slot_id),
+      planPolicy: planPolicyOf(row.group_plan_policy)
+    })
+    if (effectiveLead === slotId || membersMayPlan) {
+      // 有效 lead，或无 lead 且允许全员规划的组里的每个成员：叠加主控模板能力（coordination / planning），
+      // 让 TaskAgentService 的 plan / 任务板视图放行；directive / broadcast / collect 仍由 isEffectiveLead 单独把关。
       for (const capability of LEAD_ROLE_CAPABILITIES) base.add(capability)
     } else if (templateKey === 'lead') {
       for (const capability of LEAD_ROLE_CAPABILITIES) base.delete(capability)
@@ -120,7 +131,8 @@ function effectiveCapabilities(row: SqliteRow): string[] {
 const IDENTITY_SELECT = `
   SELECT ar.agent_session_id, ar.run_id, b.slot_id, s.is_solo, s.group_id, r.template_key, r.capabilities_json,
     tr.acting_lead_slot_id, lead.capabilities_json AS lead_capabilities_json,
-    g.lead_slot_id AS group_lead_slot_id, g.acting_lead_slot_id AS group_acting_lead_slot_id
+    g.lead_slot_id AS group_lead_slot_id, g.acting_lead_slot_id AS group_acting_lead_slot_id,
+    g.plan_policy AS group_plan_policy
   FROM agent_registrations ar
   JOIN runtime_bindings b
     ON b.agent_session_id = ar.agent_session_id AND b.run_id = ar.run_id
@@ -155,6 +167,11 @@ function identityFromRow(row: SqliteRow): AgentAuthorizationIdentity {
   }
 }
 
+/** `plan_policy` 列缺失（旧构建写入的行 / 尚未迁移的库）或值非法时按 lead_only 读——最保守的一档。 */
+function planPolicyOf(value: unknown): TeamGroupPlanPolicy {
+  return value === 'any_member' ? 'any_member' : 'lead_only'
+}
+
 function groupFromRow(row: SqliteRow): TeamGroup {
   return {
     id: String(row.id),
@@ -164,6 +181,7 @@ function groupFromRow(row: SqliteRow): TeamGroup {
     status: String(row.status) as TeamGroupStatus,
     leadSlotId: optionalString(row.lead_slot_id),
     actingLeadSlotId: optionalString(row.acting_lead_slot_id),
+    planPolicy: planPolicyOf(row.plan_policy),
     createdAt: numberOf(row.created_at),
     updatedAt: numberOf(row.updated_at),
     dissolvedAt: optionalNumber(row.dissolved_at)
@@ -231,6 +249,21 @@ function tableHasColumn(database: DatabaseSync, table: string, column: string): 
   return (database.prepare(`PRAGMA table_info(${table})`).all() as SqliteRow[])
     .some((row) => String(row.name) === column)
 }
+
+function tableExists(database: DatabaseSync, table: string): boolean {
+  return Boolean(database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table))
+}
+
+/**
+ * 阶段 2 · 2D 退役的团队连续性（自动检查点 / 一键恢复）表，按外键依赖自子向父排列：
+ * team_restore_members → team_restore_operations → team_checkpoints → team_continuity_meta。
+ */
+const RETIRED_CONTINUITY_TABLES = [
+  'team_restore_members',
+  'team_restore_operations',
+  'team_checkpoints',
+  'team_continuity_meta'
+] as const
 
 function normalizedNote(value: string): string {
   return value.replace(/\s+/g, ' ').trim().slice(0, 2_000)
@@ -322,7 +355,6 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
       status: String(row.status) as TeamRunStatus,
       createdAt: numberOf(row.created_at),
       updatedAt: numberOf(row.updated_at),
-      launchedAt: optionalNumber(row.launched_at),
       actingLeadSlotId: optionalString(row.acting_lead_slot_id)
     }))
 
@@ -383,8 +415,6 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
       agentSessionId: String(row.agent_session_id),
       generation: String(row.generation),
       installedAt: numberOf(row.installed_at),
-      launchStatus: String(row.launch_status) as RuntimeBinding['launchStatus'],
-      launchCommandId: optionalString(row.launch_command_id),
       launchDetail: String(row.launch_detail),
       acknowledgedAt: optionalNumber(row.acknowledged_at),
       lastCheckInAt: optionalNumber(row.last_check_in_at),
@@ -397,7 +427,7 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
     }))
 
     return {
-      schemaVersion: numberOf(meta.schema_version) as 8,
+      schemaVersion: numberOf(meta.schema_version) as 9,
       revision: numberOf(meta.revision),
       activeWorkspaceId: optionalString(meta.active_workspace_id),
       workspaces,
@@ -474,8 +504,8 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
       `).run(workspace.id, workspace.name, workspace.path, workspace.createdAt, workspace.updatedAt)
       this.database.prepare(`
         INSERT OR IGNORE INTO team_runs (
-          id, workspace_id, name, goal, template_id, status, created_at, updated_at, launched_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
+          id, workspace_id, name, goal, template_id, status, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         run.id,
         run.workspaceId,
@@ -520,11 +550,10 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
       }
 
       if (topologyChanged) {
+        // 拓扑变了：旧绑定与注册作废（席位要重新安装 MCP），run 状态不变——没有 draft 可以退回去。
         this.database.prepare('DELETE FROM runtime_bindings WHERE run_id = ?').run(run.id)
         revokeWorkspaceAgentRegistrations(this.database, workspace.id)
-        this.database.prepare(`
-          UPDATE team_runs SET status = 'draft', launched_at = NULL, updated_at = ? WHERE id = ?
-        `).run(Date.now(), run.id)
+        this.database.prepare('UPDATE team_runs SET updated_at = ? WHERE id = ?').run(Date.now(), run.id)
       }
 
       const slotIds = bundle.slots.map((slot) => slot.id)
@@ -595,38 +624,6 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
     this.database.exec('BEGIN IMMEDIATE')
     try {
       this.bumpRevision(normalized)
-      this.database.exec('COMMIT')
-    } catch (error) {
-      if (this.database.isTransaction) this.database.exec('ROLLBACK')
-      throw error
-    }
-  }
-
-  updateRunGoal(runId: string, goal: string): void {
-    const normalizedGoal = goal.trim()
-    if (!normalizedGoal) throw new Error('团队目标不能为空')
-    if (normalizedGoal.length > 8_000) throw new Error('团队目标不能超过 8000 个字符')
-    this.database.exec('BEGIN IMMEDIATE')
-    try {
-      const run = this.database.prepare(`
-        SELECT status FROM team_runs WHERE id = ?
-      `).get(runId.trim()) as SqliteRow | undefined
-      if (!run) throw new Error('TeamRun 不存在')
-      if (['launching', 'running', 'completed'].includes(String(run.status))) {
-        throw new Error('当前 TeamRun 已启动，不能修改团队目标')
-      }
-      const bindingCounts = this.database.prepare(`
-        SELECT
-          (SELECT COUNT(*) FROM agent_slots WHERE run_id = ?) AS slots,
-          (SELECT COUNT(*) FROM runtime_bindings WHERE run_id = ?) AS bindings
-      `).get(runId.trim(), runId.trim()) as SqliteRow
-      const installationComplete = numberOf(bindingCounts.slots) > 0 &&
-        numberOf(bindingCounts.slots) === numberOf(bindingCounts.bindings)
-      const result = this.database.prepare(`
-        UPDATE team_runs SET goal = ?, status = ?, updated_at = ? WHERE id = ?
-      `).run(normalizedGoal, installationComplete ? 'ready' : 'draft', Date.now(), runId.trim())
-      if (numberOf(result.changes) !== 1) throw new Error('TeamRun 不存在')
-      this.bumpRevision()
       this.database.exec('COMMIT')
     } catch (error) {
       if (this.database.isTransaction) this.database.exec('ROLLBACK')
@@ -705,13 +702,8 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
           }, installedAt)
         }
         // 相同拓扑重复安装必须是幂等刷新：保留 runtime_bindings 的 generation、
-        // launch_status、composer 绑定和 check_in 证据，避免把仍在轮询的 Cursor 会话误杀。
-        this.database.prepare(`
-          UPDATE team_runs
-          SET status = CASE WHEN length(trim(goal)) > 0 THEN 'ready' ELSE 'draft' END,
-              updated_at = ?, launched_at = NULL
-          WHERE id = ? AND status IN ('draft', 'ready')
-        `).run(installedAt, runId)
+        // composer 绑定、会话令牌和 check_in 证据，避免把仍在轮询的 Cursor 会话误杀。run 状态不变。
+        this.database.prepare('UPDATE team_runs SET updated_at = ? WHERE id = ?').run(installedAt, runId)
         this.bumpRevision(workspaceId)
         this.database.exec('COMMIT')
         return
@@ -743,15 +735,8 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
           newSessionToken()
         )
       }
-      // 安装批次只把「尚未启动」的 run 归位到 ready/draft；launching/running 等
-      // 已启动状态必须保留——否则启动标记被抹掉后 team_check_in 永久拒绝（白名单
-      // 不含 ready），而消息通道不校验 run 状态照常工作，形成状态撕裂。
-      this.database.prepare(`
-        UPDATE team_runs
-        SET status = CASE WHEN length(trim(goal)) > 0 THEN 'ready' ELSE 'draft' END,
-            updated_at = ?, launched_at = NULL
-        WHERE id = ? AND status IN ('draft', 'ready')
-      `).run(installedAt, runId)
+      // 安装不改 run 状态：run 一建即 running，没有 draft / ready 可以归位。
+      this.database.prepare('UPDATE team_runs SET updated_at = ? WHERE id = ?').run(installedAt, runId)
       this.bumpRevision(workspaceId)
       this.database.exec('COMMIT')
     } catch (error) {
@@ -846,8 +831,7 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
       const result = this.database.prepare(`
         UPDATE runtime_bindings
         SET composer_binding_key = ?, composer_id = NULL, composer_bound_at = NULL,
-            composer_binding_method = NULL, launch_status = 'not_started',
-            launch_command_id = NULL, launch_detail = '', acknowledged_at = NULL,
+            composer_binding_method = NULL, launch_detail = '', acknowledged_at = NULL,
             last_check_in_at = NULL, last_check_in_note = '', session_token = ?
         WHERE run_id = ? AND slot_id = ?
       `).run(bindingKey, newSessionToken(), input.runId.trim(), input.slotId.trim())
@@ -992,342 +976,6 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
     }))
   }
 
-  rebindSlotToStandby(input: {
-    failoverId: string
-    runId: string
-    slotId: string
-    expectedAgentSessionId: string
-    replacementAgentSessionId: string
-    reason: string
-    detectedAt: number
-    bindingKey: string
-    checkpointId?: string
-  }): TeamFailoverRebindResult {
-    const failoverId = input.failoverId.trim()
-    const runId = input.runId.trim()
-    const slotId = input.slotId.trim()
-    const expectedAgentSessionId = input.expectedAgentSessionId.trim()
-    const replacementAgentSessionId = input.replacementAgentSessionId.trim()
-    if (!failoverId || !runId || !slotId || !expectedAgentSessionId || !replacementAgentSessionId) {
-      throw new Error('接替换绑参数不完整')
-    }
-    if (!COMPOSER_BINDING_KEY_PATTERN.test(input.bindingKey.trim())) {
-      throw new Error('接替绑定键无效')
-    }
-
-    this.database.exec('BEGIN IMMEDIATE')
-    try {
-      const current = this.database.prepare(`
-        SELECT b.workspace_id, b.channel_id, b.agent_session_id, r.name AS role_name,
-               r.capabilities_json
-        FROM runtime_bindings b
-        JOIN agent_slots s ON s.id = b.slot_id AND s.run_id = b.run_id
-        JOIN team_roles r ON r.id = s.role_id AND r.run_id = b.run_id
-        WHERE b.run_id = ? AND b.slot_id = ?
-      `).get(runId, slotId) as SqliteRow | undefined
-      if (!current || String(current.agent_session_id) !== expectedAgentSessionId) {
-        throw new TaskPoolError('failover_stale_binding', 'AgentSlot 已被其他运行时接替，忽略迟到的掉线事件')
-      }
-      const replacement = this.database.prepare(`
-        SELECT workspace_id, channel_id, generation
-        FROM agent_registrations
-        WHERE agent_session_id = ? AND run_id = ? AND revoked_at IS NULL
-      `).get(replacementAgentSessionId, runId) as SqliteRow | undefined
-      if (!replacement || String(replacement.workspace_id) !== String(current.workspace_id)) {
-        throw new TaskPoolError('standby_not_registered', '备用通道没有当前 TeamRun 的有效 MCP 注册')
-      }
-      const occupied = this.database.prepare(`
-        SELECT slot_id FROM runtime_bindings
-        WHERE run_id = ? AND agent_session_id = ?
-      `).get(runId, replacementAgentSessionId)
-      if (occupied) throw new TaskPoolError('standby_already_assigned', '备用通道已被其他职责占用')
-
-      const at = input.detectedAt
-      this.database.prepare(`
-        UPDATE agent_registrations SET revoked_at = ?
-        WHERE agent_session_id = ? AND run_id = ? AND revoked_at IS NULL
-      `).run(at, expectedAgentSessionId, runId)
-      this.database.prepare(`
-        UPDATE agent_registrations SET capabilities_json = ?
-        WHERE agent_session_id = ? AND run_id = ? AND revoked_at IS NULL
-      `).run(String(current.capabilities_json), replacementAgentSessionId, runId)
-      // 备用会话早已在线、未持有本席令牌：令牌清空（按无令牌旧会话放行），同时让
-      // 原失联 Agent 若复活并出示旧令牌时被围栏拒绝。
-      const updated = this.database.prepare(`
-        UPDATE runtime_bindings
-        SET id = ?, channel_id = ?, agent_session_id = ?, generation = ?, installed_at = ?,
-            launch_status = 'sending', launch_command_id = NULL,
-            launch_detail = '备用 Agent 正在接替职责', acknowledged_at = NULL,
-            last_check_in_at = NULL, last_check_in_note = '', composer_binding_key = ?,
-            composer_id = NULL, composer_bound_at = NULL, composer_binding_method = NULL,
-            session_token = NULL
-        WHERE run_id = ? AND slot_id = ? AND agent_session_id = ?
-      `).run(
-        `runtime-binding:${replacementAgentSessionId}`,
-        String(replacement.channel_id),
-        replacementAgentSessionId,
-        String(replacement.generation),
-        at,
-        input.bindingKey.trim(),
-        runId,
-        slotId,
-        expectedAgentSessionId
-      )
-      if (numberOf(updated.changes) !== 1) {
-        throw new TaskPoolError('failover_stale_binding', '接替时 AgentSlot 绑定已经变化')
-      }
-      this.database.prepare(`
-        UPDATE agent_slots SET channel_id = ?, updated_at = ? WHERE id = ? AND run_id = ?
-      `).run(String(replacement.channel_id), at, slotId, runId)
-      this.database.prepare(`
-        INSERT INTO team_failovers (
-          id, workspace_id, run_id, slot_id, role_name,
-          from_channel_id, from_agent_session_id, to_channel_id, to_agent_session_id,
-          status, reason, checkpoint_id, message_id, task_ids_json,
-          detected_at, updated_at, completed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'waiting_for_agent', ?, ?, NULL, '[]', ?, ?, NULL)
-      `).run(
-        failoverId,
-        String(current.workspace_id),
-        runId,
-        slotId,
-        String(current.role_name),
-        String(current.channel_id),
-        expectedAgentSessionId,
-        String(replacement.channel_id),
-        replacementAgentSessionId,
-        normalizedNote(input.reason),
-        input.checkpointId?.trim() || null,
-        at,
-        at
-      )
-      this.database.prepare(`
-        UPDATE team_runs SET status = 'attention', updated_at = ?
-        WHERE id = ? AND status = 'running'
-      `).run(at, runId)
-      this.bumpRevision()
-      this.database.exec('COMMIT')
-      return {
-        record: this.listFailovers(runId).find((record) => record.id === failoverId)!,
-        bindingKey: input.bindingKey.trim()
-      }
-    } catch (error) {
-      if (this.database.isTransaction) this.database.exec('ROLLBACK')
-      throw error
-    }
-  }
-
-  rebindSlotFromMember(input: {
-    failoverId: string
-    runId: string
-    slotId: string
-    donorSlotId: string
-    expectedAgentSessionId: string
-    replacementAgentSessionId: string
-    reason: string
-    detectedAt: number
-    bindingKey: string
-    checkpointId?: string
-  }): TeamFailoverRebindResult {
-    const failoverId = input.failoverId.trim()
-    const runId = input.runId.trim()
-    const slotId = input.slotId.trim()
-    const donorSlotId = input.donorSlotId.trim()
-    const expectedAgentSessionId = input.expectedAgentSessionId.trim()
-    const replacementAgentSessionId = input.replacementAgentSessionId.trim()
-    if (!failoverId || !runId || !slotId || !donorSlotId || slotId === donorSlotId
-      || !expectedAgentSessionId || !replacementAgentSessionId) {
-      throw new Error('手动交接换绑参数不完整')
-    }
-    if (!COMPOSER_BINDING_KEY_PATTERN.test(input.bindingKey.trim())) throw new Error('交接绑定键无效')
-
-    this.database.exec('BEGIN IMMEDIATE')
-    try {
-      const bindingRow = (targetSlotId: string): SqliteRow | undefined => this.database.prepare(`
-        SELECT b.*, s.avatar_id, r.name AS role_name, r.capabilities_json
-        FROM runtime_bindings b
-        JOIN agent_slots s ON s.id = b.slot_id AND s.run_id = b.run_id
-        JOIN team_roles r ON r.id = s.role_id AND r.run_id = b.run_id
-        WHERE b.run_id = ? AND b.slot_id = ?
-      `).get(runId, targetSlotId) as SqliteRow | undefined
-      const current = bindingRow(slotId)
-      const donor = bindingRow(donorSlotId)
-      if (!current || String(current.agent_session_id) !== expectedAgentSessionId) {
-        throw new TaskPoolError('failover_stale_binding', '待交接 AgentSlot 已被其他运行时接替')
-      }
-      if (!donor || String(donor.agent_session_id) !== replacementAgentSessionId) {
-        throw new TaskPoolError('handoff_candidate_changed', '候选 Agent 的运行身份已经变化')
-      }
-      const replacement = this.database.prepare(`
-        SELECT workspace_id FROM agent_registrations
-        WHERE agent_session_id = ? AND run_id = ? AND revoked_at IS NULL
-      `).get(replacementAgentSessionId, runId) as SqliteRow | undefined
-      if (!replacement || String(replacement.workspace_id) !== String(current.workspace_id)) {
-        throw new TaskPoolError('handoff_candidate_revoked', '候选 Agent 已失效，不能交接')
-      }
-      const conflict = this.database.prepare(`
-        SELECT 1 FROM team_failovers
-        WHERE run_id = ? AND status = 'waiting_for_agent' AND slot_id IN (?, ?)
-      `).get(runId, slotId, donorSlotId)
-      if (conflict) throw new TaskPoolError('handoff_in_progress', '相关角色已经处于交接中')
-
-      const at = input.detectedAt
-      const temporaryId = `runtime-binding:handoff-temp:${failoverId}`
-      const temporaryAgent = `handoff-temp:${failoverId}`
-      this.database.prepare('UPDATE agent_slots SET channel_id = NULL WHERE run_id = ? AND id IN (?, ?)')
-        .run(runId, slotId, donorSlotId)
-      this.database.prepare(`
-        UPDATE runtime_bindings SET id = ?, agent_session_id = ?
-        WHERE run_id = ? AND slot_id = ? AND agent_session_id = ?
-      `).run(temporaryId, temporaryAgent, runId, slotId, expectedAgentSessionId)
-      // 会话令牌随运行身份一起交换：在线的 donor 继续用自己的令牌通过围栏；
-      // 迁到 donor 席的离线身份令牌清空（其旧令牌若复活出示即被拒绝）。
-      this.database.prepare(`
-        UPDATE runtime_bindings
-        SET id = ?, channel_id = ?, agent_session_id = ?, generation = ?, installed_at = ?,
-            launch_status = 'failed', launch_command_id = NULL,
-            launch_detail = '原运行时已离线；在线 Agent 已迁移到其他职责',
-            acknowledged_at = NULL, last_check_in_at = NULL, last_check_in_note = '',
-            composer_binding_key = ?, composer_id = NULL, composer_bound_at = NULL,
-            composer_binding_method = NULL, session_token = NULL
-        WHERE run_id = ? AND slot_id = ? AND agent_session_id = ?
-      `).run(
-        String(current.id), String(current.channel_id), expectedAgentSessionId,
-        String(current.generation), at, String(current.composer_binding_key),
-        runId, donorSlotId, replacementAgentSessionId
-      )
-      this.database.prepare(`
-        UPDATE runtime_bindings
-        SET id = ?, channel_id = ?, agent_session_id = ?, generation = ?, installed_at = ?,
-            launch_status = 'sending', launch_command_id = NULL,
-            launch_detail = '用户手动交接，等待新角色确认', acknowledged_at = NULL,
-            last_check_in_at = NULL, last_check_in_note = '', composer_binding_key = ?,
-            composer_id = NULL, composer_bound_at = NULL, composer_binding_method = NULL,
-            session_token = ?
-        WHERE run_id = ? AND slot_id = ? AND agent_session_id = ?
-      `).run(
-        String(donor.id), String(donor.channel_id), replacementAgentSessionId,
-        String(donor.generation), at, input.bindingKey.trim(),
-        optionalString(donor.session_token) ?? null,
-        runId, slotId, temporaryAgent
-      )
-      this.database.prepare(`
-        UPDATE agent_slots SET channel_id = ?, avatar_id = ?, updated_at = ? WHERE run_id = ? AND id = ?
-      `).run(String(donor.channel_id), String(donor.avatar_id), at, runId, slotId)
-      this.database.prepare(`
-        UPDATE agent_slots SET channel_id = ?, avatar_id = ?, updated_at = ? WHERE run_id = ? AND id = ?
-      `).run(String(current.channel_id), String(current.avatar_id), at, runId, donorSlotId)
-      this.database.prepare(`
-        UPDATE agent_registrations SET revoked_at = ?
-        WHERE agent_session_id = ? AND run_id = ? AND revoked_at IS NULL
-      `).run(at, expectedAgentSessionId, runId)
-      this.database.prepare(`
-        UPDATE agent_registrations SET capabilities_json = ?
-        WHERE agent_session_id = ? AND run_id = ? AND revoked_at IS NULL
-      `).run(String(current.capabilities_json), replacementAgentSessionId, runId)
-      this.database.prepare(`
-        INSERT INTO team_failovers (
-          id, workspace_id, run_id, slot_id, role_name,
-          from_channel_id, from_agent_session_id, to_channel_id, to_agent_session_id,
-          status, reason, checkpoint_id, message_id, task_ids_json,
-          detected_at, updated_at, completed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'waiting_for_agent', ?, ?, NULL, '[]', ?, ?, NULL)
-      `).run(
-        failoverId, String(current.workspace_id), runId, slotId, String(current.role_name),
-        String(current.channel_id), expectedAgentSessionId, String(donor.channel_id),
-        replacementAgentSessionId, normalizedNote(input.reason),
-        input.checkpointId?.trim() || null, at, at
-      )
-      this.database.prepare(`
-        UPDATE team_runs SET status = 'attention', updated_at = ?
-        WHERE id = ? AND status = 'running'
-      `).run(at, runId)
-      this.bumpRevision()
-      this.database.exec('COMMIT')
-      return {
-        record: this.listFailovers(runId).find((record) => record.id === failoverId)!,
-        bindingKey: input.bindingKey.trim()
-      }
-    } catch (error) {
-      if (this.database.isTransaction) this.database.exec('ROLLBACK')
-      throw error
-    }
-  }
-
-  attachFailoverContext(input: {
-    failoverId: string
-    checkpointId?: string
-    messageId: string
-    taskIds: string[]
-    at: number
-  }): void {
-    this.database.exec('BEGIN IMMEDIATE')
-    try {
-      const result = this.database.prepare(`
-        UPDATE team_failovers
-        SET checkpoint_id = ?, message_id = ?, task_ids_json = ?, updated_at = ?
-        WHERE id = ? AND status = 'waiting_for_agent'
-      `).run(
-        input.checkpointId ?? null,
-        input.messageId.trim(),
-        JSON.stringify([...new Set(input.taskIds.map((id) => id.trim()).filter(Boolean))]),
-        input.at,
-        input.failoverId.trim()
-      )
-      if (numberOf(result.changes) !== 1) throw new Error('接替记录不存在或状态已结束')
-      this.bumpRevision()
-      this.database.exec('COMMIT')
-    } catch (error) {
-      if (this.database.isTransaction) this.database.exec('ROLLBACK')
-      throw error
-    }
-  }
-
-  updateFailoverStatus(input: {
-    failoverId: string
-    status: 'completed' | 'failed'
-    reason?: string
-    at: number
-  }): void {
-    this.database.exec('BEGIN IMMEDIATE')
-    try {
-      const row = this.database.prepare(
-        'SELECT run_id FROM team_failovers WHERE id = ?'
-      ).get(input.failoverId.trim()) as SqliteRow | undefined
-      if (!row) throw new Error('接替记录不存在')
-      this.database.prepare(`
-        UPDATE team_failovers
-        SET status = ?, reason = CASE WHEN ? = '' THEN reason ELSE ? END,
-            updated_at = ?, completed_at = ?
-        WHERE id = ? AND status = 'waiting_for_agent'
-      `).run(
-        input.status,
-        input.reason?.trim() ?? '',
-        normalizedNote(input.reason ?? ''),
-        input.at,
-        input.at,
-        input.failoverId.trim()
-      )
-      if (input.status === 'completed') {
-        const pending = this.database.prepare(`
-          SELECT COUNT(*) AS count FROM team_failovers
-          WHERE run_id = ? AND status = 'waiting_for_agent'
-        `).get(String(row.run_id)) as SqliteRow
-        if (numberOf(pending.count) === 0) {
-          this.database.prepare(`
-            UPDATE team_runs SET status = 'running', updated_at = ?
-            WHERE id = ? AND status = 'attention'
-          `).run(input.at, String(row.run_id))
-        }
-      }
-      this.bumpRevision()
-      this.database.exec('COMMIT')
-    } catch (error) {
-      if (this.database.isTransaction) this.database.exec('ROLLBACK')
-      throw error
-    }
-  }
-
   listFailovers(runId: string): TeamFailoverRecord[] {
     return (this.database.prepare(`
       SELECT * FROM team_failovers WHERE run_id = ?
@@ -1335,23 +983,22 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
     `).all(runId.trim()) as SqliteRow[]).map(failoverFromRow)
   }
 
-  completeRun(runId: string, at: number, detail = RUN_COMPLETED_ALL_OFFLINE_DETAIL): boolean {
+  completeRun(runId: string, at: number, detail = RUN_COMPLETED_DEFAULT_DETAIL): boolean {
     this.database.exec('BEGIN IMMEDIATE')
     try {
       const normalizedRunId = runId.trim()
       const result = this.database.prepare(`
         UPDATE team_runs SET status = 'completed', acting_lead_slot_id = NULL, updated_at = ?
-        WHERE id = ? AND status IN ('launching', 'running', 'attention', 'paused')
+        WHERE id = ? AND status = 'running'
       `).run(at, normalizedRunId)
       if (numberOf(result.changes) > 0) {
         this.database.prepare(`
           UPDATE agent_registrations SET revoked_at = ?
           WHERE run_id = ? AND revoked_at IS NULL
         `).run(at, normalizedRunId)
+        // 收尾原因写进绑定备注；launch_status 列不再表达状态（阶段 2 · 2B）。
         this.database.prepare(`
-          UPDATE runtime_bindings
-          SET launch_status = 'failed', launch_detail = ?
-          WHERE run_id = ?
+          UPDATE runtime_bindings SET launch_detail = ? WHERE run_id = ?
         `).run(normalizedNote(detail), normalizedRunId)
         this.bumpRevision()
       }
@@ -1378,7 +1025,7 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
       }
       const result = this.database.prepare(`
         UPDATE team_runs SET acting_lead_slot_id = ?, updated_at = ?
-        WHERE id = ? AND status IN ('launching', 'running', 'attention')
+        WHERE id = ? AND status = 'running'
       `).run(normalizedSlotId, input.at, normalizedRunId)
       if (numberOf(result.changes) !== 1) {
         throw new TaskPoolError('acting_lead_run_inactive', '只有运行中的 TeamRun 可以设置临时主控')
@@ -1392,106 +1039,11 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
     }
   }
 
-  beginLaunch(runId: string, at: number, bindingKey: string): void {
-    const normalizedBindingKey = bindingKey.trim()
-    if (!COMPOSER_BINDING_KEY_PATTERN.test(normalizedBindingKey)) {
-      throw new Error('Cursor 会话启动绑定键无效')
-    }
-    this.database.exec('BEGIN IMMEDIATE')
-    try {
-      const result = this.database.prepare(`
-        UPDATE team_runs
-        SET status = 'launching', launched_at = ?, updated_at = ?
-        WHERE id = ? AND status IN ('ready', 'attention') AND length(trim(goal)) > 0
-      `).run(at, at, runId.trim())
-      if (numberOf(result.changes) !== 1) throw new Error('TeamRun 尚未达到可启动状态')
-      this.database.prepare(`
-        UPDATE runtime_bindings
-        SET launch_status = 'not_started', launch_command_id = NULL, launch_detail = '',
-            acknowledged_at = NULL, last_check_in_at = NULL, last_check_in_note = '',
-            composer_binding_key = ?, composer_id = NULL, composer_bound_at = NULL,
-            composer_binding_method = NULL
-        WHERE run_id = ?
-      `).run(normalizedBindingKey, runId.trim())
-      this.bumpRevision()
-      this.database.exec('COMMIT')
-    } catch (error) {
-      if (this.database.isTransaction) this.database.exec('ROLLBACK')
-      throw error
-    }
-  }
-
   /**
-   * 幂等推进 run 到 launching（仅状态，不重置 bindings）：
-   * 供会话创建路径在投递启动提示前调用，保证 Agent 收到提示时 check_in 必被接纳。
-   * 与 beginLaunch 的差别：不轮换 composer_binding_key、不清除既有 composer 绑定，
-   * 因此不会打断已在线会话。已是 launching/running/attention 等状态时为空操作。
+   * team_check_in 落库：签到时间 / 备注写回绑定，入组席位追加 member_checked_in 审计行。
+   * 池 run 没有启动状态机（阶段 2 · 2B）：run 只有 running / completed，已结束的 run 拒绝签到
+   *（`run_completed`）；不再有「自愈推进 launching」与「全员签到 → running」的状态推进。
    */
-  ensureRunLaunching(runId: string, at: number): void {
-    this.database.exec('BEGIN IMMEDIATE')
-    try {
-      this.database.prepare(`
-        UPDATE team_runs
-        SET status = 'launching', launched_at = COALESCE(launched_at, ?), updated_at = ?
-        WHERE id = ? AND status IN ('ready', 'draft') AND length(trim(goal)) > 0
-      `).run(at, at, runId.trim())
-      this.bumpRevision()
-      this.database.exec('COMMIT')
-    } catch (error) {
-      if (this.database.isTransaction) this.database.exec('ROLLBACK')
-      throw error
-    }
-  }
-
-  recordLaunchDelivery(input: {
-    runId: string
-    slotId: string
-    status: 'sending' | 'delivered' | 'uncertain' | 'failed'
-    commandId?: string
-    detail: string
-  }): void {
-    this.database.exec('BEGIN IMMEDIATE')
-    try {
-      const result = this.database.prepare(`
-        UPDATE runtime_bindings
-        SET
-          launch_status = CASE
-            WHEN launch_status = 'acknowledged' THEN 'acknowledged'
-            ELSE ?
-          END,
-          launch_command_id = COALESCE(?, launch_command_id),
-          launch_detail = CASE
-            WHEN launch_status = 'acknowledged' THEN launch_detail
-            ELSE ?
-          END
-        WHERE run_id = ? AND slot_id = ?
-      `).run(
-        input.status,
-        input.commandId ?? null,
-        input.detail.trim().slice(0, 2_000),
-        input.runId,
-        input.slotId
-      )
-      if (numberOf(result.changes) !== 1) throw new Error('RuntimeBinding 不存在')
-      const binding = this.database.prepare(`
-        SELECT launch_status FROM runtime_bindings WHERE run_id = ? AND slot_id = ?
-      `).get(input.runId, input.slotId) as SqliteRow
-      if (
-        binding.launch_status !== 'acknowledged' &&
-        (input.status === 'failed' || input.status === 'uncertain')
-      ) {
-        this.database.prepare(`
-          UPDATE team_runs SET status = 'attention', updated_at = ? WHERE id = ?
-        `).run(Date.now(), input.runId)
-      }
-      this.bumpRevision()
-      this.database.exec('COMMIT')
-    } catch (error) {
-      if (this.database.isTransaction) this.database.exec('ROLLBACK')
-      throw error
-    }
-  }
-
   recordAgentCheckIn(identity: AgentAuthorizationIdentity, note: string): AgentCheckInReceipt {
     const at = Date.now()
     let row: SqliteRow | undefined
@@ -1508,24 +1060,14 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
       if (!row) {
         throw new TaskPoolError('runtime_binding_missing', '当前 Agent 没有有效的外置 Team RuntimeBinding')
       }
-      if (!['launching', 'attention', 'running'].includes(String(row.run_status))) {
-        // 自愈：会话创建路径（AgentSessionLauncher）只投递启动提示、不推进 run 状态，
-        // Agent 收到提示即 check_in。只要 run 已具备目标，就原地推进到 launching，
-        // 保证任何投递路径下 check_in 都不会被状态机误拒（team_run_not_launched）。
-        // 无目标（draft 且 goal 为空）时依旧拒绝——此时不该存在有效的启动提示。
-        const healed = this.database.prepare(`
-          UPDATE team_runs
-          SET status = 'launching', launched_at = COALESCE(launched_at, ?), updated_at = ?
-          WHERE id = ? AND status IN ('ready', 'draft') AND length(trim(goal)) > 0
-        `).run(at, at, identity.runId)
-        if (numberOf(healed.changes) !== 1) {
-          throw new TaskPoolError('team_run_not_launched', '当前 TeamRun 尚未启动，不能提前确认 Agent')
-        }
+      if (String(row.run_status) !== 'running') {
+        throw new TaskPoolError('run_completed', '当前运行已经结束，不能再登记在岗')
       }
 
+      // acknowledged_at 只写首次（就绪度 active 的唯一依据）；重复签到只刷 last_check_in_*。
       const updated = this.database.prepare(`
         UPDATE runtime_bindings
-        SET launch_status = 'acknowledged', acknowledged_at = ?, last_check_in_at = ?, last_check_in_note = ?
+        SET acknowledged_at = COALESCE(acknowledged_at, ?), last_check_in_at = ?, last_check_in_note = ?
         WHERE agent_session_id = ? AND run_id = ?
       `).run(at, at, normalizedNote(note), identity.agentSessionId, identity.runId)
       if (numberOf(updated.changes) !== 1) {
@@ -1542,22 +1084,6 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
           detail: normalizedNote(note) || undefined,
           at
         })
-      }
-
-      const totals = this.database.prepare(`
-        SELECT
-          COUNT(*) AS total,
-          SUM(CASE WHEN launch_status = 'acknowledged' THEN 1 ELSE 0 END) AS acknowledged
-        FROM runtime_bindings b
-        JOIN agent_slots s ON s.id = b.slot_id AND s.run_id = b.run_id
-        WHERE b.run_id = ? AND COALESCE(s.is_solo, 0) = 0
-      `).get(identity.runId) as SqliteRow
-      if (numberOf(totals.total) > 0 && numberOf(totals.total) === numberOf(totals.acknowledged)) {
-        this.database.prepare(`
-          UPDATE team_runs
-          SET status = 'running', updated_at = ?
-          WHERE id = ? AND status IN ('launching', 'attention')
-        `).run(at, identity.runId)
       }
       this.bumpRevision()
       this.database.exec('COMMIT')
@@ -1591,6 +1117,7 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
     goal?: string
     members: TeamGroupMemberConfiguration[]
     leadSlotId?: string
+    planPolicy?: TeamGroupPlanPolicy
     at?: number
   }): TeamGroupMutation {
     const runId = input.runId.trim()
@@ -1601,6 +1128,7 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
     if (leadSlotId && !input.members.some((member) => member.slotId.trim() === leadSlotId)) {
       throw new TaskPoolError('group_lead_not_member', 'lead 必须是本组成员')
     }
+    const planPolicy = input.planPolicy ?? defaultGroupPlanPolicy(leadSlotId)
     const at = input.at ?? Date.now()
     this.database.exec('BEGIN IMMEDIATE')
     try {
@@ -1608,9 +1136,9 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
       const groupId = `team-group:${run.workspaceId}:${randomUUID()}`
       this.database.prepare(`
         INSERT INTO team_groups (
-          id, run_id, name, goal, status, lead_slot_id, acting_lead_slot_id, created_at, updated_at, dissolved_at
-        ) VALUES (?, ?, ?, ?, 'active', NULL, NULL, ?, ?, NULL)
-      `).run(groupId, runId, name, goal, at, at)
+          id, run_id, name, goal, status, lead_slot_id, acting_lead_slot_id, plan_policy, created_at, updated_at, dissolved_at
+        ) VALUES (?, ?, ?, ?, 'active', NULL, NULL, ?, ?, ?, NULL)
+      `).run(groupId, runId, name, goal, planPolicy, at, at)
       this.appendGroupEvent({ groupId, type: 'created', actor: 'operator', detail: name, at })
       const joined = this.joinMembers(groupId, runId, input.members, at)
       if (leadSlotId) {
@@ -1758,6 +1286,28 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
     }
   }
 
+  setGroupPlanPolicy(input: { groupId: string; planPolicy: TeamGroupPlanPolicy; at?: number }): TeamGroupMutation {
+    if (input.planPolicy !== 'lead_only' && input.planPolicy !== 'any_member') {
+      throw new TaskPoolError('group_plan_policy_invalid', `未知的规划策略：${String(input.planPolicy)}`)
+    }
+    const at = input.at ?? Date.now()
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      const group = this.requireActiveGroup(input.groupId)
+      this.database.prepare('UPDATE team_groups SET plan_policy = ?, updated_at = ? WHERE id = ?')
+        .run(input.planPolicy, at, group.id)
+      this.appendGroupEvent({
+        groupId: group.id, type: 'plan_policy_updated', actor: 'operator', detail: `${group.planPolicy} → ${input.planPolicy}`, at
+      })
+      this.bumpRevision()
+      this.database.exec('COMMIT')
+      return { group: this.requireGroup(group.id), joined: [], left: [] }
+    } catch (error) {
+      if (this.database.isTransaction) this.database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
   dissolveGroup(input: { groupId: string; at?: number }): TeamGroupMutation {
     const at = input.at ?? Date.now()
     this.database.exec('BEGIN IMMEDIATE')
@@ -1775,6 +1325,112 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
       this.bumpRevision()
       this.database.exec('COMMIT')
       return { group: this.requireGroup(group.id), joined: [], left }
+    } catch (error) {
+      if (this.database.isTransaction) this.database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  transferGroupMembership(input: {
+    groupId: string
+    fromSlotId: string
+    toSlotId: string
+    at?: number
+  }): GroupMembershipTransfer {
+    const fromSlotId = input.fromSlotId.trim()
+    const toSlotId = input.toSlotId.trim()
+    if (!fromSlotId || !toSlotId) throw new TaskPoolError('transfer_slot_required', '迁移需要同时指定原席位与目标席位')
+    if (fromSlotId === toSlotId) throw new TaskPoolError('transfer_same_slot', '目标席位不能是原席位自己')
+    const at = input.at ?? Date.now()
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      const group = this.requireActiveGroup(input.groupId)
+      const run = this.requirePoolRun(group.runId)
+      // A 出组（leaveMember 校验成员关系并写 member_left）、B 以同一角色模板入组（joinMembers
+      // 校验 B 未入组并写 member_joined）。先出后进：A 的组角色行删除后，B 的新角色拿到同一 role_key。
+      const left = this.leaveMember(group, fromSlotId, at)
+      const joined = this.joinMembers(group.id, group.runId, [
+        { slotId: toSlotId, roleTemplateKey: left.roleTemplateKey }
+      ], at)[0]!
+      // lead 随迁：组身份 = 组角色 + lead 身份。指向 A 的 lead / 临时主控指针都改指 B，有效 lead 不因
+      // 迁移而消失（也绝不落进「无 lead 组开放规划」的意外分支）。transferredLead 只看有效 lead 是否
+      // 从 A 移到了 B：A 是名义 lead 但另有临时主控时指针照样移动，但组里的有效 lead 并没有变。
+      const transferredLead = effectiveGroupLeadSlotId(group) === fromSlotId
+      if (group.leadSlotId === fromSlotId) {
+        this.database.prepare('UPDATE team_groups SET lead_slot_id = ? WHERE id = ?').run(toSlotId, group.id)
+        this.appendGroupEvent({
+          groupId: group.id, type: 'lead_changed', slotId: toSlotId, channelId: joined.channelId,
+          actor: 'operator', detail: `${fromSlotId} → ${toSlotId}（成员身份迁移）`, at
+        })
+      }
+      if (group.actingLeadSlotId === fromSlotId) {
+        this.database.prepare('UPDATE team_groups SET acting_lead_slot_id = ? WHERE id = ?').run(toSlotId, group.id)
+        this.appendGroupEvent({
+          groupId: group.id, type: 'acting_lead_changed', slotId: toSlotId, channelId: joined.channelId,
+          actor: 'operator', detail: `${fromSlotId} → ${toSlotId}（成员身份迁移）`, at
+        })
+      }
+      this.database.prepare('UPDATE team_groups SET updated_at = ? WHERE id = ?').run(at, group.id)
+      // 审计走 team_failovers（reason 固定 manual_membership_transfer）：绑定 / 令牌 / Composer 不动，
+      // 没有「等待接替确认」这一步，落库即 completed。会话字段缺省为空串 / NULL（席位可能尚未安装）。
+      const bindingOf = this.database.prepare(
+        'SELECT agent_session_id FROM runtime_bindings WHERE run_id = ? AND slot_id = ?'
+      )
+      const fromBinding = bindingOf.get(group.runId, fromSlotId) as SqliteRow | undefined
+      const toBinding = bindingOf.get(group.runId, toSlotId) as SqliteRow | undefined
+      const failoverId = `team-handoff:membership:${randomUUID()}`
+      this.database.prepare(`
+        INSERT INTO team_failovers (
+          id, workspace_id, run_id, slot_id, role_name,
+          from_channel_id, from_agent_session_id, to_channel_id, to_agent_session_id,
+          status, reason, checkpoint_id, message_id, task_ids_json,
+          detected_at, updated_at, completed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', 'manual_membership_transfer', NULL, NULL, '[]', ?, ?, ?)
+      `).run(
+        failoverId, run.workspaceId, group.runId, fromSlotId, left.roleName,
+        left.channelId ?? '', fromBinding ? String(fromBinding.agent_session_id) : '',
+        joined.channelId ?? null, toBinding ? String(toBinding.agent_session_id) : null,
+        at, at, at
+      )
+      this.bumpRevision()
+      this.database.exec('COMMIT')
+      return {
+        group: this.requireGroup(group.id),
+        from: left,
+        to: joined,
+        transferredLead,
+        failover: this.listFailovers(group.runId).find((record) => record.id === failoverId)!
+      }
+    } catch (error) {
+      if (this.database.isTransaction) this.database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  recordGroupMemberRebuilt(input: { groupId: string; slotId: string; at?: number }): void {
+    const slotId = input.slotId.trim()
+    const at = input.at ?? Date.now()
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      const group = this.requireActiveGroup(input.groupId)
+      const row = this.database.prepare(`
+        SELECT s.channel_id, r.name AS role_name
+        FROM agent_slots s
+        JOIN team_roles r ON r.id = s.role_id
+        WHERE s.id = ? AND s.group_id = ?
+      `).get(slotId, group.id) as SqliteRow | undefined
+      if (!row) throw new TaskPoolError('group_member_not_found', `席位 ${slotId} 不是本组成员`)
+      this.appendGroupEvent({
+        groupId: group.id,
+        type: 'member_rejoined_after_rebuild',
+        slotId,
+        channelId: optionalString(row.channel_id),
+        actor: 'system',
+        detail: String(row.role_name),
+        at
+      })
+      this.bumpRevision()
+      this.database.exec('COMMIT')
     } catch (error) {
       if (this.database.isTransaction) this.database.exec('ROLLBACK')
       throw error
@@ -2007,6 +1663,7 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
         status TEXT NOT NULL,
         lead_slot_id TEXT,
         acting_lead_slot_id TEXT,
+        plan_policy TEXT NOT NULL DEFAULT 'lead_only',
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         dissolved_at INTEGER
@@ -2270,6 +1927,71 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
         throw error
       }
     }
+    if (databaseVersion === 8) {
+      // v9（阶段 2 · 2B）：团队 run 的启动状态机退役，run 只剩 running / completed。
+      // - 一次性团队 run（software-core-v1）不再能被创建、启动或接管：无论停在哪个状态，一律归档为
+      //   completed（detail 标明是升级归档，不是「全员离线」）。仍在 running 的旧团队会话会在下一次轮询
+      //   被会话围栏以 run_completed 退役——升级后没有任何界面能继续操作它，与其半死不如明确结束。
+      // - 早期代码遗留的、非最新的 running 独立 run（同一工作区内已被更新的 run 取代）同样归档；
+      //   activeRun 永远取最新一条，这些行只是脏数据。
+      // - draft / ready / launching / attention / paused 这些值此后不会再被写入。
+      this.database.exec('BEGIN IMMEDIATE')
+      try {
+        const now = Date.now()
+        const runs = this.database.prepare(
+          'SELECT id, workspace_id, template_id, status, created_at FROM team_runs ORDER BY created_at DESC, id DESC'
+        ).all() as SqliteRow[]
+        const newestPoolByWorkspace = new Map<string, string>()
+        for (const run of runs) {
+          const workspaceId = String(run.workspace_id)
+          if (!newestPoolByWorkspace.has(workspaceId)) newestPoolByWorkspace.set(workspaceId, String(run.id))
+        }
+        const legacyTeamRunIds = runs
+          .filter((run) => String(run.template_id) !== INDEPENDENT_SESSION_TEMPLATE_ID && String(run.status) !== 'completed')
+          .map((run) => String(run.id))
+        const stalePoolIds = runs
+          .filter((run) => String(run.template_id) === INDEPENDENT_SESSION_TEMPLATE_ID
+            && String(run.status) !== 'completed'
+            && newestPoolByWorkspace.get(String(run.workspace_id)) !== String(run.id))
+          .map((run) => String(run.id))
+        // 归档 = completeRun 的三件事（run 置 completed、撤销该 run 的 agent 注册、收尾原因写进绑定备注），
+        // 只是 detail 标明是升级归档；注册按 run 撤销，同工作区更新的池 run 不受影响。
+        const archiveRun = this.database.prepare("UPDATE team_runs SET status = 'completed', updated_at = ? WHERE id = ?")
+        const revokeRegistrations = this.database.prepare(
+          'UPDATE agent_registrations SET revoked_at = ? WHERE run_id = ? AND revoked_at IS NULL'
+        )
+        const noteBindings = this.database.prepare('UPDATE runtime_bindings SET launch_detail = ? WHERE run_id = ?')
+        for (const runId of legacyTeamRunIds) {
+          archiveRun.run(now, runId)
+          revokeRegistrations.run(now, runId)
+          noteBindings.run(RUN_ARCHIVED_LEGACY_TEAM_DETAIL, runId)
+        }
+        for (const runId of stalePoolIds) {
+          archiveRun.run(now, runId)
+          revokeRegistrations.run(now, runId)
+          noteBindings.run(RUN_ARCHIVED_STALE_POOL_DETAIL, runId)
+        }
+        // 兜底：任何仍带旧状态值的行（理论上上面两步已覆盖）一律归档，保证此后 status 只有两种取值。
+        this.database.prepare(`
+          UPDATE team_runs SET status = 'completed', updated_at = ?
+          WHERE status IN ('draft', 'ready', 'launching', 'attention', 'paused')
+        `).run(now)
+        // 启动状态机退役：launch_status 列保留（不重建表）但此后恒为 not_started，存量行一并归位；
+        // launch_command_id 同理清空。就绪度改由 acknowledged_at 表达。
+        this.database.exec("UPDATE runtime_bindings SET launch_status = 'not_started', launch_command_id = NULL")
+        this.database.prepare(
+          'UPDATE team_control_meta SET schema_version = ?, revision = revision + 1, updated_at = ? WHERE id = 1'
+        ).run(9, now)
+        this.database.exec('COMMIT')
+        databaseVersion = 9
+        if (legacyTeamRunIds.length || stalePoolIds.length) {
+          process.stderr.write(`[team-control] v9: archived ${legacyTeamRunIds.length} legacy team run(s) and ${stalePoolIds.length} stale pool run(s)\n`)
+        }
+      } catch (error) {
+        if (this.database.isTransaction) this.database.exec('ROLLBACK')
+        throw error
+      }
+    }
     if (databaseVersion !== TEAM_SCHEMA_VERSION) {
       throw new Error(`团队控制数据库版本不兼容：${databaseVersion}，当前支持 ${TEAM_SCHEMA_VERSION}`)
     }
@@ -2284,15 +2006,25 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
         if (!tableHasColumn(this.database, 'runtime_bindings', 'session_token')) throw error
       }
     }
+    // 协作组规划策略（阶段 2 · 2A）：同样是纯附加列 + 默认值，不升 schema 版本。v8 建好的组补上默认
+    // lead_only——与建组时「有 lead 默认 lead_only」一致；无 lead 的旧组需要用户显式改策略才开放全员规划。
+    if (!tableHasColumn(this.database, 'team_groups', 'plan_policy')) {
+      try {
+        this.database.exec("ALTER TABLE team_groups ADD COLUMN plan_policy TEXT NOT NULL DEFAULT 'lead_only'")
+      } catch (error) {
+        if (!tableHasColumn(this.database, 'team_groups', 'plan_policy')) throw error
+      }
+    }
     this.database.exec(`
       CREATE UNIQUE INDEX IF NOT EXISTS uq_runtime_bindings_run_composer
       ON runtime_bindings(run_id, composer_id) WHERE composer_id IS NOT NULL;
       CREATE INDEX IF NOT EXISTS idx_agent_slots_group ON agent_slots(group_id) WHERE group_id IS NOT NULL;
     `)
-    const repaired = this.database.prepare(`
-      UPDATE team_runs SET status = 'draft', updated_at = ?
-      WHERE status = 'ready' AND length(trim(goal)) = 0
-    `).run(Date.now())
-    if (numberOf(repaired.changes) > 0) this.bumpRevision()
+    // 团队连续性（自动检查点 / 一键恢复）随阶段 2 · 2D 退役：池模型下的恢复是席位重建 + 上下文交接 +
+    // 入组通知 + team_check_in 实时简报，检查点没有读者。旧构建建过的四张表按存在性删除（同样不升
+    // schema 版本；DROP 在另一进程刚删过时以 IF EXISTS 幂等），删表顺序按外键自子向父。
+    if (RETIRED_CONTINUITY_TABLES.some((table) => tableExists(this.database, table))) {
+      this.database.exec(RETIRED_CONTINUITY_TABLES.map((table) => `DROP TABLE IF EXISTS ${table};`).join('\n'))
+    }
   }
 }

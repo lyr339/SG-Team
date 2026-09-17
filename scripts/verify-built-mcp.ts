@@ -6,34 +6,23 @@ import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 import { transactTaskPool } from '../src/application/task-pool-transaction'
 import { SqliteTaskPoolRepository } from '../src/infrastructure/task-pool/sqlite-task-pool-repository'
 import { SqliteTeamControlRepository } from '../src/infrastructure/team-control/sqlite-team-control-repository'
-import { createDefaultTeamBundle } from '../src/domain/team-control'
+import { createConfiguredTeamBundle } from '../src/domain/team-control'
 import { TEAM_TOOL_NAMES } from '../src/mcp/team-tools'
 
+// 真实模型：会话池（三个独立席位）+ 一个协作组（CH-1 lead、CH-2 builder、CH-3 reviewer）。
 const directory = mkdtempSync(join(tmpdir(), 'sg-team-mcp-smoke-'))
 const databasePath = join(directory, 'task-pool.sqlite3')
-const bundle = createDefaultTeamBundle({
+const channelIds = ['1', '2', '3']
+const bundle = createConfiguredTeamBundle({
   workspaceId: 'smoke',
   workspaceName: 'smoke',
   workspacePath: join(directory, 'workspace'),
-  channelIds: ['1', '2', '3'],
+  mode: 'independent',
+  runKey: 'run-smoke-stdio',
+  members: channelIds.map((channelId) => ({ channelId, roleTemplateKey: 'solo', avatarId: 'researcher', skills: [], solo: true })),
   now: Date.now()
 })
-const role = (key: string) => bundle.roles.find((candidate) => candidate.key === key)!
-const slot = (key: string) => bundle.slots.find((candidate) => candidate.roleId === role(key).id)!
-const agentSessionId = (key: string) => `smoke:ch-${slot(key).channelId}:generation1`
-const ownerId = agentSessionId('builder')
-const reviewerId = agentSessionId('reviewer')
 const smokeRunId = bundle.run.id
-const repository = new SqliteTaskPoolRepository(databasePath)
-const [task] = transactTaskPool(repository, (pool) => pool.plan(smokeRunId, [
-  {
-    key: 'stdio',
-    title: '验证打包后的 stdio MCP',
-    requiredCapabilities: ['code'],
-    acceptance: '跨进程恢复后由独立质量进程验收，SQLite 状态为 done'
-  }
-]))
-repository.close()
 const teamRepository = new SqliteTeamControlRepository(databasePath)
 teamRepository.upsertWorkspaceTeam(bundle)
 teamRepository.recordInstallation({
@@ -46,10 +35,39 @@ teamRepository.recordInstallation({
     channelId: slot.channelId!,
     generation: 'generation1',
     runId: smokeRunId,
-    capabilities: bundle.roles.find((role) => role.id === slot.roleId)!.capabilities
+    capabilities: []
   }))
 })
+const slotOf = (channelId: string) => bundle.slots.find((candidate) => candidate.channelId === channelId)!
+const group = teamRepository.createGroup({
+  runId: smokeRunId,
+  name: '冒烟组',
+  goal: '验证打包后的 stdio MCP',
+  leadSlotId: slotOf('1').id,
+  members: [
+    { slotId: slotOf('1').id, roleTemplateKey: 'lead' },
+    { slotId: slotOf('2').id, roleTemplateKey: 'builder' },
+    { slotId: slotOf('3').id, roleTemplateKey: 'reviewer' }
+  ]
+}).group
+const groupRoles = teamRepository.loadTeamControl().roles.filter((candidate) => candidate.groupId === group.id)
 teamRepository.close()
+const channelOf: Record<string, string> = { lead: '1', builder: '2', reviewer: '3' }
+const slot = (key: string) => slotOf(channelOf[key]!)
+const role = (key: string) => groupRoles.find((candidate) => candidate.templateKey === key)!
+const agentSessionId = (key: string) => `smoke:ch-${slot(key).channelId}:generation1`
+const ownerId = agentSessionId('builder')
+const reviewerId = agentSessionId('reviewer')
+const repository = new SqliteTaskPoolRepository(databasePath)
+const [task] = transactTaskPool(repository, (pool) => pool.plan(smokeRunId, [
+  {
+    key: 'stdio',
+    title: '验证打包后的 stdio MCP',
+    requiredCapabilities: ['code'],
+    acceptance: '跨进程恢复后由独立质量进程验收，SQLite 状态为 done'
+  }
+], group.id))
+repository.close()
 
 const inheritedEnvironment = Object.fromEntries(
   Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
@@ -201,6 +219,8 @@ if (saved?.status !== 'done' || saved.progress !== 100 || savedReview?.status !=
 
 process.stdout.write(JSON.stringify({
   ok: true,
+  sessionPool: true,
+  groupScoped: saved.groupId === group.id,
   processCount: readyLogs.length,
   agentCount: 3,
   channelCount: 3,

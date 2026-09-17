@@ -14,17 +14,20 @@ import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 import { SqliteChannelMessageRepository } from '../src/infrastructure/channel-messages/sqlite-channel-message-repository'
 import { SqliteTaskPoolRepository } from '../src/infrastructure/task-pool/sqlite-task-pool-repository'
 import { SqliteTeamControlRepository } from '../src/infrastructure/team-control/sqlite-team-control-repository'
-import { createDefaultTeamBundle } from '../src/domain/team-control'
+import { createConfiguredTeamBundle } from '../src/domain/team-control'
 
 const directory = mkdtempSync(join(tmpdir(), 'sg-team-channel-mcp-smoke-'))
 const databasePath = join(directory, 'task-pool.sqlite3')
 const mcpServerPath = resolve('out/mcp/index.mjs')
 
-const bundle = createDefaultTeamBundle({
+// 真实模型：会话池里的一个独立席位（CH-1）；团队工具在入组前返回 not_in_group，入组后正常工作。
+const bundle = createConfiguredTeamBundle({
   workspaceId: 'smoke',
   workspaceName: 'smoke',
   workspacePath: join(directory, 'workspace'),
-  channelIds: ['1'],
+  mode: 'independent',
+  runKey: 'run-smoke-channel',
+  members: [{ channelId: '1', roleTemplateKey: 'solo', avatarId: 'researcher', skills: [], solo: true }],
   now: Date.now()
 })
 const teamRepository = new SqliteTeamControlRepository(databasePath)
@@ -39,10 +42,9 @@ teamRepository.recordInstallation({
     channelId: slot.channelId!,
     generation: 'generation1',
     runId: bundle.run.id,
-    capabilities: bundle.roles.find((role) => role.id === slot.roleId)!.capabilities
+    capabilities: []
   }))
 })
-teamRepository.close()
 // 触发任务池库结构创建（与生产同库）
 new SqliteTaskPoolRepository(databasePath).close()
 
@@ -130,17 +132,35 @@ if (!channel.stderr().includes('[sg-team-mcp] ready unified')) {
 }
 
 // ── 团队工具同服：调用刷新通道 presence（S2 活性钩子保留）────────────
-// refreshIdentity 先于业务校验执行——即使业务拒绝（TeamRun 未启动），
+// refreshIdentity 先于业务校验执行——即使业务拒绝（独立席位 not_in_group），
 // 活性也必须已刷新（工具被调用本身即 Agent 存活证据）。
 const before = Date.now() - 60_000
 repository.touchPresence('1', { lastSeenAt: before })
 const team = await openUnifiedClient('1')
-await team.client.callTool({ name: 'team_check_in', arguments: { channel_id: '1' } }, { timeout: 10_000 })
-await team.close()
+const soloCheckIn = await team.client.callTool({ name: 'team_check_in', arguments: { channel_id: '1' } }, { timeout: 10_000 })
+if (!soloCheckIn.isError || (soloCheckIn.structuredContent as { code?: string })?.code !== 'not_in_group') {
+  throw new Error(`独立席位调用团队工具应得到 not_in_group：${textOf(soloCheckIn)}`)
+}
 const touched = repository.getPresence('1')
 if (!touched || touched.lastSeenAt <= before) {
   throw new Error('统一服务器团队工具调用未刷新通道 presence')
 }
+
+// ── 入组即生效：操作员建组后，同一进程的下一次 team_check_in 直接返回组简报 ──
+const groupName = '冒烟组'
+teamRepository.createGroup({
+  runId: bundle.run.id,
+  name: groupName,
+  goal: '通道冒烟',
+  leadSlotId: bundle.slots[0]!.id,
+  members: [{ slotId: bundle.slots[0]!.id, roleTemplateKey: 'lead' }]
+})
+const groupedCheckIn = await team.client.callTool({ name: 'team_check_in', arguments: { channel_id: '1' } }, { timeout: 10_000 })
+if (groupedCheckIn.isError) throw new Error(`入组后 team_check_in 失败：${textOf(groupedCheckIn)}`)
+const briefing = (groupedCheckIn.structuredContent as { briefing?: string })?.briefing ?? ''
+if (!briefing.includes(`协作组「${groupName}」`)) throw new Error(`入组简报缺少组名：${briefing.slice(0, 200)}`)
+await team.close()
+teamRepository.close()
 repository.close()
 
 process.stdout.write(JSON.stringify({
@@ -152,5 +172,7 @@ process.stdout.write(JSON.stringify({
   recordReplyReleased: true,
   secondDeliveryOk: true,
   presenceHeartbeatFresh: true,
-  teamToolCallRefreshesPresence: true
+  soloTeamToolFenced: true,
+  teamToolCallRefreshesPresence: true,
+  groupedCheckInBriefed: true
 }, null, 2) + '\n')

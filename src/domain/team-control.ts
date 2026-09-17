@@ -10,14 +10,12 @@ import { TEAM_REPLY_STYLE_INSTRUCTION } from './team-reply-style'
 import { hasConfirmedRuntimeStop, MEMBERSHIP_NOTICE_PREFIX, SG_TEAM_MCP_SERVER_ID } from './channel-message'
 import { TaskPoolError } from './task-pool'
 
-export type TeamRunStatus =
-  | 'draft'
-  | 'ready'
-  | 'launching'
-  | 'running'
-  | 'attention'
-  | 'paused'
-  | 'completed'
+/**
+ * run 只有两种状态（阶段 2 · 2B）：一建即 `running`，用户结束 / 被新 run 替换 / 升级归档后 `completed`。
+ * 没有 draft / ready / launching（没有启动这一步）、attention（关注点在组上：`TeamGroupView.attention`）、
+ * paused（没有暂停语义）。
+ */
+export type TeamRunStatus = 'running' | 'completed'
 
 export type WorkspaceRunMode = 'team' | 'independent'
 export const INDEPENDENT_SESSION_TEMPLATE_ID = 'independent-session-v1'
@@ -37,23 +35,17 @@ export function isSessionPoolRun(run?: Pick<TeamRun, 'templateId'>): boolean {
 
 export type TeamRoleAccent = 'mint' | 'periwinkle' | 'apricot' | 'sky'
 
-export type TeamLaunchStatus =
-  | 'not_started'
-  | 'sending'
-  | 'delivered'
-  | 'acknowledged'
-  | 'uncertain'
-  | 'failed'
-
+/**
+ * 席位就绪度：未绑通道 → 未装 MCP → 离线 → 在线但不在协议内相位 → 待命 → 已签到在岗。
+ * 没有 launching / attention（启动状态机已退役；需要关注的是组，不是席位）。
+ */
 export type TeamMemberReadiness =
   | 'unbound'
   | 'mcp_missing'
   | 'offline'
   | 'not_waiting'
   | 'ready'
-  | 'launching'
   | 'active'
-  | 'attention'
 
 export interface TeamWorkspace {
   id: string
@@ -72,7 +64,6 @@ export interface TeamRun {
   status: TeamRunStatus
   createdAt: number
   updatedAt: number
-  launchedAt?: number
   /** 临时主控 SlotId：主控离线时由系统或手动指定，优先级高于角色模板。 */
   actingLeadSlotId?: string
 }
@@ -124,6 +115,14 @@ export interface AgentSlot {
 export type TeamGroupStatus = 'active' | 'dissolved'
 
 /**
+ * 组内谁能 `team_task plan`（阶段 2 · 2A，决策 D2）：
+ * - `lead_only`：只有有效 lead；组没有 lead 时组内无人能规划，任务由用户在拾光里为该组创建。
+ * - `any_member`：组没有 lead 时任一成员都能规划（扁平协作组）；有 lead 时仍只有 lead。
+ * 用户永远可以在桌面为任一组建任务，该策略只约束 Agent。
+ */
+export type TeamGroupPlanPolicy = 'lead_only' | 'any_member'
+
+/**
  * 协作组：会话池内随时可建可拆的协作上下文（目标、成员、角色、lead、任务、消息、记忆）。
  * 入组 / 出组不触碰会话令牌、Composer 绑定与作用域——那些是池级事实。
  */
@@ -137,9 +136,25 @@ export interface TeamGroup {
   leadSlotId?: string
   /** 临时主控（lead 离线时由系统或用户指定），优先级高于 leadSlotId。 */
   actingLeadSlotId?: string
+  planPolicy: TeamGroupPlanPolicy
   createdAt: number
   updatedAt: number
   dissolvedAt?: number
+}
+
+/** 建组时未显式给出策略：有 lead 的组默认 lead_only；无 lead 的组默认 any_member（任务书 2A「无 lead 时自动 any_member」）。 */
+export function defaultGroupPlanPolicy(leadSlotId: string | undefined): TeamGroupPlanPolicy {
+  return leadSlotId ? 'lead_only' : 'any_member'
+}
+
+/**
+ * 组内除有效 lead 之外的成员是否也能规划任务：只有「没有有效 lead 且策略为 any_member」时成立。
+ * 有 lead 时策略不生效——规划权始终归有效 lead（与 lead 权限和角色模板解耦的口径一致）。
+ */
+export function groupMembersMayPlan(
+  group: Pick<TeamGroup, 'leadSlotId' | 'actingLeadSlotId' | 'planPolicy'>
+): boolean {
+  return effectiveGroupLeadSlotId(group) === undefined && group.planPolicy === 'any_member'
 }
 
 export type TeamGroupEventType =
@@ -147,9 +162,12 @@ export type TeamGroupEventType =
   | 'member_joined'
   | 'member_left'
   | 'member_checked_in'
+  /** 入组席位换席重建完成（新 Cursor 会话已绑定），系统补投 joined 通知（阶段 2 · 2C）。 */
+  | 'member_rejoined_after_rebuild'
   | 'lead_changed'
   | 'acting_lead_changed'
   | 'goal_updated'
+  | 'plan_policy_updated'
   | 'dissolved'
 
 export interface TeamGroupEvent {
@@ -158,7 +176,7 @@ export interface TeamGroupEvent {
   type: TeamGroupEventType
   slotId?: string
   channelId?: string
-  /** `operator` 或 `agent:<slotId>`。 */
+  /** `operator`、`agent:<slotId>` 或 `system`（绑定观察者等系统路径）。 */
   actor: string
   detail?: string
   at: number
@@ -184,9 +202,12 @@ export interface RuntimeBinding {
   agentSessionId: string
   generation: string
   installedAt: number
-  launchStatus: TeamLaunchStatus
-  launchCommandId?: string
+  /**
+   * 绑定备注：run 收尾原因（用户结束 / 被替换 / 升级归档）或交接说明；列名沿用 `launch_detail`。
+   * 启动状态机已退役（阶段 2 · 2B）：`launch_status` 列保留但恒为 `not_started`，不再投影。
+   */
   launchDetail: string
+  /** 首次 team_check_in 时间；有值 = 该会话已在岗签到（就绪度 active）。换席重建时清空。 */
   acknowledgedAt?: number
   lastCheckInAt?: number
   lastCheckInNote: string
@@ -202,7 +223,7 @@ export interface RuntimeBinding {
 }
 
 export interface TeamControlState {
-  schemaVersion: 8
+  schemaVersion: 9
   revision: number
   activeWorkspaceId?: string
   workspaces: TeamWorkspace[]
@@ -227,7 +248,7 @@ export interface TeamMemberRuntime {
   connectionPhase?: string
   /** 已投递待回复的出站消息身份（回复同步守门，事实源 channel_presence）。 */
   pendingOutboundId?: string
-  /** 回复同步守门开启时间；开放判定见 hasOpenReplySync。 */
+  /** 回复同步守门开启时间；超过 CHANNEL_REPLY_SYNC_STALE_MS 未收口由 check_messages 自动放行。 */
   pendingReplySyncSince?: number
   queueDepth: number
   lastSeenAt?: number
@@ -245,13 +266,11 @@ export interface TeamMemberView {
   readiness: TeamMemberReadiness
 }
 
+/** 池的接入前提（没有目标 / 启动这两道门）：通道就绪、工作区已绑、全部席位已装 MCP；blockers 是人话版。 */
 export interface TeamPreflight {
   bridgeConnected: boolean
   workspaceBound: boolean
-  goalDefined: boolean
   mcpInstalled: boolean
-  agentsWaiting: boolean
-  canLaunch: boolean
   blockers: string[]
 }
 
@@ -294,6 +313,15 @@ export interface TeamControlSnapshot extends Omit<TeamControlState, 'groups'> {
 
 /** 已解散的组在快照里保留的时长（阶段 3 的历史折叠区之前，只读卡片）。 */
 export const DISSOLVED_GROUP_VISIBLE_MS = 24 * 60 * 60_000
+
+/** 简报与成员关系通知里的 lead 标签：`主控协调 · CH-1`；无有效 lead 时 undefined（模板写「无」）。 */
+export function groupLeadLabel(view: TeamGroupView): string | undefined {
+  const lead = view.effectiveLeadSlotId
+    ? view.members.find((member) => member.slot.id === view.effectiveLeadSlotId)
+    : undefined
+  if (!lead) return undefined
+  return `${lead.role.name} · CH-${lead.binding?.channelId ?? lead.slot.channelId ?? '?'}`
+}
 
 /**
  * 把活动 run 的组行投影成视图：成员 = `slot.groupId === group.id`（按席位顺序），
@@ -465,9 +493,6 @@ export const TEAM_ROLE_TEMPLATES: TeamRoleTemplate[] = [
 export const AGENT_AVATAR_IDS = ['lead', 'architect', 'reviewer', 'frontend', 'devops', 'researcher'] as const
 /** 主控模板能力：有效 lead（含临时主控）在授权时叠加，持 lead 模板但被替代的成员则被摘除。 */
 export const LEAD_ROLE_CAPABILITIES: readonly string[] = TEAM_ROLE_TEMPLATES.find((template) => template.key === 'lead')!.capabilities
-export const ALL_TEAM_CAPABILITIES = [...new Set(
-  TEAM_ROLE_TEMPLATES.flatMap((template) => template.capabilities)
-)].sort()
 
 export interface TeamMemberConfiguration {
   channelId: string
@@ -492,7 +517,7 @@ function uniqueChannelIds(values: string[]): string[] {
 
 export function emptyTeamControlState(): TeamControlState {
   return {
-    schemaVersion: 8,
+    schemaVersion: 9,
     revision: 0,
     workspaces: [],
     runs: [],
@@ -515,10 +540,7 @@ export function emptyTeamControlSnapshot(): TeamControlSnapshot {
     preflight: {
       bridgeConnected: false,
       workspaceBound: false,
-      goalDefined: false,
       mcpInstalled: false,
-      agentsWaiting: false,
-      canLaunch: false,
       blockers: ['拾光通道尚未连接', '尚未绑定 Cursor 工作区']
     }
   }
@@ -621,37 +643,13 @@ export function createConfiguredTeamBundle(input: {
       name: mode === 'independent' ? `${workspaceName} · 独立会话` : `${workspaceName} · ${runKey ? '本轮运行' : '主运行'}`,
       goal: '',
       templateId: mode === 'independent' ? INDEPENDENT_SESSION_TEMPLATE_ID : 'software-core-v1',
-      status: mode === 'independent' ? 'running' : 'draft',
+      status: 'running',
       createdAt: now,
       updatedAt: now
     },
     roles,
     slots
   }
-}
-
-export function createDefaultTeamBundle(input: {
-  workspaceId: string
-  workspacePath: string
-  workspaceName: string
-  channelIds: string[]
-  runKey?: string
-  now?: number
-}): WorkspaceTeamBundle {
-  const channelIds = uniqueChannelIds(input.channelIds)
-  return createConfiguredTeamBundle({
-    ...input,
-    members: channelIds.map((channelId, index) => {
-      const templateKey = index === 0 ? 'lead' : index === 1 ? 'builder' : index === 2 ? 'reviewer' : 'specialist'
-      const template = roleTemplateOf(templateKey)
-      const avatarId = index < 3
-        ? template.avatarId
-        : AGENT_AVATAR_IDS[3 + ((index - 3) % (AGENT_AVATAR_IDS.length - 3))]!
-      return { channelId, roleTemplateKey: templateKey, avatarId, skills: [] }
-    }),
-    runKey: input.runKey,
-    now: input.now
-  })
 }
 
 /** 组 id 形如 `team-group:<workspaceId>:<uuid>`；角色 key 只取 uuid 尾 8 位作前缀。 */
@@ -740,21 +738,10 @@ export function sessionTokenInstruction(input: { channelId: string; sessionToken
     + '若返回「会话围栏」终止指令，说明本会话已被新会话接管或本轮已结束——立即停止轮询并结束，不要重试。'
 }
 
-export function buildTeamLaunchHint(input: {
-  channelId: string
-  binding: RuntimeBinding
-}): string {
-  const { channelId, binding } = input
-  return [
-    `${SG_TEAM_MCP_SERVER_ID} · CH-${channelId}。不要回复本条；`,
-    `立即调用 team_check_in({channel_id:'${channelId}'})，随后按角色简报与服务器说明工作。`,
-    cursorComposerBindingMarker({ bindingKey: binding.composerBindingKey, channelId })
-  ].join('\n')
-}
-
 /**
- * 独立席位开场指令：只交付本会话动态参数与首个动作；完整循环、静默和终止规则
+ * 席位开场指令（阶段 2 · 2B 起唯一的一种）：只交付本会话动态参数与首个动作；完整循环、静默和终止规则
  * 由 SG Team MCP instructions 单一陈述，绑定标记由 AgentSessionLauncher 统一追加。
+ * 入组席位重建后的会话同样先进入 check_messages，入组通知随首个轮询到达（阶段 2C）。
  */
 export function buildSoloLaunchHint(input: { channelId: string; sessionToken?: string }): string {
   const { channelId } = input
@@ -765,28 +752,33 @@ export function buildSoloLaunchHint(input: { channelId: string; sessionToken?: s
   ].join('\n')
 }
 
-/**
- * 角色简报：team_check_in 完整返回，属工具输出而非会话内容。
- * 只写角色相关的内容（身份、目标、职责、工作流、协作规范）；通信协议（record_reply /
- * check_messages / 静默规则 / 终止条件）由服务器说明唯一陈述，这里不复述。
- */
-/** team_check_in 简报里的协作组参数：组目标替代 run 目标；lead 一句话；无 lead 组不输出 lead 专用工作流。 */
+/** team_check_in 简报里的协作组参数：目标在组上；lead 一句话；无 lead 组不输出 lead 专用工作流。 */
 export interface TeamRoleBriefingGroup {
   name: string
   goal: string
   /** 有效 lead 的角色名 + 通道（`主控协调 · CH-1`）；无 lead 组为空。 */
   leadLabel?: string
   memberCount: number
+  /** 无 lead 且策略 any_member：组内任一成员都能 team_task plan（见 `groupMembersMayPlan`）。 */
+  membersMayPlan?: boolean
 }
 
+/**
+ * 角色简报：team_check_in 完整返回，属工具输出而非会话内容。
+ * 只写角色相关的内容（身份、目标、职责、工作流、协作规范）；通信协议（record_reply /
+ * check_messages / 静默规则 / 终止条件）由服务器说明唯一陈述，这里不复述。
+ *
+ * 简报只对协作组成员存在（阶段 2 · 2B）：未入组席位在 team_check_in 得到 not_in_group，legacy 团队 run 已归档，
+ * 所以目标、lead 与成员关系一律来自组；run 只提供 id 作为稳定坐标。
+ */
 export function buildTeamRoleBriefing(input: {
-  run: TeamRun
+  run: Pick<TeamRun, 'id'>
   role: TeamRole
   slot: AgentSlot
   binding: RuntimeBinding
   effectiveLead?: boolean
   originalLeadDemoted?: boolean
-  group?: TeamRoleBriefingGroup
+  group: TeamRoleBriefingGroup
 }): string {
   const { run, role, slot, binding, group } = input
   const effectiveLead = input.effectiveLead ?? role.templateKey === 'lead'
@@ -800,34 +792,39 @@ export function buildTeamRoleBriefing(input: {
   })
   // 带 channel_id 的调用示例：`{channel_id:'2', view:'board'}`。
   const call = (args: string) => `{channel_id:'${channelId}', ${args}}`
+  // 无 lead 且允许全员规划的组：成员也持有规划权（`groupMembersMayPlan`）。
+  const memberMayPlan = !effectiveLead && group.membersMayPlan === true
+  const planRule = `只有收到用户明确要求“开始 / 分配 / 拆任务 / 执行”后，才用 team_task(${call("action:'plan', tasks:[...]")}) 创建带依赖、验收标准和目标 AgentSlot 的计划；创建后由拾光自动分派、催办与派验收，不需要你逐条派发。`
   const roleWorkflow = effectiveLead
-    ? `2. 调用 team_tasks(${call("view:'board'")}) 了解任务板。启动后即使任务板为空也只待命，不要依据团队目标自行调用 team_task plan；只有收到用户明确要求“开始 / 分配 / 拆任务 / 执行”后，才用 team_task(${call("action:'plan', tasks:[...]")}) 创建带依赖、验收标准和目标 AgentSlot 的计划。`
+    ? `2. 调用 team_tasks(${call("view:'board'")}) 了解任务板。启动后即使任务板为空也只待命，不要依据团队目标自行调用 team_task plan；${planRule}`
     : role.templateKey === 'reviewer'
       ? `2. 优先调用 team_tasks(${call("view:'reviews'")}) 并用 team_review(${call("action:'claim'")}) 领取独立验收；没有待验收项时再看 view:'mine' / view:'available'。`
-      : `2. 调用 team_tasks(${call("view:'mine'")})；有 leased/running 任务就继续，否则看 view:'available' 并用 team_task(${call("action:'claim'")}) 按能力领取。`
+      : `2. 调用 team_tasks(${call("view:'mine'")})；有 leased/running 任务就继续，否则看 view:'available' 并用 team_task(${call("action:'claim'")}) 按能力领取。${memberMayPlan ? `本组允许全体成员规划：${planRule}` : ''}`
   const executionWorkflow = role.templateKey === 'reviewer'
     ? "3. 验收必须独立复现并检查验收标准；用 team_review({action:'renew'}) 续租，最后用 team_review({action:'submit', decision, evidence, reason}) 提交通过证据或明确打回原因。"
     : "3. 领取后 team_task({action:'start'})；每个里程碑（实现完成、测试完成、遇到阻塞、返工完成）都用 team_task({action:'progress', progress, summary}) 上报，长任务定期 action:'renew' 续租；完成后 team_task({action:'submit', output}) 提交验收，不能自行宣布验收通过。"
+  // 阶段 2 · 2A（决策 D1）：分派、催办、派验收、打回后的重派全部由桌面编排器完成；lead 只规划、答用户、汇总真实上报，
+  // 成员的上报由 team_task / team_review 动作自动生成，不再要求手写一条 team_message。
   const collaborationWorkflow = effectiveLead
-    ? "4. 收件箱优先：每次被唤醒先 team_message({action:'inbox'}) 处理未读上报——成员的进度/提交/失败/验收是你调度的唯一依据，收到重要上报立即推进下一步（安排验收、打回返工、收尾）。只有出现新的可执行结论、阻塞、需要用户决策或用户明确询问时，才用 record_reply 向用户同步 1—3 句；无未读、已读重复、纯 keepalive 一律静默续等，禁止制造可见消息堵塞队列。用户要求“全体/各角色/多人”回答时必须 team_message broadcast + collect 收真实回应，禁止代答。"
-    : "4. 每轮先处理未读：team_message({action:'inbox'}) / team_message({action:'read', messageId})；directive 或 question 必须用 team_message({action:'respond', messageId, content}) 回应原 messageId。关键节点主动向主控上报（team_task progress / team_message send），静默干活即失职。"
+    ? "4. 收件箱优先：每次被唤醒先 team_message({action:'inbox'}) 读未读——成员的 status 上报与系统的【任务完成】/【任务失败】/【成员离线提醒】是你向用户汇报的依据。分派、催办、派验收、打回后的重派由拾光自动完成，你不要手动调度、催办或安排验收。只有出现新的可执行结论、阻塞、需要用户决策或用户明确询问时，才用 record_reply 向用户同步 1—3 句；无未读、已读重复、纯 keepalive 一律静默续等，禁止制造可见消息堵塞队列。用户要求“全体/各角色/多人”回答时必须 team_message broadcast + collect 收真实回应，禁止代答。"
+    : "4. 每轮先处理未读：team_message({action:'inbox'}) / team_message({action:'read', messageId})；directive 或 question 必须用 team_message({action:'respond', messageId, content}) 回应原 messageId。领取、进度、提交、失败与验收结论会随 team_task / team_review 的动作自动上报主控，不要再另发 team_message 复述；只有遇到需要主控或用户决策的阻塞时才 team_message send。"
   const skills = role.skills.length
     ? `已分配 Agent Skills：${role.skills.map((skill) => `/${skill.name}`).join('、')}。只在任务相关时按 Cursor Skills 机制调用，不要把技能名称当作已完成工作。`
     : '当前席位没有单独指定 Agent Skill；仍可按 Cursor 自动发现机制使用工作区内相关技能。'
-  const scopeLabel = group ? `协作组「${group.name}」` : '本 TeamRun'
+  const leaderlessLabel = group.membersMayPlan
+    ? '无——任务由用户在拾光里创建，或由任一成员规划，系统自动分派'
+    : '无——任务由用户在拾光里创建并自动分派，组内成员只共享目标、消息与记忆'
   return [
-    group
-      ? `你是拾光外置协作中枢中协作组「${group.name}」的「${role.name}」Agent（组内 ${group.memberCount} 名成员；lead：${group.leadLabel ?? '无——本组只共享目标、消息与记忆，没有任务板调度'}）。`
-      : `你是拾光外置协作中枢中的「${role.name}」Agent。`,
+    `你是拾光外置协作中枢中协作组「${group.name}」的「${role.name}」Agent（组内 ${group.memberCount} 名成员；lead：${group.leadLabel ?? leaderlessLabel}）。`,
     effectiveLead && role.templateKey !== 'lead'
-      ? `当前权限：你已接管为${scopeLabel}的唯一有效主控；保留原专业职责，同时承担全局规划、调度、消息协调与收尾责任。`
+      ? `当前权限：你已接管为协作组「${group.name}」的唯一有效主控；保留原专业职责，同时承担全局规划、消息协调与向用户汇报的责任（分派与催办由拾光自动完成）。`
       : input.originalLeadDemoted
         ? '当前权限：主控权限已转移给临时主控；你保留原席位上下文，但不得再调用主控专用工具，直至权限复位。'
         : '',
     `稳定身份：${slot.id}；本次可替换运行时：CH-${channelId}；TeamRun：${run.id}。`,
     `本次 Cursor 会话绑定标记：${telemetryMarker}`,
     ...(sessionNote ? [sessionNote] : []),
-    group ? `组目标：${group.goal || '（未填写，以用户随后指令为准）'}` : `团队目标：${run.goal}`,
+    `组目标：${group.goal || '（未填写，以用户随后指令为准）'}`,
     `核心职责：${role.mission}`,
     `工作边界：${role.instructions}`,
     TEAM_REPLY_STYLE_INSTRUCTION,
@@ -841,13 +838,11 @@ export function buildTeamRoleBriefing(input: {
     '5. 单点 Agent 间指令与回应用 team_message 的 send / respond，以 messageId 建立回执；禁止用普通回复或冒充成员已响应。',
     "6. 会影响团队后续工作的决策、约束、风险或经验，用 team_memory({action:'propose', kind, title, content, sources}) 记录并附消息/任务/文件来源；主控与质量角色用 team_memory review 处理待确认提案，不要求用户整理记忆。",
     effectiveLead
-      ? '7. 只有任务板已由用户明确启动/分配后，才主动调度、催办（team_message send 询问成员）或处理真实上报；空任务板表示等待用户下一条指令。向用户说明现状只用于状态真的变化、出现阻塞或用户询问，禁止重复发送同一进展。'
-      : group && !group.leadLabel
-        ? '7. 本组没有 lead：任务由用户直接指派，成员间用 team_message 协调；额度耗尽、工具缺失或无法推进时用 record_reply 向用户说明一次。'
+      ? '7. 空任务板表示等待用户下一条指令。有任务时不要催办、不要安排验收、不要打回返工——验收结论由质量角色给出，系统负责重派；收到【任务失败】后是否重新规划由你判断。向用户说明现状只用于状态真的变化、出现阻塞或用户询问，禁止重复发送同一进展。'
+      : !group.leadLabel
+        ? `7. 本组没有 lead：任务由用户在拾光里创建${group.membersMayPlan ? '，或按第 2 条由成员规划' : ''}，系统自动分派；成员间用 team_message 协调；额度耗尽、工具缺失或无法推进时用 record_reply 向用户说明一次。`
         : '7. 额度耗尽、工具缺失或无法推进时，立即向主控 team_message send 上报阻塞原因与已尝试步骤，禁止沉默卡死。',
-    ...(group
-      ? [`成员关系：拾光操作员随时可能把你移出本组或解散本组，届时 check_messages 会投递${MEMBERSHIP_NOTICE_PREFIX}；出组后回到只用 check_messages / record_reply，不再调用 team_*。`]
-      : []),
+    `成员关系：拾光操作员随时可能把你移出本组或解散本组，届时 check_messages 会投递${MEMBERSHIP_NOTICE_PREFIX}；出组后回到只用 check_messages / record_reply，不再调用 team_*。`,
     '额度耗尽、授权失败、工具缺失或不可恢复错误：明确报告一次并停止自动重试。'
   ].join('\n')
 }

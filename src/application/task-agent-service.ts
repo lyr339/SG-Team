@@ -2,6 +2,7 @@ import { transactTaskPool, type TaskPoolRepository } from './task-pool-transacti
 import {
   type PlanTaskInput,
   sameTaskGroup,
+  type TaskPoolAggregate,
   TaskPoolError,
   type TaskAttempt,
   type TaskReview,
@@ -53,7 +54,12 @@ export class TaskAgentService {
     private readonly repository: TaskPoolRepository,
     identity: AgentIdentity,
     private readonly authorizer: AgentAuthorizer,
-    private readonly presenceStore?: AgentPresenceStore
+    private readonly presenceStore?: AgentPresenceStore,
+    /**
+     * 租约持有者是否仍在岗（阶段 2 · 2F）：领取 / 写入路径内的到期回收据此放行续租。
+     * 不注入 = 按到期即回收（旧行为）——MCP 进程在 `src/mcp/index.ts` 注入通道 presence 判定。
+     */
+    private readonly holderOnline?: (agentSessionId: string) => boolean
   ) {
     const agentSessionId = identity.agentSessionId.trim()
     const runId = identity.runId.trim()
@@ -81,6 +87,11 @@ export class TaskAgentService {
   /** Agent 视角的作用域：同 run 且同组（legacy 团队 run 双方都无组）。 */
   private inScope(task: TeamTask): boolean {
     return task.runId === this.identity.runId && sameTaskGroup(task.groupId, this.identity.groupId)
+  }
+
+  /** 全部写事务走这里：领取 / 写入路径内的到期回收都要带上在岗判定（阶段 2 · 2F）。 */
+  private transact<Result>(operation: (pool: TaskPoolAggregate) => Result): Result {
+    return transactTaskPool(this.repository, operation, { dependencies: { holderOnline: this.holderOnline } })
   }
 
   checkIn(note = ''): AgentCheckInReceipt {
@@ -159,7 +170,7 @@ export class TaskAgentService {
         leaseExpiresAt: existing.leaseExpiresAt
       }
     }
-    const leased = transactTaskPool(this.repository, (pool) =>
+    const leased = this.transact((pool) =>
       taskId?.trim()
         ? pool.leaseTask(taskId.trim(), this.identity)
         : pool.leaseNext(this.identity)
@@ -181,24 +192,25 @@ export class TaskAgentService {
       const state = this.repository.load()
       return { task: structuredClone(state.tasks[running.taskId]!), attempt: sanitizedAttempt(running) }
     }
-    return transactTaskPool(this.repository, (pool) => {
+    return this.transact((pool) => {
       const active = this.ownedActiveAttempt(pool.snapshot(), taskId, ['leased'])
       const attempt = pool.startAttempt(active.id, active.leaseToken!)
       return { task: pool.snapshot().tasks[attempt.taskId]!, attempt: sanitizedAttempt(attempt) }
     })
   }
 
-  renew(taskId?: string, ttlMs?: number): number {
+  /** 兼容 no-op（阶段 2 · 2F）：续租已由服务端按 presence 完成；仍回当前到期时刻，ttl 不再生效。 */
+  renew(taskId?: string): number {
     this.ensureAuthorized()
-    return transactTaskPool(this.repository, (pool) => {
+    return this.transact((pool) => {
       const active = this.ownedActiveAttempt(pool.snapshot(), taskId, ['leased', 'running'])
-      return pool.renewLease(active.id, active.leaseToken!, ttlMs)
+      return pool.renewLease(active.id, active.leaseToken!)
     })
   }
 
   report(taskId: string | undefined, progress: number, summary = ''): AgentTaskView {
     this.ensureAuthorized()
-    return transactTaskPool(this.repository, (pool) => {
+    return this.transact((pool) => {
       const active = this.ownedActiveAttempt(pool.snapshot(), taskId, ['running'])
       const attempt = pool.reportProgress(active.id, active.leaseToken!, progress, summary)
       return { task: pool.snapshot().tasks[attempt.taskId]!, attempt: sanitizedAttempt(attempt) }
@@ -212,7 +224,7 @@ export class TaskAgentService {
       const state = this.repository.load()
       return { task: structuredClone(state.tasks[review.taskId]!), attempt: sanitizedAttempt(review) }
     }
-    return transactTaskPool(this.repository, (pool) => {
+    return this.transact((pool) => {
       const active = this.ownedActiveAttempt(pool.snapshot(), taskId, ['running'])
       const attempt = pool.submitForReview(active.id, active.leaseToken!, output)
       return { task: pool.snapshot().tasks[attempt.taskId]!, attempt: sanitizedAttempt(attempt) }
@@ -221,7 +233,7 @@ export class TaskAgentService {
 
   fail(taskId: string | undefined, reason: string): TeamTask {
     this.ensureAuthorized()
-    return transactTaskPool(this.repository, (pool) => {
+    return this.transact((pool) => {
       const active = this.ownedActiveAttempt(pool.snapshot(), taskId, ['leased', 'running'])
       return pool.failAttempt(active.id, active.leaseToken!, reason)
     })
@@ -242,7 +254,7 @@ export class TaskAgentService {
         leaseExpiresAt: existing.leaseExpiresAt
       }
     }
-    const leased = transactTaskPool(this.repository, (pool) => pool.leaseReview({
+    const leased = this.transact((pool) => pool.leaseReview({
       runId: this.identity.runId,
       agentSessionId: this.identity.agentSessionId,
       slotId: this.identity.slotId!,
@@ -258,11 +270,12 @@ export class TaskAgentService {
     }
   }
 
-  renewReview(taskId?: string, ttlMs?: number): number {
+  /** 兼容 no-op，同 `renew`（阶段 2 · 2F）。 */
+  renewReview(taskId?: string): number {
     this.ensureReviewer()
-    return transactTaskPool(this.repository, (pool) => {
+    return this.transact((pool) => {
       const review = this.ownedActiveReview(pool.snapshot(), taskId)
-      return pool.renewReview(review.id, review.leaseToken!, ttlMs)
+      return pool.renewReview(review.id, review.leaseToken!)
     })
   }
 
@@ -286,7 +299,7 @@ export class TaskAgentService {
       if (!task) throw new TaskPoolError('task_not_found', '验收对应任务不存在')
       return structuredClone(task)
     }
-    return transactTaskPool(this.repository, (pool) => {
+    return this.transact((pool) => {
       const review = this.ownedActiveReview(pool.snapshot(), taskId)
       return pool.submitReview(review.id, review.leaseToken!, decision, evidence, reason)
     })
@@ -323,12 +336,12 @@ export class TaskAgentService {
     if (!inputs.length || inputs.length > 30) {
       throw new TaskPoolError('invalid_plan_size', '一次必须规划 1 到 30 条任务')
     }
-    return transactTaskPool(this.repository, (pool) => pool.plan(this.identity.runId, inputs, this.identity.groupId))
+    return this.transact((pool) => pool.plan(this.identity.runId, inputs, this.identity.groupId))
   }
 
   recoverLeadWork(fromAgentSessionId: string, targetSlotId: string): string[] {
     this.ensureCoordinator()
-    return transactTaskPool(this.repository, (pool) => pool.recoverAgentWork({
+    return this.transact((pool) => pool.recoverAgentWork({
       fromAgentSessionId,
       toAgentSessionId: this.identity.agentSessionId,
       targetSlotId

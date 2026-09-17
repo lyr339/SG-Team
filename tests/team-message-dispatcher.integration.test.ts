@@ -8,11 +8,11 @@ import { TaskAgentService } from '../src/application/task-agent-service'
 import { TeamCollaborationAgentService } from '../src/application/team-collaboration-agent-service'
 import { TeamControlService } from '../src/application/team-control-service'
 import { TeamMessageDispatcher } from '../src/application/team-message-dispatcher'
-import { createDefaultTeamBundle } from '../src/domain/team-control'
 import { SqliteChannelMessageRepository } from '../src/infrastructure/channel-messages/sqlite-channel-message-repository'
 import { SqliteTaskPoolRepository } from '../src/infrastructure/task-pool/sqlite-task-pool-repository'
 import { SqliteTeamCollaborationRepository } from '../src/infrastructure/team-collaboration/sqlite-team-collaboration-repository'
 import { SqliteTeamControlRepository } from '../src/infrastructure/team-control/sqlite-team-control-repository'
+import { createDefaultTeamBundle } from './legacy-team-fixtures'
 
 async function waitFor(predicate: () => boolean, timeoutMs = 3_000): Promise<void> {
   const startedAt = Date.now()
@@ -83,7 +83,11 @@ describe('Team message end-to-end local delivery', () => {
       channelRepository.listPendingOutbound(channelId).map((message) => message.text)
 
     try {
-      await waitFor(() => team.getSnapshot().preflight.agentsWaiting)
+      // 两个席位都已在岗待命（presence 经 relay 投影进 members.runtime）。
+      await waitFor(() => {
+        const members = team.getSnapshot().members
+        return members.length === 2 && members.every((member) => member.runtime?.online && member.runtime.waiting)
+      })
       const lead = agent('lead')
       const builder = agent('builder')
       const directive = lead.sendMessage({

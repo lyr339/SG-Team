@@ -2,8 +2,8 @@
 
 Independent Electron control plane for Cursor multi-Agent teamwork (macOS + Windows).
 通道消息与活性经拾光内嵌 MCP（SG Team 单条目）+ SQLite 队列直达 Cursor；
-本应用拥有会话投影、持久任务调度、带回执的 Agent 间协作、自动检查点、
-一键恢复与进程绑定的 Agent MCP 接入。
+本应用拥有会话投影、持久任务调度、带回执的 Agent 间协作、会话池内随建随拆的协作组、
+席位重建与上下文交接，以及进程绑定的 Agent MCP 接入。
 
 ```bash
 npm install             # package.json 的 allowScripts 已放行 electron / esbuild 的安装脚本（npm 11）

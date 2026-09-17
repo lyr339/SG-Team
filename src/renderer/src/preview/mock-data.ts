@@ -8,7 +8,6 @@ import type { TaskPoolSnapshot } from '../../../domain/task-pool'
 import type { TeamControlSnapshot, TeamMemberView } from '../../../domain/team-control'
 import { createConfiguredTeamBundle } from '../../../domain/team-control'
 import type { TeamCollaborationSnapshot, TeamMessage } from '../../../domain/team-collaboration'
-import type { TeamContinuitySnapshot } from '../../../domain/team-continuity'
 import type { TeamMemorySnapshot } from '../../../domain/team-memory'
 import type { DesktopSnapshot } from '../../../shared/desktop-api'
 
@@ -552,8 +551,7 @@ const members: TeamMemberView[] = bundle.slots.map((slot, index) => {
       agentSessionId: session.id,
       generation: 'a1b2c3d4e5f6',
       installedAt: NOW - 30 * 60 * MIN,
-      launchStatus: index === 2 ? 'uncertain' : 'acknowledged',
-      launchDetail: index === 2 ? '通道离线，启动确认超时' : '已确认',
+      launchDetail: '',
       acknowledgedAt: NOW - 25 * 60 * MIN,
       lastCheckInAt: NOW - 10 * MIN,
       lastCheckInNote: '已读取团队目标',
@@ -599,7 +597,7 @@ const previewStandbyChannels = [
 ]
 
 export const teamControlSnapshot: TeamControlSnapshot = {
-  schemaVersion: 8,
+  schemaVersion: 9,
   revision: 42,
   activeWorkspaceId: bundle.workspace.id,
   workspaces: [bundle.workspace],
@@ -646,10 +644,7 @@ export const teamControlSnapshot: TeamControlSnapshot = {
   preflight: {
     bridgeConnected: true,
     workspaceBound: true,
-    goalDefined: true,
     mcpInstalled: true,
-    agentsWaiting: true,
-    canLaunch: true,
     blockers: []
   }
 }
@@ -792,67 +787,6 @@ export const collaborationSnapshot: TeamCollaborationSnapshot = {
     { seq: 12, type: 'message.created', runId: bundle.run.id, threadId: 'thread-2', messageId: 'm3', actor: { type: 'agent', slotId: bundle.slots[0]!.id }, at: NOW - 15 * MIN }
   ],
   updatedAt: NOW - 14 * MIN
-}
-
-export const continuitySnapshot: TeamContinuitySnapshot = {
-  schemaVersion: 1,
-  revision: 6,
-  workspaceId: bundle.workspace.id,
-  runId: bundle.run.id,
-  checkpoints: [
-    {
-      id: 'cp-2',
-      workspaceId: bundle.workspace.id,
-      runId: bundle.run.id,
-      reason: 'automatic',
-      digest: 'digest-2',
-      capsule: {
-        schemaVersion: 1,
-        goal: '完成拾光桌面端视觉与交互升级。',
-        runName: bundle.run.name,
-        runStatus: 'running',
-        members: bundle.slots.map((slot) => ({
-          slotId: slot.id,
-          roleKey: bundle.roles.find((role) => role.id === slot.roleId)!.key,
-          roleName: bundle.roles.find((role) => role.id === slot.roleId)!.name,
-          channelId: slot.channelId,
-          workingFiles: sessions.find((session) => session.channelId === slot.channelId)?.workingFiles ?? []
-        })),
-        activeTasks: [
-          { id: 't2', title: '重构会话时间线为气泡体系', status: 'running', progress: 62, summary: '气泡+分组已完成' },
-          { id: 't3', title: '团队共识审核界面', status: 'review', progress: 100 }
-        ],
-        pendingMessages: [
-          { id: 'm3', sender: { type: 'agent', slotId: bundle.slots[0]!.id }, recipient: { type: 'agent', slotId: bundle.slots[2]!.id }, kind: 'question', content: '气泡对比度是否达到 AA？', stage: 'uncertain' }
-        ],
-        sharedMemory: [
-          { id: 'mem-2', kind: 'constraint', title: '正文字号不低于 12px', content: '中文正文最小 12px。', version: 1 }
-        ],
-        capturedAt: NOW - 8 * MIN
-      },
-      createdAt: NOW - 8 * MIN
-    },
-    {
-      id: 'cp-1',
-      workspaceId: bundle.workspace.id,
-      runId: bundle.run.id,
-      reason: 'automatic',
-      digest: 'digest-1',
-      capsule: {
-        schemaVersion: 1,
-        goal: '完成拾光桌面端视觉与交互升级。',
-        runName: bundle.run.name,
-        runStatus: 'running',
-        members: [],
-        activeTasks: [],
-        pendingMessages: [],
-        sharedMemory: [],
-        capturedAt: NOW - 60 * MIN
-      },
-      createdAt: NOW - 60 * MIN
-    }
-  ],
-  updatedAt: NOW - 8 * MIN
 }
 
 export const memorySnapshot: TeamMemorySnapshot = {

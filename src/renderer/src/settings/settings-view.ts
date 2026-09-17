@@ -17,7 +17,7 @@ import type {
   CursorStorageScan
 } from '../../../domain/cursor-storage-cleanup'
 import type { CursorUsageSnapshot } from '../../../domain/cursor-usage'
-import type { StatsSeatSource } from './stats-view'
+import type { StatsGroupSource, StatsSeatSource } from './stats-view'
 
 /**
  * 设置页视图模型与纯函数。
@@ -226,9 +226,10 @@ export interface SettingsPageProps {
   onScanCursorStorage?: (input?: { chatHistoryOlderThanDays?: number }) => Promise<void>
   onCleanCursorStorage?: (request: CursorStorageCleanupRequest) => Promise<void>
   onRevealCursorStorage?: (id: CursorStorageItemId) => void
-  /** 统计页：全部会话的用量快照（含逐回合账本）与席位来源投影，纯只读。 */
+  /** 统计页：全部会话的用量快照（含逐回合账本）、席位来源与 active 组来源投影，纯只读。 */
   usageSnapshot?: CursorUsageSnapshot
   statsSeats?: readonly StatsSeatSource[]
+  statsGroups?: readonly StatsGroupSource[]
 }
 
 /** 运行中的相位（非空闲、非终态）：期间禁用会改动账号 / 浏览器状态的操作。 */

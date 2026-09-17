@@ -13,9 +13,10 @@ describe('用量采集到持久化的事件链', () => {
   it('真实 hook 表达式：上下文变化→同 generation 四桶结算→持久化恢复不重算', async () => {
     const root = mkdtempSync(join(tmpdir(), 'sg-usage-pipeline-'))
     const store = new CursorUsageStore(join(root, 'usage.json'))
-    // 全程在 run 'run' 内（重启也是同 run 恢复）：账归当前 run，不受历史保留窗口裁旧——
-    // hook 的假时钟从 1 起算，若被当成别的 run 的旧账，启动加载会按真实时钟裁掉。
-    const tracker = new CursorUsageTracker({ runId: 'run', persistSnapshot: (state) => store.save('run', state) })
+    // 全程 'c' 在绑（重启也是同一绑定恢复）：在绑的账不受保留窗口裁旧——hook 的假时钟从 1 起算，
+    // 若 'c' 出绑，启动加载会按真实时钟把它当 56 年前的旧账裁掉。
+    const seat = [{ composerId: 'c', slotId: 'seat-1' }]
+    const tracker = new CursorUsageTracker({ boundComposers: seat, persistSnapshot: (state) => store.save(state) })
     const data = { composerId: 'c', chatGenerationUUID: 'g', status: 'generating', contextTokensUsed: 10000,
       modelConfig: { modelName: 'claude-fable-5-1' }, fullConversationHeadersOnly: [], conversationMap: {},
       turnTokenUsage: undefined as undefined | { inputTokens: bigint; outputTokens: bigint; cacheReadTokens: bigint; cacheWriteTokens: bigint } }
@@ -47,7 +48,8 @@ describe('用量采集到持久化的事件链', () => {
       expect(interrupted.c!.outputTokens).toBeGreaterThan(0)
       expect(interrupted.c?.ledger?.turns.g?.stopped).toBe(true)
       expect(interrupted.c?.ledger?.turns.g?.estimateProfile).toBe('claudeCode')
-      const retry = new CursorUsageTracker({ initialSnapshot: interrupted, runId: 'run' })
+      expect(interrupted.c?.slotId).toBe('seat-1')
+      const retry = new CursorUsageTracker({ initialSnapshot: interrupted, boundComposers: seat })
       retry.recordRequestSample({ composerId: 'c', generationId: 'g', used: 11500, stopped: true, occurredAt: 9999 })
       expect(retry.getSnapshot()).toEqual(interrupted)
       retry.dispose()
@@ -57,18 +59,19 @@ describe('用量采集到持久化的事件链', () => {
       manager.markDirty({ composerId: 'c' }); await Promise.resolve()
       tracker.dispose()
       const saved = store.load()
-      expect(saved.c).toMatchObject({ inputTokens: 12168, outputTokens: 42, cacheReadTokens: 3968, cacheWriteTokens: 0, quality: 'exact', runId: 'run' })
-      const restored = new CursorUsageTracker({ initialSnapshot: saved, runId: 'run' })
+      expect(saved.c).toMatchObject({ inputTokens: 12168, outputTokens: 42, cacheReadTokens: 3968, cacheWriteTokens: 0, quality: 'exact', slotId: 'seat-1' })
+      const restored = new CursorUsageTracker({ initialSnapshot: saved, boundComposers: seat })
       const p = payloads.at(-1)!
       restored.record({ composerId: p.c, generationId: p.g, inputTokens: p.i, outputTokens: p.o, cacheReadTokens: p.r, cacheWriteTokens: p.w, occurredAt: 999 })
       expect(restored.getSnapshot()).toEqual(saved)
       restored.setCollecting(false)
-      store.save('run', restored.getSnapshot())
+      store.save(restored.getSnapshot())
       expect(store.load().c?.ledger?.frozenAt).toBeDefined()
-      // 新 run 接手：旧 run 的账保留在文件里（归属 'run'），不再被清空。
-      store.save('next-run', restored.getSnapshot())
-      expect(store.load().c).toMatchObject({ runId: 'run', quality: 'exact' })
-      restored.dispose()
+      // 席位重建换了 Composer（'c' 出绑）：旧账保留在文件里（封口、带席位标签），不再被清空。
+      const rebuilt = new CursorUsageTracker({ initialSnapshot: store.load(), boundComposers: [{ composerId: 'c2', slotId: 'seat-1' }], now: () => 1000 })
+      store.save(rebuilt.getSnapshot())
+      expect(store.load().c).toMatchObject({ slotId: 'seat-1', quality: 'exact' })
+      restored.dispose(); rebuilt.dispose()
       expect(JSON.parse(readFileSync(store.path, 'utf8')).version).toBe(4)
     } finally { tracker.dispose(); rmSync(root, { recursive: true, force: true }) }
   })

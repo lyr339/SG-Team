@@ -11,7 +11,6 @@ import {
   priceForModel,
   totalUsageTokens,
   upgradeUsageEstimate,
-  usageBelongsToRun,
   usageHasCacheWriteBucket,
   USAGE_HISTORY_RETENTION_MS,
   type CursorSessionUsage,
@@ -249,19 +248,18 @@ describe('展示格式化', () => {
     expect(formatCostUsd(1.5)).toBe('$1.50')
   })
 
-  it('run 归属：投影与归约都随行保留 runId；徽章只认当前 run，无标签的旧账不限定', () => {
+  it('席位归属：投影与归约都随行保留 slotId（入账时所绑席位），无绑定上下文的账没有此字段', () => {
     const turn = { inputTokens: 10, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0, estimatedCostUsd: 0.001, price: priceForModel('gpt-5'), exact: true, at: 5 }
-    const tagged = projectUsage('c', { turns: { g1: turn } }, 'run-a')
-    expect(tagged.runId).toBe('run-a')
-    expect(projectUsage('c', { turns: { g1: turn } })).not.toHaveProperty('runId')
-    // 同 composer 的下一回合：归约后 runId 不丢。
+    const tagged = projectUsage('c', { turns: { g1: turn } }, 'seat-1')
+    expect(tagged.slotId).toBe('seat-1')
+    expect(projectUsage('c', { turns: { g1: turn } })).not.toHaveProperty('slotId')
+    // 同 composer 的下一回合：归约后 slotId 不丢。
     const reduced = reduceUsage(tagged, { kind: 'checkpoint', value: { ...event({ composerId: 'c', inputTokens: 20, outputTokens: 2, cacheReadTokens: 0 }), generationId: 'g2' } })
-    expect(reduced).toMatchObject({ runId: 'run-a', turns: 2 })
-    expect(upgradeUsageEstimate(tagged).runId).toBe('run-a')
-    expect(usageBelongsToRun({ runId: 'run-a' }, 'run-a')).toBe(true)
-    expect(usageBelongsToRun({ runId: 'run-a' }, 'run-b')).toBe(false)
-    expect(usageBelongsToRun({ runId: 'run-a' }, undefined)).toBe(false)
-    expect(usageBelongsToRun({}, 'run-b')).toBe(true)
+    expect(reduced).toMatchObject({ slotId: 'seat-1', turns: 2 })
+    expect(upgradeUsageEstimate(tagged).slotId).toBe('seat-1')
+    // 封口的账本不再归约，标签原样。
+    const frozen = { ...tagged, ledger: { ...tagged.ledger!, frozenAt: 9 } }
+    expect(reduceUsage(frozen, { kind: 'checkpoint', value: { ...event({ composerId: 'c' }), generationId: 'g3' } })).toBe(frozen)
     // 保留窗口至少覆盖统计页「30 天」范围（本地午夜起算 ≤ 30×24h）。
     expect(USAGE_HISTORY_RETENTION_MS).toBeGreaterThanOrEqual(30 * 86_400_000)
   })

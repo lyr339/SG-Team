@@ -5,13 +5,13 @@ import type {
   TeamGroup,
   TeamGroupEvent,
   TeamGroupMemberConfiguration,
-  TeamLaunchStatus,
+  TeamGroupPlanPolicy,
   WorkspaceTeamBundle
 } from '../domain/team-control'
 import type { ComposerBindingMethod } from '../domain/cursor-telemetry'
 import type { CursorModelSelection } from '../domain/cursor-model'
 import type { AgentAuthorizationIdentity, AgentRegistration } from './agent-authorization'
-import type { TeamFailoverRebindResult, TeamFailoverRecord, TeamFailoverStatus } from '../domain/team-failover'
+import type { TeamFailoverRecord } from '../domain/team-failover'
 
 /** 一次成员关系变化里进入 / 离开组的席位（服务层据此投递成员关系通知，不必再查库）。 */
 export interface GroupMembershipChange {
@@ -29,6 +29,16 @@ export interface TeamGroupMutation {
   leadChange?: { previousSlotId?: string; nextSlotId?: string }
 }
 
+/** 成员身份迁移结果：A 出组、B 以同角色入组、有效 lead 是否随迁 + 审计行。 */
+export interface GroupMembershipTransfer {
+  group: TeamGroup
+  from: GroupMembershipChange
+  to: GroupMembershipChange
+  /** 迁移前 A 是本组有效 lead（组 lead 或临时主控），迁移后 B 是。指向 A 的 lead 指针无论如何都改指 B。 */
+  transferredLead: boolean
+  failover: TeamFailoverRecord
+}
+
 export interface TeamControlRepository extends AgentPresenceStore {
   /** 轻量读取当前修订号；用于避免每个轮询消费者都全量装配团队状态。 */
   revision?(): number
@@ -37,18 +47,7 @@ export interface TeamControlRepository extends AgentPresenceStore {
   /** 单槽模型选定持久化（lobby 逐会话配置保存出口）。 */
   setSlotModelSelection(slotId: string, selection: CursorModelSelection, updatedAt?: number): void
   setActiveWorkspace(workspaceId: string): void
-  updateRunGoal(runId: string, goal: string): void
   recordInstallation(batch: AgentRegistrationBatch): void
-  beginLaunch(runId: string, at: number, bindingKey: string): void
-  /** 幂等推进 run 到 launching（仅状态，不重置 bindings）；未达可启动条件时为空操作。 */
-  ensureRunLaunching(runId: string, at: number): void
-  recordLaunchDelivery(input: {
-    runId: string
-    slotId: string
-    status: Extract<TeamLaunchStatus, 'sending' | 'delivered' | 'uncertain' | 'failed'>
-    commandId?: string
-    detail: string
-  }): void
   recordComposerBinding(input: {
     runId: string
     slotId: string
@@ -65,47 +64,10 @@ export interface TeamControlRepository extends AgentPresenceStore {
   }): boolean
   resolveAgentRuntimeIdentity(identityKey: string, runId?: string): AgentAuthorizationIdentity
   listAgentRegistrations(runId: string): AgentRegistration[]
-  rebindSlotToStandby(input: {
-    failoverId: string
-    runId: string
-    slotId: string
-    expectedAgentSessionId: string
-    replacementAgentSessionId: string
-    reason: string
-    detectedAt: number
-    bindingKey: string
-    checkpointId?: string
-  }): TeamFailoverRebindResult
-  rebindSlotFromMember(input: {
-    failoverId: string
-    runId: string
-    slotId: string
-    donorSlotId: string
-    expectedAgentSessionId: string
-    replacementAgentSessionId: string
-    reason: string
-    detectedAt: number
-    bindingKey: string
-    checkpointId?: string
-  }): TeamFailoverRebindResult
-  attachFailoverContext(input: {
-    failoverId: string
-    checkpointId?: string
-    messageId: string
-    taskIds: string[]
-    at: number
-  }): void
-  updateFailoverStatus(input: {
-    failoverId: string
-    status: Extract<TeamFailoverStatus, 'completed' | 'failed'>
-    reason?: string
-    at: number
-  }): void
   listFailovers(runId: string): TeamFailoverRecord[]
   /**
-   * 把 launching/running/attention/paused 的 run 收尾为 completed（撤销注册、
-   * 绑定标 failed）。`detail` 写入各绑定的 launch_detail，说明收尾原因（自动
-   * 离线收尾 / 用户显式结束 / 被新运行替换）；draft/ready 不适用，返回 false。
+   * 把 running 的 run 收尾为 completed（撤销注册、收尾原因写进各绑定的 launch_detail）；
+   * 已结束的 run 返回 false。
    */
   completeRun(runId: string, at: number, detail?: string): boolean
   recordAgentCheckIn(
@@ -117,13 +79,17 @@ export interface TeamControlRepository extends AgentPresenceStore {
 
   // ---- 协作组（会话池）：每个方法 = 一次事务 + team_group_events 审计行；不触碰令牌 / Composer / 作用域 ----
 
-  /** 在会话池 run 内建组：成员必须是未入组席位；lead 可空（无 lead 组）。 */
+  /**
+   * 在会话池 run 内建组：成员必须是未入组席位；lead 可空（无 lead 组）。
+   * `planPolicy` 省略时按 `defaultGroupPlanPolicy(leadSlotId)`：有 lead → lead_only，无 lead → any_member。
+   */
   createGroup(input: {
     runId: string
     name: string
     goal?: string
     members: TeamGroupMemberConfiguration[]
     leadSlotId?: string
+    planPolicy?: TeamGroupPlanPolicy
     at?: number
   }): TeamGroupMutation
   addGroupMembers(input: { groupId: string; members: TeamGroupMemberConfiguration[]; at?: number }): TeamGroupMutation
@@ -137,8 +103,23 @@ export interface TeamControlRepository extends AgentPresenceStore {
   /** 组内临时主控（lead 离线接管 / team_run transfer_lead）；null = 复位。 */
   setGroupActingLead(input: { groupId: string; slotId: string | null; at?: number }): TeamGroupMutation
   updateGroupGoal(input: { groupId: string; goal: string; at?: number }): TeamGroupMutation
+  /** 改规划策略（谁能 team_task plan）；只对无 lead 的组产生实际效果，有 lead 时规划权始终归有效 lead。 */
+  setGroupPlanPolicy(input: { groupId: string; planPolicy: TeamGroupPlanPolicy; at?: number }): TeamGroupMutation
   /** 解散：全部成员恢复 solo、组角色删除、组置 dissolved；任务 / 消息 / 记忆由调用方按组收尾。 */
   dissolveGroup(input: { groupId: string; at?: number }): TeamGroupMutation
+  /**
+   * 成员身份迁移（阶段 2 · 2C）：A 出组、B 以 A 的组角色模板入组；指向 A 的组 lead / 临时主控
+   * 指针改指 B（lead 身份随迁）。一次事务完成，绑定 / 令牌 / Composer 不动；审计行写 team_failovers
+   *（reason='manual_membership_transfer'，落库即 completed）。
+   */
+  transferGroupMembership(input: {
+    groupId: string
+    fromSlotId: string
+    toSlotId: string
+    at?: number
+  }): GroupMembershipTransfer
+  /** 入组席位换席重建完成（新会话已绑定 Composer）：写 member_rejoined_after_rebuild 审计事件。 */
+  recordGroupMemberRebuilt(input: { groupId: string; slotId: string; at?: number }): void
   listGroupEvents(groupId: string, limit?: number): TeamGroupEvent[]
   close(): void
 }

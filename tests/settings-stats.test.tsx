@@ -12,7 +12,7 @@ import {
 import { SettingsPage } from '../src/renderer/src/settings/SettingsPage'
 import { SettingsStats } from '../src/renderer/src/settings/SettingsStats'
 import type { SettingsPageProps } from '../src/renderer/src/settings/settings-view'
-import type { StatsSeatSource } from '../src/renderer/src/settings/stats-view'
+import type { StatsGroupSource, StatsSeatSource } from '../src/renderer/src/settings/stats-view'
 
 const HOUR = 3_600_000
 const DAY = 86_400_000
@@ -145,6 +145,45 @@ describe('统计页组件', () => {
     const seatMixRows = container.querySelectorAll('.stats-seatmix li')
     expect(seatMixRows.length).toBeGreaterThan(0)
     expect([...seatMixRows].some((row) => row.textContent?.includes('命中'))).toBe(true)
+  })
+
+  it('分组卡：组按成本降序，给出席数 / 回合与占池份额条；没有 active 组时不出卡', async () => {
+    const { usage, seats } = fixture(Date.now())
+    const groups: StatsGroupSource[] = [
+      { key: 'g-impl', label: '实现组', channelIds: ['2'] },
+      { key: 'g-main', label: '主力组', channelIds: ['1'] }
+    ]
+    await render({ usageSnapshot: usage, statsSeats: seats, statsGroups: groups, active: true })
+    const card = container.querySelector('[aria-label="分组用量"]')!
+    expect(card.querySelector('header')?.textContent).toContain('2 个组')
+    const rows = [...card.querySelectorAll('.stats-groups li')]
+    expect(rows).toHaveLength(2)
+    // 今天：CH-1 两个 Fable 回合 > CH-2 一个 Sol 回合，主力组排前。
+    expect(rows[0]!.querySelector('.stats-groups__name')?.textContent).toBe('主力组')
+    expect(rows[0]!.querySelector('.stats-groups__meta')?.textContent).toContain('1 席')
+    expect(rows[0]!.querySelector('.stats-groups__meta')?.textContent).toContain('2 回合')
+    expect(rows[0]!.querySelector('.stats-groups__cost')?.textContent).toMatch(/^\$/)
+    const shareOf = (row: Element): number =>
+      Number.parseFloat(row.querySelector<HTMLElement>('.stats-groups__bar b')!.style.width)
+    expect(shareOf(rows[0]!)).toBeGreaterThan(shareOf(rows[1]!))
+    expect(shareOf(rows[0]!)).toBeLessThanOrEqual(100)
+    // 两个组覆盖全部席位，份额之和即池的全部。
+    expect(shareOf(rows[0]!) + shareOf(rows[1]!)).toBeCloseTo(100, 4)
+    await render({ usageSnapshot: usage, statsSeats: seats, active: true })
+    expect(container.querySelector('[aria-label="分组用量"]')).toBeNull()
+  })
+
+  it('分组卡跟随度量切换：Tokens 下主数字是 token 量，成本退到元信息行', async () => {
+    const { usage, seats } = fixture(Date.now())
+    const groups: StatsGroupSource[] = [{ key: 'g-main', label: '主力组', channelIds: ['1'] }]
+    await render({ usageSnapshot: usage, statsSeats: seats, statsGroups: groups, active: true })
+    const mainCost = (): string | null | undefined => container.querySelector('.stats-groups__cost')?.textContent
+    const mainMeta = (): string | null | undefined => container.querySelector('.stats-groups__meta')?.textContent
+    expect(mainCost()).toMatch(/^\$/)
+    expect(mainMeta()).not.toContain('$')
+    await act(async () => { buttonByText('Tokens').click() })
+    expect(mainCost()).not.toMatch(/^\$/)
+    expect(mainMeta()).toContain('$')
   })
 
   it('分组隐藏期间冻结视图：新快照不触发重算，重新激活后取新数据', async () => {

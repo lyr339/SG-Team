@@ -3,10 +3,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { TeamMessageDispatcher, type TeamMessageDispatcherBridge, type TeamMessageDispatcherTeamSource } from '../src/application/team-message-dispatcher'
-import { createDefaultTeamBundle, emptyTeamControlSnapshot, type TeamControlSnapshot } from '../src/domain/team-control'
+import { emptyTeamControlSnapshot, type TeamControlSnapshot } from '../src/domain/team-control'
 import type { DesktopSnapshot, SendMessageInput } from '../src/shared/desktop-api'
 import { SqliteTeamCollaborationRepository } from '../src/infrastructure/team-collaboration/sqlite-team-collaboration-repository'
 import { SqliteTeamControlRepository } from '../src/infrastructure/team-control/sqlite-team-control-repository'
+import { createDefaultTeamBundle } from './legacy-team-fixtures'
 
 class FakeBridge implements TeamMessageDispatcherBridge {
   readonly sent: Array<SendMessageInput & { commandId: string }> = []
@@ -130,10 +131,7 @@ function fixture() {
     preflight: {
       bridgeConnected: true,
       workspaceBound: true,
-      goalDefined: true,
       mcpInstalled: true,
-      agentsWaiting: true,
-      canLaunch: true,
       blockers: []
     }
   }

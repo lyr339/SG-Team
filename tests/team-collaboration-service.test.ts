@@ -18,7 +18,7 @@ class FakeCollaborationRepository implements TeamCollaborationRepository {
   resolveAuthorizedAgent(): never { throw new Error('unused') }
   listRunMembers(): [] { return [] }
   clearRun(): boolean { return false }
-  createMessage(): never { throw new Error('should not create messages before launch') }
+  createMessage(): never { throw new Error('should not create messages for a completed run') }
   markNotificationSending(): never { throw new Error('unused') }
   markNotificationResult(): never { throw new Error('unused') }
   markRead(): never { throw new Error('unused') }
@@ -57,16 +57,16 @@ function snapshot(status: TeamRun['status']): TeamControlSnapshot {
 }
 
 describe('TeamCollaborationService', () => {
-  it.each(['draft', 'ready'] as const)('rejects operator messages while the run is %s', (status) => {
+  it('rejects operator messages after the run has completed', () => {
     const service = new TeamCollaborationService(
       new FakeCollaborationRepository(),
-      new FakeTeamSource(snapshot(status))
+      new FakeTeamSource(snapshot('completed'))
     )
 
     expect(() => service.send({
       recipientSlotId: 'slot:builder',
       kind: 'directive',
-      content: 'before launch'
-    })).toThrowError(/尚未启动/)
+      content: 'after the run ended'
+    })).toThrowError(/已经结束/)
   })
 })

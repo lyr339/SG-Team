@@ -420,8 +420,9 @@ html[data-card-transparency="clear"] .stats-card { background: color-mix(in srgb
 .stats-seatmix__tokens { font-variant-numeric: tabular-nums; text-align: right; }
 .stats-seatmix__hit { color: var(--faint); font-size: var(--fs-10); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
-/* ---------- 模型分布 ---------- */
-.stats-models {
+/* ---------- 模型分布 / 分组（同一行式：名称 · 元信息 · 数值 + 份额条） ---------- */
+.stats-models,
+.stats-groups {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -429,7 +430,8 @@ html[data-card-transparency="clear"] .stats-card { background: color-mix(in srgb
   gap: 11px;
 }
 
-.stats-models li {
+.stats-models li,
+.stats-groups li {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
   grid-template-areas:
@@ -441,7 +443,8 @@ html[data-card-transparency="clear"] .stats-card { background: color-mix(in srgb
   font-size: var(--fs-11);
 }
 
-.stats-models__name {
+.stats-models__name,
+.stats-groups__name {
   grid-area: name;
   font-weight: 600;
   overflow: hidden;
@@ -449,10 +452,13 @@ html[data-card-transparency="clear"] .stats-card { background: color-mix(in srgb
   white-space: nowrap;
 }
 
-.stats-models__meta { grid-area: meta; color: var(--faint); font-size: var(--fs-10); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.stats-models__cost { grid-area: cost; font-weight: 650; font-variant-numeric: tabular-nums; }
+.stats-models__meta,
+.stats-groups__meta { grid-area: meta; color: var(--faint); font-size: var(--fs-10); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.stats-models__cost,
+.stats-groups__cost { grid-area: cost; font-weight: 650; font-variant-numeric: tabular-nums; }
 
-.stats-models__bar {
+.stats-models__bar,
+.stats-groups__bar {
   grid-area: bar;
   display: block;
   height: 4px;
@@ -461,7 +467,8 @@ html[data-card-transparency="clear"] .stats-card { background: color-mix(in srgb
   overflow: hidden;
 }
 
-.stats-models__bar b {
+.stats-models__bar b,
+.stats-groups__bar b {
   display: block;
   height: 100%;
   border-radius: 2px;

@@ -156,29 +156,6 @@ describe('run seats · per-session model config', () => {
     expect(effortOf(launched.mock.calls[0]?.[0])).toBe('high')
   })
 
-  it('highlights and focuses the one-click action when goal guidance is active', async () => {
-    await act(async () => root.render(
-      <RunSeats
-        rows={[{ channelId: '1', name: '会话 1', pending: true }, { channelId: '2', name: '会话 2', pending: true }]}
-        cursorModels={[opus]}
-        selections={{ '1': structuredClone(opus), '2': structuredClone(opus) }}
-        busy={false}
-        createLabel="一键创建会话（2）"
-        guided
-        cdpAutoHealEnabled={false}
-        onCreate={() => {}}
-        onModelSave={() => {}}
-      />
-    ))
-    await act(async () => { await new Promise((resolve) => requestAnimationFrame(resolve)) })
-    expect(container.querySelector('.run-seats.is-guided')).not.toBeNull()
-    expect(container.textContent).toContain('下一步')
-    expect(container.textContent).toContain('确认模型后创建 2 个 Cursor 会话')
-    const launch = Array.from(container.querySelectorAll<HTMLButtonElement>('button'))
-      .find((button) => button.textContent?.includes('一键创建会话'))!
-    expect(document.activeElement).toBe(launch)
-  })
-
   it('keeps the editor open when persistence fails', async () => {
     await act(async () => root.render(
       <RunSeats

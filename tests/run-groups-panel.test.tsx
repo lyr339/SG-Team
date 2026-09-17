@@ -80,12 +80,6 @@ describe('RunGroupsPanel（会话池 · 协作组最小 UI）', () => {
       cursorModels: desktopSnapshot.cursorModels ?? [],
       cdpAutoHealEnabled: false,
       groupActions: actions,
-      onChooseWorkspace: vi.fn(async () => {}),
-      onReconfigure: vi.fn(async () => {}),
-      onUpdateGoal: vi.fn(async () => team),
-      onInstallMcp: vi.fn(async () => team),
-      onLaunch: vi.fn(async () => team),
-      onCreateNextRun: vi.fn(async () => ({ snapshot: team })),
       onLaunchAgentSessions: vi.fn(async (_requests: AgentLaunchRequest[]) => donePlan),
       onCreateIndependentSessions: vi.fn(async (_input: CreateIndependentSessionsInput) => donePlan),
       onChooseIndependentWorkspace: vi.fn(async () => undefined),
@@ -241,12 +235,6 @@ describe('RunGroupsPanel（会话池 · 协作组最小 UI）', () => {
         detectedWorkspace={detected}
         cursorModels={desktopSnapshot.cursorModels ?? []}
         cdpAutoHealEnabled={false}
-        onChooseWorkspace={async () => {}}
-        onReconfigure={async () => {}}
-        onUpdateGoal={async () => pool()}
-        onInstallMcp={async () => pool()}
-        onLaunch={async () => pool()}
-        onCreateNextRun={async () => ({ snapshot: pool() })}
         onLaunchAgentSessions={async () => donePlan}
         onCreateIndependentSessions={async () => donePlan}
         onChooseIndependentWorkspace={async () => undefined}

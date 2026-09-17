@@ -73,7 +73,7 @@ export function RunGroupsPanel({ view, busy, ended, actions }: RunGroupsPanelPro
     setError('')
   }, [runId])
 
-  if (!actions || view.mode !== 'independent') return null
+  if (!actions || !view.run) return null
   const disabled = busy || pending
   const active = view.groups.filter((group) => group.status === 'active')
   const dissolved = view.groups.filter((group) => group.status === 'dissolved')

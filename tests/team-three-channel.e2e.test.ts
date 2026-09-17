@@ -17,13 +17,13 @@ import { TeamMemoryAgentService } from '../src/application/team-memory-agent-ser
 import { TeamMemoryService } from '../src/application/team-memory-service'
 import { TeamMessageDispatcher } from '../src/application/team-message-dispatcher'
 import { TeamOrchestrator } from '../src/application/team-orchestrator'
-import { createDefaultTeamBundle } from '../src/domain/team-control'
 import { SqliteChannelMessageRepository } from '../src/infrastructure/channel-messages/sqlite-channel-message-repository'
 import { SqliteTaskPoolRepository } from '../src/infrastructure/task-pool/sqlite-task-pool-repository'
 import { SqliteTeamCollaborationRepository } from '../src/infrastructure/team-collaboration/sqlite-team-collaboration-repository'
 import { SqliteTeamControlRepository } from '../src/infrastructure/team-control/sqlite-team-control-repository'
 import { SqliteTeamMemoryRepository } from '../src/infrastructure/team-memory/sqlite-team-memory-repository'
 import { createUnifiedChannelServer } from '../src/mcp/unified-channel-server'
+import { createDefaultTeamBundle } from './legacy-team-fixtures'
 
 async function waitFor(predicate: () => boolean, timeoutMs = 4_000): Promise<void> {
   const startedAt = Date.now()
@@ -55,10 +55,10 @@ describe('three-channel autonomous team end to end', () => {
       workspacePath: '/workspace/alpha',
       channelIds: ['1', '2', '3'],
       runKey: 'run-three-channel',
-      now: 100
+      now: 100,
+      goal: '交付一个由实现与质量角色共同完成的可靠功能'
     })
     controlRepository.upsertWorkspaceTeam(bundle)
-    controlRepository.updateRunGoal(bundle.run.id, '交付一个由实现与质量角色共同完成的可靠功能')
     controlRepository.recordInstallation({
       workspaceId: bundle.workspace.id,
       runId: bundle.run.id,
@@ -143,7 +143,7 @@ describe('three-channel autonomous team end to end', () => {
     const allOutboxTexts = (): string[] => ['1', '2', '3'].flatMap((channelId) => outboxTexts(channelId))
 
     try {
-      await waitFor(() => team.getSnapshot().preflight.canLaunch)
+      await waitFor(() => team.getSnapshot().preflight.blockers.length === 0)
       const lead = await connectAgent('lead')
       const builder = await connectAgent('builder')
       const reviewer = await connectAgent('reviewer')
@@ -153,7 +153,8 @@ describe('three-channel autonomous team end to end', () => {
       messageDispatcher.start(250)
       orchestrator.start()
 
-      await team.launch()
+      // 阶段 2 · 2B 起没有「启动」这一步：run 一建即 running，成员直接签到。
+      expect(team.getSnapshot().activeRun?.status).toBe('running')
       expect(allOutboxTexts().filter((text) => text.includes('系统规划调度'))).toHaveLength(0)
       await leadCall('team_check_in', { note: '主控已读取目标' })
       await builderCall('team_check_in', { note: '实现席已读取边界' })

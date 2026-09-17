@@ -294,7 +294,6 @@ function binding(channelId: string, generation = 'generation123', installedAt = 
     generation,
     composerBindingKey: generation,
     installedAt,
-    launchStatus: 'not_started',
     launchDetail: '',
     lastCheckInNote: ''
   }

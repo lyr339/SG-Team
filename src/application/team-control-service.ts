@@ -4,14 +4,12 @@ import type { ComposerBindingMethod } from '../domain/cursor-telemetry'
 import type { TeamControlRepository } from './team-control-repository'
 import type { TeamCollaborationRepository } from './team-collaboration-repository'
 import type { AgentSession } from '../domain/agent-session'
-import type { AgentLaunchPlan } from '../domain/agent-launch'
 import type { CursorModelSelection } from '../domain/cursor-model'
 import { hasInFlightExecution, isAgentOnDuty } from '../domain/channel-message'
-import type { ConversationEntry } from '../domain/conversation-entry'
 import {
-  buildTeamLaunchHint,
+  buildMembershipNotice,
   createConfiguredTeamBundle,
-  createDefaultTeamBundle,
+  groupLeadLabel,
   isSessionPoolRun,
   projectGroups,
   type TeamControlSnapshot,
@@ -51,9 +49,6 @@ function sanitizeModelSelection(value: unknown): CursorModelSelection {
   return { modelId, displayName, parameters, maxMode: candidate.maxMode === true }
 }
 
-const DEFAULT_CONFIRMATION_TIMEOUT_MS = 10_000
-const STALE_LAUNCH_TIMEOUT_MS = 5 * 60_000
-
 export interface TeamControlBridge {
   getSnapshot(): DesktopSnapshot
   sendMessage(input: SendMessageInput): SendMessageAccepted
@@ -61,22 +56,17 @@ export interface TeamControlBridge {
   beginConversationScope?(input: { runId: string; startedAt: number }): DesktopSnapshot
 }
 
-export interface TeamWorkspaceSelection {
+/** 新建会话池的工作区标识 + 席位配置（全部 solo；入组是运行中的操作员动作）。 */
+export interface CreateSessionPoolInput {
   workspaceId: string
   workspaceName: string
   workspacePath: string
-  channelIds: string[]
-}
-
-interface DeliveryResult {
-  status: 'delivered' | 'uncertain' | 'failed'
-  detail: string
-  commandId?: string
+  members: TeamMemberConfiguration[]
 }
 
 type TeamControlListener = (snapshot: TeamControlSnapshot) => void
 
-/** completeRun 收尾原因（写入绑定 launch_detail，供大厅/审计区分自动收尾与显式操作）。 */
+/** completeRun 收尾原因（写入绑定 launch_detail，供大厅/审计区分收尾方式）。 */
 const RUN_ENDED_BY_USER_DETAIL = '用户已结束本轮运行'
 const RUN_REPLACED_DETAIL = '已被新的运行替换；旧会话将在下一次轮询收到会话围栏终止指令'
 
@@ -91,109 +81,48 @@ function freshTeamRunKey(): string {
   return `run-${randomUUID()}`
 }
 
-function isLegacyMainRun(run: TeamRun): boolean {
-  return run.id.endsWith(':main')
-}
-
 function readinessOf(input: {
   binding: TeamMemberView['binding']
   runtime?: AgentSession
 }): TeamMemberReadiness {
   const { binding, runtime } = input
   if (!binding) return 'mcp_missing'
-  if (binding.launchStatus === 'failed' || binding.launchStatus === 'uncertain') return 'attention'
   if (!runtime?.online) return 'offline'
-  if (binding.launchStatus === 'acknowledged') return 'active'
-  if (binding.launchStatus === 'sending' || binding.launchStatus === 'delivered') return 'launching'
+  // 已签到（team_check_in 写过 acknowledged_at）= 在岗；换席重建会清空它，新会话重新从 ready 开始。
+  if (binding.acknowledgedAt !== undefined) return 'active'
   // 就绪判定与大厅/launcher 同源：online 之上认协议内相位（含 processing/keepalive），
   // 裸 waiting 会在 Agent 处理消息期间把就绪成员误标 not_waiting。
   if (!isAgentOnDuty(runtime)) return 'not_waiting'
   return 'ready'
 }
 
-function commandEntry(snapshot: DesktopSnapshot, channelId: string, commandId: string): ConversationEntry | undefined {
-  return snapshot.conversations[channelId]?.find((entry) => entry.commandId === commandId)
-}
-
-function sendAndConfirm(
-  bridge: TeamControlBridge,
-  input: SendMessageInput,
-  timeoutMs: number
-): Promise<DeliveryResult> {
-  return new Promise((resolve) => {
-    let commandId = ''
-    let settled = false
-    let timer: ReturnType<typeof setTimeout> | undefined
-    let unsubscribe = (): void => {}
-
-    const finish = (result: DeliveryResult): void => {
-      if (settled) return
-      settled = true
-      if (timer) clearTimeout(timer)
-      unsubscribe()
-      resolve(result)
-    }
-    const inspect = (snapshot: DesktopSnapshot): void => {
-      if (!commandId) return
-      const entry = commandEntry(snapshot, input.channelId, commandId)
-      if (entry?.status === 'complete') {
-        finish({ status: 'delivered', detail: '拾光已确认指令送入 Cursor', commandId })
-      }
-      if (entry?.status === 'failed') {
-        finish({
-          status: 'failed',
-          detail: entry.error || '通道拒绝了启动指令',
-          commandId
-        })
-      }
-    }
-
-    try {
-      unsubscribe = bridge.subscribe(inspect)
-      commandId = bridge.sendMessage(input).commandId
-      inspect(bridge.getSnapshot())
-      if (settled) return
-      timer = setTimeout(() => {
-        finish({
-          status: 'uncertain',
-          detail: '等待投递回执超时；为避免重复启动，未自动重发',
-          commandId
-        })
-      }, timeoutMs)
-    } catch (error) {
-      finish({
-        status: 'failed',
-        detail: error instanceof Error ? error.message : String(error),
-        commandId: commandId || undefined
-      })
-    }
-  })
-}
-
+/**
+ * 团队控制服务：会话池（活动 run）的读投影与池级操作（新建池、结束池、席位模型、Composer 绑定）。
+ * 阶段 2 · 2B 起没有一次性团队 run 的创建 / 启动 / 新一轮：run 只有 running / completed，
+ * 协作在池内以组的形式随时建拆（TeamGroupService）。
+ */
 export class TeamControlService {
   private listeners = new Set<TeamControlListener>()
   private lastRevision: number
   private cachedState?: TeamControlState
+  private readonly onerror: (error: unknown) => void
   /** Date.now() can repeat within one millisecond; activeRun ordering requires a strict clock. */
   private lastRunCreatedAt = 0
   private watchTimer?: ReturnType<typeof setInterval>
-  private activeLaunch?: Promise<TeamControlSnapshot>
   private readonly unsubscribeBridge: () => void
 
   constructor(
     private readonly repository: TeamControlRepository,
     private readonly bridge: TeamControlBridge,
-    private readonly confirmationTimeoutMs = DEFAULT_CONFIRMATION_TIMEOUT_MS,
     private readonly telemetrySource?: CursorComposerTelemetrySource,
-    private readonly collaborationLifecycle?: Pick<TeamCollaborationRepository, 'clearRun'>
+    private readonly collaborationLifecycle?: Pick<TeamCollaborationRepository, 'clearRun'>,
+    options: { onerror?: (error: unknown) => void } = {}
   ) {
-    let state = repository.loadTeamControl()
+    this.onerror = options.onerror ?? (() => undefined)
+    const state = repository.loadTeamControl()
     this.lastRunCreatedAt = Math.max(0, ...state.runs.map((run) => run.createdAt))
-    state = this.freshenLegacyPrelaunchMainRun(state)
-    state = this.recoverStaleLaunch(state)
     this.cachedState = state
     this.lastRevision = state.revision
-    this.clearPrelaunchCollaboration(state)
     this.syncConversationScope(state)
     this.unsubscribeBridge = bridge.subscribe(() => this.emit())
   }
@@ -255,50 +184,12 @@ export class TeamControlService {
     return () => this.listeners.delete(listener)
   }
 
-  ensureWorkspace(input: TeamWorkspaceSelection): TeamControlSnapshot {
-    const bundle = createDefaultTeamBundle({
-      workspaceId: input.workspaceId,
-      workspaceName: input.workspaceName,
-      workspacePath: input.workspacePath,
-      channelIds: input.channelIds,
-      runKey: freshTeamRunKey(),
-      now: this.nextRunCreatedAt()
-    })
-    this.repository.upsertWorkspaceTeam(bundle)
-    this.collaborationLifecycle?.clearRun(bundle.run.id)
-    this.syncConversationScope(this.loadState())
-    this.emit()
-    return this.getSnapshot()
-  }
-
   /**
-   * 组建团队 run（可能替换当前独立 run / 旧团队 run）。
-   *
-   * 模式切换不再以「旧会话全部离线」为前提：会话围栏（session 令牌）让被替换的
-   * 旧会话在下一次轮询就收到终止指令自行退出，且不能刷新新席位的 presence；
-   * 作用域切换同时把全部通道的既有心跳退役。唯一硬阻塞是正在进行的团队启动
-   * 投递（单飞）。后果（旧会话结束、排队消息归档）由渲染层在切换前向用户确认。
+   * 新建会话池（独立批次 run），替换当前活动 run：旧池显式收尾 → 写入新拓扑 → 切换会话作用域。
+   * 会话围栏（session 令牌）让被替换的旧会话在下一次轮询就收到终止指令自行退出，且不能刷新新席位的
+   * presence；后果（旧会话结束、排队消息归档）由渲染层在替换前向用户确认。
    */
-  configureWorkspace(input: Omit<TeamWorkspaceSelection, 'channelIds'> & {
-    members: TeamMemberConfiguration[]
-  }): TeamControlSnapshot {
-    this.assertNoLaunchInFlight()
-    const bundle = createConfiguredTeamBundle({
-      workspaceId: input.workspaceId,
-      workspaceName: input.workspaceName,
-      workspacePath: input.workspacePath,
-      members: input.members,
-      runKey: freshTeamRunKey(),
-      now: this.nextRunCreatedAt()
-    })
-    return this.replaceActiveRun(bundle)
-  }
-
-  /** 创建独立批次 run（可能替换当前团队 run / 旧独立批次）；守卫语义同 configureWorkspace。 */
-  configureIndependentWorkspace(input: Omit<TeamWorkspaceSelection, 'channelIds'> & {
-    members: TeamMemberConfiguration[]
-  }): TeamControlSnapshot {
-    this.assertNoLaunchInFlight()
+  createSessionPool(input: CreateSessionPoolInput): TeamControlSnapshot {
     const bundle = createConfiguredTeamBundle({
       workspaceId: input.workspaceId,
       workspaceName: input.workspaceName,
@@ -308,40 +199,6 @@ export class TeamControlService {
       runKey: freshTeamRunKey(),
       now: this.nextRunCreatedAt()
     })
-    return this.replaceActiveRun(bundle)
-  }
-
-  /**
-   * 显式结束当前 run（团队或独立批次）。独立批次此前没有任何结束出口，只能被
-   * 替换或等待旧会话心跳过期；结束后携带令牌的旧会话在下一次轮询被围栏拒绝。
-   */
-  endActiveRun(): TeamControlSnapshot {
-    const run = activeRunOf(this.loadState())
-    if (!run) throw new Error('当前没有可结束的运行')
-    if (run.status === 'completed') throw new Error('当前运行已经结束')
-    // draft/ready 还没有任何会话（团队 run 要到 launch 才签发启动提示），无所谓「结束」；
-    // completeRun 对这两个状态也不生效，提前给出准确原因而不是「状态已变化」。
-    if (run.status === 'draft' || run.status === 'ready') {
-      throw new Error('当前运行尚未启动，没有需要结束的会话')
-    }
-    this.assertNoLaunchInFlight()
-    if (!this.repository.completeRun(run.id, Date.now(), RUN_ENDED_BY_USER_DETAIL)) {
-      throw new Error('运行状态已变化，请刷新后重试')
-    }
-    this.emit()
-    return this.getSnapshot()
-  }
-
-  private assertNoLaunchInFlight(): void {
-    if (this.activeLaunch) throw new Error('团队启动指令正在投递，请稍后再切换')
-  }
-
-  /**
-   * 用新 run 替换当前活动 run：旧 run 显式收尾 → 写入新拓扑 → 切换会话作用域。
-   * 旧 run 仍是 draft/ready（从未启动、没有会话）时 completeRun 不适用，只被更新的
-   * created_at 取代——不伪造一个从未运行过的 completed。
-   */
-  private replaceActiveRun(bundle: WorkspaceTeamBundle): TeamControlSnapshot {
     const previous = activeRunOf(this.loadState())
     if (previous && previous.status !== 'completed' && previous.id !== bundle.run.id) {
       this.repository.completeRun(previous.id, Date.now(), RUN_REPLACED_DETAIL)
@@ -353,142 +210,21 @@ export class TeamControlService {
     return this.getSnapshot()
   }
 
-  /**
-   * 团队「开始新一轮」：沿用上一轮角色/席位重建 run。团队 run 是一次性会话，语义上
-   * 要求上一轮已经结束（或全部离线可显式收尾），因此保留在线硬阻——这与模式切换
-   * （configureWorkspace / configureIndependentWorkspace 的围栏软守卫）是两种意图。
-   * 启动投递在途时禁止：launching 中的成员尚未签到，会被误判「全部离线」而收尾。
-   */
-  createNextRun(): TeamControlSnapshot {
-    this.assertNoLaunchInFlight()
-    let state = this.loadState()
-    let previousRun = activeRunOf(state)
-    const workspace = state.workspaces.find((candidate) => candidate.id === state.activeWorkspaceId)
-    if (!previousRun || !workspace) throw new Error('当前没有可续建的团队工作区')
-    if (previousRun.status !== 'completed') {
-      const snapshot = this.getSnapshot()
-      const teamMembers = snapshot.members.filter((member) => member.slot.solo !== true)
-      const canExplicitlyEnd = ['launching', 'running', 'attention', 'paused'].includes(previousRun.status)
-        && teamMembers.length > 0
-        && teamMembers.every((member) => (
-          !member.runtime?.online && !hasInFlightExecution(member.runtime)
-        ))
-      if (!canExplicitlyEnd) {
-        throw new Error('当前仍有在线或执行中的 Agent；请先恢复当前团队，或等待任务停止后再开始新一轮')
-      }
-      if (!this.repository.completeRun(previousRun.id, Date.now())) {
-        throw new Error('当前 TeamRun 状态已变化，请刷新后重试')
-      }
-      state = this.loadState()
-      previousRun = activeRunOf(state)
-      if (!previousRun || previousRun.status !== 'completed') {
-        throw new Error('旧 TeamRun 收尾失败，请刷新后重试')
-      }
+  /** 显式结束当前会话池：结束后携带令牌的旧会话在下一次轮询被围栏拒绝。 */
+  endActiveRun(): TeamControlSnapshot {
+    const run = activeRunOf(this.loadState())
+    if (!run) throw new Error('当前没有可结束的运行')
+    if (run.status === 'completed') throw new Error('当前运行已经结束')
+    if (!this.repository.completeRun(run.id, Date.now(), RUN_ENDED_BY_USER_DETAIL)) {
+      throw new Error('运行状态已变化，请刷新后重试')
     }
-
-    const previousRoles = state.roles
-      .filter((role) => role.runId === previousRun.id)
-      .sort((left, right) => left.order - right.order)
-    const previousSlots = state.slots
-      .filter((slot) => slot.runId === previousRun.id)
-      .sort((left, right) => left.order - right.order)
-    const roleById = new Map(previousRoles.map((role) => [role.id, role]))
-    const previousBindings = state.bindings.filter((binding) => binding.runId === previousRun.id)
-    const previousBindingBySlot = new Map(previousBindings.map((binding) => [binding.slotId, binding]))
-    const reusableChannelIds = [...new Set(previousSlots.flatMap((slot) => {
-      const channelId = slot.channelId ?? previousBindingBySlot.get(slot.id)?.channelId
-      return channelId ? [channelId] : []
-    }))]
-      .sort((left, right) => Number(left) - Number(right) || left.localeCompare(right))
-    if (!reusableChannelIds.length) throw new Error('上一轮没有可复用的拾光通道配置')
-
-    const leadSlot = previousSlots.find((slot) => roleById.get(slot.roleId)?.templateKey === 'lead')
-    if (!leadSlot) throw new Error('上一轮团队缺少主控角色，无法自动建立新一轮')
-    const selectedSlots = [leadSlot, ...previousSlots.filter((slot) => slot.id !== leadSlot.id)]
-      .slice(0, Math.min(previousSlots.length, reusableChannelIds.length))
-    const usedChannelIds = new Set<string>()
-    const members: TeamMemberConfiguration[] = selectedSlots.map((slot) => {
-        const role = roleById.get(slot.roleId)
-        if (!role) throw new Error('上一轮团队角色数据不完整')
-        const preferredChannelId = slot.channelId ?? previousBindingBySlot.get(slot.id)?.channelId
-        const channelId = preferredChannelId && !usedChannelIds.has(preferredChannelId)
-          ? preferredChannelId
-          : reusableChannelIds.find((candidate) => !usedChannelIds.has(candidate))
-        if (!channelId) throw new Error('可复用的拾光通道不足')
-        usedChannelIds.add(channelId)
-        return {
-          channelId,
-          roleTemplateKey: role.templateKey,
-          avatarId: slot.avatarId,
-          skills: structuredClone(role.skills),
-          modelSelection: slot.modelSelection ? structuredClone(slot.modelSelection) : undefined,
-          solo: slot.solo === true
-        }
-      })
-    const bundle = createConfiguredTeamBundle({
-      workspaceId: workspace.id,
-      workspaceName: workspace.name,
-      workspacePath: workspace.path,
-      members,
-      runKey: freshTeamRunKey(),
-      now: this.nextRunCreatedAt()
-    })
-    // 上一轮已 completed，replaceActiveRun 只负责写入拓扑与切换作用域。
-    return this.replaceActiveRun(bundle)
+    this.emit()
+    return this.getSnapshot()
   }
 
   setActiveWorkspace(workspaceId: string): TeamControlSnapshot {
     this.repository.setActiveWorkspace(workspaceId)
     this.syncConversationScope(this.loadState())
-    this.emit()
-    return this.getSnapshot()
-  }
-
-  updateGoal(goal: string): TeamControlSnapshot {
-    const run = activeRunOf(this.loadState())
-    if (!run) throw new Error('请先选择团队工作区')
-    this.repository.updateRunGoal(run.id, goal)
-    this.emit()
-    return this.getSnapshot()
-  }
-
-  /**
-   * 显式主控转移（P0）：将主控权限临时转移给指定在线成员。
-   * 权限：仅当前 lead 或 acting lead 可调用。
-   */
-  transferLead(input: { targetSlotId: string; reason?: string }): TeamControlSnapshot {
-    const snapshot = this.getSnapshot()
-    const run = snapshot.activeRun
-    if (!run || !['launching', 'running', 'attention'].includes(run.status)) {
-      throw new Error('只有运行中的 TeamRun 可以转移主控')
-    }
-    const currentLead = snapshot.members.find((member) => member.role.templateKey === 'lead')
-    const actingLead = run.actingLeadSlotId
-      ? snapshot.members.find((member) => member.slot.id === run.actingLeadSlotId)
-      : undefined
-    const effectiveLead = actingLead ?? currentLead
-    if (!effectiveLead?.binding) throw new Error('当前没有有效的主控绑定')
-    const target = snapshot.members.find((member) => member.slot.id === input.targetSlotId.trim())
-    if (!target) throw new Error('目标 AgentSlot 不属于当前 TeamRun')
-    if (target.slot.solo === true) throw new Error('独立席位不能成为团队主控')
-    if (!target.binding) throw new Error('目标 Agent 尚未完成 MCP 绑定')
-    if (!target.runtime?.online) throw new Error('目标 Agent 当前不在线')
-    if (target.slot.id === effectiveLead.slot.id) throw new Error('目标已是当前主控')
-    const at = Date.now()
-    this.repository.setActingLead({ runId: run.id, slotId: target.slot.id, at })
-    this.emit()
-    return this.getSnapshot()
-  }
-
-  /** 清除临时主控，恢复原始 lead 角色。 */
-  clearActingLead(): TeamControlSnapshot {
-    const snapshot = this.getSnapshot()
-    const run = snapshot.activeRun
-    if (!run || !['launching', 'running', 'attention'].includes(run.status)) {
-      throw new Error('只有运行中的 TeamRun 可以清除临时主控')
-    }
-    const at = Date.now()
-    this.repository.setActingLead({ runId: run.id, slotId: null, at })
     this.emit()
     return this.getSnapshot()
   }
@@ -512,8 +248,43 @@ export class TeamControlService {
       ...input,
       at: input.at ?? Date.now()
     })
-    if (changed) this.emit()
-    return changed
+    if (!changed) return false
+    this.emit()
+    // 重建收口（阶段 2 · 2C）：仓储只在 composer_id 为空时写入（首绑即定；同一 Composer 的重复上报
+    // 与换绑都返回 false），所以 changed 就是这个席位「无 Composer → 有」的那一次——一个新的 Cursor
+    // 会话顶上了它。席位若在组内：新会话的启动提示是 solo 版（2B-1 起唯一形态），对组一无所知，入组
+    // 时的 joined 通知已被上一个会话消费。这里补投一条 joined 通知并写审计事件。若入组通知恰好还在
+    // 队列里（席位在无会话期间入组），重复投递无害：通知语义幂等，check_messages 顺序送达。
+    this.noticeRebuiltGroupedSeat(input.runId, input.slotId)
+    return true
+  }
+
+  /** 换席重建完成的组内席位：写 member_rejoined_after_rebuild 审计事件 + 补投 joined 通知（fail-soft）。 */
+  private noticeRebuiltGroupedSeat(runId: string, slotId: string): void {
+    try {
+      const snapshot = this.getSnapshot()
+      if (snapshot.activeRun?.id !== runId) return
+      const view = snapshot.groups.find((candidate) => (
+        candidate.group.status === 'active' && candidate.members.some((member) => member.slot.id === slotId)
+      ))
+      const member = view?.members.find((candidate) => candidate.slot.id === slotId)
+      const channelId = member?.binding?.channelId ?? member?.slot.channelId
+      if (!view || !member || !channelId) return
+      this.repository.recordGroupMemberRebuilt({ groupId: view.group.id, slotId })
+      this.bridge.sendMessage({
+        channelId,
+        text: buildMembershipNotice({
+          kind: 'joined',
+          channelId,
+          group: view.group,
+          roleName: member.role.name,
+          leadLabel: groupLeadLabel(view)
+        }),
+        kind: 'membership'
+      })
+    } catch (error) {
+      this.onerror(error)
+    }
   }
 
   /**
@@ -540,44 +311,6 @@ export class TeamControlService {
   }
 
   /**
-   * 会话创建路径的状态兜底：投递启动提示前幂等推进 run 到 launching。
-   * 仅当 run 仍是 draft/ready 且有目标时生效；不重置 bindings，不影响已在线会话。
-   */
-  ensureRunLaunched(): void {
-    const snapshot = this.getSnapshot()
-    const run = snapshot.activeRun
-    if (!run || !run.goal.trim()) return
-    if (run.status !== 'draft' && run.status !== 'ready') return
-    this.collaborationLifecycle?.clearRun(run.id)
-    this.repository.ensureRunLaunching(run.id, Date.now())
-    this.emit()
-  }
-
-  /**
-   * 会话编排终态回写。失败只影响对应席位，并把本轮转入 attention；
-   * 已成功/已签到席位保持原状，迟到的 check-in 仍可继续推进到 running。
-   */
-  settleAgentSessionLaunch(plan: AgentLaunchPlan): void {
-    if (plan.state !== 'failed') return
-    const snapshot = this.getSnapshot()
-    const run = snapshot.activeRun
-    if (!run || run.status !== 'launching') return
-    const bindingByChannel = new Map(snapshot.bindings.map((binding) => [binding.channelId, binding]))
-    for (const item of plan.items) {
-      if (item.stage !== 'failed') continue
-      const binding = bindingByChannel.get(item.channelId)
-      if (!binding || binding.launchStatus === 'acknowledged') continue
-      this.repository.recordLaunchDelivery({
-        runId: run.id,
-        slotId: binding.slotId,
-        status: 'failed',
-        detail: item.message || 'Cursor Agent 会话启动失败'
-      })
-    }
-    this.emit()
-  }
-
-  /**
    * Lobby 逐会话模型配置持久化：写入当前 run 对应席位，重启/换 run 后回读仍一一对应。
    */
   setSlotModelSelection(channelId: string, selection: CursorModelSelection): TeamControlSnapshot {
@@ -592,55 +325,6 @@ export class TeamControlService {
     this.repository.setSlotModelSelection(member.slot.id, sanitizeModelSelection(selection), Date.now())
     this.emit()
     return this.getSnapshot()
-  }
-
-  launch(): Promise<TeamControlSnapshot> {
-    if (this.activeLaunch) return this.activeLaunch
-    const snapshot = this.getSnapshot()
-    if (!snapshot.activeRun) throw new Error('请先选择团队工作区')
-    if (!snapshot.preflight.canLaunch) {
-      throw new Error(snapshot.preflight.blockers[0] || '启动前检查尚未通过')
-    }
-
-    const runId = snapshot.activeRun.id
-    const at = Date.now()
-    if (snapshot.activeRun.status === 'ready') {
-      this.collaborationLifecycle?.clearRun(runId, at)
-    }
-    const bindingKey = randomUUID()
-    this.repository.beginLaunch(runId, at, bindingKey)
-    this.emit()
-    const launchSnapshot = this.getSnapshot()
-    const teamMembers = launchSnapshot.members.filter((member) => member.slot.solo !== true)
-    this.activeLaunch = Promise.all(teamMembers.map(async (member) => {
-      if (!member.binding) throw new Error(`${member.slot.name} 尚未安装 MCP`)
-      this.repository.recordLaunchDelivery({
-        runId,
-        slotId: member.slot.id,
-        status: 'sending',
-        detail: '正在向 Cursor 投递角色指令'
-      })
-      this.emit()
-      const result = await sendAndConfirm(
-        this.bridge,
-        {
-          channelId: member.binding.channelId,
-          text: buildTeamLaunchHint({ channelId: member.binding.channelId, binding: member.binding })
-        },
-        this.confirmationTimeoutMs
-      )
-      this.repository.recordLaunchDelivery({
-        runId,
-        slotId: member.slot.id,
-        ...result
-      })
-      this.emit()
-    }))
-      .then(() => this.getSnapshot())
-      .finally(() => {
-        this.activeLaunch = undefined
-      })
-    return this.activeLaunch
   }
 
   startWatcher(intervalMs = 1_000): void {
@@ -746,7 +430,6 @@ export class TeamControlService {
 
     const bridgeConnected = bridgeSnapshot.connection.state === 'connected'
     const workspaceBound = Boolean(state.activeWorkspaceId && activeRun)
-    const goalDefined = Boolean(activeRun?.goal.trim())
     const activeMembersInstalled = members.length > 0 && members.every((member) =>
       Boolean(member.binding && member.slot.channelId === member.binding.channelId)
     )
@@ -754,25 +437,12 @@ export class TeamControlService {
       Boolean(member.slot.channelId && registrationByChannel.has(member.slot.channelId))
     )
     const mcpInstalled = activeMembersInstalled && activeMemberChannelsRegistered
-    // 会话池里「非 solo」= 已入组席位（任务书 §5.7）：agentsWaiting 只看入组成员。
-    const teamMembers = members.filter((member) => member.slot.solo !== true)
-    const agentsWaiting = teamMembers.length > 0 && teamMembers.every((member) =>
-      member.runtime?.online && member.runtime.waiting
-    )
-    // 池没有「团队目标」与「启动」这两个概念：目标在组上，组即建即用；这两条 blocker 只属于一次性团队 run。
-    const pool = activeRun !== undefined && isSessionPoolRun(activeRun)
+    // 池没有「团队目标」与「启动」这两个概念：目标在组上，组即建即用。blockers 只剩接入前提与已结束。
     const blockers: string[] = []
     if (!bridgeConnected) blockers.push('拾光本地通道尚未就绪')
     if (!workspaceBound) blockers.push('尚未绑定 Cursor 工作区')
-    if (activeRun && !goalDefined && !pool) blockers.push('请先填写并保存团队目标')
     if (workspaceBound && !mcpInstalled) blockers.push('Agent MCP 尚未接入全部本轮通道')
-    if (mcpInstalled && !agentsWaiting && activeRun && !['running', 'completed'].includes(activeRun.status)) {
-      blockers.push('并非所有 Agent 通道都已在线待命')
-    }
-    if (activeRun?.status === 'launching') blockers.push('团队启动指令正在投递')
-    if (activeRun?.status === 'running' && agentsWaiting && !pool) blockers.push('团队已经运行')
-    if (activeRun?.status === 'paused') blockers.push('团队已暂停，当前版本尚未开放恢复')
-    if (activeRun?.status === 'completed') blockers.push('本次团队运行已经完成')
+    if (activeRun?.status === 'completed') blockers.push('本次运行已经结束')
 
     return {
       ...state,
@@ -788,10 +458,7 @@ export class TeamControlService {
       preflight: {
         bridgeConnected,
         workspaceBound,
-        goalDefined,
         mcpInstalled,
-        agentsWaiting,
-        canLaunch: blockers.length === 0,
         blockers
       }
     }
@@ -806,77 +473,5 @@ export class TeamControlService {
   private syncConversationScope(state: TeamControlState): void {
     const run = activeRunOf(state)
     if (run) this.bridge.beginConversationScope?.({ runId: run.id, startedAt: run.createdAt })
-  }
-
-  private clearPrelaunchCollaboration(state: TeamControlState): void {
-    const run = activeRunOf(state)
-    if (run && (run.status === 'draft' || run.status === 'ready')) {
-      this.collaborationLifecycle?.clearRun(run.id)
-    }
-  }
-
-  private recoverStaleLaunch(state: TeamControlState): TeamControlState {
-    const run = activeRunOf(state)
-    if (!run || run.status !== 'launching' || !run.launchedAt) return state
-    if (Date.now() - run.launchedAt < STALE_LAUNCH_TIMEOUT_MS) return state
-    const pending = state.bindings.filter((binding) => (
-      binding.runId === run.id
-      && binding.launchStatus !== 'acknowledged'
-      && state.slots.find((slot) => slot.id === binding.slotId)?.solo !== true
-    ))
-    for (const binding of pending) {
-      this.repository.recordLaunchDelivery({
-        runId: run.id,
-        slotId: binding.slotId,
-        status: 'uncertain',
-        detail: '启动确认窗口已结束；可重试该通道，迟到的 Agent 签到仍会被接纳'
-      })
-    }
-    return pending.length ? this.loadState() : state
-  }
-
-  /**
-   * 老版本预启动团队会复用 team-run:<workspace>:main。只在 draft/ready 且无
-   * runtime bindings 的阶段一次性迁到 fresh run；已绑定或已运行的旧 run 不能在
-   * 拾光重启时自动换身份，否则会影响 Cursor 中仍然活着的会话。
-   */
-  private freshenLegacyPrelaunchMainRun(state: TeamControlState): TeamControlState {
-    const run = activeRunOf(state)
-    if (!run || !isLegacyMainRun(run) || (run.status !== 'draft' && run.status !== 'ready')) return state
-    if (state.bindings.some((binding) => binding.runId === run.id)) return state
-    const workspace = state.workspaces.find((candidate) => candidate.id === run.workspaceId)
-    if (!workspace) return state
-    const roles = state.roles
-      .filter((role) => role.runId === run.id)
-      .sort((left, right) => left.order - right.order)
-    const slots = state.slots
-      .filter((slot) => slot.runId === run.id)
-      .sort((left, right) => left.order - right.order)
-    const roleById = new Map(roles.map((role) => [role.id, role]))
-    const members = slots.flatMap((slot) => {
-      const role = roleById.get(slot.roleId)
-      if (!role?.templateKey || !slot.channelId) return []
-      return [{
-        channelId: slot.channelId,
-        roleTemplateKey: role.templateKey,
-        avatarId: slot.avatarId,
-        skills: structuredClone(role.skills),
-        modelSelection: slot.modelSelection ? structuredClone(slot.modelSelection) : undefined,
-        solo: slot.solo === true
-      } satisfies TeamMemberConfiguration]
-    })
-    if (members.length !== slots.length) return state
-    const bundle = createConfiguredTeamBundle({
-      workspaceId: workspace.id,
-      workspaceName: workspace.name,
-      workspacePath: workspace.path,
-      members,
-      runKey: freshTeamRunKey(),
-      now: this.nextRunCreatedAt()
-    })
-    bundle.run.goal = run.goal
-    bundle.run.status = 'draft'
-    this.repository.upsertWorkspaceTeam(bundle)
-    return this.loadState()
   }
 }

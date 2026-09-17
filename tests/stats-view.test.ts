@@ -12,6 +12,7 @@ import {
   buildSessionStatsView,
   sortStatsRows,
   statsTickVisible,
+  type StatsGroupSource,
   type StatsSeatSource
 } from '../src/renderer/src/settings/stats-view'
 
@@ -27,8 +28,8 @@ function turnAt(at: number, modelId = 'claude-fable-5'): UsageTurn {
   return { ...counts, estimatedCostUsd: estimateTurnCostUsd({ ...counts, occurredAt: at }, price), price, exact: true, at }
 }
 
-function usageOf(composerId: string, turns: UsageTurn[]): CursorSessionUsage {
-  return projectUsage(composerId, { turns: Object.fromEntries(turns.map((turn, index) => [`g${index}`, turn])) })
+function usageOf(composerId: string, turns: UsageTurn[], slotId?: string): CursorSessionUsage {
+  return projectUsage(composerId, { turns: Object.fromEntries(turns.map((turn, index) => [`g${index}`, turn])) }, slotId)
 }
 
 const FABLE_TURN_COST = 0.0998   // 80×$10 + 31000×$1 + 2400×$12.5 + 760×$50，每百万
@@ -97,6 +98,62 @@ describe('统计视图模型', () => {
     expect(hist?.title).toBe('历史会话')
     expect(hist?.seatKey).toBe(STATS_HISTORY_SEAT.key)
     expect(hist?.sub).toBe('hist-1'.slice(0, 8))
+  })
+
+  it('席位重建：账上的席位标签把旧 Composer 归回同一席位并标「旧会话」；席位随池消失的落回历史会话', () => {
+    // 席位 id 含每池新生成的 runKey：同池重建保留，换池则不再匹配任何当前席位。
+    const leadSlot = 'agent-slot:ws:run-b:lead'
+    const rebuilt: StatsSeatSource[] = [
+      { ...seats[0]!, composerId: 'composer-01b', slotId: leadSlot },
+      { ...seats[1]!, slotId: 'agent-slot:ws:run-b:impl' }
+    ]
+    const usage: CursorUsageSnapshot = {
+      'composer-01a': usageOf('composer-01a', [turnAt(NOW - 3 * HOUR)], leadSlot), // 重建前
+      'composer-01b': usageOf('composer-01b', [turnAt(NOW - HOUR)], leadSlot),     // 重建后（在绑）
+      'composer-old': usageOf('composer-old', [turnAt(NOW - 2 * HOUR)], 'agent-slot:ws:run-a:lead') // 被替换的池
+    }
+    const view = buildSessionStatsView({ usage, seats: rebuilt, range: 'today', now: NOW })
+    const previous = view.rows.find((row) => row.composerId === 'composer-01a')
+    expect(previous?.seatKey).toBe('ch:1')
+    expect(previous?.title).toBe('主控席')
+    expect(previous?.sub).toBe('CH-1 · 旧会话')
+    // 在绑的那本账不带「旧会话」后缀。
+    expect(view.rows.find((row) => row.composerId === 'composer-01b')?.sub).toBe('CH-1')
+    expect(view.rows.find((row) => row.composerId === 'composer-old')?.seatKey).toBe(STATS_HISTORY_SEAT.key)
+    // 席位段合并重建前后两本账，旧池那本不进席位。
+    expect(view.spectrum.find((segment) => segment.seat.key === 'ch:1')?.costUsd).toBeCloseTo(FABLE_TURN_COST * 2, 6)
+  })
+
+  it('组 = 成员席位之和：不随席位筛选收窄，历史会话不进任何组，按成本降序', () => {
+    const groups: StatsGroupSource[] = [
+      { key: 'g-main', label: '主力组', channelIds: ['1', '2'] },
+      { key: 'g-impl', label: '实现组', channelIds: ['2', '2'] }, // 重复通道号只算一席
+      { key: 'g-ghost', label: '空组', channelIds: ['9'] }        // 没有对应席位
+    ]
+    // 今天：ch:1 一个 Fable 回合、ch:2 一个 Sol 回合（hist-1 在两天前）。
+    const view = buildSessionStatsView({ usage: snapshot(), seats, groups, range: 'today', now: NOW })
+    expect(view.groups.map((group) => group.key)).toEqual(['g-main', 'g-impl', 'g-ghost'])
+    const main = view.groups[0]!
+    expect(main).toMatchObject({ label: '主力组', seatCount: 2, turns: 2 })
+    expect(main.costUsd).toBeCloseTo(FABLE_TURN_COST + SOL_TURN_COST, 6)
+    expect(main.costUsd).toBeCloseTo(view.spectrumTotals.costUsd, 6) // 今天没有历史账
+    expect(view.groups[1]).toMatchObject({ seatCount: 1, turns: 1 })
+    expect(view.groups[1]!.costUsd).toBeCloseTo(SOL_TURN_COST, 6)
+    expect(view.groups[2]).toMatchObject({ label: '空组', seatCount: 0, costUsd: 0, tokens: 0, turns: 0 })
+    // 席位筛选只影响明细与总计，组层与光谱带同口径保持全量。
+    const filtered = buildSessionStatsView({ usage: snapshot(), seats, groups, range: 'today', now: NOW, seatKey: 'ch:1' })
+    expect(filtered.groups).toEqual(view.groups)
+  })
+
+  it('组求和不含历史会话：池 = 组之和 + 历史；不给组来源时组层为空', () => {
+    const groups: StatsGroupSource[] = [{ key: 'g-main', label: '主力组', channelIds: ['1', '2'] }]
+    // 7 天内多出 hist-1（归历史会话）与 composer-01 的昨日回合。
+    const week = buildSessionStatsView({ usage: snapshot(), seats, groups, range: '7d', now: NOW })
+    const history = week.spectrum.find((segment) => segment.seat.key === STATS_HISTORY_SEAT.key)!
+    expect(history.costUsd).toBeCloseTo(FABLE_TURN_COST, 6)
+    expect(week.groups[0]!.costUsd).toBeCloseTo(week.spectrumTotals.costUsd - history.costUsd, 8)
+    expect(week.groups[0]!.turns).toBe(3) // ch:1 今天 + 昨天，ch:2 今天
+    expect(buildSessionStatsView({ usage: snapshot(), seats, range: '7d', now: NOW }).groups).toEqual([])
   })
 
   it('缓存节省 = 无缓存全价 − 实付，按回合当时牌价累加', () => {

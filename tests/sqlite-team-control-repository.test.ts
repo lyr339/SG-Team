@@ -3,22 +3,40 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { describe, expect, it } from 'vitest'
-import { createConfiguredTeamBundle, createDefaultTeamBundle } from '../src/domain/team-control'
+import { createConfiguredTeamBundle } from '../src/domain/team-control'
 import { SqliteTeamControlRepository } from '../src/infrastructure/team-control/sqlite-team-control-repository'
 import { SqliteTaskPoolRepository } from '../src/infrastructure/task-pool/sqlite-task-pool-repository'
+import { createDefaultTeamBundle } from './legacy-team-fixtures'
 
 function repositoryFixture() {
   const path = join(mkdtempSync(join(tmpdir(), 'sg-team-control-')), 'control.sqlite3')
   return new SqliteTeamControlRepository(path)
 }
 
-function bundle(workspaceId: string, channelIds = ['1']) {
+function bundle(workspaceId: string, channelIds = ['1'], goal?: string) {
   return createDefaultTeamBundle({
     workspaceId,
     workspaceName: workspaceId,
     workspacePath: `/workspace/${workspaceId}`,
     channelIds,
-    now: 100
+    now: 100,
+    goal
+  })
+}
+
+function installTeam(repository: SqliteTeamControlRepository, team: ReturnType<typeof bundle>, generation = 'generation123') {
+  repository.recordInstallation({
+    workspaceId: team.workspace.id,
+    runId: team.run.id,
+    generation,
+    agents: team.slots.map((slot) => ({
+      agentSessionId: `${team.workspace.id}:ch-${slot.channelId}:${generation}`,
+      workspaceId: team.workspace.id,
+      channelId: slot.channelId!,
+      generation,
+      runId: team.run.id,
+      capabilities: team.roles.find((role) => role.id === slot.roleId)!.capabilities
+    }))
   })
 }
 
@@ -26,12 +44,10 @@ describe('SqliteTeamControlRepository', () => {
   it('keeps workspace runs isolated and preserves each goal when switching', () => {
     const repository = repositoryFixture()
     try {
-      const alpha = bundle('alpha')
-      const beta = bundle('beta')
+      const alpha = bundle('alpha', ['1'], 'Alpha 目标')
+      const beta = bundle('beta', ['1'], 'Beta 目标')
       repository.upsertWorkspaceTeam(alpha)
-      repository.updateRunGoal(alpha.run.id, 'Alpha 目标')
       repository.upsertWorkspaceTeam(beta)
-      repository.updateRunGoal(beta.run.id, 'Beta 目标')
 
       let state = repository.loadTeamControl()
       expect(state.activeWorkspaceId).toBe('beta')
@@ -70,7 +86,7 @@ describe('SqliteTeamControlRepository', () => {
       })
       repository.upsertWorkspaceTeam(team)
       const state = repository.loadTeamControl()
-      expect(state.schemaVersion).toBe(8)
+      expect(state.schemaVersion).toBe(9)
       expect(state.roles.find((role) => role.templateKey === 'frontend')).toMatchObject({
         skills: [{ id: 'project:frontend-design', name: 'frontend-design' }]
       })
@@ -126,19 +142,10 @@ describe('SqliteTeamControlRepository', () => {
   it('degrades to run_completed guidance after the run wraps up instead of a hard auth error (P0-2)', () => {
     const repository = repositoryFixture()
     try {
-      const team = bundle('archive', ['1', '2'])
+      const team = bundle('archive', ['1', '2'], '归档语义验证')
       repository.upsertWorkspaceTeam(team)
-      repository.recordInstallation({
-        workspaceId: 'archive', runId: team.run.id, generation: 'generation123',
-        agents: team.slots.map((slot) => ({
-          agentSessionId: `archive:ch-${slot.channelId}:generation123`, workspaceId: 'archive',
-          channelId: slot.channelId!, generation: 'generation123', runId: team.run.id,
-          capabilities: team.roles.find((role) => role.id === slot.roleId)!.capabilities
-        }))
-      })
+      installTeam(repository, team)
       expect(repository.resolveChannelAgentIdentity('1')).toMatchObject({ runId: team.run.id })
-      repository.updateRunGoal(team.run.id, '归档语义验证')
-      repository.beginLaunch(team.run.id, 200, 'launch-key-archive')
       expect(repository.completeRun(team.run.id, 300)).toBe(true)
 
       // run 收尾撤销注册是轮次归档：曾注册的通道得到「本轮已结束 + 如何恢复」
@@ -166,22 +173,9 @@ describe('SqliteTeamControlRepository', () => {
   it('reconfigures an installed team to the exact selected seats', () => {
     const repository = repositoryFixture()
     try {
-      const eightSeatTeam = bundle('alpha', ['1', '2', '3', '4', '5', '6', '7', '8'])
+      const eightSeatTeam = bundle('alpha', ['1', '2', '3', '4', '5', '6', '7', '8'], '实现并验证')
       repository.upsertWorkspaceTeam(eightSeatTeam)
-      repository.updateRunGoal(eightSeatTeam.run.id, '实现并验证')
-      repository.recordInstallation({
-        workspaceId: 'alpha',
-        runId: eightSeatTeam.run.id,
-        generation: 'generation123',
-        agents: eightSeatTeam.slots.map((slot) => ({
-          agentSessionId: `alpha:ch-${slot.channelId}:generation123`,
-          workspaceId: 'alpha',
-          channelId: slot.channelId!,
-          generation: 'generation123',
-          runId: eightSeatTeam.run.id,
-          capabilities: eightSeatTeam.roles.find((role) => role.id === slot.roleId)!.capabilities
-        }))
-      })
+      installTeam(repository, eightSeatTeam)
       expect(repository.loadTeamControl().bindings.filter((binding) => binding.runId === eightSeatTeam.run.id))
         .toHaveLength(8)
 
@@ -201,7 +195,6 @@ describe('SqliteTeamControlRepository', () => {
 
       const state = repository.loadTeamControl()
       const run = state.runs.find((candidate) => candidate.id === fourSeatTeam.run.id)!
-      expect(run.status).toBe('draft')
       expect(state.slots.filter((slot) => slot.runId === run.id).map((slot) => slot.channelId)).toEqual(['1', '2', '3', '4'])
       expect(state.roles.filter((role) => role.runId === run.id).map((role) => role.templateKey)).toEqual([
         'lead', 'builder', 'reviewer', 'specialist'
@@ -212,283 +205,90 @@ describe('SqliteTeamControlRepository', () => {
     }
   })
 
-  it('separates delivery from acknowledgement and runs only after every agent checks in', () => {
+  it('check-in marks the binding acknowledged and leaves the run running (no launch state machine, 2B)', () => {
     const repository = repositoryFixture()
     try {
-      const team = bundle('alpha', ['1', '2'])
+      const team = bundle('alpha', ['1', '2'], '实现并验证')
       repository.upsertWorkspaceTeam(team)
-      repository.updateRunGoal(team.run.id, '实现并验证')
-      repository.recordInstallation({
-        workspaceId: 'alpha',
-        runId: team.run.id,
-        generation: 'generation123',
-        agents: team.slots.map((slot) => ({
-          agentSessionId: `alpha:ch-${slot.channelId}:generation123`,
-          workspaceId: 'alpha',
-          channelId: slot.channelId!,
-          generation: 'generation123',
-          runId: team.run.id,
-          capabilities: team.roles.find((role) => role.id === slot.roleId)!.capabilities
-        }))
-      })
-      repository.beginLaunch(team.run.id, 200, 'launch-attempt-1')
-      for (const slot of team.slots) {
-        repository.recordLaunchDelivery({
-          runId: team.run.id,
-          slotId: slot.id,
-          status: 'delivered',
-          commandId: `command-${slot.channelId}`,
-          detail: '已投递'
-        })
-      }
+      installTeam(repository, team)
 
       let state = repository.loadTeamControl()
-      expect(state.runs[0]?.status).toBe('launching')
-      expect(state.bindings.every((binding) => binding.launchStatus === 'delivered')).toBe(true)
+      expect(state.runs[0]?.status).toBe('running')
+      expect(state.bindings.every((binding) => binding.acknowledgedAt === undefined)).toBe(true)
 
       const first = state.bindings[0]!
-      repository.recordAgentCheckIn({
+      const receipt = repository.recordAgentCheckIn({
         agentSessionId: first.agentSessionId,
         runId: first.runId,
         capabilities: []
       }, '已读取角色边界')
-      expect(repository.loadTeamControl().runs[0]?.status).toBe('launching')
-
-      const second = state.bindings[1]!
-      repository.recordAgentCheckIn({
-        agentSessionId: second.agentSessionId,
-        runId: second.runId,
-        capabilities: []
-      }, '已读取团队目标')
+      expect(receipt).toMatchObject({ runId: team.run.id, slotId: first.slotId })
       state = repository.loadTeamControl()
       expect(state.runs[0]?.status).toBe('running')
-      expect(state.bindings.every((binding) => binding.launchStatus === 'acknowledged')).toBe(true)
-    } finally {
-      repository.close()
-    }
-  })
+      const acknowledged = state.bindings.find((binding) => binding.id === first.id)!
+      expect(acknowledged).toMatchObject({ acknowledgedAt: receipt.acknowledgedAt, lastCheckInNote: '已读取角色边界' })
+      expect(state.bindings.find((binding) => binding.id !== first.id)?.acknowledgedAt).toBeUndefined()
 
-  it('keeps the launched status when an installation batch re-registers after launch', () => {
-    const repository = repositoryFixture()
-    try {
-      const team = bundle('alpha', ['1', '2'])
-      repository.upsertWorkspaceTeam(team)
-      repository.updateRunGoal(team.run.id, '实现并验证')
-      const install = (generation: string) => repository.recordInstallation({
-        workspaceId: 'alpha',
-        runId: team.run.id,
-        generation,
-        agents: team.slots.map((slot) => ({
-          agentSessionId: `alpha:ch-${slot.channelId}:${generation}`,
-          workspaceId: 'alpha',
-          channelId: slot.channelId!,
-          generation,
-          runId: team.run.id,
-          capabilities: team.roles.find((role) => role.id === slot.roleId)!.capabilities
-        }))
-      })
-      install('generation123')
-      repository.beginLaunch(team.run.id, 200, 'launch-attempt-1')
-      expect(repository.loadTeamControl().runs[0]?.status).toBe('launching')
-
-      // 启动后安装器再次登记（通道补装/重激活）：不得抹掉已启动标记，
-      // 否则 team_check_in 被 team_run_not_launched 永久误拒而消息通道照常工作
-      install('generation456')
-      const state = repository.loadTeamControl()
-      expect(state.runs[0]?.status).toBe('launching')
-      expect(state.runs[0]?.launchedAt).toBe(200)
-
-      // check_in 正常放行并推进 acknowledged
-      const binding = state.bindings[0]!
-      const receipt = repository.recordAgentCheckIn({
-        agentSessionId: binding.agentSessionId,
-        runId: binding.runId,
+      // 再次签到（刷新上下文）只刷 last_check_in_*：acknowledged_at 保留首次值，会话开始时间不漂移。
+      const again = repository.recordAgentCheckIn({
+        agentSessionId: first.agentSessionId,
+        runId: first.runId,
         capabilities: []
-      }, '重新确认角色边界')
-      expect(receipt.runId).toBe(team.run.id)
-      expect(repository.loadTeamControl().bindings[0]?.launchStatus).toBe('acknowledged')
+      }, '入组后刷新简报')
+      const refreshed = repository.loadTeamControl().bindings.find((binding) => binding.id === first.id)!
+      expect(refreshed.acknowledgedAt).toBe(acknowledged.acknowledgedAt)
+      expect(refreshed.lastCheckInAt).toBe(again.acknowledgedAt)
+      expect(refreshed.lastCheckInNote).toBe('入组后刷新简报')
     } finally {
       repository.close()
     }
   })
 
-  it('rejects an Agent acknowledgement before the TeamRun has launched', () => {
+  it('rejects check-in on a completed run with run_completed and leaves the binding untouched', () => {
     const repository = repositoryFixture()
     try {
-      const team = bundle('alpha')
+      const team = bundle('alpha', ['1'])
       repository.upsertWorkspaceTeam(team)
-      repository.recordInstallation({
-        workspaceId: 'alpha',
-        runId: team.run.id,
-        generation: 'generation123',
-        agents: [{
-          agentSessionId: 'alpha:ch-1:generation123',
-          workspaceId: 'alpha',
-          channelId: '1',
-          generation: 'generation123',
-          runId: team.run.id,
-          capabilities: ['coordination', 'planning']
-        }]
-      })
-
-      expect(repository.loadTeamControl().runs[0]?.status).toBe('draft')
-
+      installTeam(repository, team)
+      expect(repository.completeRun(team.run.id, 300)).toBe(true)
       expect(() => repository.recordAgentCheckIn({
         agentSessionId: 'alpha:ch-1:generation123',
         runId: team.run.id,
         capabilities: ['coordination', 'planning']
-      }, '提前确认')).toThrowError(/尚未启动/)
-      expect(repository.loadTeamControl().bindings[0]?.launchStatus).toBe('not_started')
+      }, '迟到的签到')).toThrowError(expect.objectContaining({ code: 'run_completed' }))
+      expect(repository.loadTeamControl().bindings[0]).toMatchObject({ launchDetail: '本轮运行已结束', lastCheckInNote: '' })
+      expect(() => repository.recordAgentCheckIn({
+        agentSessionId: 'alpha:ch-9:unknown',
+        runId: team.run.id,
+        capabilities: []
+      }, '无绑定')).toThrowError(expect.objectContaining({ code: 'runtime_binding_missing' }))
     } finally {
       repository.close()
     }
   })
 
-  it('self-heals a goal-ready run when an Agent checks in from a session-created prompt', () => {
+  it('keeps the run running and the existing generation when the same topology re-registers', () => {
     const repository = repositoryFixture()
     try {
-      // 会话创建路径（一键创建会话）只投递启动提示、不调用 beginLaunch；
-      // Agent 收到提示即 check_in，状态机应原地推进到 launching 而非误拒。
-      const team = bundle('alpha', ['1', '2'])
+      const team = bundle('alpha', ['1', '2'], '实现并验证')
       repository.upsertWorkspaceTeam(team)
-      repository.updateRunGoal(team.run.id, '实现并验证')
-      repository.recordInstallation({
-        workspaceId: 'alpha',
-        runId: team.run.id,
-        generation: 'generation123',
-        agents: team.slots.map((slot) => ({
-          agentSessionId: `alpha:ch-${slot.channelId}:generation123`,
-          workspaceId: 'alpha',
-          channelId: slot.channelId!,
-          generation: 'generation123',
-          runId: team.run.id,
-          capabilities: team.roles.find((role) => role.id === slot.roleId)!.capabilities
-        }))
-      })
-      expect(repository.loadTeamControl().runs[0]?.status).toBe('ready')
-
+      installTeam(repository, team, 'generation123')
       const first = repository.loadTeamControl().bindings[0]!
+      repository.recordAgentCheckIn({ agentSessionId: first.agentSessionId, runId: first.runId, capabilities: [] }, '已确认')
+
+      // 安装器再次登记（通道补装 / 重激活）：幂等刷新，不得抹掉签到证据、不得改 run 状态。
+      installTeam(repository, team, 'generation456')
+      const state = repository.loadTeamControl()
+      expect(state.runs[0]?.status).toBe('running')
+      expect(state.bindings.every((binding) => binding.generation === 'generation123')).toBe(true)
+      expect(state.bindings.find((binding) => binding.id === first.id)?.acknowledgedAt).toBeDefined()
+
       const receipt = repository.recordAgentCheckIn({
         agentSessionId: first.agentSessionId,
         runId: first.runId,
         capabilities: []
-      }, '会话创建后直接确认')
+      }, '重新确认角色边界')
       expect(receipt.runId).toBe(team.run.id)
-
-      let state = repository.loadTeamControl()
-      expect(state.runs[0]?.status).toBe('launching')
-      expect(state.runs[0]?.launchedAt).not.toBeNull()
-      expect(state.bindings.find((binding) => binding.id === first.id)?.launchStatus).toBe('acknowledged')
-
-      // 全部确认后照旧推进 running
-      const second = state.bindings.find((binding) => binding.id !== first.id)!
-      repository.recordAgentCheckIn({
-        agentSessionId: second.agentSessionId,
-        runId: second.runId,
-        capabilities: []
-      }, '已读取团队目标')
-      state = repository.loadTeamControl()
-      expect(state.runs[0]?.status).toBe('running')
-    } finally {
-      repository.close()
-    }
-  })
-
-  it('self-heals a draft run with a goal (topology reset) on Agent check-in', () => {
-    const repository = repositoryFixture()
-    try {
-      // 拓扑变更会把 run 打回 draft 但保留目标；此后重建会话的 check_in 同样自愈。
-      const team = bundle('alpha', ['1'])
-      repository.upsertWorkspaceTeam(team)
-      repository.updateRunGoal(team.run.id, '实现并验证')
-      repository.recordInstallation({
-        workspaceId: 'alpha',
-        runId: team.run.id,
-        generation: 'generation123',
-        agents: [{
-          agentSessionId: 'alpha:ch-1:generation123',
-          workspaceId: 'alpha',
-          channelId: '1',
-          generation: 'generation123',
-          runId: team.run.id,
-          capabilities: ['coordination', 'planning']
-        }]
-      })
-      repository.beginLaunch(team.run.id, 200, 'launch-attempt-1')
-      // 模拟拓扑变更（1 席扩为 2 席）：状态打回 draft（保留目标），bindings 重建
-      const expanded = bundle('alpha', ['1', '2'])
-      repository.upsertWorkspaceTeam(expanded)
-      expect(repository.loadTeamControl().runs[0]?.status).toBe('draft')
-      repository.recordInstallation({
-        workspaceId: 'alpha',
-        runId: team.run.id,
-        generation: 'generation456',
-        agents: expanded.slots.map((slot) => ({
-          agentSessionId: `alpha:ch-${slot.channelId}:generation456`,
-          workspaceId: 'alpha',
-          channelId: slot.channelId!,
-          generation: 'generation456',
-          runId: team.run.id,
-          capabilities: expanded.roles.find((role) => role.id === slot.roleId)!.capabilities
-        }))
-      })
-      // 安装批次会把 draft+有目标 归位到 ready；此后再无 beginLaunch，run 停在 ready
-      expect(repository.loadTeamControl().runs[0]?.status).toBe('ready')
-
-      repository.recordAgentCheckIn({
-        agentSessionId: 'alpha:ch-1:generation456',
-        runId: team.run.id,
-        capabilities: ['coordination', 'planning']
-      }, '拓扑重置后确认')
-
-      const state = repository.loadTeamControl()
-      expect(state.runs[0]?.status).toBe('launching')
-      expect(state.bindings.find((binding) => binding.channelId === '1')?.launchStatus).toBe('acknowledged')
-    } finally {
-      repository.close()
-    }
-  })
-
-  it('never downgrades an acknowledgement when the delivery receipt arrives late', () => {
-    const repository = repositoryFixture()
-    try {
-      const team = bundle('alpha')
-      repository.upsertWorkspaceTeam(team)
-      repository.updateRunGoal(team.run.id, '验证单调启动状态')
-      repository.recordInstallation({
-        workspaceId: 'alpha',
-        runId: team.run.id,
-        generation: 'generation123',
-        agents: [{
-          agentSessionId: 'alpha:ch-1:generation123',
-          workspaceId: 'alpha',
-          channelId: '1',
-          generation: 'generation123',
-          runId: team.run.id,
-          capabilities: ['coordination', 'planning']
-        }]
-      })
-      repository.beginLaunch(team.run.id, 200, 'launch-attempt-1')
-      repository.recordAgentCheckIn({
-        agentSessionId: 'alpha:ch-1:generation123',
-        runId: team.run.id,
-        capabilities: ['coordination', 'planning']
-      }, '已确认')
-      repository.recordLaunchDelivery({
-        runId: team.run.id,
-        slotId: team.slots[0]!.id,
-        status: 'uncertain',
-        commandId: 'late-command',
-        detail: '迟到的超时结果'
-      })
-
-      const state = repository.loadTeamControl()
-      expect(state.bindings[0]).toMatchObject({
-        launchStatus: 'acknowledged',
-        launchCommandId: 'late-command',
-        lastCheckInNote: '已确认'
-      })
-      expect(state.runs[0]?.status).toBe('running')
     } finally {
       repository.close()
     }
@@ -522,8 +322,7 @@ describe('SqliteTeamControlRepository', () => {
       expect(second.bindings[0]).toMatchObject({
         generation: 'generation123',
         agentSessionId: 'alpha:ch-1:generation123',
-        slotId: first.slots[0]?.id,
-        launchStatus: 'not_started'
+        slotId: first.slots[0]?.id
       })
     } finally {
       repository.close()
@@ -607,7 +406,6 @@ describe('SqliteTeamControlRepository', () => {
         ['builder', '3']
       ])
       expect(state.bindings).toEqual([])
-      expect(state.runs[0]?.status).toBe('draft')
       expect(() => authorization.assertAgentAuthorized({
         agentSessionId: 'alpha:ch-1:generation123',
         runId: initial.run.id,
@@ -677,7 +475,7 @@ describe('SqliteTeamControlRepository', () => {
       })).toBe(false)
 
       expect(repository.loadTeamControl()).toMatchObject({
-        schemaVersion: 8,
+        schemaVersion: 9,
         bindings: expect.arrayContaining([expect.objectContaining({
           slotId: first!.slotId,
           composerId: 'composer-alpha-123',
@@ -686,14 +484,14 @@ describe('SqliteTeamControlRepository', () => {
         })])
       })
 
-      repository.updateRunGoal(team.run.id, '验证启动轮次栅栏')
-      repository.beginLaunch(team.run.id, 400, 'launch-attempt-2')
+      // 换席重建轮换绑定键：旧键的迟到绑定被拒，新键照常。
+      expect(repository.prepareComposerRelaunch({
+        runId: team.run.id, slotId: first!.slotId, bindingKey: 'launch-attempt-2'
+      })).toBe(true)
       const rotated = repository.loadTeamControl().bindings.find((value) => value.slotId === first!.slotId)!
-      expect(rotated).toMatchObject({
-        composerBindingKey: 'launch-attempt-2',
-        launchStatus: 'not_started'
-      })
+      expect(rotated).toMatchObject({ composerBindingKey: 'launch-attempt-2' })
       expect(rotated.composerId).toBeUndefined()
+      expect(rotated.acknowledgedAt).toBeUndefined()
       expect(repository.recordComposerBinding({
         runId: first!.runId,
         slotId: first!.slotId,
@@ -738,8 +536,9 @@ describe('SqliteTeamControlRepository', () => {
         runId: binding.runId, slotId: binding.slotId, bindingKey: 'relaunch-key-2'
       })).toBe(true)
       const rotated = repository.loadTeamControl().bindings[0]!
-      expect(rotated).toMatchObject({ composerBindingKey: 'relaunch-key-2', launchStatus: 'not_started' })
+      expect(rotated).toMatchObject({ composerBindingKey: 'relaunch-key-2' })
       expect(rotated.composerId).toBeUndefined()
+      expect(rotated.acknowledgedAt).toBeUndefined()
       expect(repository.recordComposerBinding({
         runId: binding.runId, slotId: binding.slotId, generation: binding.generation,
         bindingKey: 'relaunch-key-2', composerId: 'composer-new-123', method: 'launch_marker', at: 200
@@ -772,7 +571,7 @@ describe('SqliteTeamControlRepository', () => {
 
     const repository = new SqliteTeamControlRepository(path)
     try {
-      expect(repository.loadTeamControl().schemaVersion).toBe(8)
+      expect(repository.loadTeamControl().schemaVersion).toBe(9)
       const database = new DatabaseSync(path, { readOnly: true })
       try {
         const columns = database.prepare('PRAGMA table_info(runtime_bindings)').all() as { name: string }[]
@@ -811,7 +610,7 @@ describe('SqliteTeamControlRepository', () => {
     const migrated = new SqliteTeamControlRepository(path)
     try {
       const state = migrated.loadTeamControl()
-      expect(state.schemaVersion).toBe(8)
+      expect(state.schemaVersion).toBe(9)
       expect(state.roles.map((role) => [role.key, role.templateKey, role.skills])).toEqual([
         ['lead', 'lead', []],
         ['builder', 'builder', []],
@@ -845,7 +644,7 @@ describe('SqliteTeamControlRepository', () => {
     const migrated = new SqliteTeamControlRepository(path)
     try {
       const state = migrated.loadTeamControl()
-      expect(state.schemaVersion).toBe(8)
+      expect(state.schemaVersion).toBe(9)
       expect(state.slots.every((slot) => slot.solo === false)).toBe(true)
       const database = new DatabaseSync(path, { readOnly: true })
       try {
@@ -874,7 +673,7 @@ describe('SqliteTeamControlRepository', () => {
     const migrated = new SqliteTeamControlRepository(path)
     try {
       expect(migrated.loadTeamControl()).toMatchObject({
-        schemaVersion: 8,
+        schemaVersion: 9,
         activeWorkspaceId: team.workspace.id
       })
       const database = new DatabaseSync(path, { readOnly: true })
@@ -888,11 +687,120 @@ describe('SqliteTeamControlRepository', () => {
       migrated.close()
     }
   })
+
+  it('migrates v8 → v9 by archiving every legacy team run and every superseded pool run, idempotently (2B)', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'sg-team-control-v9-')), 'control.sqlite3')
+    const seeded = new SqliteTeamControlRepository(path)
+    // 同一工作区里的一次性团队 run：一个卡在 launching（已安装、一人已签到），一个还是 draft（未安装）。
+    const launching = bundle('legacy', ['1', '2'], '升级前仍在启动')
+    seeded.upsertWorkspaceTeam(launching)
+    installTeam(seeded, launching)
+    const launchingBinding = seeded.loadTeamControl().bindings[0]!
+    seeded.recordAgentCheckIn({ agentSessionId: launchingBinding.agentSessionId, runId: launchingBinding.runId, capabilities: [] }, '签到')
+    const draft = createDefaultTeamBundle({
+      workspaceId: 'legacy', workspaceName: 'legacy', workspacePath: '/workspace/legacy', channelIds: ['1'], now: 200, runKey: 'run-draft0001'
+    })
+    seeded.upsertWorkspaceTeam(draft)
+    // 已经 completed 的团队 run：保持原样，绑定文案不被覆盖。
+    const done = createDefaultTeamBundle({
+      workspaceId: 'done', workspaceName: 'done', workspacePath: '/workspace/done', channelIds: ['1'], now: 100
+    })
+    seeded.upsertWorkspaceTeam(done)
+    installTeam(seeded, done)
+    expect(seeded.completeRun(done.run.id, 150, '用户已结束本轮运行')).toBe(true)
+    // 同一工作区两个 running 的会话池：旧的是早期代码遗留的脏数据，新的是活动池。
+    const poolOf = (runKey: string, now: number) => createConfiguredTeamBundle({
+      workspaceId: 'pool', workspaceName: 'pool', workspacePath: '/workspace/pool', now, runKey, mode: 'independent',
+      members: [{ channelId: '1', roleTemplateKey: 'solo', avatarId: 'researcher', skills: [], solo: true }]
+    })
+    const stalePool = poolOf('run-older0001', 300)
+    const activePool = poolOf('run-newer0001', 400)
+    for (const [pool, generation] of [[stalePool, 'generationold'], [activePool, 'generationnew']] as const) {
+      seeded.upsertWorkspaceTeam(pool)
+      seeded.recordInstallation({
+        workspaceId: 'pool', runId: pool.run.id, generation,
+        agents: [{
+          agentSessionId: `pool:ch-1:${generation}`, workspaceId: 'pool', channelId: '1',
+          generation, runId: pool.run.id, capabilities: []
+        }]
+      })
+    }
+    seeded.close()
+
+    const old = new DatabaseSync(path)
+    old.prepare("UPDATE team_runs SET status = 'launching', launched_at = 120 WHERE id = ?").run(launching.run.id)
+    old.prepare("UPDATE team_runs SET status = 'draft' WHERE id = ?").run(draft.run.id)
+    // v8 的启动状态机留下的值：签到过的绑定 acknowledged、另一个 delivered + 启动指令 id。
+    old.prepare("UPDATE runtime_bindings SET launch_status = 'acknowledged' WHERE agent_session_id = ?").run(launchingBinding.agentSessionId)
+    old.prepare("UPDATE runtime_bindings SET launch_status = 'delivered', launch_command_id = 'cmd-1' WHERE run_id = ? AND agent_session_id <> ?")
+      .run(launching.run.id, launchingBinding.agentSessionId)
+    old.prepare('UPDATE team_control_meta SET schema_version = 8 WHERE id = 1').run()
+    old.close()
+
+    const migrated = new SqliteTeamControlRepository(path)
+    try {
+      const state = migrated.loadTeamControl()
+      expect(state.schemaVersion).toBe(9)
+      const statusOf = (runId: string) => state.runs.find((run) => run.id === runId)?.status
+      expect(statusOf(launching.run.id)).toBe('completed')
+      expect(statusOf(draft.run.id)).toBe('completed')
+      expect(statusOf(done.run.id)).toBe('completed')
+      expect(statusOf(stalePool.run.id)).toBe('completed')
+      expect(statusOf(activePool.run.id)).toBe('running')
+      expect(state.runs.every((run) => run.status === 'running' || run.status === 'completed')).toBe(true)
+
+      const bindingsOf = (runId: string) => state.bindings.filter((binding) => binding.runId === runId)
+      // 归档 = completeRun 的语义：绑定备注写明是升级归档（不是「全员离线」），该 run 的 agent 注册全部撤销。
+      expect(bindingsOf(launching.run.id)).toHaveLength(2)
+      expect(bindingsOf(launching.run.id).every((binding) => binding.launchDetail.includes('archived: legacy team run'))).toBe(true)
+      expect(migrated.listAgentRegistrations(launching.run.id)).toEqual([])
+      expect(bindingsOf(stalePool.run.id)[0]?.launchDetail).toContain('archived: superseded pool run')
+      expect(migrated.listAgentRegistrations(stalePool.run.id)).toEqual([])
+      // 之前就 completed 的 run 不被覆盖；活动池的绑定、注册与签到证据原样保留。
+      expect(bindingsOf(done.run.id)[0]?.launchDetail).toBe('用户已结束本轮运行')
+      expect(bindingsOf(activePool.run.id)[0]).toMatchObject({ launchDetail: '', generation: 'generationnew' })
+      expect(migrated.listAgentRegistrations(activePool.run.id)).toHaveLength(1)
+      expect(bindingsOf(launching.run.id).find((binding) => binding.agentSessionId === launchingBinding.agentSessionId)?.acknowledgedAt).toBeDefined()
+      // 会话围栏据此把仍持旧团队令牌的会话判为 run_completed；活动池的通道照常。
+      migrated.setActiveWorkspace('legacy')
+      expect(migrated.resolveChannelSessionOwner('1')).toMatchObject({ runId: draft.run.id, runStatus: 'completed' })
+      migrated.setActiveWorkspace('pool')
+      expect(migrated.resolveChannelSessionOwner('1')).toMatchObject({ runId: activePool.run.id, runStatus: 'running', bound: true })
+      // 已归档的团队 run 拒绝签到。
+      expect(() => migrated.recordAgentCheckIn({
+        agentSessionId: launchingBinding.agentSessionId, runId: launchingBinding.runId, capabilities: []
+      }, '升级后签到')).toThrowError(expect.objectContaining({ code: 'run_completed' }))
+    } finally {
+      migrated.close()
+    }
+    // 启动状态机退役：列保留，但存量行全部归位（恒 not_started / NULL），此后没有代码再写别的值。
+    const columns = new DatabaseSync(path, { readOnly: true })
+    try {
+      const rows = columns.prepare('SELECT launch_status, launch_command_id FROM runtime_bindings').all() as { launch_status: string; launch_command_id: string | null }[]
+      expect(rows.length).toBeGreaterThan(0)
+      expect(rows.every((row) => row.launch_status === 'not_started' && row.launch_command_id === null)).toBe(true)
+    } finally {
+      columns.close()
+    }
+
+    // 幂等：再开一次库不再改任何行（活动池仍 running，revision 不变）。
+    const before = new DatabaseSync(path, { readOnly: true })
+    const revisionBefore = (before.prepare('SELECT revision FROM team_control_meta WHERE id = 1').get() as { revision: number }).revision
+    before.close()
+    const reopened = new SqliteTeamControlRepository(path)
+    try {
+      expect(reopened.loadTeamControl().runs.find((run) => run.id === activePool.run.id)?.status).toBe('running')
+      expect(reopened.revision()).toBe(revisionBefore)
+    } finally {
+      reopened.close()
+    }
+  })
 })
 
 describe('SqliteTeamControlRepository 会话围栏令牌', () => {
   const TOKEN_PATTERN = /^[a-zA-Z0-9_-]{8,128}$/
 
+  /** legacy 团队 run（lead + 若干 solo 旁路席位），直接 running（阶段 2 · 2B 起没有 draft / ready）。 */
   function installed(repository: SqliteTeamControlRepository, workspaceId: string, channelIds: string[]) {
     const team = createConfiguredTeamBundle({
       workspaceId, workspaceName: workspaceId, workspacePath: `/workspace/${workspaceId}`, now: 100,
@@ -902,6 +810,7 @@ describe('SqliteTeamControlRepository 会话围栏令牌', () => {
           : { channelId, roleTemplateKey: 'solo', avatarId: 'researcher', skills: [], solo: true }
       ))
     })
+    team.run.status = 'running'
     repository.upsertWorkspaceTeam(team)
     repository.recordInstallation({
       workspaceId, runId: team.run.id, generation: 'generation123',
@@ -925,7 +834,7 @@ describe('SqliteTeamControlRepository 会话围栏令牌', () => {
 
       const lead = repository.resolveChannelSessionOwner('1')
       expect(lead).toEqual({
-        runId: team.run.id, runStatus: 'draft', bound: true,
+        runId: team.run.id, runStatus: 'running', bound: true,
         sessionToken: bindings.find((binding) => binding.channelId === '1')!.sessionToken, solo: false
       })
       expect(repository.resolveChannelSessionOwner('2')).toMatchObject({ bound: true, solo: true })
@@ -941,7 +850,7 @@ describe('SqliteTeamControlRepository 会话围栏令牌', () => {
       expect(repository.resolveChannelSessionOwner('1')).toBeUndefined()
       const team = installed(repository, 'partial', ['1'])
       expect(repository.resolveChannelSessionOwner('9')).toEqual({
-        runId: team.run.id, runStatus: 'draft', bound: false, sessionToken: undefined, solo: false
+        runId: team.run.id, runStatus: 'running', bound: false, sessionToken: undefined, solo: false
       })
     } finally {
       repository.close()
@@ -988,9 +897,15 @@ describe('SqliteTeamControlRepository 会话围栏令牌', () => {
       const after = repository.resolveChannelSessionOwner('1')!.sessionToken
       expect(after).toMatch(TOKEN_PATTERN)
       expect(after).not.toBe(before)
-      // 团队 launch 不轮换令牌：启动前创建的会话不能被自己的团队围栏误杀。
-      repository.updateRunGoal(team.run.id, '围栏令牌在 launch 时保持不变')
-      repository.beginLaunch(team.run.id, 300, 'launch-key-1')
+      // 同拓扑重复安装（补装 / 重激活）不轮换令牌：仍在轮询的会话不能被自己的围栏误杀。
+      repository.recordInstallation({
+        workspaceId: 'relaunch', runId: team.run.id, generation: 'generation456',
+        agents: team.slots.map((candidate) => ({
+          agentSessionId: `relaunch:ch-${candidate.channelId}:generation456`, workspaceId: 'relaunch',
+          channelId: candidate.channelId!, generation: 'generation456', runId: team.run.id,
+          capabilities: team.roles.find((role) => role.id === candidate.roleId)!.capabilities
+        }))
+      })
       expect(repository.resolveChannelSessionOwner('1')!.sessionToken).toBe(after)
     } finally {
       repository.close()
@@ -1001,23 +916,19 @@ describe('SqliteTeamControlRepository 会话围栏令牌', () => {
     const repository = repositoryFixture()
     try {
       const team = installed(repository, 'ending', ['1'])
-      repository.updateRunGoal(team.run.id, '结束语义')
-      repository.beginLaunch(team.run.id, 300, 'launch-key-end')
       expect(repository.completeRun(team.run.id, 400, '用户已结束本轮运行')).toBe(true)
       expect(repository.resolveChannelSessionOwner('1')).toMatchObject({ runId: team.run.id, runStatus: 'completed', bound: true })
       const binding = repository.loadTeamControl().bindings.find((candidate) => candidate.runId === team.run.id)!
-      expect(binding.launchStatus).toBe('failed')
       expect(binding.launchDetail).toBe('用户已结束本轮运行')
-      // 缺省文案仍是 failover 的自动收尾语义。
+      // 已结束的 run 不能再收尾一次（returns false，不改动绑定文案）。
+      expect(repository.completeRun(team.run.id, 500)).toBe(false)
+      expect(repository.loadTeamControl().bindings.find((candidate) => candidate.runId === team.run.id)?.launchDetail)
+        .toBe('用户已结束本轮运行')
+      // 缺省文案：没有 failover「全员离线」语义了，只是中性的「已结束」。
       const other = installed(repository, 'ending-default', ['1'])
-      repository.updateRunGoal(other.run.id, '缺省收尾文案')
-      repository.beginLaunch(other.run.id, 300, 'launch-key-default')
       expect(repository.completeRun(other.run.id, 400)).toBe(true)
       expect(repository.loadTeamControl().bindings.find((candidate) => candidate.runId === other.run.id)?.launchDetail)
-        .toBe('本轮所有 Agent 已离线，TeamRun 自动结束')
-      // draft/ready 不可收尾。
-      const fresh = installed(repository, 'ending-draft', ['1'])
-      expect(repository.completeRun(fresh.run.id, 500)).toBe(false)
+        .toBe('本轮运行已结束')
     } finally {
       repository.close()
     }
@@ -1044,5 +955,51 @@ describe('SqliteTeamControlRepository 会话围栏令牌', () => {
     } finally {
       migrated.close()
     }
+  })
+
+  it('drops the retired team-continuity tables left behind by older builds, idempotently (2D)', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'sg-team-control-continuity-drop-')), 'control.sqlite3')
+    const seeded = new SqliteTeamControlRepository(path)
+    const team = installed(seeded, 'cont', ['1'])
+    seeded.close()
+    // 模拟旧构建的 continuity 仓储建过的四张表（含指向 team_runs / agent_slots 的外键与已写入的行）。
+    const old = new DatabaseSync(path)
+    old.exec('PRAGMA foreign_keys = ON')
+    old.exec(`
+      CREATE TABLE team_continuity_meta (id INTEGER PRIMARY KEY CHECK (id = 1), schema_version INTEGER NOT NULL, revision INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+      CREATE TABLE team_checkpoints (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES team_workspaces(id) ON DELETE CASCADE, run_id TEXT NOT NULL REFERENCES team_runs(id) ON DELETE CASCADE, reason TEXT NOT NULL, digest TEXT NOT NULL, capsule_json TEXT NOT NULL, created_at INTEGER NOT NULL);
+      CREATE TABLE team_restore_operations (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, run_id TEXT NOT NULL REFERENCES team_runs(id) ON DELETE CASCADE, checkpoint_id TEXT NOT NULL REFERENCES team_checkpoints(id) ON DELETE RESTRICT, status TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+      CREATE TABLE team_restore_members (restore_id TEXT NOT NULL REFERENCES team_restore_operations(id) ON DELETE CASCADE, slot_id TEXT NOT NULL REFERENCES agent_slots(id) ON DELETE CASCADE, role_name TEXT NOT NULL, message_id TEXT, PRIMARY KEY (restore_id, slot_id));
+      INSERT INTO team_continuity_meta VALUES (1, 1, 3, 0);
+    `)
+    old.prepare('INSERT INTO team_checkpoints VALUES (?, ?, ?, ?, ?, ?, ?)').run('cp-1', team.workspace.id, team.run.id, 'automatic', 'a'.repeat(64), '{}', 1)
+    old.prepare('INSERT INTO team_restore_operations VALUES (?, ?, ?, ?, ?, ?, ?)').run('r-1', team.workspace.id, team.run.id, 'cp-1', 'waiting', 1, 1)
+    old.prepare('INSERT INTO team_restore_members VALUES (?, ?, ?, NULL)').run('r-1', team.slots[0]!.id, '主控协调')
+    old.close()
+
+    const tables = (): string[] => {
+      const db = new DatabaseSync(path)
+      try {
+        return (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'team_%' ORDER BY name").all() as Array<{ name: string }>)
+          .map((row) => row.name)
+      } finally {
+        db.close()
+      }
+    }
+    const migrated = new SqliteTeamControlRepository(path)
+    migrated.close()
+    const after = tables()
+    for (const table of ['team_continuity_meta', 'team_checkpoints', 'team_restore_operations', 'team_restore_members']) {
+      expect(after).not.toContain(table)
+    }
+    // 现役表与数据不受影响；再次打开是无操作。
+    const reopened = new SqliteTeamControlRepository(path)
+    try {
+      expect(reopened.loadTeamControl().runs.map((run) => run.id)).toContain(team.run.id)
+      expect(reopened.resolveChannelSessionOwner('1')).toMatchObject({ runId: team.run.id, bound: true })
+    } finally {
+      reopened.close()
+    }
+    expect(tables()).toEqual(after)
   })
 })

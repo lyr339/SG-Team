@@ -316,14 +316,12 @@ body { line-height: var(--font-text-sm-line-height); letter-spacing: 0; }
 :where(
   .primary-button,
   .lobby-account__save,
-  .cursor-model-dialog > footer button,
-  .team-setup-footer > button:last-child
+  .cursor-model-dialog > footer button
 ) { position: relative; overflow: hidden; isolation: isolate; }
 :where(
   .primary-button,
   .lobby-account__save,
-  .cursor-model-dialog > footer button,
-  .team-setup-footer > button:last-child
+  .cursor-model-dialog > footer button
 )::after {
   content: "";
   position: absolute;
@@ -337,8 +335,7 @@ body { line-height: var(--font-text-sm-line-height); letter-spacing: 0; }
 :where(
   .primary-button,
   .lobby-account__save,
-  .cursor-model-dialog > footer button,
-  .team-setup-footer > button:last-child
+  .cursor-model-dialog > footer button
 ):hover:not(:disabled)::after { opacity: 1; animation: shiguang-button-sheen 1.25s ease-in-out infinite; }
 @keyframes shiguang-button-sheen {
   0% { left: -42%; }
@@ -724,14 +721,17 @@ body.is-resizing-columns .resizable-columns { transition: none; }
 .session-group__tab {
   position: relative; flex: 0 0 auto; height: 22px; display: inline-flex; align-items: center; gap: 6px;
   padding: 0 15px 0 11px;
-  background: var(--surface-soft);
+  /* 旗身要比组条的实底深一档才读得出「一枚标签」：曾用 surface-soft，与白底只差 3%，几乎看不见
+    （2026-09-18 用户反馈）。往 secondary 底色里掺 12% 的 tertiary 文字色——浅色下约 #e2e6eb，
+     深色下约 #212731，两端都比实底明确一级，仍是无色相的灰。 */
+  background: color-mix(in srgb, var(--color-text-tertiary) 12%, var(--color-background-secondary));
   /* 右端 45° 收尖成书签；clip-path 会裁掉边框，所以旗身是平色，状态脊用 ::before 画在旗内。 */
   clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 50%, calc(100% - 8px) 100%, 0 100%);
   font-size: var(--fs-11); font-weight: 650; line-height: 22px; letter-spacing: .02em; white-space: nowrap;
   transition: background 120ms ease;
 }
 .session-group__tab::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--rail-state); }
-.session-group__header:hover .session-group__tab { background: color-mix(in srgb, var(--surface-soft) 70%, var(--color-border-tertiary)); }
+.session-group__header:hover .session-group__tab { background: color-mix(in srgb, var(--color-text-tertiary) 20%, var(--color-background-secondary)); }
 .session-group__tab > b { color: var(--muted); font: 650 var(--fs-10)/1 var(--font-numeric); font-variant-numeric: lining-nums tabular-nums; }
 .session-group__rule { flex: 1 1 auto; height: 1px; background: var(--color-border-tertiary); }
 /* chevron 骑在尾线末端：绝对定位不占 flex 空间，尾线一直画到右缘；浮现时用实底垫住身下那一小段线。
@@ -1567,7 +1567,7 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 .session-handoff__target.is-busy > em { color: var(--color-text-info); }
 .session-handoff__block textarea { min-height: 64px; padding: 8px 10px; color: var(--text); background: var(--canvas); border: var(--border-width-regular) solid var(--line); border-radius: 8px; font: inherit; font-size: var(--fs-11); line-height: 1.5; resize: vertical; }
 .session-handoff__block textarea:focus { outline: none; border-color: var(--accent-border-strong); }
-/* 职责迁移弹窗：随迁移附带上下文文档的选项（候选列表之下、页脚之上） */
+/* 成员身份迁移弹窗：随迁移附带上下文文档的选项（候选列表之下、页脚之上） */
 .handoff-context-option { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 10px; margin: 0 15px 12px; padding: 10px; background: var(--canvas); border: var(--border-width-regular) solid var(--line); border-radius: 10px; cursor: pointer; }
 .handoff-context-option:has(input:checked) { background: var(--accent-wash); border-color: var(--accent-border-strong); }
 .handoff-context-option input { width: 14px; height: 14px; margin: 2px 0 0; accent-color: var(--accent); }
@@ -1829,7 +1829,7 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
   .workspace-composer,
   .connection-chip--connected i, .typing-indicator i, .timeline-jump, .context-popover { transition: none; animation: none; }
   .workspace-composer:focus-within { transform: none; }
-  :where(.primary-button, .lobby-account__save, .cursor-model-dialog > footer button, .team-setup-footer > button:last-child)::after { display: none; }
+  :where(.primary-button, .lobby-account__save, .cursor-model-dialog > footer button)::after { display: none; }
 }
 
 @media (max-width: 1200px) {

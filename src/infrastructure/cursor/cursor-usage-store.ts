@@ -2,9 +2,10 @@ import { projectUsage, type CursorUsageLedger, type UsageTurn, type CursorSessio
 import { quarantineStoreFileSync, readStoreJsonSync, writeStoreFileSync } from '../fs/store-file'
 
 /**
- * V4：每行自带 runId，文件跨 run 保留全部账本（历史 run 已由 tracker 冻结）。
- * V2/V3 文件只有顶层 runId（单 run 覆盖写），读入时把它盖到没有 runId 的行上——
- * 升级那一刻的账本恰好属于当时的 run，不丢也不错归属。
+ * V4：一个 Composer 一行，文件跨会话池保留全部账本（出绑 / 结束的账已由 tracker 封口，裁旧也归它）。
+ * 行上可带 slotId（入账时所绑席位，统计页据此归属）。阶段 2 · 2E 起不再有 run 语义：
+ * 2E 之前 V4 行与 V2/V3 文件顶层的 runId 读入时忽略（旧构建读到无 runId 的行按「不限定」处理），
+ * 版本号不升——共用文件的新旧构建互不强迫升级。
  */
 const STORE_VERSION = 4
 const READABLE_VERSIONS = new Set([2, 3, STORE_VERSION])
@@ -14,10 +15,10 @@ function finiteNonNegative(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined
 }
 
-function sessionUsage(value: unknown, composerId: string, fallbackRunId: string | undefined): CursorSessionUsage | undefined {
+function sessionUsage(value: unknown, composerId: string): CursorSessionUsage | undefined {
   if (!value || typeof value !== 'object') return undefined
   const row = value as Record<string, unknown>
-  const runId = typeof row.runId === 'string' && row.runId.length > 0 && row.runId.length <= 200 ? row.runId : fallbackRunId
+  const slotId = typeof row.slotId === 'string' && row.slotId.length > 0 && row.slotId.length <= 200 ? row.slotId : undefined
   const turns = finiteNonNegative(row.turns)
   const inputTokens = finiteNonNegative(row.inputTokens)
   const outputTokens = finiteNonNegative(row.outputTokens)
@@ -54,12 +55,12 @@ function sessionUsage(value: unknown, composerId: string, fallbackRunId: string 
         || (turn.lastUsed !== undefined && (!Number.isSafeInteger(turn.lastUsed) || turn.lastUsed < 0))) return undefined
       Object.defineProperty(ledger.turns, id, { value: structuredClone(turn), enumerable: true, writable: true, configurable: true })
     }
-    return projectUsage(composerId, ledger, runId)
+    return projectUsage(composerId, ledger, slotId)
   }
   return {
     quality: 'legacy',
     composerId,
-    ...(runId !== undefined ? { runId } : {}),
+    ...(slotId !== undefined ? { slotId } : {}),
     turns: Math.floor(turns),
     inputTokens: Math.floor(inputTokens),
     outputTokens: Math.floor(outputTokens),
@@ -72,12 +73,12 @@ function sessionUsage(value: unknown, composerId: string, fallbackRunId: string 
   }
 }
 
-/** Cursor 用量的本地持久化；只保存计数与费用估算，不含正文或凭据。跨 run 保留，归属由每行 runId 表达。 */
+/** Cursor 用量的本地持久化；只保存计数与费用估算，不含正文或凭据。一个 Composer 一行，跨会话池保留。 */
 export class CursorUsageStore {
   constructor(readonly path: string) {}
 
   /**
-   * 读出全部 run 的账（时间裁旧由 tracker 负责）。
+   * 读出全部账（时间裁旧由 tracker 负责）。
    * 坏文件 / 不识别的版本不再静默回空——先留档再回空，否则下一次 save 会把
    * 仅存的历史覆写掉（2026-09-17 断电事故正是这样丢的全部账本）。
    */
@@ -87,10 +88,8 @@ export class CursorUsageStore {
     try {
       const parsed = file.value as {
         version?: unknown
-        runId?: unknown
         sessions?: unknown
       }
-      const storedRunId = typeof parsed.runId === 'string' ? parsed.runId : undefined
       if (typeof parsed.version !== 'number' || !READABLE_VERSIONS.has(parsed.version) || !parsed.sessions || typeof parsed.sessions !== 'object') {
         quarantineStoreFileSync(this.path, '用量账本版本或结构不符')
         return {}
@@ -98,7 +97,7 @@ export class CursorUsageStore {
       const rows = Object.entries(parsed.sessions as Record<string, unknown>)
         .flatMap(([composerId, value]) => {
           const normalizedId = composerId.trim().slice(0, 200)
-          const usage = normalizedId ? sessionUsage(value, normalizedId, storedRunId) : undefined
+          const usage = normalizedId ? sessionUsage(value, normalizedId) : undefined
           return usage ? [[normalizedId, usage] as const] : []
         })
         .sort((left, right) => right[1].lastTurnAt - left[1].lastTurnAt)
@@ -110,11 +109,10 @@ export class CursorUsageStore {
     }
   }
 
-  /** runId = 当前 run（诊断用，也是旧格式行的归属回退）；每行自身的 runId 才是权威归属。 */
-  save(runId: string | undefined, snapshot: CursorUsageSnapshot): void {
+  save(snapshot: CursorUsageSnapshot): void {
     const sessions = Object.fromEntries(Object.entries(snapshot)
       .sort((left, right) => right[1].lastTurnAt - left[1].lastTurnAt)
       .slice(0, MAX_SESSIONS))
-    writeStoreFileSync(this.path, JSON.stringify({ version: STORE_VERSION, runId, sessions }), { mode: 0o600 })
+    writeStoreFileSync(this.path, JSON.stringify({ version: STORE_VERSION, sessions }), { mode: 0o600 })
   }
 }

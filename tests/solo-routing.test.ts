@@ -8,7 +8,7 @@ function member(id: string, capabilities: string[], solo = false): TeamMemberVie
   return {
     slot: { id, runId: 'run', roleId: `role-${id}`, name: id, avatarId: 'researcher', solo, order: 0, createdAt: 1, updatedAt: 1 },
     role: { id: `role-${id}`, runId: 'run', key: id, templateKey: solo ? 'solo' : 'builder', name: id, mission: '', instructions: '', capabilities, skills: [], accent: 'sky', order: 0 },
-    binding: { id: `binding-${id}`, workspaceId: 'w', runId: 'run', slotId: id, channelId: id, agentSessionId: `session-${id}`, generation: 'g', installedAt: 1, launchStatus: 'acknowledged', launchDetail: '', lastCheckInNote: '', composerBindingKey: 'g' },
+    binding: { id: `binding-${id}`, workspaceId: 'w', runId: 'run', slotId: id, channelId: id, agentSessionId: `session-${id}`, generation: 'g', installedAt: 1, launchDetail: '', acknowledgedAt: 1, lastCheckInNote: '', composerBindingKey: 'g' },
     runtime: { channelId: id, status: 'waiting', online: true, waiting: true, queueDepth: 0, lastSeenAt: 1, healthEvidence: [], workingFiles: [] },
     readiness: 'ready'
   }
@@ -16,10 +16,10 @@ function member(id: string, capabilities: string[], solo = false): TeamMemberVie
 
 function team(members: TeamMemberView[]): TeamControlSnapshot {
   return {
-    schemaVersion: 8, revision: 1, workspaces: [], runs: [], roles: members.map((item) => item.role),
+    schemaVersion: 9, revision: 1, workspaces: [], runs: [], roles: members.map((item) => item.role),
     slots: members.map((item) => item.slot), bindings: members.map((item) => item.binding!), updatedAt: 1,
     members, runtimeChannels: [], standbyChannels: [], failovers: [], groups: [],
-    preflight: { bridgeConnected: true, workspaceBound: true, goalDefined: true, mcpInstalled: true, agentsWaiting: true, canLaunch: true, blockers: [] }
+    preflight: { bridgeConnected: true, workspaceBound: true, mcpInstalled: true, blockers: [] }
   }
 }
 

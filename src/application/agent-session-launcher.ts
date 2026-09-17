@@ -53,7 +53,7 @@ export interface AgentSessionLauncherOptions {
   now?: () => number
   /** 本轮所有通道均已创建提交成功（CDP 硬回执齐全）时触发一次；后续 composer/waiting 验证继续。 */
   onAllTriggered?: (plan: AgentLaunchPlan) => void
-  /** 整轮进入终态时触发；供上层把创建失败收敛回 TeamRun 状态机。 */
+  /** 整轮进入终态时触发（成功或失败都会调用一次）。 */
   onFinished?: (plan: AgentLaunchPlan) => void
 }
 

@@ -9,7 +9,7 @@ import { parseCursorAccountCard } from '../../../domain/cursor-account-card'
 import type { ConversationEntry, ProcessBlock } from '../../../domain/conversation-entry'
 import { AGENT_AVATAR_IDS, TEAM_ROLE_TEMPLATES, createConfiguredTeamBundle, emptyTeamControlSnapshot } from '../../../domain/team-control'
 import type { TeamRunStatus } from '../../../domain/team-control'
-import type { LiveProcessState, LiveStatusLineState, SgDesktopApi, TeamSetupDraft } from '../../../shared/desktop-api'
+import type { LiveProcessState, LiveStatusLineState, SgDesktopApi } from '../../../shared/desktop-api'
 import type { WorkspaceReviewSummary } from '../../../domain/workspace-review'
 import { estimateTurnCostUsd, estimateUsageFromReference, priceForModel, projectUsage, type CursorUsageSnapshot, type UsageTurn } from '../../../domain/cursor-usage'
 import { CURSOR_STORAGE_CATALOG, buildCleanupPlan, type CursorStorageScan } from '../../../domain/cursor-storage-cleanup'
@@ -30,7 +30,6 @@ import { App } from '../App'
 import { applyAppearancePreferences, readAppearancePreferences } from '../appearance-preferences'
 import {
   collaborationSnapshot,
-  continuitySnapshot,
   desktopSnapshot,
   memorySnapshot,
   taskPoolSnapshot,
@@ -38,7 +37,6 @@ import {
 } from './mock-data'
 import '../claude-theme.css'
 import '../styles.css'
-import '../team-setup.css'
 import '../lobby/lobby.css'
 import '../settings/settings.css'
 import '../settings/stats.css'
@@ -98,56 +96,17 @@ const previewWarmupRun: import('../../../domain/session-warmup').SessionWarmupRu
   failed: { phase: 'failed' as const, message: '预热响应超时（30s 内 GPT-5.6 Luna 未产出回复）——账号可能已不可用，已中止批量发起', modelLabel: 'GPT-5.6 Luna', startedAt: previewNow - 30_000, finishedAt: previewNow - 1_000 },
   'no-model': { phase: 'failed' as const, message: '未在 Cursor 模型目录中找到可用的低成本模型（GPT-5.6 Luna 等）；已中止预热，绝不静默切换贵模型', startedAt: previewNow - 500, finishedAt: previewNow }
 } as const)[warmupScene] : undefined
-const previewRunStatus = (['draft', 'ready', 'launching', 'running', 'attention', 'paused', 'completed'] as TeamRunStatus[])
+// run 只有 running / completed 两态（阶段 2 · 2B）：`?runStatus=completed` 走查已结束的运行。
+const previewRunStatus = (['running', 'completed'] as TeamRunStatus[])
   .find((status) => status === requestedRunStatus)
 // 右栏「变更」面板走查：?review=clean|not_git|error|many（缺省为两文件就绪态）。
 const reviewScene = (['clean', 'not_git', 'error', 'many'] as const).find((scene) => scene === previewParameters.get('review'))
-const setupSkill = (name: string, description: string, source: 'cursor' | 'workspace' | 'user' | 'vercel' | 'anthropic', installed = true) => ({
-  id: installed ? `${source}:${name}` : `recommended:${source}:${name}`,
-  name,
-  description,
-  scope: source === 'cursor' ? 'builtin' as const : source === 'user' ? 'user' as const : 'project' as const,
-  installed,
-  source,
-  recommendedRoles: [] as string[]
-})
-const setupDraft: TeamSetupDraft = {
-  draftId: 'preview-team-setup',
-  workspaceId: 'wedge-demo',
-  workspaceName: 'wedge-demo',
-  workspacePath: '/Users/demo/Workspace/wedge-demo',
-  channels: Array.from({ length: 5 }, (_, index) => ({
-    channelId: String(index + 1),
-    displayName: `SG Team CH-${index + 1}`,
-    status: offlineSessionsPreviewMode ? 'offline' as const : index === 2 || index === 4 ? 'idle' as const : 'waiting' as const,
-    online: !offlineSessionsPreviewMode,
-    waiting: !offlineSessionsPreviewMode && index !== 2 && index !== 4,
-    queueDepth: index === 1 ? 1 : 0
-  })),
-  roleTemplates: structuredClone(TEAM_ROLE_TEMPLATES),
-  avatarIds: [...AGENT_AVATAR_IDS],
-  cursorModels: structuredClone(desktopSnapshot.cursorModels ?? []),
-  skills: [
-    setupSkill('review', '自动选择并执行代码审查流程。', 'cursor'),
-    setupSkill('review-security', '检查安全漏洞与权限边界。', 'cursor'),
-    setupSkill('split-to-prs', '把大型变更拆成可审查 PR。', 'cursor'),
-    setupSkill('frontend-design', '构建具有明确视觉方向的真实界面。', 'workspace'),
-    setupSkill('webapp-testing', '使用 Playwright 验证本地界面。', 'workspace'),
-    setupSkill('mcp-builder', '设计和实现高质量 MCP Server。', 'user'),
-    setupSkill('doc-coauthoring', '结构化共创技术说明。', 'user'),
-    setupSkill('vercel-react-best-practices', 'React 性能和工程最佳实践。', 'vercel', false),
-    setupSkill('web-design-guidelines', '审查 Web 设计与可访问性。', 'vercel', false)
-  ]
-}
-const detectedSetupDraft: TeamSetupDraft = detectedWorkspaceMode ? {
-  ...structuredClone(setupDraft),
-  draftId: 'preview-detected-workspace',
-  workspaceId: 'detected-property-app',
-  workspaceName: '物业管理',
-  workspacePath: '/Users/demo/Workspace/物业管理',
-  channels: setupDraft.channels.slice(0, 4)
-} : setupDraft
+/** 预览里的「Cursor 当前工程」与它的通道号：`?detectedWorkspace=1` 换成另一个工程（4 个通道）。 */
+const previewWorkspace = detectedWorkspaceMode
+  ? { workspaceId: 'detected-property-app', workspaceName: '物业管理', workspacePath: '/Users/demo/Workspace/物业管理', channelIds: ['1', '2', '3', '4'] }
+  : { workspaceId: 'wedge-demo', workspaceName: 'wedge-demo', workspacePath: '/Users/demo/Workspace/wedge-demo', channelIds: ['1', '2', '3', '4', '5'] }
 
+// `?setup=1`：没有任何运行的空工作区——运行页直接进入批次配置。
 const initialTeam = structuredClone(setupMode ? emptyTeamControlSnapshot() : teamControlSnapshot)
 if (activeExecutingMode && initialTeam.activeRun) {
   initialTeam.members = initialTeam.members.map((member) => ({
@@ -157,9 +116,7 @@ if (activeExecutingMode && initialTeam.activeRun) {
   }))
   initialTeam.preflight = {
     ...initialTeam.preflight,
-    agentsWaiting: false,
-    canLaunch: false,
-    blockers: ['并非所有 Agent 通道都已在线待命', '团队已经运行']
+    blockers: ['团队已经运行']
   }
 }
 if (previewRunStatus && initialTeam.activeRun) {
@@ -167,20 +124,7 @@ if (previewRunStatus && initialTeam.activeRun) {
   initialTeam.runs = initialTeam.runs.map((run) => (
     run.id === initialTeam.activeRun?.id ? { ...run, status: previewRunStatus } : run
   ))
-  if (previewRunStatus === 'launching') {
-    initialTeam.bindings = initialTeam.bindings.map((binding, index) => ({
-      ...binding,
-      launchStatus: index === 0 ? 'acknowledged' as const : 'delivered' as const
-    }))
-    initialTeam.members = initialTeam.members.map((member, index) => ({
-      ...member,
-      binding: member.binding ? {
-        ...member.binding,
-        launchStatus: index === 0 ? 'acknowledged' as const : 'delivered' as const
-      } : member.binding,
-      readiness: index === 0 ? 'active' as const : 'launching' as const
-    }))
-  } else if (previewRunStatus === 'completed') {
+  if (previewRunStatus === 'completed') {
     initialTeam.members = initialTeam.members.map((member) => ({
       ...member,
       runtime: member.runtime ? { ...member.runtime, online: false, waiting: false } : member.runtime,
@@ -202,9 +146,7 @@ if (previewRunStatus && initialTeam.activeRun) {
   initialTeam.preflight = {
     ...initialTeam.preflight,
     mcpInstalled: false,
-    agentsWaiting: false,
-    canLaunch: false,
-    blockers: ['Agent MCP 尚未接入全部本轮通道', '并非所有 Agent 通道都已在线待命']
+    blockers: ['Agent MCP 尚未接入全部本轮通道']
   }
 }
 // 运行页独立批次走查：?independent=live|mixed|spread|ended|groups
@@ -273,7 +215,7 @@ if (independentScene && initialTeam.activeRun) {
     initialTeam.members = members
     initialTeam.roles = [...initialTeam.roles, ...members.slice(0, 4).map((member) => member.role)]
     initialTeam.slots = members.map((member) => member.slot)
-    const groupBase = { runId: run.id, createdAt: previewNow - 30 * 60_000, updatedAt: previewNow - 4 * 60_000 }
+    const groupBase = { runId: run.id, planPolicy: 'lead_only' as const, createdAt: previewNow - 30 * 60_000, updatedAt: previewNow - 4 * 60_000 }
     initialTeam.groups = [
       {
         group: { ...groupBase, id: refactorId, name: '接口重构', goal: '把 TaskAgentService 的查询路径收成一个入口，补齐组作用域测试。', status: 'active', leadSlotId: members[0]!.slot.id },
@@ -290,9 +232,8 @@ if (independentScene && initialTeam.activeRun) {
     ]
   }
 }
+// `?handoff=1`：CH-1 离线、其余待命——run 状态不变（离线只是席位 / 组的事实，run 没有 attention 态）。
 if (manualHandoffMode && initialTeam.activeRun) {
-  initialTeam.activeRun = { ...initialTeam.activeRun, status: 'attention' }
-  initialTeam.runs = initialTeam.runs.map((run) => run.id === initialTeam.activeRun?.id ? { ...run, status: 'attention' } : run)
   initialTeam.members = initialTeam.members.map((member, index) => ({
     ...member,
     runtime: member.runtime ? {
@@ -348,13 +289,13 @@ if (offlineSessionsPreviewMode) {
   const existing = new Set(state.desktop.sessions.map((session) => session.channelId))
   state.desktop.sessions = [
     ...state.desktop.sessions,
-    ...detectedSetupDraft.channels
-      .filter((channel) => !existing.has(channel.channelId))
-      .map((channel) => ({
+    ...previewWorkspace.channelIds
+      .filter((channelId) => !existing.has(channelId))
+      .map((channelId) => ({
         ...template,
-        id: `preview-channel-${channel.channelId}`,
-        channelId: channel.channelId,
-        displayName: channel.displayName,
+        id: `preview-channel-${channelId}`,
+        channelId,
+        displayName: `SG Team CH-${channelId}`,
         roleName: '未绑定外置团队'
       }))
   ].map((session) => ({
@@ -709,13 +650,37 @@ if (['1', 'long'].includes(previewParameters.get('railactivity') ?? '')) {
     ? { ...session, status: 'running', connectionPhase: 'processing', waiting: false, online: true, awaitingUser: session.channelId === '5' }
     : session)
 }
-// 统计页走查：?stats=1 —— 三个在册席位 + 两个历史 Composer，账本铺满 30 天，
-// 小时（今天）与天（7/30 天）两种分桶、四桶构成、多模型分布、历史归属一次看全。
+// 统计页走查：?stats=1 —— 三个在册席位（CH-1 另有一个重建前的 Composer）+ 两个历史 Composer + 两个组，
+// 账本铺满 30 天，小时（今天）与天（7/30 天）两种分桶、四桶构成、多模型分布、
+// 席位 / 组 / 池三层与「旧会话」「历史会话」两种归属一次看全。
 const statsPreviewMode = previewParameters.has('stats')
+/** 统计页走查里「重建前的旧 Composer」带的席位标签 = CH-1 的席位 id（阶段 2 · 2E）。 */
+let statsRebuiltSlotId: string | undefined
 if (statsPreviewMode) {
   state.desktop.sessions = state.desktop.sessions.map((session) => session.channelId === '3'
     ? { ...session, composerId: 'composer-03' }
     : session)
+  // 组层走查：CH-1 + CH-2 成「接口重构」、CH-3 成「验收」——分组卡 = 成员席位之和、条宽 = 占池份额；
+  // 两个 hist-* 不属任何席位，池 > 组之和的差额即「历史会话」。
+  if (initialTeam.activeRun) {
+    const seatOf = (channelId: string): (typeof initialTeam.members)[number] =>
+      initialTeam.members.find((member) => member.slot.channelId === channelId)!
+    statsRebuiltSlotId = seatOf('1').slot.id
+    const groupBase = {
+      runId: initialTeam.activeRun.id, goal: '', planPolicy: 'lead_only' as const,
+      createdAt: previewNow - 6 * 3_600_000, updatedAt: previewNow - 20 * 60_000
+    }
+    initialTeam.groups = [
+      {
+        group: { ...groupBase, id: 'team-group:stats:refactor', name: '接口重构', status: 'active', leadSlotId: seatOf('1').slot.id },
+        members: [seatOf('1'), seatOf('2')], effectiveLeadSlotId: seatOf('1').slot.id, attention: false
+      },
+      {
+        group: { ...groupBase, id: 'team-group:stats:acceptance', name: '验收', status: 'active', leadSlotId: seatOf('3').slot.id },
+        members: [seatOf('3')], effectiveLeadSlotId: seatOf('3').slot.id, attention: false
+      }
+    ]
+  }
 }
 
 function previewStatsTurn(at: number, modelId: string, scale: number): UsageTurn {
@@ -730,20 +695,22 @@ function previewStatsTurn(at: number, modelId: string, scale: number): UsageTurn
 
 function previewStatsUsage(): CursorUsageSnapshot {
   const hour = 3_600_000
-  // [composerId, 模型, 回合的「几小时前」序列]：近端密（今天有小时节奏）、远端疏（30 天有形状）。
-  const composers: Array<[string, string, number[]]> = [
+  // [composerId, 模型, 回合的「几小时前」序列, 席位标签]：近端密（今天有小时节奏）、远端疏（30 天有形状）。
+  const composers: Array<[string, string, number[], string?]> = [
     ['composer-01', 'claude-fable-5', [0.4, 1.3, 2.6, 3.2, 4.7, 6.3, 7.9, 9.4, 25, 29, 49, 74, 97, 121, 168, 240, 380, 520, 700]],
     ['composer-02', 'claude-fable-5', [0.8, 1.9, 3.5, 5.2, 8.3, 24, 48, 72, 120, 170, 238, 312, 430, 560]],
     ['composer-03', 'gpt-5-6-sol', [1.1, 2.3, 6.5, 26, 50, 95, 144, 199, 300]],
+    // CH-1 重建前的 Composer：账上带席位标签，归本席位并在明细里标「旧会话」。
+    ['composer-01-prev', 'claude-fable-5-1', [12, 15, 34, 58, 210], statsRebuiltSlotId],
     ['hist-4f2a9c1e', 'claude-fable-5-1', [128, 250, 405, 552, 640]],
     ['hist-b83d07aa', 'composer-2-5-fast', [88, 295, 630]]
   ]
-  return Object.fromEntries(composers.map(([composerId, modelId, hoursAgo]) => {
+  return Object.fromEntries(composers.map(([composerId, modelId, hoursAgo, slotId]) => {
     const turns = Object.fromEntries(hoursAgo.map((back, index) => [
       `gen-${composerId}-${index}`,
       previewStatsTurn(previewNow - Math.round(back * hour), modelId, 0.55 + ((index * 7) % 9) * 0.45)
     ]))
-    return [composerId, projectUsage(composerId, { turns })]
+    return [composerId, projectUsage(composerId, { turns }, slotId)]
   }))
 }
 
@@ -1366,8 +1333,8 @@ const api: SgDesktopApi = {
   saveImageAs: async () => true,
   getTaskPoolSnapshot: async () => structuredClone(previewTasks),
   installTaskMcp: async () => ({
-    workspacePath: detectedSetupDraft.workspacePath,
-    workspaceId: detectedSetupDraft.workspaceId,
+    workspacePath: previewWorkspace.workspacePath,
+    workspaceId: previewWorkspace.workspaceId,
     runId: state.team.activeRun?.id ?? 'preview-run',
     serverNames: ['SG Team']
   }),
@@ -1375,99 +1342,19 @@ const api: SgDesktopApi = {
   detectCursorWorkspace: async () => ({
     state: 'detected',
     workspace: {
-      id: detectedSetupDraft.workspaceId,
-      name: detectedSetupDraft.workspaceName,
-      path: detectedSetupDraft.workspacePath,
+      id: previewWorkspace.workspaceId,
+      name: previewWorkspace.workspaceName,
+      path: previewWorkspace.workspacePath,
       cursorWorkspaceId: 'preview-cursor-workspace'
     },
     candidates: [],
     detail: '预览中的 Cursor 工作区',
     observedAt: Date.now()
   }),
-  prepareDetectedTeamWorkspace: async () => setupMode || detectedWorkspaceMode
-    ? ({ kind: 'setup', draft: structuredClone(detectedSetupDraft) })
-    : ({ kind: 'existing', snapshot: structuredClone(state.team) }),
-  chooseTeamWorkspace: async () => setupMode ? ({ kind: 'setup', draft: structuredClone(setupDraft) }) : ({ cancelled: true }),
-  createTeam: async (input) => {
-    if (setupMode) {
-      const skillById = new Map(setupDraft.skills.map((skill) => [skill.id, skill]))
-      const configured = createConfiguredTeamBundle({
-        workspaceId: setupDraft.workspaceId,
-        workspaceName: setupDraft.workspaceName,
-        workspacePath: setupDraft.workspacePath,
-        now: Date.now(),
-        members: input.members.map((member) => ({
-          channelId: member.channelId,
-          roleTemplateKey: member.roleTemplateKey,
-          avatarId: member.avatarId,
-          solo: member.solo,
-          modelSelection: member.modelSelection,
-          skills: member.skillIds.flatMap((id) => {
-            const skill = skillById.get(id)
-            return skill ? [{ id: skill.id, name: skill.name, description: skill.description, scope: skill.scope }] : []
-          })
-        }))
-      })
-      const run = { ...configured.run, goal: '预览团队目标', status: 'ready' as const }
-      const members = configured.slots.map((slot, index) => {
-        const role = configured.roles.find((candidate) => candidate.id === slot.roleId)!
-        const runtime = desktopSnapshot.sessions.find((session) => session.channelId === slot.channelId)
-        const binding = {
-          id: `preview-binding-${slot.channelId}`, workspaceId: configured.workspace.id, runId: run.id,
-          slotId: slot.id, channelId: slot.channelId!, agentSessionId: `preview:ch-${slot.channelId}:g1`,
-          generation: 'g1', installedAt: Date.now(), launchStatus: 'not_started' as const,
-          launchDetail: '', lastCheckInNote: '', composerBindingKey: `preview-${slot.channelId}`
-        }
-        return {
-          slot, role, binding,
-          runtime: runtime ? {
-            channelId: runtime.channelId, status: runtime.status, online: runtime.online,
-            waiting: runtime.waiting, queueDepth: runtime.queueDepth, lastSeenAt: runtime.lastSeenAt,
-            healthEvidence: runtime.healthEvidence, workingFiles: runtime.workingFiles
-          } : undefined,
-          readiness: runtime?.online ? runtime.waiting ? 'ready' as const : 'active' as const : 'offline' as const
-        }
-      })
-      state.team = {
-        ...emptyTeamControlSnapshot(),
-        revision: 1,
-        activeWorkspaceId: configured.workspace.id,
-        workspaces: [configured.workspace],
-        runs: [run],
-        roles: configured.roles,
-        slots: configured.slots,
-        bindings: members.map((member) => member.binding),
-        updatedAt: Date.now(),
-        activeRun: run,
-        members,
-        runtimeChannels: members.map((member) => ({
-          channelId: member.binding.channelId,
-          displayName: `SG Team CH-${member.binding.channelId}`,
-          status: member.runtime?.status ?? 'offline',
-          online: member.runtime?.online ?? false,
-          waiting: member.runtime?.waiting ?? false,
-          queueDepth: member.runtime?.queueDepth ?? 0,
-          registered: true,
-          assignedSlotId: member.slot.id,
-          agentSessionId: member.binding.agentSessionId,
-          generation: member.binding.generation
-        })),
-        preflight: {
-          bridgeConnected: true, workspaceBound: true, goalDefined: true,
-          mcpInstalled: false, agentsWaiting: false, canLaunch: false,
-          blockers: ['Agent MCP 尚未接入全部本轮通道', '并非所有团队通道都已在线待命']
-        }
-      }
-    } else {
-      state.team = structuredClone(teamControlSnapshot)
-    }
-    pushTeam()
-    return structuredClone(state.team)
-  },
   createIndependentSessions: async (input) => {
     const configured = createConfiguredTeamBundle({
-      workspaceId: detectedSetupDraft.workspaceId,
-      workspaceName: detectedSetupDraft.workspaceName,
+      workspaceId: previewWorkspace.workspaceId,
+      workspaceName: previewWorkspace.workspaceName,
       workspacePath: input.workspacePath,
       mode: 'independent',
       now: Date.now(),
@@ -1479,7 +1366,7 @@ const api: SgDesktopApi = {
     const bindings = configured.slots.map((slot) => ({
       id: `preview-independent-binding-${slot.channelId}`, workspaceId: configured.workspace.id, runId: configured.run.id,
       slotId: slot.id, channelId: slot.channelId!, agentSessionId: `preview-independent:ch-${slot.channelId}:g1`,
-      generation: 'g1', installedAt: Date.now(), launchStatus: 'not_started' as const,
+      generation: 'g1', installedAt: Date.now(),
       launchDetail: '', lastCheckInNote: '', composerBindingKey: `preview-independent-${slot.channelId}`
     }))
     const members = configured.slots.map((slot, index) => ({
@@ -1498,34 +1385,17 @@ const api: SgDesktopApi = {
         online: false, waiting: false, queueDepth: 0, registered: true, assignedSlotId: binding.slotId,
         agentSessionId: binding.agentSessionId, generation: binding.generation
       })),
-      preflight: {
-        bridgeConnected: true, workspaceBound: true, goalDefined: false, mcpInstalled: true,
-        agentsWaiting: false, canLaunch: false, blockers: []
-      },
+      preflight: { bridgeConnected: true, workspaceBound: true, mcpInstalled: true, blockers: [] },
       updatedAt: Date.now()
     }
     pushTeam()
     return structuredClone(state.team)
   },
   chooseIndependentWorkspace: async () => ({
-    id: detectedSetupDraft.workspaceId,
-    name: detectedSetupDraft.workspaceName,
-    path: detectedSetupDraft.workspacePath
+    id: previewWorkspace.workspaceId,
+    name: previewWorkspace.workspaceName,
+    path: previewWorkspace.workspacePath
   }),
-  createNextTeamRun: async () => {
-    state.desktop = { ...state.desktop, conversations: {}, updatedAt: Date.now() }
-    state.team = {
-      ...structuredClone(teamControlSnapshot),
-      runs: teamControlSnapshot.runs.map((run) => ({ ...run, goal: '', status: 'draft' as const })),
-      activeRun: teamControlSnapshot.activeRun
-        ? { ...teamControlSnapshot.activeRun, goal: '', status: 'draft' as const }
-        : undefined,
-      failovers: []
-    }
-    pushDesktop()
-    pushTeam()
-    return structuredClone(state.team)
-  },
   endActiveRun: async () => {
     state.team = {
       ...state.team,
@@ -1539,31 +1409,6 @@ const api: SgDesktopApi = {
     pushTeam()
     return structuredClone(state.team)
   },
-  prepareActiveTeamSetup: async () => structuredClone({
-    ...setupDraft,
-    draftId: 'preview-team-reconfigure',
-    initialMembers: teamControlSnapshot.members.map((member) => ({
-      channelId: member.slot.channelId!,
-      roleTemplateKey: member.role.templateKey,
-      avatarId: member.slot.avatarId,
-      skillIds: member.role.skills.map((skill) => skill.id),
-      solo: member.slot.solo === true,
-      modelSelection: member.slot.modelSelection
-    }))
-  }),
-  updateTeamGoal: async (goal) => {
-    state.team = {
-      ...state.team,
-      revision: state.team.revision + 1,
-      activeRun: state.team.activeRun ? { ...state.team.activeRun, goal, updatedAt: Date.now() } : undefined,
-      runs: state.team.runs.map((run) => run.id === state.team.activeRun?.id
-        ? { ...run, goal, updatedAt: Date.now() }
-        : run)
-    }
-    pushTeam()
-    return structuredClone(state.team)
-  },
-  launchTeam: async () => structuredClone(state.team),
   setSlotModelSelection: async () => structuredClone(state.team),
   // 协作组操作在预览里只回传当前快照；组卡片的交互预览由 ⑤b 的 `?groups=1` 场景补齐。
   createTeamGroup: async () => structuredClone(state.team),
@@ -1571,117 +1416,106 @@ const api: SgDesktopApi = {
   removeTeamGroupMember: async () => structuredClone(state.team),
   setTeamGroupLead: async () => structuredClone(state.team),
   updateTeamGroupGoal: async () => structuredClone(state.team),
+  setTeamGroupPlanPolicy: async () => structuredClone(state.team),
   dissolveTeamGroup: async () => structuredClone(state.team),
+  planTeamGroupTasks: async () => [],
   getTeamCollaborationSnapshot: async () => structuredClone(collaborationSnapshot),
-  getManualHandoffOptions: async (slotId) => {
-    const source = state.team.members.find((member) => member.slot.id === slotId)
-    if (!source?.binding) throw new Error('待交接角色不存在')
+  getMembershipTransferOptions: async (slotId) => {
+    const view = state.team.groups.find((candidate) => (
+      candidate.group.status === 'active' && candidate.members.some((member) => member.slot.id === slotId)
+    ))
+    const source = view?.members.find((member) => member.slot.id === slotId)
+    if (!view || !source) throw new Error('该席位不在任何协作组内')
     return {
       runId: state.team.activeRun!.id,
+      groupId: view.group.id,
+      groupName: view.group.name,
       sourceSlotId: source.slot.id,
       sourceRoleName: source.role.name,
-      sourceChannelId: source.binding.channelId,
-      candidates: [
-        ...state.team.standbyChannels.filter((channel) => channel.agentSessionId).map((channel) => ({
-          agentSessionId: channel.agentSessionId!,
-          kind: 'standby' as const,
-          mode: 'role_rebind' as const,
-          channelId: channel.channelId,
-          roleName: channel.displayName,
-          eligible: channel.online && channel.waiting && channel.queueDepth === 0,
-          blocker: !channel.online ? '备用 Agent 已离线' : !channel.waiting ? '备用 Agent 尚未待命' : channel.queueDepth ? `队列中还有 ${channel.queueDepth} 条消息` : undefined,
-          impact: '备用 Agent 将直接接管，不会产生新的职责空缺'
-        })),
-        ...state.team.members.filter((member) => member.slot.solo !== true && member.slot.id !== source.slot.id && member.binding && member.runtime?.online).map((member) => ({
-        agentSessionId: member.binding!.agentSessionId,
-        kind: 'member' as const,
-        mode: source.role.templateKey === 'lead' ? 'lead_authority' as const : 'role_rebind' as const,
-        channelId: member.binding!.channelId,
-        slotId: member.slot.id,
-        roleName: member.role.name,
-        avatarId: member.slot.avatarId,
-        eligible: source.role.templateKey === 'lead'
-          ? true
-          : member.runtime!.waiting && member.runtime!.queueDepth === 0 && member.role.templateKey !== 'lead',
-        blocker: source.role.templateKey !== 'lead' && member.role.templateKey === 'lead'
-          ? '不能挪走当前唯一主控'
-          : undefined,
-        impact: source.role.templateKey === 'lead'
-          ? `保留${member.role.name}职责与现有任务，同时接管唯一主控权限`
-          : `${member.role.name}席将转为离线空缺`
-        }))
-      ]
+      sourceChannelId: source.binding?.channelId ?? source.slot.channelId,
+      transfersLead: view.effectiveLeadSlotId === source.slot.id,
+      candidates: state.team.members
+        .filter((member) => member.slot.solo === true)
+        .map((member) => {
+          const online = member.runtime?.online === true
+          return {
+            slotId: member.slot.id,
+            channelId: member.binding?.channelId ?? member.slot.channelId,
+            roleName: member.role.name,
+            avatarId: member.slot.avatarId,
+            online,
+            impact: online
+              ? '在线独立席位：入组通知随它的下一次轮询到达'
+              : '当前离线：通知与上下文会在其通道排队，等新会话上线后生效'
+          }
+        })
     }
   },
-  manualHandoff: async ({ sourceSlotId, replacementAgentSessionId }) => {
-    const source = state.team.members.find((member) => member.slot.id === sourceSlotId)!
-    const donor = state.team.members.find((member) => member.binding?.agentSessionId === replacementAgentSessionId)
-    const standby = state.team.standbyChannels.find((channel) => channel.agentSessionId === replacementAgentSessionId)
-    const sourceBinding = source.binding!
-    if (source.role.templateKey === 'lead' && donor) {
-      state.team = {
-        ...state.team,
-        revision: state.team.revision + 1,
-        activeRun: state.team.activeRun
-          ? { ...state.team.activeRun, actingLeadSlotId: donor.slot.id, updatedAt: Date.now() }
-          : undefined,
-        runs: state.team.runs.map((run) => run.id === state.team.activeRun?.id
-          ? { ...run, actingLeadSlotId: donor.slot.id, updatedAt: Date.now() }
-          : run)
-      }
-      pushTeam()
-      return {
-        handoff: {
-          mode: 'lead_authority' as const,
-          messageId: 'preview-lead-authority-message',
-          actingLeadSlotId: donor.slot.id,
-          recoveredTaskIds: []
-        },
-        team: structuredClone(state.team)
-      }
+  // 预览版成员身份迁移：A 恢复独立、B 顶上 A 的组角色（lead 随迁）；绑定 / 令牌不动。
+  transferMembership: async ({ groupId, fromSlotId, toSlotId }) => {
+    const view = state.team.groups.find((candidate) => candidate.group.id === groupId)!
+    const source = view.members.find((member) => member.slot.id === fromSlotId)!
+    const target = state.team.members.find((member) => member.slot.id === toSlotId)!
+    const transferredLead = view.effectiveLeadSlotId === fromSlotId
+    const groupRole = { ...source.role }
+    const restoredSource = {
+      ...source,
+      role: target.role,
+      slot: { ...source.slot, solo: true, groupId: undefined, roleId: target.role.id, homeRoleId: undefined, groupJoinedAt: undefined }
     }
-    const sourceChannel = sourceBinding.channelId
-    const replacementChannelId = donor?.binding?.channelId ?? standby!.channelId
-    const replacementAgentSessionIdResolved = donor?.binding?.agentSessionId ?? standby!.agentSessionId!
-    source.binding = {
-      ...sourceBinding,
-      channelId: replacementChannelId,
-      agentSessionId: replacementAgentSessionIdResolved,
-      slotId: source.slot.id,
-      launchStatus: 'sending'
-    }
-    source.slot = { ...source.slot, channelId: replacementChannelId, avatarId: donor?.slot.avatarId ?? source.slot.avatarId }
-    source.runtime = donor?.runtime
-      ? { ...donor.runtime, channelId: replacementChannelId }
-      : { channelId: replacementChannelId, status: 'waiting', online: true, waiting: true, queueDepth: 0, lastSeenAt: Date.now(), healthEvidence: ['备用 Agent 已接管'], workingFiles: [] }
-    source.readiness = 'launching'
-    if (donor?.binding) {
-      donor.binding = { ...sourceBinding, slotId: donor.slot.id, launchStatus: 'failed' }
-      donor.slot = { ...donor.slot, channelId: sourceChannel }
-      donor.runtime = donor.runtime ? { ...donor.runtime, channelId: sourceChannel, online: false, waiting: false, status: 'offline' } : donor.runtime
-      donor.readiness = 'offline'
+    const joinedTarget = {
+      ...target,
+      role: groupRole,
+      slot: { ...target.slot, solo: false, groupId, roleId: groupRole.id, homeRoleId: target.slot.roleId, groupJoinedAt: Date.now() }
     }
     const failover = {
-      id: `team-handoff:manual:preview`, workspaceId: sourceBinding.workspaceId,
-      runId: sourceBinding.runId, slotId: source.slot.id, roleName: source.role.name,
-      fromChannelId: sourceChannel, fromAgentSessionId: sourceBinding.agentSessionId,
-      toChannelId: replacementChannelId, toAgentSessionId: replacementAgentSessionIdResolved,
-      status: 'waiting_for_agent' as const, reason: '用户手动交接', taskIds: [],
-      detectedAt: Date.now(), updatedAt: Date.now()
+      id: 'team-handoff:membership:preview',
+      workspaceId: source.binding?.workspaceId ?? 'preview',
+      runId: state.team.activeRun!.id,
+      slotId: source.slot.id,
+      roleName: groupRole.name,
+      fromChannelId: source.binding?.channelId ?? source.slot.channelId ?? '?',
+      fromAgentSessionId: source.binding?.agentSessionId ?? '',
+      toChannelId: target.binding?.channelId ?? target.slot.channelId,
+      toAgentSessionId: target.binding?.agentSessionId,
+      status: 'completed' as const,
+      reason: 'manual_membership_transfer',
+      taskIds: [],
+      detectedAt: Date.now(),
+      updatedAt: Date.now(),
+      completedAt: Date.now()
     }
     state.team = {
       ...state.team,
       revision: state.team.revision + 1,
-      activeRun: state.team.activeRun ? { ...state.team.activeRun, status: 'attention' } : undefined,
-      standbyChannels: standby ? state.team.standbyChannels.filter((channel) => channel.agentSessionId !== replacementAgentSessionId) : state.team.standbyChannels,
+      members: state.team.members.map((member) => (
+        member.slot.id === fromSlotId ? restoredSource : member.slot.id === toSlotId ? joinedTarget : member
+      )),
+      groups: state.team.groups.map((candidate) => candidate.group.id === groupId
+        ? {
+            ...candidate,
+            group: {
+              ...candidate.group,
+              leadSlotId: transferredLead ? toSlotId : candidate.group.leadSlotId,
+              actingLeadSlotId: candidate.group.actingLeadSlotId === fromSlotId ? toSlotId : candidate.group.actingLeadSlotId
+            },
+            members: [...candidate.members.filter((member) => member.slot.id !== fromSlotId), joinedTarget],
+            effectiveLeadSlotId: transferredLead ? toSlotId : candidate.effectiveLeadSlotId
+          }
+        : candidate),
       failovers: [failover, ...state.team.failovers]
     }
     pushTeam()
     return {
-      handoff: {
-        mode: 'role_rebind',
+      transfer: {
+        groupId,
+        fromSlotId,
+        toSlotId,
+        toChannelId: failover.toChannelId,
+        roleName: groupRole.name,
+        transferredLead,
         failover,
-        messageId: 'preview-handoff-message', vacatedSlotId: donor?.slot.id
+        releasedTaskIds: []
       },
       team: structuredClone(state.team)
     }

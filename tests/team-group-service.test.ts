@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { TaskAgentService } from '../src/application/task-agent-service'
+import { TaskDispatcher } from '../src/application/task-dispatcher'
 import { TaskPoolService } from '../src/application/task-pool-service'
 import { TeamControlService, type TeamControlBridge } from '../src/application/team-control-service'
 import { TeamGroupService } from '../src/application/team-group-service'
@@ -13,6 +14,7 @@ import { SqliteTaskPoolRepository } from '../src/infrastructure/task-pool/sqlite
 import { SqliteTeamCollaborationRepository } from '../src/infrastructure/team-collaboration/sqlite-team-collaboration-repository'
 import { SqliteTeamControlRepository } from '../src/infrastructure/team-control/sqlite-team-control-repository'
 import type { DesktopSnapshot, SendMessageInput } from '../src/shared/desktop-api'
+import { createDefaultTeamBundle } from './legacy-team-fixtures'
 
 /**
  * TeamGroupService（任务书 §5.2「事务外」列 + §7 拆组 / 移出规则）：仓储事务是真相源，
@@ -70,7 +72,7 @@ function poolFixture() {
   const channelIds = ['1', '2', '3', '4']
   const bridge = new RecordingBridge(desktopSnapshot(channelIds))
   const control = new TeamControlService(controlRepository, bridge)
-  const selected = control.configureIndependentWorkspace({
+  const selected = control.createSessionPool({
     workspaceId: 'alpha', workspaceName: 'alpha', workspacePath: '/workspace/alpha',
     members: channelIds.map((channelId) => ({ channelId, roleTemplateKey: 'solo', avatarId: 'researcher', skills: [], solo: true }))
   })
@@ -131,9 +133,7 @@ describe('TeamGroupService · 建组与加人', () => {
 
       // 池 run 没有「团队目标」「团队已经运行」两条 blocker（§5.7）：run.goal 为空、入组成员全在线待命也不阻塞。
       expect(snapshot.activeRun?.goal ?? '').toBe('')
-      expect(snapshot.preflight.agentsWaiting).toBe(true)
       expect(snapshot.preflight.blockers).toEqual([])
-      expect(snapshot.preflight.canLaunch).toBe(true)
       expect(data.errors).toEqual([])
     } finally {
       data.close()
@@ -166,14 +166,12 @@ describe('TeamGroupService · 建组与加人', () => {
   it('refuses to create groups outside a session pool with no side effect', () => {
     const data = poolFixture()
     try {
-      data.control.configureWorkspace({
-        workspaceId: 'alpha', workspaceName: 'alpha', workspacePath: '/workspace/alpha',
-        members: [
-          { channelId: '1', roleTemplateKey: 'lead', avatarId: 'lead', skills: [] },
-          { channelId: '2', roleTemplateKey: 'builder', avatarId: 'architect', skills: [] }
-        ]
-      })
+      // 阶段 2 · 2B 起产品里建不出团队 run；这里直接落一条更新的 legacy 团队 run 作为活动 run（只读归档路径）。
+      data.controlRepository.upsertWorkspaceTeam(createDefaultTeamBundle({
+        workspaceId: 'alpha', workspaceName: 'alpha', workspacePath: '/workspace/alpha', channelIds: ['1', '2'], now: Date.now() + 60_000
+      }))
       const legacy = data.control.getSnapshot()
+      expect(legacy.activeRun?.id).not.toBe(data.runId)
       expect(code(() => data.service.createGroup({
         name: 'G', members: [{ slotId: legacy.members[0]!.slot.id, roleTemplateKey: 'builder' }]
       }))).toBe('group_requires_pool_run')
@@ -379,6 +377,97 @@ describe('TeamGroupService · lead、目标与解散', () => {
     }
   })
 
+  it('setGroupPlanPolicy gates team_task plan in a lead-less group and briefs members only when their planning right actually changed (2A)', () => {
+    const data = poolFixture()
+    try {
+      // 无 lead 组默认 any_member：两个成员都能 plan，规划出的任务落在本组。
+      const { groups } = data.service.createGroup({
+        name: '扁平组', members: [{ slotId: data.slotIdOf('1'), roleTemplateKey: 'builder' }, { slotId: data.slotIdOf('2'), roleTemplateKey: 'reviewer' }]
+      })
+      const groupId = groups[0]!.group.id
+      expect(groups[0]!.group.planPolicy).toBe('any_member')
+      const [planned] = data.taskAgent('2').plan([{ key: 'flat-1', title: '扁平组任务' }])
+      expect(planned).toMatchObject({ groupId, status: 'queued' })
+
+      // 收紧为 lead_only：成员失去规划权（coordinator_only），每人一条 notice 说明任务改由用户创建。
+      const tightened = data.service.setGroupPlanPolicy({ groupId, planPolicy: 'lead_only' })
+      expect(tightened.groups[0]!.group.planPolicy).toBe('lead_only')
+      expect(code(() => data.taskAgent('2').plan([{ key: 'flat-2', title: '再规划' }]))).toBe('coordinator_only')
+      for (const channelId of ['1', '2']) {
+        const notices = data.messagesTo(data.slotIdOf(channelId))
+        expect(notices).toHaveLength(1)
+        expect(notices[0]).toMatchObject({ kind: 'notice', sender: { type: 'operator' }, groupId })
+        expect(notices[0]!.content).toContain('不再允许成员规划任务')
+      }
+      expect(data.bridge.sent.filter((message) => message.kind !== 'membership')).toEqual([])
+
+      // 同值重复设置：无变化、不再通知。
+      data.service.setGroupPlanPolicy({ groupId, planPolicy: 'lead_only' })
+      expect(data.messagesTo(data.slotIdOf('1'))).toHaveLength(1)
+
+      // 放开回 any_member：规划权回来，再各收一条「允许全体成员规划」。
+      data.service.setGroupPlanPolicy({ groupId, planPolicy: 'any_member' })
+      expect(data.taskAgent('1').plan([{ key: 'flat-3', title: '放开后规划' }])[0]).toMatchObject({ groupId })
+      expect(data.messagesTo(data.slotIdOf('2')).map((message) => message.content.includes('允许全体成员规划任务'))).toEqual([false, true])
+
+      // 有 lead 的组：策略切换不改变任何人的规划权，成员不被打扰。
+      const led = data.service.createGroup({
+        name: '有 lead', members: [{ slotId: data.slotIdOf('3'), roleTemplateKey: 'lead' }, { slotId: data.slotIdOf('4'), roleTemplateKey: 'builder' }],
+        leadSlotId: data.slotIdOf('3')
+      }).groups.find((view) => view.group.name === '有 lead')!.group
+      expect(led.planPolicy).toBe('lead_only')
+      data.service.setGroupPlanPolicy({ groupId: led.id, planPolicy: 'any_member' })
+      expect(code(() => data.taskAgent('4').plan([{ key: 'led-1', title: '成员规划' }]))).toBe('coordinator_only')
+      expect(data.messagesTo(data.slotIdOf('3'))).toEqual([])
+      expect(data.messagesTo(data.slotIdOf('4'))).toEqual([])
+      expect(data.errors).toEqual([])
+    } finally {
+      data.close()
+    }
+  })
+
+  it('planGroupTasks lets the user plan into a group (lead or not) with the same scope and capability checks as team_task plan, and the dispatcher picks the tasks up (2A)', () => {
+    const data = poolFixture()
+    try {
+      const { groups } = data.service.createGroup({
+        name: '共享组', planPolicy: 'lead_only',
+        members: [{ slotId: data.slotIdOf('1'), roleTemplateKey: 'builder' }, { slotId: data.slotIdOf('2'), roleTemplateKey: 'reviewer' }]
+      })
+      const groupId = groups[0]!.group.id
+      // 无 lead + lead_only：成员不能 plan，但用户可以。
+      expect(code(() => data.taskAgent('1').plan([{ key: 'm', title: '成员规划' }]))).toBe('coordinator_only')
+      const planned = data.service.planGroupTasks({
+        groupId,
+        tasks: [
+          { key: 'impl', title: '实现', requiredCapabilities: ['code'], targetSlotId: data.slotIdOf('1') },
+          { key: 'verify', title: '验证', dependsOn: ['impl'], requiredCapabilities: ['qa'] }
+        ]
+      })
+      expect(planned.map((task) => [task.key, task.status, task.groupId, task.targetSlotId])).toEqual([
+        ['impl', 'queued', groupId, data.slotIdOf('1')],
+        ['verify', 'queued', groupId, undefined]
+      ])
+      // 派单器按组自动派给能力匹配的成员：只有 impl 可执行（verify 依赖它）。
+      new TaskDispatcher(data.tasks, data.control, data.collaboration).reconcile()
+      const directives = data.messagesTo(data.slotIdOf('1')).filter((message) => message.kind === 'directive')
+      expect(directives).toHaveLength(1)
+      expect(directives[0]!.content).toContain(planned[0]!.id)
+      expect(data.messagesTo(data.slotIdOf('2')).filter((message) => message.kind === 'directive')).toEqual([])
+
+      // 校验与 Agent 侧同口径：目标席位必须在组内、能力必须有人具备、key 在 run 内唯一、组必须存在且活跃。
+      expect(code(() => data.service.planGroupTasks({ groupId, tasks: [{ key: 'x', title: 'x', targetSlotId: data.slotIdOf('3') }] }))).toBe('target_slot_not_found')
+      expect(code(() => data.service.planGroupTasks({ groupId, tasks: [{ key: 'x', title: 'x', requiredCapabilities: ['ops'] }] }))).toBe('team_capability_unavailable')
+      expect(code(() => data.service.planGroupTasks({ groupId, tasks: [{ key: 'x', title: 'x', targetSlotId: data.slotIdOf('2'), requiredCapabilities: ['code'] }] }))).toBe('target_capability_mismatch')
+      expect(code(() => data.service.planGroupTasks({ groupId, tasks: [{ key: 'impl', title: '重复 key' }] }))).toBe('duplicate_task_key')
+      expect(code(() => data.service.planGroupTasks({ groupId: 'team-group:nope', tasks: [{ key: 'x', title: 'x' }] }))).toBe('group_not_found')
+      data.service.dissolveGroup({ groupId })
+      expect(code(() => data.service.planGroupTasks({ groupId, tasks: [{ key: 'y', title: 'y' }] }))).toBe('group_not_active')
+      expect(data.tasks.getSnapshot().taskOrder).toHaveLength(2)
+    } finally {
+      data.close()
+    }
+  })
+
   it('dissolveGroup cancels the group\'s open tasks, orphans pending directives, restores every seat and notifies each member (§7 rules 5–7)', () => {
     const data = poolFixture()
     try {
@@ -435,6 +524,122 @@ describe('TeamGroupService · lead、目标与解散', () => {
       // 解散后的组不能再操作。
       expect(code(() => data.service.addGroupMembers({ groupId, members: [{ slotId: data.slotIdOf('4'), roleTemplateKey: 'builder' }] }))).toBe('group_dissolved')
       expect(data.errors).toEqual([])
+    } finally {
+      data.close()
+    }
+  })
+})
+
+describe('TeamGroupService · 成员身份迁移（2C）', () => {
+  it('moves the membership to an independent seat: lease released, left/joined notices, lead informed, audit row', () => {
+    const data = poolFixture()
+    try {
+      const { groups } = data.service.createGroup({
+        name: '接口重构', goal: '收口查询路径',
+        members: [{ slotId: data.slotIdOf('1'), roleTemplateKey: 'lead' }, { slotId: data.slotIdOf('2'), roleTemplateKey: 'builder' }],
+        leadSlotId: data.slotIdOf('1')
+      })
+      const groupId = groups[0]!.group.id
+      // CH-2 持有一条 leased 任务：迁移后必须释放回队列。
+      const [task] = data.taskAgent('1').plan([{ key: 'build', title: '实现', targetSlotId: data.slotIdOf('2') }])
+      data.taskAgent('2').claim(task!.id)
+      data.bridge.sent.length = 0
+
+      const result = data.service.transferMembership({ groupId, fromSlotId: data.slotIdOf('2'), toSlotId: data.slotIdOf('3') })
+      expect(result).toMatchObject({
+        groupId, fromSlotId: data.slotIdOf('2'), toSlotId: data.slotIdOf('3'), toChannelId: '3',
+        roleName: '架构实现', transferredLead: false, releasedTaskIds: [task!.id]
+      })
+      expect(result.failover).toMatchObject({ status: 'completed', reason: 'manual_membership_transfer' })
+
+      // 成员关系：CH-2 独立、CH-3 以同角色入组；身份解析随之切换。
+      const snapshot = data.control.getSnapshot()
+      expect(snapshot.groups[0]!.members.map((member) => [member.slot.channelId, member.role.name])).toEqual([
+        ['1', '主控协调'], ['3', '架构实现']
+      ])
+      expect(snapshot.members.find((member) => member.slot.channelId === '2')?.slot).toMatchObject({ solo: true, groupId: undefined })
+      expect(code(() => data.controlRepository.resolveChannelAgentIdentity('2'))).toBe('not_in_group')
+      expect(data.controlRepository.resolveChannelAgentIdentity('3').groupId).toBe(groupId)
+
+      // 任务：租约取消、回 queued、定向清空。
+      expect(data.taskRepository.load().tasks[task!.id]).toMatchObject({
+        status: 'queued', assigneeSessionId: undefined, targetSlotId: undefined, failureReason: 'member_left'
+      })
+
+      // 通知：A left、B joined（带组名与角色）；lead 收到迁移 notice。
+      expect(data.bridge.sent.map((message) => [message.channelId, message.kind])).toEqual([
+        ['2', 'membership'], ['3', 'membership']
+      ])
+      expect(data.bridge.membershipTo('2')[0]).toContain('已被移出协作组「接口重构」')
+      expect(data.bridge.membershipTo('3')[0]).toContain('已加入协作组「接口重构」')
+      expect(data.bridge.membershipTo('3')[0]).toContain('架构实现')
+      const leadNotices = data.messagesTo(data.slotIdOf('1'))
+      expect(leadNotices).toHaveLength(1)
+      expect(leadNotices[0]!.content).toContain('成员身份已迁移')
+      expect(leadNotices[0]!.content).toContain('1 项任务已回到队列')
+      expect(data.errors).toEqual([])
+    } finally {
+      data.close()
+    }
+  })
+
+  it('carries the lead with the membership: the new seat gets joined + lead_changed, the old seat only left', () => {
+    const data = poolFixture()
+    try {
+      const { groups } = data.service.createGroup({
+        name: 'G', members: [{ slotId: data.slotIdOf('1'), roleTemplateKey: 'lead' }, { slotId: data.slotIdOf('2'), roleTemplateKey: 'builder' }],
+        leadSlotId: data.slotIdOf('1')
+      })
+      const groupId = groups[0]!.group.id
+      data.bridge.sent.length = 0
+
+      const result = data.service.transferMembership({ groupId, fromSlotId: data.slotIdOf('1'), toSlotId: data.slotIdOf('4') })
+      expect(result.transferredLead).toBe(true)
+      const snapshot = data.control.getSnapshot()
+      expect(snapshot.groups[0]!.group.leadSlotId).toBe(data.slotIdOf('4'))
+      expect(snapshot.groups[0]!.effectiveLeadSlotId).toBe(data.slotIdOf('4'))
+
+      // 通知序列：CH-1 left、CH-4 joined（lead 标签即自己）、CH-4 lead_changed。CH-1 已出组，left 通知
+      // 已说明它不再持有任何组内权限——不能再给它一条要它 team_check_in 的 lead_changed。
+      expect(data.bridge.sent.map((message) => [message.channelId, message.kind])).toEqual([
+        ['1', 'membership'], ['4', 'membership'], ['4', 'membership']
+      ])
+      expect(data.bridge.membershipTo('1')).toHaveLength(1)
+      expect(data.bridge.membershipTo('1')[0]).toContain('已被移出协作组「G」')
+      expect(data.bridge.membershipTo('4')[0]).toContain('已加入协作组「G」')
+      expect(data.bridge.membershipTo('4')[0]).toContain('主控协调 · CH-4')
+      expect(data.bridge.membershipTo('4')[1]).toContain('已成为本组唯一有效主控')
+      // lead 就是 B 自己：没有第三方 lead 要通知。
+      expect(data.messagesTo(data.slotIdOf('4'))).toEqual([])
+      expect(data.errors).toEqual([])
+    } finally {
+      data.close()
+    }
+  })
+
+  it('exposes transfer options only for grouped seats and only offers ungrouped candidates', () => {
+    const data = poolFixture()
+    try {
+      const { groups } = data.service.createGroup({
+        name: 'G', members: [{ slotId: data.slotIdOf('1'), roleTemplateKey: 'lead' }, { slotId: data.slotIdOf('2'), roleTemplateKey: 'builder' }],
+        leadSlotId: data.slotIdOf('1')
+      })
+      const options = data.service.membershipTransferOptions(data.slotIdOf('1'))
+      expect(options).toMatchObject({
+        groupId: groups[0]!.group.id, groupName: 'G',
+        sourceSlotId: data.slotIdOf('1'), sourceRoleName: '主控协调', sourceChannelId: '1', transfersLead: true
+      })
+      expect(options.candidates.map((candidate) => [candidate.slotId, candidate.channelId, candidate.online])).toEqual([
+        [data.slotIdOf('3'), '3', true], [data.slotIdOf('4'), '4', true]
+      ])
+      // 未入组席位没有可迁移的组身份。
+      expect(code(() => data.service.membershipTransferOptions(data.slotIdOf('3')))).toBe('transfer_source_not_grouped')
+      // 池结束后一律拒绝。
+      data.control.endActiveRun()
+      expect(code(() => data.service.membershipTransferOptions(data.slotIdOf('1')))).toBe('group_run_inactive')
+      expect(code(() => data.service.transferMembership({
+        groupId: groups[0]!.group.id, fromSlotId: data.slotIdOf('1'), toSlotId: data.slotIdOf('3')
+      }))).toBe('group_run_inactive')
     } finally {
       data.close()
     }

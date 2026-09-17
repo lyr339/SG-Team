@@ -87,9 +87,8 @@ export class SessionHandoffService {
   }
 
   /**
-   * 用已解析好的来源上下文投递。职责迁移会改写原席位绑定（channel_id 换成接手通道、
-   * composer_id 清空），迁移后再 context(原通道) 已定位不到转录——调用方须在迁移前解析，
-   * 迁移成功后再用这里投递。
+   * 用已解析好的来源上下文投递。成员身份迁移（transferMembershipWithContext）在迁移前解析、
+   * 迁移成功后才投递：迁移不改写绑定，但失败时不能留下投递副作用，解析失败也不拦迁移。
    */
   deliverFrom(source: SessionHandoffContext, target: SessionHandoffTarget, note?: string): SessionHandoffResult {
     if (!source.composerId || !source.transcript) {

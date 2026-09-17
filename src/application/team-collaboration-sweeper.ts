@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import type { TeamCollaborationRepository } from './team-collaboration-repository'
-import { isSessionPoolRun, type TeamControlSnapshot } from '../domain/team-control'
+import { hasConfirmedRuntimeStop } from '../domain/channel-message'
+import { isSessionPoolRun, type TeamControlSnapshot, type TeamGroupView, type TeamMemberView } from '../domain/team-control'
 import {
   DEFAULT_UNANSWERED_TTL_MS,
   UNANSWERED_ALERT_DEBOUNCE_MS,
@@ -15,10 +16,10 @@ export interface TeamCollaborationSweeperOptions {
 }
 
 /**
- * 协作域挂死清扫器：对照 task-pool 的租约清扫模式，补齐消息与主控心跳两类
+ * 协作域挂死清扫器：对照 task-pool 的租约清扫模式，补齐消息、主控心跳与成员离线三类
  * 挂死形态。原则与 P0 未待命修复一致——只提醒、不越权改消息状态。
  *
- * 主控提醒只接受 TeamControlSnapshot 的正面终止证据；被动心跳静默、
+ * 主控提醒与成员 attention 都只接受 TeamControlSnapshot 的正面终止证据；被动心跳静默、
  * online=false 与 ping no-pong 都只属于 suspected，不会诱导其他 Agent 接管。
  */
 export class TeamCollaborationSweeper {
@@ -27,6 +28,8 @@ export class TeamCollaborationSweeper {
   private readonly unansweredAlertedAt = new Map<string, number>()
   /** 作用域（run 或组）→ 主控终止周期键；已广播过的周期不重复，明确恢复后键变更自动复位。 */
   private readonly leadAlertedCycle = new Map<string, string>()
+  /** 组内成员 slotId → 已通知 lead 的离线周期键；成员恢复后键变更自动复位，下次离线再提醒。 */
+  private readonly memberAttentionCycle = new Map<string, string>()
 
   constructor(
     private readonly collaboration: TeamCollaborationRepository,
@@ -58,21 +61,26 @@ export class TeamCollaborationSweeper {
     const run = control.activeRun
     if (!run || !['launching', 'running', 'attention'].includes(run.status)) {
       this.leadAlertedCycle.clear()
+      this.memberAttentionCycle.clear()
       return 0
     }
     const runId = run.id
     // 作用域：legacy 团队 run 只有一个 run 级作用域；会话池按活动协作组逐组清扫（任务书 §5.5）。
-    const scopes: Array<string | undefined> = isSessionPoolRun(run)
-      ? control.groups.filter((view) => view.group.status === 'active').map((view) => view.group.id)
-      : [undefined]
+    const pool = isSessionPoolRun(run)
+    const activeGroups = pool ? control.groups.filter((view) => view.group.status === 'active') : []
+    const scopes: Array<string | undefined> = pool ? activeGroups.map((view) => view.group.id) : [undefined]
     for (const key of [...this.leadAlertedCycle.keys()]) {
       if (!scopes.some((scope) => (scope ?? 'run') === key)) this.leadAlertedCycle.delete(key)
     }
     return this.sweepUnanswered(control, runId, now)
       + scopes.reduce((sent, groupId) => sent + this.sweepLeadHeartbeat(control, runId, groupId, now), 0)
+      + this.sweepMemberAttention(activeGroups, runId)
   }
 
-  /** 超龄未获回应的 directive/question：向原发送者回执超时提醒，并通知该消息所属组的有效主控（幂等）。 */
+  /**
+   * 超龄未获回应的 directive/question：向原发送者回执超时提醒（幂等）。
+   * 不再抄送有效主控「请介入协调」（阶段 2 · 2A）：催办与改派是编排器的事，lead 只收 done / failed / attention。
+   */
   private sweepUnanswered(control: TeamControlSnapshot, runId: string, now: number): number {
     const snapshot = this.collaboration.loadRun(runId)
     const existingClientIds = new Set(
@@ -84,50 +92,85 @@ export class TeamCollaborationSweeper {
     for (const item of stale) {
       const lastAlerted = this.unansweredAlertedAt.get(item.id)
       if (lastAlerted !== undefined && now - lastAlerted < UNANSWERED_ALERT_DEBOUNCE_MS) continue
-      const leadSlotId = groupScopedLead(control, snapshot.messages[item.id]?.groupId)?.slot.id
+      this.unansweredAlertedAt.set(item.id, now)
+      // 发送者是 operator（控制台）时没有回执对象——operator→operator 自回环会被仓储拒绝，
+      // 且控制台 UI 已有回执阶段展示。
+      if (item.sender.type !== 'agent') continue
       const minutes = Math.round(item.ageMs / 60_000)
       const debounceBucket = Math.floor(now / UNANSWERED_ALERT_DEBOUNCE_MS)
       // 不用 replyToMessageId：仓储要求回复双方与原消息严格对应，而提醒是系统
       // 身份发出的独立通告；正文里引用原消息 id 保持可追溯。
-      // 发送者是 operator（控制台）时跳过回执——operator→operator 自回环会被仓储拒绝，
-      // 且控制台 UI 已有回执阶段展示；此类消息只通知主控。
-      if (item.sender.type === 'agent') {
-        const senderKey = `sweeper:unanswered:${item.id}:${debounceBucket}`
-        // 持久幂等：内存防抖在进程重启后失效，以快照 clientMessageId 查重兜底。
-        if (!existingClientIds.has(senderKey)) {
-          this.collaboration.createMessage({
-            runId,
-            sender: { type: 'operator' },
-            recipient: item.sender,
-            kind: 'notice',
-            content: `【清扫提醒】你发出的${item.kind === 'directive' ? '指令' : '问题'}（${item.id}）已 ${minutes} 分钟未获回应：` +
-              `「${item.contentPreview}」。若接收方已掉线，请转交代理主控或改派；若已无需处理，请回执说明。`,
-            clientMessageId: senderKey,
-            threadId: item.threadId
-          })
-          existingClientIds.add(senderKey)
-          sent += 1
-        }
+      const senderKey = `sweeper:unanswered:${item.id}:${debounceBucket}`
+      // 持久幂等：内存防抖在进程重启后失效，以快照 clientMessageId 查重兜底。
+      if (existingClientIds.has(senderKey)) continue
+      this.collaboration.createMessage({
+        runId,
+        sender: { type: 'operator' },
+        recipient: item.sender,
+        kind: 'notice',
+        content: `【清扫提醒】你发出的${item.kind === 'directive' ? '指令' : '问题'}（${item.id}）已 ${minutes} 分钟未获回应：` +
+          `「${item.contentPreview}」。若接收方已掉线，请转交代理主控或改派；若已无需处理，请回执说明。`,
+        clientMessageId: senderKey,
+        threadId: item.threadId
+      })
+      existingClientIds.add(senderKey)
+      sent += 1
+    }
+    return sent
+  }
+
+  /**
+   * 组内成员确认离线（Cursor 明确终止）→ 向该组有效 lead 发一条 attention notice（阶段 2 · 2A 三类 lead 通知之一）。
+   * 与 `TeamGroupView.attention` 同口径（`hasConfirmedRuntimeStop`）；每个离线周期只提醒一次，成员恢复后自动复位。
+   * lead 自己离线走 `sweepLeadHeartbeat`（提醒的是其他成员），这里跳过。
+   */
+  private sweepMemberAttention(groups: TeamGroupView[], runId: string): number {
+    interface Candidate { view: TeamGroupView; member: TeamMemberView; leadSlotId: string; cycleKey: string }
+    const offlineMembers = new Set<string>()
+    const candidates: Candidate[] = []
+    for (const view of groups) {
+      const leadSlotId = view.effectiveLeadSlotId
+      for (const member of view.members) {
+        const runtime = member.runtime
+        if (!runtime || runtime.online || !hasConfirmedRuntimeStop(runtime)) continue
+        offlineMembers.add(member.slot.id)
+        if (!leadSlotId || member.slot.id === leadSlotId) continue
+        const cycleKey = `${runtime.connectionPhase ?? ''}:${runtime.lastSeenAt ?? 0}:${runtime.lastAgentActivityAt ?? 0}`
+        if (this.memberAttentionCycle.get(member.slot.id) === cycleKey) continue
+        candidates.push({ view, member, leadSlotId, cycleKey })
       }
-      // 同步通知有效主控（发送者本人即主控时不重复）；只提醒，不改动原消息状态。
-      if (leadSlotId && !(item.sender.type === 'agent' && item.sender.slotId === leadSlotId)) {
-        const leadKey = `sweeper:unanswered:${item.id}:lead:${debounceBucket}`
-        if (!existingClientIds.has(leadKey)) {
-          this.collaboration.createMessage({
-            runId,
-            sender: { type: 'operator' },
-            recipient: { type: 'agent', slotId: leadSlotId },
-            kind: 'notice',
-            content: `【清扫提醒】成员发出的${item.kind === 'directive' ? '指令' : '问题'}（${item.id}）已 ${minutes} 分钟未获回应：` +
-              `「${item.contentPreview}」。请主控介入协调（催促/改派/确认接收方活性）；本提醒不改动原消息状态。`,
-            clientMessageId: leadKey,
-            threadId: item.threadId
-          })
-          existingClientIds.add(leadKey)
-          sent += 1
-        }
-      }
-      this.unansweredAlertedAt.set(item.id, now)
+    }
+    // 成员恢复（不再离线）→ 忘掉它的周期键，下次再离线时重新提醒。
+    for (const slotId of [...this.memberAttentionCycle.keys()]) {
+      if (!offlineMembers.has(slotId)) this.memberAttentionCycle.delete(slotId)
+    }
+    if (!candidates.length) return 0
+    // 持久幂等：进程重启后内存周期键失效，以快照 clientMessageId 查重兜底（与其余两类清扫一致）。
+    const snapshot = this.collaboration.loadRun(runId)
+    const existingClientIds = new Set(
+      snapshot.messageOrder.map((id) => snapshot.messages[id]?.clientMessageId).filter(Boolean)
+    )
+    let sent = 0
+    for (const { view, member, leadSlotId, cycleKey } of candidates) {
+      this.memberAttentionCycle.set(member.slot.id, cycleKey)
+      const cycleHash = createHash('sha1').update(`${member.slot.id}:${cycleKey}`).digest('hex').slice(0, 12)
+      const alertKey = `sweeper:member-attention:${cycleHash}`
+      if (existingClientIds.has(alertKey)) continue
+      const runtime = member.runtime!
+      const channelId = member.binding?.channelId ?? member.slot.channelId ?? '?'
+      this.collaboration.createMessage({
+        runId,
+        sender: { type: 'operator' },
+        recipient: { type: 'agent', slotId: leadSlotId },
+        kind: 'notice',
+        subject: `成员疑似离线：${member.role.name}`,
+        content: `【成员离线提醒】协作组「${view.group.name}」的成员「${member.role.name} · CH-${channelId}」的 Cursor 会话已明确终止` +
+          `（${runtime.healthEvidence[0] ?? runtime.connectionPhase ?? '无进一步证据'}）。` +
+          '其持有的任务会在租约到期后回到队列并自动重派；是否移出该成员或交接其上下文由用户在拾光里决定，你只需在向用户汇报时提及。',
+        clientMessageId: alertKey
+      })
+      existingClientIds.add(alertKey)
+      sent += 1
     }
     return sent
   }

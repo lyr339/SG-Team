@@ -35,13 +35,14 @@ export interface CursorUsageEvent {
 }
 
 /**
- * 会话级累积用量（按 composerId 本地持久化，跨 TeamRun 保留）。
- * runId 标记归属 run：会话卡徽章只认当前 run（usageBelongsToRun），统计页跨 run 累计。
+ * 会话级累积用量：一个 Composer 一本账（会话生命周期 = Composer 生命周期，阶段 2 · 2E），
+ * 按 composerId 本地持久化，跨会话池保留；账本的开与关跟着「席位 ↔ Composer 绑定」走（见 CursorUsageTracker）。
+ * slotId 标记归属席位：统计页据此把重建前的旧 Composer 仍归到席位，组 / 池求和 = 成员席位之和。
  */
 export interface CursorSessionUsage {
   composerId: string
-  /** 归属 TeamRun；迁移前的旧账与无 run 上下文的账没有此字段。 */
-  runId?: string
+  /** 归属席位（AgentSlot id）：入账时该 Composer 所绑的席位；旧账与无绑定上下文的账没有此字段。 */
+  slotId?: string
   /** V3 为原生 generation 数，不是工具调用数或模型请求数。 */
   turns: number
   inputTokens: number
@@ -62,23 +63,15 @@ export interface CursorSessionUsage {
   ledger?: CursorUsageLedger
 }
 
-/** composerId → 累积用量（含已冻结归档的历史 run）。 */
+/** composerId → 累积用量（在绑 Composer 的开放账本 + 出绑后封口的历史账）。 */
 export type CursorUsageSnapshot = Record<string, CursorSessionUsage>
 
 /**
- * 历史 run 账本的保留窗口：统计页最长范围「30 天」自本地午夜起算（≤ 30×24h），再留 1 天余量；
- * 当前 run 的账不受此限。窗口外的旧账在 run 切换 / 启动加载时裁掉，文件与 IPC 推送体积有界。
+ * 不在绑 Composer 账本的保留窗口：统计页最长范围「30 天」自本地午夜起算（≤ 30×24h），再留 1 天余量；
+ * 仍绑在活动 run 席位上的 Composer 不受此限。会话池长生命周期（阶段 2 · 2E）：席位重建 / 自动轮换
+ * 留下的旧 Composer 与被替换的池一样按此窗口裁掉（不看归属 run），文件与 IPC 推送体积有界。
  */
 export const USAGE_HISTORY_RETENTION_MS = 31 * 86_400_000
-
-/**
- * 会话卡徽章是否应呈现这笔账：只认当前 run（新 run 的席位卡不能顶着旧 run 的数字——
- * 通道最新转录定位到的 composer 在新会话建立前仍指向旧 composer）。
- * 无 runId 的账（迁移前落盘 / 无 run 上下文）不限定。
- */
-export function usageBelongsToRun(usage: Pick<CursorSessionUsage, 'runId'>, runId: string | undefined): boolean {
-  return usage.runId === undefined || usage.runId === runId
-}
 
 /**
  * 百万 token 单价（USD）。
@@ -316,11 +309,11 @@ export function upgradeUsageEstimate(usage: CursorSessionUsage): CursorSessionUs
   }))
   // 旧账里无写入桶厂商的估算写入份额也在这里归一（projectUsage 内完成），首次加载后即幂等。
   if (Object.values(turns).some(hasFabricatedCacheWrite)) changed = true
-  return changed ? projectUsage(usage.composerId, { ...usage.ledger, turns }, usage.runId) : usage
+  return changed ? projectUsage(usage.composerId, { ...usage.ledger, turns }, usage.slotId) : usage
 }
 
-/** 账本 → UI 字段投影；runId 只是随行标签（归属由 tracker 决定），投影不改写。 */
-export function projectUsage(composerId: string, ledger: CursorUsageLedger, runId?: string): CursorSessionUsage {
+/** 账本 → UI 字段投影；slotId 只是随行标签（归属由 tracker 按绑定决定），投影不改写。 */
+export function projectUsage(composerId: string, ledger: CursorUsageLedger, slotId?: string): CursorSessionUsage {
   // 兼容已有账本（含冻结/混合模型）：无写入桶厂商的估算回合写入归零并回普通输入；
   // 其写价本就等于输入价，费用不变。精确回合不动。
   if (Object.values(ledger.turns).some(hasFabricatedCacheWrite)) {
@@ -334,7 +327,7 @@ export function projectUsage(composerId: string, ledger: CursorUsageLedger, runI
     turns.reduce((total, turn) => total + turn[key], 0)
   const models = [...new Set(turns.map((turn) => turn.price.label))]
   return {
-    composerId, ...(runId !== undefined ? { runId } : {}), turns: turns.length,
+    composerId, ...(slotId !== undefined ? { slotId } : {}), turns: turns.length,
     inputTokens: sum('inputTokens'), outputTokens: sum('outputTokens'),
     cacheReadTokens: sum('cacheReadTokens'), cacheWriteTokens: sum('cacheWriteTokens'),
     estimatedCostUsd: sum('estimatedCostUsd'), pricedModel: models.length === 1 ? models[0]! : 'Mixed models',
@@ -347,7 +340,7 @@ export function projectUsage(composerId: string, ledger: CursorUsageLedger, runI
 export function reduceUsage(current: CursorSessionUsage | undefined, observation: UsageObservation): CursorSessionUsage | undefined {
   const event = observation.value
   if (!event.generationId || !Number.isFinite(event.occurredAt) || event.occurredAt < 0) return current
-  // V2 无 generation 身份，保留展示至下一 run，不与 V3 精确账混加。
+  // V2 无 generation 身份，不与 V3 精确账混加（tracker 在该 Composer 再次入账时整行换成 V3 账本）。
   if (current && !current.ledger) return current
   const ledger = current?.ledger ?? { turns: {} }
   const previous = Object.hasOwn(ledger.turns, event.generationId) ? ledger.turns[event.generationId] : undefined
@@ -378,7 +371,7 @@ export function reduceUsage(current: CursorSessionUsage | undefined, observation
     next = { ...base, ...referenceUsage(base.inputTokens + (changed ? sample.used : 0), profile, price),
       lastUsed: sample.used, at: sample.occurredAt, ...(sample.stopped ? { stopped: true } : {}) }
   }
-  return projectUsage(event.composerId, { ...ledger, turns: { ...ledger.turns, [event.generationId]: next } }, current?.runId)
+  return projectUsage(event.composerId, { ...ledger, turns: { ...ledger.turns, [event.generationId]: next } }, current?.slotId)
 }
 
 /** 输入已包含缓存读写，总量不重复加缓存。 */

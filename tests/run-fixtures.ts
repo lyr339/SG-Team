@@ -1,4 +1,4 @@
-import type { TeamControlSnapshot, TeamMemberRuntime, TeamMemberView, TeamRunStatus } from '../src/domain/team-control'
+import { defaultGroupPlanPolicy, type TeamControlSnapshot, type TeamMemberRuntime, type TeamMemberView, type TeamRunStatus } from '../src/domain/team-control'
 import { teamControlSnapshot } from '../src/renderer/src/preview/mock-data'
 
 /** 席位运行形态：与服务端守卫口径一致（在岗 / 执行租约 / 离线 / 无证据）。 */
@@ -55,7 +55,7 @@ export function pooledTeam(
     })
     const leadSlotId = group.leadChannelId ? members.find((member) => member.slot.channelId === group.leadChannelId)?.slot.id : undefined
     return {
-      group: { id: groupId, runId: snapshot.activeRun!.id, name: group.name, goal: group.goal ?? '', status: 'active', leadSlotId, createdAt: now - 120_000, updatedAt: now - 60_000 },
+      group: { id: groupId, runId: snapshot.activeRun!.id, name: group.name, goal: group.goal ?? '', status: 'active', leadSlotId, planPolicy: defaultGroupPlanPolicy(leadSlotId), createdAt: now - 120_000, updatedAt: now - 60_000 },
       members,
       effectiveLeadSlotId: leadSlotId,
       attention: group.attention ?? false
@@ -65,7 +65,7 @@ export function pooledTeam(
     const groupId = `team-group:wedge-demo:dissolved`
     groupIds.push(groupId)
     snapshot.groups.push({
-      group: { id: groupId, runId: snapshot.activeRun!.id, name: options.dissolved.name, goal: options.dissolved.goal ?? '', status: 'dissolved', createdAt: now - 300_000, updatedAt: now - 30_000, dissolvedAt: now - 30_000 },
+      group: { id: groupId, runId: snapshot.activeRun!.id, name: options.dissolved.name, goal: options.dissolved.goal ?? '', status: 'dissolved', planPolicy: 'lead_only', createdAt: now - 300_000, updatedAt: now - 30_000, dissolvedAt: now - 30_000 },
       members: [],
       effectiveLeadSlotId: undefined,
       attention: false

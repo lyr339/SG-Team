@@ -1,14 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { QuestionActions } from './QuestionCard'
 import type {
-  ChooseTeamWorkspaceResult,
   CreateIndependentSessionsInput,
-  DesktopSnapshot,
-  TeamSetupDraft
+  DesktopSnapshot
 } from '../../shared/desktop-api'
 import { emptyTaskPoolSnapshot, newestTaskPoolSnapshot } from '../../domain/task-pool'
-import { usageBelongsToRun, type CursorUsageSnapshot } from '../../domain/cursor-usage'
-import { emptyTeamControlSnapshot, type TeamRunStatus, type WorkspaceRunMode } from '../../domain/team-control'
+import type { CursorUsageSnapshot } from '../../domain/cursor-usage'
+import { emptyTeamControlSnapshot, type TeamRunStatus } from '../../domain/team-control'
 import { emptyTeamCollaborationSnapshot } from '../../domain/team-collaboration'
 import { DesktopShell, type AppModule } from './DesktopShell'
 import { SessionOverview } from './SessionOverview'
@@ -18,11 +16,10 @@ import { WorkspaceInspector } from './WorkspaceInspector'
 import { RunPage } from './run/RunPage'
 import { SettingsPage } from './settings/SettingsPage'
 import type { SettingsPageProps } from './settings/settings-view'
-import { TeamSetupPage } from './team/TeamSetupPage'
 import { ManualHandoffDialog } from './team/ManualHandoffDialog'
 import { SessionHandoffDialog } from './SessionHandoffDialog'
 import { resolveHandoffEntry } from './handoff-entry'
-import type { ManualTeamHandoffOutcome, TeamHandoffOptions } from '../../domain/team-handoff'
+import type { MembershipTransferOptions, MembershipTransferOutcome } from '../../domain/team-handoff'
 import type { CursorAccountMetadata, CursorRuntimeAccountMatch } from '../../domain/cursor-account'
 import type { CursorMembershipStatus } from '../../domain/cursor-membership'
 import type { CursorUpdatePreferences } from '../../domain/cursor-update'
@@ -127,7 +124,6 @@ export function App(): React.JSX.Element {
   const [cursorUsage, setCursorUsage] = useState<CursorUsageSnapshot>({})
   const [teamControl, setTeamControl] = useState(emptyTeamControlSnapshot())
   const [collaboration, setCollaboration] = useState(emptyTeamCollaborationSnapshot())
-  const [teamSetup, setTeamSetup] = useState<TeamSetupDraft>()
   // URL hash 深链接优先；日常启动默认直达会话工作区。`lobby` / `config` 是运行页的旧别名。
   const [activeModule, setActiveModule] = useState<AppModule>(() => {
     const [module] = window.location.hash.slice(1).split(':')
@@ -138,11 +134,9 @@ export function App(): React.JSX.Element {
     const [module, channel] = window.location.hash.slice(1).split(':')
     return module === 'sessions' && channel ? channel : readLastSessionChannel()
   })
-  /** 运行页无活跃运行时预选的模式（会话总览的「创建独立会话」直达独立配置）。 */
-  const [runStartMode, setRunStartMode] = useState<WorkspaceRunMode>('team')
   const [sessionListRequested, setSessionListRequested] = useState(false)
   const [teamNotice, setTeamNotice] = useState('')
-  const [handoffOptions, setHandoffOptions] = useState<TeamHandoffOptions>()
+  const [handoffOptions, setHandoffOptions] = useState<MembershipTransferOptions>()
   const [handoffBusy, setHandoffBusy] = useState(false)
   const [handoffError, setHandoffError] = useState('')
   const [cursorAccounts, setCursorAccounts] = useState<CursorAccountMetadata[]>([])
@@ -819,14 +813,12 @@ export function App(): React.JSX.Element {
     return {
       ...snapshot,
       sessions: snapshot.sessions.map((session) => {
-        // 用量关联回退：binding.composerId 缺失（绑定滞后/被 run 收尾清空）时，
-        // 以通道最新转录定位的 composer 查表——遥测层已全局水合该映射。
-        // 快照含历史 run 的账（统计页用）；徽章只认当前 run，否则新会话建立前会顶着旧 run 的数字。
-        const usageComposerId = session.composerId ?? session.telemetryChannelComposerId
-        const usage = usageComposerId ? cursorUsage[usageComposerId] : undefined
-        const withUsage = usage && usage.turns > 0 && usageBelongsToRun(usage, teamControl.activeRun?.id)
-          ? { ...session, usage }
-          : session
+        // 徽章只认席位当前绑定的 Composer 的账（会话生命周期 = Composer 生命周期，阶段 2 · 2E）：
+        // 只有在绑的 Composer 会入账，席位重建 / 换池后新会话绑定前不显示数字——不回退到通道最新
+        // 转录定位的 composer，那在新会话建立前仍指向旧会话，只会顶着旧账。
+        // 快照含出绑后封口的历史账（统计页用），结束后的账仍在绑，徽章保持最后一笔数值。
+        const usage = session.composerId ? cursorUsage[session.composerId] : undefined
+        const withUsage = usage && usage.turns > 0 ? { ...session, usage } : session
         const member = memberByChannel.get(session.channelId)
         if (!member) return withUsage
         const task = taskPool.taskOrder
@@ -840,22 +832,40 @@ export function App(): React.JSX.Element {
           roleTemplateKey: member.role.templateKey,
           isEffectiveLead,
           avatarId: member.slot.avatarId,
-          status: member.readiness === 'launching' ? 'reviving' as const : withUsage.status,
           currentTask: task?.title ?? ''
         }
       })
     }
-  }, [cursorUsage, snapshot, taskPool, teamControl.activeRun?.id, teamControl.activeRun?.actingLeadSlotId, teamControl.members])
-  // 统计页席位来源：引用随 sessions 走——推流高频渲染下不触发统计视图模型重算。
-  const statsSeats = useMemo(() => visibleSnapshot.sessions.map((session) => ({
-    channelId: session.channelId,
-    roleName: session.roleName,
-    displayName: session.displayName,
-    avatarId: session.avatarId,
-    online: session.online,
-    composerId: session.composerId,
-    telemetryChannelComposerId: session.telemetryChannelComposerId
-  })), [visibleSnapshot.sessions])
+  }, [cursorUsage, snapshot, taskPool, teamControl.activeRun?.actingLeadSlotId, teamControl.members])
+  // 统计页席位来源：引用随 sessions 走（sessions 本身已随 members 重算）——推流高频渲染下不触发统计视图模型重算。
+  // slotId 让重建前旧 Composer 的账（账上带入账时的席位）仍归到这个席位。
+  const statsSeats = useMemo(() => {
+    const slotByChannel = new Map(teamControl.members.flatMap((member) => {
+      const channelId = member.binding?.channelId ?? member.slot.channelId
+      return channelId ? [[channelId, member.slot.id] as const] : []
+    }))
+    return visibleSnapshot.sessions.map((session) => ({
+      channelId: session.channelId,
+      roleName: session.roleName,
+      displayName: session.displayName,
+      avatarId: session.avatarId,
+      online: session.online,
+      composerId: session.composerId,
+      telemetryChannelComposerId: session.telemetryChannelComposerId,
+      slotId: slotByChannel.get(session.channelId)
+    }))
+  }, [visibleSnapshot.sessions, teamControl.members])
+  // 统计页组来源：活动 run 的 active 组 → 成员通道号；组求和 = 成员席位之和（阶段 2 · 2E）。
+  const statsGroups = useMemo(() => teamControl.groups
+    .filter((view) => view.group.status === 'active')
+    .map((view) => ({
+      key: view.group.id,
+      label: view.group.name,
+      channelIds: view.members.flatMap((member) => {
+        const channelId = member.binding?.channelId ?? member.slot.channelId
+        return channelId ? [channelId] : []
+      })
+    })), [teamControl.groups])
   const selectedSession = visibleSnapshot.sessions.find((session) => session.channelId === selectedChannelId)
   const selectedMember = teamControl.members.find((member) => (
     (member.binding?.channelId ?? member.slot.channelId) === selectedSession?.channelId
@@ -905,7 +915,7 @@ export function App(): React.JSX.Element {
     return reused
   }, [activeWorkspace?.path, workspaceEntries, workspaceLiveProcess, workspaceReviewSummary, workspaceWorking])
   const handleReviewTurnFiles = useCallback((request: ReviewFocusRequest): void => requestReviewFocus(request), [])
-  // 「交接」三态：离线团队席位 → 职责迁移（可附带上下文）；其余在运行中的席位（独立或团队、
+  // 「交接」三态：离线入组席位 → 成员身份迁移（可附带上下文）；其余在运行中的席位（独立或入组、
   // 在线或离线）→ 上下文交接；运行已结束 / 非本轮席位 → 禁用并说明原因。
   const handoffEntry = resolveHandoffEntry({ member: selectedMember, run: teamControl.activeRun })
   const [contextHandoffChannel, setContextHandoffChannel] = useState<string>()
@@ -947,7 +957,7 @@ export function App(): React.JSX.Element {
     setHandoffBusy(true)
     setHandoffError('')
     try {
-      setHandoffOptions(await window.sgDesktop.getManualHandoffOptions(slotId))
+      setHandoffOptions(await window.sgDesktop.getMembershipTransferOptions(slotId))
     } catch (reason) {
       setHandoffError(reason instanceof Error ? reason.message : String(reason))
     } finally {
@@ -955,18 +965,19 @@ export function App(): React.JSX.Element {
     }
   }, [])
 
-  // 迁移成功后弹窗停在结果页（职责与上下文文档各自的结果），由用户点「完成」关闭；
-  // 会话区先切到接手通道，关闭后正好落在接手者的会话上。
+  // 迁移成功后弹窗停在结果页（成员身份与上下文文档各自的结果），由用户点「完成」关闭；
+  // 会话区先切到目标席位的通道，关闭后正好落在接手者的会话上。
   const confirmManualHandoff = useCallback(async (
-    input: { agentSessionId: string; includeContext: boolean }
-  ): Promise<ManualTeamHandoffOutcome | undefined> => {
+    input: { toSlotId: string; includeContext: boolean }
+  ): Promise<MembershipTransferOutcome | undefined> => {
     if (!handoffOptions) return undefined
     setHandoffBusy(true)
     setHandoffError('')
     try {
-      const { team, ...outcome } = await window.sgDesktop.manualHandoff({
-        sourceSlotId: handoffOptions.sourceSlotId,
-        replacementAgentSessionId: input.agentSessionId,
+      const { team, ...outcome } = await window.sgDesktop.transferMembership({
+        groupId: handoffOptions.groupId,
+        fromSlotId: handoffOptions.sourceSlotId,
+        toSlotId: input.toSlotId,
         includeContext: input.includeContext
       })
       acceptTeamControl(team)
@@ -978,9 +989,7 @@ export function App(): React.JSX.Element {
       acceptTaskPool(tasks)
       acceptCollaboration(messages)
       acceptSnapshot(desktop)
-      const replacementChannel = team.members
-        .find((member) => member.slot.id === handoffOptions.sourceSlotId)?.binding?.channelId
-      if (replacementChannel) setSelectedChannelId(replacementChannel)
+      if (outcome.transfer.toChannelId) setSelectedChannelId(outcome.transfer.toChannelId)
       return outcome
     } catch (reason) {
       setHandoffError(reason instanceof Error ? reason.message : String(reason))
@@ -989,37 +998,6 @@ export function App(): React.JSX.Element {
       setHandoffBusy(false)
     }
   }, [acceptCollaboration, acceptSnapshot, acceptTaskPool, acceptTeamControl, handoffOptions])
-
-  const applyWorkspaceSelection = useCallback(async (
-    result: ChooseTeamWorkspaceResult,
-    detected: boolean
-  ): Promise<void> => {
-    if ('cancelled' in result) return
-    setActiveModule('run')
-    setSelectedChannelId(undefined)
-    if (result.kind === 'setup') {
-      setTeamSetup(result.draft)
-      setTeamNotice(detected ? `已自动识别 Cursor 当前工程：${result.draft.workspaceName}` : '')
-      return
-    }
-    setTeamSetup(undefined)
-    acceptTeamControl(result.snapshot)
-    const [tasks, messages, desktop] = await Promise.all([
-      window.sgDesktop.getTaskPoolSnapshot(),
-      window.sgDesktop.getTeamCollaborationSnapshot(),
-      window.sgDesktop.getSnapshot()
-    ])
-    acceptTaskPool(tasks)
-    acceptCollaboration(messages)
-    acceptSnapshot(desktop)
-    const workspace = result.snapshot.workspaces.find((item) => item.id === result.snapshot.activeWorkspaceId)
-    setTeamNotice(workspace ? `${detected ? '已切换到 Cursor 当前工程' : '已切换工程'}：${workspace.name}` : '')
-  }, [acceptCollaboration, acceptSnapshot, acceptTaskPool, acceptTeamControl])
-
-  const chooseWorkspace = useCallback(async (): Promise<void> => {
-    await applyWorkspaceSelection(await window.sgDesktop.chooseTeamWorkspace(), false)
-  }, [applyWorkspaceSelection])
-
 
   const accountPanel: SettingsPageProps = {
     accounts: cursorAccounts,
@@ -1331,9 +1309,11 @@ export function App(): React.JSX.Element {
       }
     },
     onRevealCursorStorage: (id) => { void window.sgDesktop.revealCursorStorage(id).catch(() => {}) },
-    // 统计页（纯只读投影）：全部会话用量 + 当前席位来源，历史 Composer 的账由视图模型归入「历史会话」。
+    // 统计页（纯只读投影）：全部会话用量 + 当前席位 / 组来源；重建前旧 Composer 的账按席位标签归席位，
+    // 归不到席位的由视图模型归入「历史会话」。
     usageSnapshot: cursorUsage,
     statsSeats,
+    statsGroups,
     onSetModelDataPolicyAutoAcknowledge: async (enabled) => {
       let message = '已关闭自动确认；官网已有确认保持不变'
       if (enabled) {
@@ -1403,64 +1383,11 @@ export function App(): React.JSX.Element {
     >
       {activeModule === 'account' ? (
         <SettingsPage {...accountPanel} />
-      ) : activeModule === 'run' && teamSetup ? (
-        <TeamSetupPage
-          key={teamSetup.draftId}
-          draft={teamSetup}
-          onCancel={() => {
-            setTeamSetup(undefined)
-            setTeamNotice('')
-          }}
-          onCreate={async (input) => {
-            const result = await window.sgDesktop.createTeam(input)
-            acceptTeamControl(result)
-            mcpReconcileRunRef.current = reconcileKeyOf(result)
-            try {
-              await window.sgDesktop.installTaskMcp()
-              setTeamNotice('团队与 SG Team MCP 已就绪。请在 Cursor 手动启动 Agent 会话，拾光会自动接管。')
-            } catch (reason) {
-              setTeamNotice(`团队已创建；MCP 自动接入失败：${reason instanceof Error ? reason.message : String(reason)}`)
-            }
-            const [desktop, latestTeam, tasks, messages] = await Promise.all([
-              window.sgDesktop.getSnapshot(),
-              window.sgDesktop.getTeamControlSnapshot(),
-              window.sgDesktop.getTaskPoolSnapshot(),
-              window.sgDesktop.getTeamCollaborationSnapshot()
-            ])
-            acceptSnapshot(desktop)
-            acceptTeamControl(latestTeam)
-            acceptTaskPool(tasks)
-            acceptCollaboration(messages)
-            setTeamSetup(undefined)
-          }}
-        />
       ) : activeModule === 'run' ? (
         <RunPage
           team={teamControl}
           detectedWorkspace={cursorWorkspace?.workspace}
           externalNotice={teamNotice}
-          startMode={runStartMode}
-          onStartModeChange={setRunStartMode}
-          onChooseWorkspace={chooseWorkspace}
-          onReconfigure={async () => {
-            setTeamSetup(await window.sgDesktop.prepareActiveTeamSetup())
-          }}
-          onUpdateGoal={async (goal) => {
-            const result = await window.sgDesktop.updateTeamGoal(goal)
-            acceptTeamControl(result)
-            return result
-          }}
-          onInstallMcp={async () => {
-            await window.sgDesktop.installTaskMcp()
-            const snapshot = await window.sgDesktop.getTeamControlSnapshot()
-            acceptTeamControl(snapshot)
-            return snapshot
-          }}
-          onLaunch={async () => {
-            const result = await window.sgDesktop.launchTeam()
-            acceptTeamControl(result)
-            return result
-          }}
           agentLaunchPlan={agentLaunchPlan}
           cursorModels={visibleSnapshot.cursorModels ?? []}
           sessionWarmupRun={sessionWarmupRun}
@@ -1499,30 +1426,6 @@ export function App(): React.JSX.Element {
           }}
           onCancelCdpAutoHealCountdown={async () => {
             await window.sgDesktop.cancelCdpAutoHealCountdown()
-          }}
-          onCreateNextRun={async () => {
-            const created = await window.sgDesktop.createNextTeamRun()
-            acceptTeamControl(created)
-            acceptCollaboration(emptyTeamCollaborationSnapshot(created.activeRun?.id))
-            mcpReconcileRunRef.current = reconcileKeyOf(created)
-            let issue: string | undefined
-            try {
-              await window.sgDesktop.installTaskMcp()
-            } catch (reason) {
-              issue = `MCP 自动接入失败：${reason instanceof Error ? reason.message : String(reason)}`
-            }
-            const [snapshot, desktop, messages] = await Promise.all([
-              window.sgDesktop.getTeamControlSnapshot(),
-              window.sgDesktop.getSnapshot(),
-              window.sgDesktop.getTeamCollaborationSnapshot()
-            ])
-            acceptTeamControl(snapshot)
-            acceptSnapshot(desktop)
-            acceptCollaboration(messages)
-            setTeamNotice(issue
-              ? `新一轮已建立；${issue}`
-              : '新一轮已建立；请填写目标，并在 Cursor 手动启动 Agent 会话。')
-            return { snapshot, issue }
           }}
         />
       ) : selectedSession ? (
@@ -1575,10 +1478,7 @@ export function App(): React.JSX.Element {
         <SessionOverview
           snapshot={visibleSnapshot}
           onOpenConfiguration={() => setActiveModule('run')}
-          onCreateIndependentSessions={() => {
-            setRunStartMode('independent')
-            setActiveModule('run')
-          }}
+          onCreateIndependentSessions={() => setActiveModule('run')}
         />
       )}
     </DesktopShell>

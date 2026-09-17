@@ -222,7 +222,7 @@ describe('membership notice protocol (会话池 · 协作组)', () => {
     expect(text).not.toContain('独立席只用 check_messages / record_reply，不调用 team_*')
   })
 
-  it('briefs a grouped seat with the group goal, lead and membership caveat; legacy briefing text is unchanged', () => {
+  it('briefs a grouped seat with the group goal, lead and membership caveat; the run goal never appears', () => {
     const bundle = createConfiguredTeamBundle({
       workspaceId: 'w', workspaceName: 'w', workspacePath: '/w', now: 1,
       members: [
@@ -235,7 +235,7 @@ describe('membership notice protocol (会话池 · 协作组)', () => {
     const builderRole = bundle.roles.find((role) => role.id === builderSlot.roleId)!
     const binding = {
       id: 'b', workspaceId: 'w', runId: bundle.run.id, slotId: builderSlot.id, channelId: '2', agentSessionId: 'w:ch-2:g',
-      generation: 'g', composerBindingKey: 'k', launchStatus: 'acknowledged' as const, launchDetail: '', lastCheckInNote: '',
+      generation: 'g', composerBindingKey: 'k', launchDetail: '', acknowledgedAt: 1, lastCheckInNote: '',
       installedAt: 1, updatedAt: 1
     }
     const grouped = buildTeamRoleBriefing({
@@ -253,9 +253,8 @@ describe('membership notice protocol (会话池 · 协作组)', () => {
     })
     expect(leaderless).toContain('lead：无')
     expect(leaderless).toContain('本组没有 lead')
-    // legacy 团队 run：文本形态不变（团队目标行、无成员关系段）。
-    const legacy = buildTeamRoleBriefing({ run: bundle.run, role: builderRole, slot: builderSlot, binding })
-    expect(legacy).toContain('团队目标：团队目标 X')
-    expect(legacy).not.toContain('成员关系：')
+    // 简报只对组成员存在（阶段 2 · 2B）：目标一律来自组，run 只提供 id 作为稳定坐标。
+    expect(leaderless).not.toContain('团队目标')
+    expect(leaderless).toContain(`TeamRun：${bundle.run.id}`)
   })
 })

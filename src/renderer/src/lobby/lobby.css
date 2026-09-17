@@ -69,29 +69,6 @@
   font-style: normal;
 }
 
-/* ---------- 流程状态节点（运行页流程 / 账号自动化流程共用） ---------- */
-.flow-status-icon {
-  width: 22px;
-  height: 22px;
-  flex: 0 0 auto;
-  display: grid;
-  place-items: center;
-  color: var(--color-text-tertiary);
-  background: var(--color-background-secondary);
-  border: 1px solid var(--color-border-tertiary);
-  border-radius: 50%;
-  box-shadow: 0 0 0 3px var(--color-background-primary);
-}
-
-.flow-status-icon svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.flow-status-icon b { font: 650 10px/1 var(--mono); letter-spacing: -.03em; }
-.flow-status-icon.is-done { color: white; background: var(--color-text-success); border-color: var(--color-border-success); }
-.flow-status-icon.is-current, .flow-status-icon.is-running { color: white; background: var(--color-text-info); border-color: var(--color-border-info); }
-.flow-status-icon.is-ready { color: var(--accent-deep); background: var(--accent-wash); border-color: var(--accent-border); }
-.flow-status-icon.is-failed { color: white; background: var(--color-text-danger); border-color: var(--color-border-danger); }
-.flow-status-icon.is-cancelled, .flow-status-icon.is-off { color: var(--muted); background: var(--surface-soft); border-color: var(--line); }
-.flow-status-icon.is-running svg path, .flow-status-icon.is-current svg path { transform-origin: center; animation: lobby-status-orbit 1.15s linear infinite; }
-
 /* ---------- 会话模型配置弹层 ---------- */
 .cursor-model-dialog__backdrop { position: fixed; inset: 0; z-index: 120; display: grid; place-items: center; padding: 24px; background: rgb(20 20 19 / 0.24); backdrop-filter: blur(2px); }
 .cursor-model-dialog { width: min(520px, calc(100vw - 40px)); max-height: min(680px, calc(100vh - 40px)); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; overflow: hidden; color: var(--text); background: var(--color-background-primary); border: 1px solid var(--color-border-tertiary); border-radius: 16px; box-shadow: var(--shadow-lg); }
@@ -580,9 +557,6 @@
   padding: 2px 6px;
 }
 
-@keyframes lobby-status-orbit { to { transform: rotate(360deg); } }
-@keyframes lobby-flow-signal { to { background-position: -180% 0; } }
-
 @media (max-width: 700px) {
   .lobby-account__list { grid-template-columns: minmax(0, 1fr); }
   .account-browser__modes { grid-template-columns: minmax(0, 1fr); }
@@ -604,6 +578,4 @@
   .lobby-account__list > article > button:first-child {
     transition: none;
   }
-
-  .flow-status-icon svg path { animation: none !important; }
 }

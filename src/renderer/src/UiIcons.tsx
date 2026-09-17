@@ -80,14 +80,6 @@ export function GearIcon(props: IconProps): React.JSX.Element {
   return <Icon {...props}><circle cx="12" cy="12" r="3" {...stroke} /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1Z" {...stroke} /></Icon>
 }
 
-export function TeamIcon(props: IconProps): React.JSX.Element {
-  return <Icon {...props}><circle cx="9" cy="8.5" r="3" {...stroke} /><circle cx="16.5" cy="9.5" r="2.4" {...stroke} /><path d="M3.5 19c.7-3.2 2.9-5 5.5-5s4.8 1.8 5.5 5M15 14.2c2.6.1 4.6 1.6 5.5 4.8" {...stroke} /></Icon>
-}
-
-export function SoloIcon(props: IconProps): React.JSX.Element {
-  return <Icon {...props}><rect x="4" y="4.5" width="16" height="15" rx="2.4" {...stroke} /><path d="M8 9.5h8M8 13h5" {...stroke} /><circle cx="16.5" cy="15.5" r="1.2" fill="currentColor" /></Icon>
-}
-
 export function StopIcon(props: IconProps): React.JSX.Element {
   return <Icon {...props}><rect x="6.5" y="6.5" width="11" height="11" rx="2" {...stroke} /></Icon>
 }

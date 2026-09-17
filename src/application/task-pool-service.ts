@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { transactTaskPool, type TaskPoolRepository } from './task-pool-transaction'
-import { sameTaskGroup, type PlanTaskInput, type TaskPoolSnapshot, type TaskPoolState, type TeamTask } from '../domain/task-pool'
+import { sameTaskGroup, type PlanTaskInput, type TaskPoolAggregate, type TaskPoolSnapshot, type TaskPoolState, type TeamTask } from '../domain/task-pool'
 import type { TeamRunStatus } from '../domain/team-control'
 
 export interface ActiveTaskScope {
@@ -37,9 +37,19 @@ export class TaskPoolService {
 
   constructor(
     private readonly repository: TaskPoolRepository,
-    private readonly runProvider: ActiveRunProvider
+    private readonly runProvider: ActiveRunProvider,
+    /**
+     * 租约持有者是否仍在岗（阶段 2 · 2F，决策 D3=a）：清扫器据此续租而不是回收。
+     * 不注入 = 按到期即回收（旧行为）；主进程在 `main/index.ts` 注入席位 presence 判定。
+     */
+    private readonly holderOnline?: (agentSessionId: string) => boolean
   ) {
     this.lastEmittedRevision = repository.load().revision
+  }
+
+  /** 全部写事务走这里：清扫与其余写入路径共用同一套在岗判定（阶段 2 · 2F）。 */
+  private transact<Result>(operation: (pool: TaskPoolAggregate) => Result): Result {
+    return transactTaskPool(this.repository, operation, { dependencies: { holderOnline: this.holderOnline } })
   }
 
   getSnapshot(): TaskPoolSnapshot {
@@ -89,16 +99,30 @@ export class TaskPoolService {
       dependsOn: dependencyKeys,
       requiredCapabilities
     }
-    const [task] = transactTaskPool(this.repository, (pool) => pool.plan(runId, [plan], groupId))
+    const [task] = this.transact((pool) => pool.plan(runId, [plan], groupId))
     this.emit()
     return task!
+  }
+
+  /**
+   * 操作员为某个协作组一次规划 1–30 条任务（阶段 2 · 2A，决策 D2）：与 `team_task plan` 走同一条聚合路径
+   *（key 唯一、依赖同组、targetSlotId 快照），差别只在没有 Agent 身份——组归属与成员校验由 TeamGroupService 完成。
+   */
+  planTasks(groupId: string, inputs: PlanTaskInput[]): TeamTask[] {
+    const normalizedGroupId = groupId.trim()
+    if (!normalizedGroupId) throw new Error('groupId 不能为空')
+    if (!inputs.length || inputs.length > 30) throw new Error('一次必须规划 1 到 30 条任务')
+    const runId = this.requireMutableRunId()
+    const tasks = this.transact((pool) => pool.plan(runId, inputs, normalizedGroupId))
+    this.emit()
+    return tasks
   }
 
   cancelTask(taskId: string, reason = '用户取消'): TeamTask {
     const normalizedTaskId = taskId.trim()
     if (!normalizedTaskId) throw new Error('taskId 不能为空')
     this.assertTaskInActiveRun(normalizedTaskId)
-    const task = transactTaskPool(this.repository, (pool) => pool.cancel(normalizedTaskId, reason))
+    const task = this.transact((pool) => pool.cancel(normalizedTaskId, reason))
     this.emit()
     return task
   }
@@ -106,7 +130,7 @@ export class TaskPoolService {
   approveTask(taskId: string, reviewer = '用户'): TeamTask {
     const normalizedTaskId = taskId.trim()
     this.assertTaskInActiveRun(normalizedTaskId)
-    const task = transactTaskPool(this.repository, (pool) => pool.approve(normalizedTaskId, reviewer))
+    const task = this.transact((pool) => pool.approve(normalizedTaskId, reviewer))
     this.emit()
     return task
   }
@@ -114,7 +138,7 @@ export class TaskPoolService {
   rejectTask(taskId: string, reason: string, reviewer = '用户'): TeamTask {
     const normalizedTaskId = taskId.trim()
     this.assertTaskInActiveRun(normalizedTaskId)
-    const task = transactTaskPool(this.repository, (pool) => pool.reject(normalizedTaskId, reviewer, reason))
+    const task = this.transact((pool) => pool.reject(normalizedTaskId, reviewer, reason))
     this.emit()
     return task
   }
@@ -139,7 +163,7 @@ export class TaskPoolService {
 
   /** 成员出组：释放其持有的任务租约与验收、清空定向给该席位的任务（任务书 §7 规则 1、3），返回受影响的任务 id。 */
   releaseAgentWork(input: { agentSessionId: string; slotId?: string; reason: string }): string[] {
-    const released = transactTaskPool(this.repository, (pool) => pool.releaseAgentWork(input))
+    const released = this.transact((pool) => pool.releaseAgentWork(input))
     if (released.length) this.emit()
     return released
   }
@@ -152,7 +176,7 @@ export class TaskPoolService {
       return task !== undefined && matches(task) && !terminal.has(task.status)
     })
     if (!taskIds.length) return []
-    const cancelled = transactTaskPool(this.repository, (pool) => taskIds.flatMap((taskId) => {
+    const cancelled = this.transact((pool) => taskIds.flatMap((taskId) => {
       const task = pool.snapshot().tasks[taskId]
       return task && !terminal.has(task.status) ? [pool.cancel(taskId, reason)] : []
     }))
@@ -161,7 +185,7 @@ export class TaskPoolService {
   }
 
   sweepExpiredLeases(): string[] {
-    const reclaimed = transactTaskPool(this.repository, (pool) => pool.reclaimExpired())
+    const reclaimed = this.transact((pool) => pool.reclaimExpired())
     this.pollExternalChanges()
     return reclaimed
   }
@@ -172,7 +196,7 @@ export class TaskPoolService {
     slotId: string
     ttlMs?: number
   }): string[] {
-    const transferred = transactTaskPool(this.repository, (pool) => pool.transferAgentWork(input))
+    const transferred = this.transact((pool) => pool.transferAgentWork(input))
     this.emit()
     return transferred
   }
@@ -183,7 +207,7 @@ export class TaskPoolService {
     targetSlotId: string
     ttlMs?: number
   }): string[] {
-    const recovered = transactTaskPool(this.repository, (pool) => pool.recoverAgentWork(input))
+    const recovered = this.transact((pool) => pool.recoverAgentWork(input))
     if (recovered.length) this.emit()
     return recovered
   }
@@ -246,9 +270,7 @@ export class TaskPoolService {
 
   private requireMutableRunId(): string {
     const runId = this.requireActiveRunId()
-    const status = this.runProvider.getActiveRunStatus?.()
-    if (status === 'completed') throw new Error('本轮团队已经结束，请开始新一轮')
-    if (status === 'paused') throw new Error('本轮团队已暂停，当前不能修改任务')
+    if (this.runProvider.getActiveRunStatus?.() === 'completed') throw new Error('本轮团队已经结束，请开始新一轮')
     return runId
   }
 

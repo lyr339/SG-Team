@@ -9,7 +9,7 @@ import { SqliteTeamMemoryRepository } from '../infrastructure/team-memory/sqlite
 import { TeamMemoryAgentService } from '../application/team-memory-agent-service'
 import { SqliteChannelMessageRepository } from '../infrastructure/channel-messages/sqlite-channel-message-repository'
 import { ChannelMessageService } from '../application/channel-message-service'
-import { buildTeamRoleBriefing, effectiveGroupLeadSlotId } from '../domain/team-control'
+import { buildTeamRoleBriefing, effectiveGroupLeadSlotId, groupMembersMayPlan } from '../domain/team-control'
 import { TaskPoolError } from '../domain/task-pool'
 import { isPresenceOnline, resolveKeepaliveTimeoutMs } from '../domain/channel-message'
 import { createUnifiedChannelServer } from './unified-channel-server'
@@ -51,7 +51,14 @@ async function serveUnified(databasePath: string): Promise<void> {
       slotId: `standby-slot:${channelId}`,
       capabilities: [] as string[]
     }
-    const service = new TaskAgentService(repository, standbyIdentity, repository, teamRepository)
+    // 租约在岗判定（阶段 2 · 2F）：agentSessionId → 绑定通道 → presence，与主进程清扫器同一口径。
+    // 只有到期的租约才会问到这里，所以每次现查 bindings 足够便宜。
+    const holderOnline = (agentSessionId: string): boolean => {
+      const binding = teamRepository.loadTeamControl().bindings
+        .find((candidate) => candidate.agentSessionId === agentSessionId)
+      return binding !== undefined && isPresenceOnline(channelRepository.getPresence(binding.channelId), Date.now())
+    }
+    const service = new TaskAgentService(repository, standbyIdentity, repository, teamRepository, holderOnline)
     const collaboration = new TeamCollaborationAgentService(
       collaborationRepository,
       { ...standbyIdentity },
@@ -103,43 +110,29 @@ async function serveUnified(databasePath: string): Promise<void> {
       : undefined
     const binding = state.bindings.find((candidate) => candidate.runId === identity.runId && candidate.slotId === identity.slotId)
     if (!run || !slot || !role || !binding) return undefined
-    // 入组席位：目标、lead 与权限都以组行为准（lead 与角色模板解耦）；legacy 团队 run 沿用 run 级 lead。
+    // 简报只对入组席位存在：目标、lead 与权限都以组行为准（lead 与角色模板解耦）。未入组席位在 refreshIdentity
+    // 已得到 not_in_group，走不到这里；legacy 团队 run 已归档（阶段 2 · 2B），没有 run 级 lead 简报。
     const group = slot.groupId ? state.groups.find((candidate) => candidate.id === slot.groupId) : undefined
-    if (group) {
-      const members = state.slots.filter((candidate) => candidate.groupId === group.id)
-      const effectiveLeadSlotId = effectiveGroupLeadSlotId(group)
-      const leadSlot = members.find((candidate) => candidate.id === effectiveLeadSlotId)
-      const leadRole = leadSlot ? state.roles.find((candidate) => candidate.id === leadSlot.roleId) : undefined
-      const leadBinding = leadSlot ? state.bindings.find((candidate) => candidate.runId === run.id && candidate.slotId === leadSlot.id) : undefined
-      return buildTeamRoleBriefing({
-        run,
-        role,
-        slot,
-        binding,
-        effectiveLead: slot.id === effectiveLeadSlotId,
-        originalLeadDemoted: role.templateKey === 'lead' && effectiveLeadSlotId !== undefined && slot.id !== effectiveLeadSlotId,
-        group: {
-          name: group.name,
-          goal: group.goal,
-          leadLabel: leadSlot ? `${leadRole?.name ?? '主控'} · CH-${leadBinding?.channelId ?? leadSlot.channelId ?? '?'}` : undefined,
-          memberCount: members.length
-        }
-      })
-    }
-    const originalLeadRole = state.roles.find((candidate) => (
-      candidate.runId === run.id && candidate.templateKey === 'lead' && !candidate.groupId
-    ))
-    const originalLeadSlot = originalLeadRole
-      ? state.slots.find((candidate) => candidate.runId === run.id && candidate.roleId === originalLeadRole.id)
-      : undefined
-    const effectiveLeadSlotId = run.actingLeadSlotId ?? originalLeadSlot?.id
+    if (!group) return undefined
+    const members = state.slots.filter((candidate) => candidate.groupId === group.id)
+    const effectiveLeadSlotId = effectiveGroupLeadSlotId(group)
+    const leadSlot = members.find((candidate) => candidate.id === effectiveLeadSlotId)
+    const leadRole = leadSlot ? state.roles.find((candidate) => candidate.id === leadSlot.roleId) : undefined
+    const leadBinding = leadSlot ? state.bindings.find((candidate) => candidate.runId === run.id && candidate.slotId === leadSlot.id) : undefined
     return buildTeamRoleBriefing({
       run,
       role,
       slot,
       binding,
       effectiveLead: slot.id === effectiveLeadSlotId,
-      originalLeadDemoted: role.templateKey === 'lead' && Boolean(run.actingLeadSlotId) && slot.id !== effectiveLeadSlotId
+      originalLeadDemoted: role.templateKey === 'lead' && effectiveLeadSlotId !== undefined && slot.id !== effectiveLeadSlotId,
+      group: {
+        name: group.name,
+        goal: group.goal,
+        leadLabel: leadSlot ? `${leadRole?.name ?? '主控'} · CH-${leadBinding?.channelId ?? leadSlot.channelId ?? '?'}` : undefined,
+        memberCount: members.length,
+        membersMayPlan: groupMembersMayPlan(group)
+      }
     })
   }
 

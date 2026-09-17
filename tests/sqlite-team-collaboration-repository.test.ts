@@ -2,10 +2,11 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { createConfiguredTeamBundle, createDefaultTeamBundle } from '../src/domain/team-control'
+import { createConfiguredTeamBundle } from '../src/domain/team-control'
 import { teamMessageReceiptStage } from '../src/domain/team-collaboration'
 import { SqliteTeamCollaborationRepository } from '../src/infrastructure/team-collaboration/sqlite-team-collaboration-repository'
 import { SqliteTeamControlRepository } from '../src/infrastructure/team-control/sqlite-team-control-repository'
+import { createDefaultTeamBundle } from './legacy-team-fixtures'
 
 function fixture(workspaceId = 'alpha') {
   const path = join(mkdtempSync(join(tmpdir(), 'sg-team-collaboration-')), 'team.sqlite3')

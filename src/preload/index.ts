@@ -114,16 +114,9 @@ const api: SgDesktopApi = {
   installTaskMcp: () => ipcRenderer.invoke(IPC.taskMcpInstall),
   getTeamControlSnapshot: () => ipcRenderer.invoke(IPC.teamControlGet),
   detectCursorWorkspace: () => ipcRenderer.invoke(IPC.teamControlDetectWorkspace),
-  prepareDetectedTeamWorkspace: () => ipcRenderer.invoke(IPC.teamControlPrepareDetectedWorkspace),
-  chooseTeamWorkspace: () => ipcRenderer.invoke(IPC.teamControlChooseWorkspace),
-  createTeam: (input) => ipcRenderer.invoke(IPC.teamControlCreateTeam, input),
   createIndependentSessions: (input) => ipcRenderer.invoke(IPC.teamControlCreateIndependent, input),
   chooseIndependentWorkspace: () => ipcRenderer.invoke(IPC.teamControlChooseIndependentWorkspace),
-  createNextTeamRun: () => ipcRenderer.invoke(IPC.teamControlNextRun),
   endActiveRun: () => ipcRenderer.invoke(IPC.teamControlEndRun),
-  prepareActiveTeamSetup: () => ipcRenderer.invoke(IPC.teamControlPrepareActiveSetup),
-  updateTeamGoal: (goal) => ipcRenderer.invoke(IPC.teamControlUpdateGoal, goal),
-  launchTeam: () => ipcRenderer.invoke(IPC.teamControlLaunch),
   setSlotModelSelection: (channelId, selection) => ipcRenderer.invoke(
     IPC.teamControlSetSlotModelSelection,
     channelId,
@@ -134,11 +127,13 @@ const api: SgDesktopApi = {
   removeTeamGroupMember: (input) => ipcRenderer.invoke(IPC.teamGroupRemoveMember, input),
   setTeamGroupLead: (input) => ipcRenderer.invoke(IPC.teamGroupSetLead, input),
   updateTeamGroupGoal: (input) => ipcRenderer.invoke(IPC.teamGroupUpdateGoal, input),
+  setTeamGroupPlanPolicy: (input) => ipcRenderer.invoke(IPC.teamGroupSetPlanPolicy, input),
   dissolveTeamGroup: (input) => ipcRenderer.invoke(IPC.teamGroupDissolve, input),
+  getMembershipTransferOptions: (slotId) => ipcRenderer.invoke(IPC.teamGroupTransferOptions, slotId),
+  transferMembership: (input) => ipcRenderer.invoke(IPC.teamGroupTransferMembership, input),
+  planTeamGroupTasks: (input) => ipcRenderer.invoke(IPC.teamGroupPlanTasks, input),
   getTeamCollaborationSnapshot: () => ipcRenderer.invoke(IPC.teamCollaborationGet),
   setWindowChromeColorMode: (mode) => ipcRenderer.invoke(IPC.windowSetChromeColorMode, mode),
-  getManualHandoffOptions: (slotId) => ipcRenderer.invoke(IPC.teamContinuityHandoffOptions, slotId),
-  manualHandoff: (input) => ipcRenderer.invoke(IPC.teamContinuityHandoff, input),
   onSnapshot: (listener: (snapshot: DesktopSnapshot) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, snapshot: DesktopSnapshot): void => listener(snapshot)
     ipcRenderer.on(IPC.snapshot, handler)

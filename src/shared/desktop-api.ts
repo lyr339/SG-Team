@@ -1,16 +1,13 @@
 import type { AgentSession } from '../domain/agent-session'
 import type { ConversationEntry, ProcessBlock } from '../domain/conversation-entry'
-import type { TaskPoolSnapshot } from '../domain/task-pool'
-import type { TeamControlSnapshot } from '../domain/team-control'
+import type { PlanTaskInput, TaskPoolSnapshot, TeamTask } from '../domain/task-pool'
+import type { TeamControlSnapshot, TeamGroupPlanPolicy } from '../domain/team-control'
 import type { TeamCollaborationSnapshot } from '../domain/team-collaboration'
-import type { TeamContinuitySnapshot } from '../domain/team-continuity'
 import type { TeamMemorySnapshot } from '../domain/team-memory'
-import type { AgentSkillCatalogEntry } from '../domain/agent-skill'
-import type { TeamRoleTemplate } from '../domain/team-control'
 import type { CursorAccountMetadata, CursorRuntimeAccountMatch } from '../domain/cursor-account'
 import type { CursorProUpgradeResult } from '../domain/cursor-checkout-profile'
 import type { CursorMembershipStatus } from '../domain/cursor-membership'
-import type { ManualTeamHandoffInput, ManualTeamHandoffOutcome, TeamHandoffOptions } from '../domain/team-handoff'
+import type { MembershipTransferInput, MembershipTransferOptions, MembershipTransferOutcome } from '../domain/team-handoff'
 import type { CursorWorkspaceDetection } from '../domain/cursor-workspace'
 import type { CursorModelOption, CursorModelSelection } from '../domain/cursor-model'
 import type { AozaiCardStatus, AozaiProcessResult, AozaiProgressEvent } from '../domain/aozai-service'
@@ -203,43 +200,6 @@ export type CursorQuestionActionResult =
   | { ok: true; status: 'submitted' | 'cancelled' }
   | { ok: false; code: CursorQuestionFailureCode; message: string }
 
-export interface TeamSetupChannel {
-  channelId: string
-  displayName: string
-  status: AgentSession['status']
-  online: boolean
-  waiting: boolean
-  queueDepth: number
-}
-
-export interface TeamSetupDraft {
-  draftId: string
-  workspaceId: string
-  workspaceName: string
-  workspacePath: string
-  channels: TeamSetupChannel[]
-  roleTemplates: TeamRoleTemplate[]
-  avatarIds: string[]
-  skills: AgentSkillCatalogEntry[]
-  cursorModels?: CursorModelOption[]
-  initialMembers?: CreateTeamMemberInput[]
-}
-
-export interface CreateTeamMemberInput {
-  channelId: string
-  roleTemplateKey: string
-  avatarId: string
-  skillIds: string[]
-  modelSelection?: CursorModelSelection
-  /** 独立席位：不入队，仅保留单聊与批量会话创建。 */
-  solo?: boolean
-}
-
-export interface CreateTeamInput {
-  draftId: string
-  members: CreateTeamMemberInput[]
-}
-
 export interface CreateIndependentSessionsInput {
   workspacePath: string
   sessions: Array<{ modelSelection?: CursorModelSelection }>
@@ -261,8 +221,21 @@ export interface CreateTeamGroupInput {
   name: string
   goal?: string
   members: TeamGroupMemberInput[]
-  /** 可空：无 lead 的纯协作组（共享目标 + 消息 + 记忆，没有任务板调度）。 */
+  /** 可空：无 lead 的纯协作组（共享目标 + 消息 + 记忆；任务由用户在拾光里创建，或按 planPolicy 由成员规划）。 */
   leadSlotId?: string
+  /** 省略 = 有 lead → lead_only，无 lead → any_member。 */
+  planPolicy?: TeamGroupPlanPolicy
+}
+
+export interface TeamGroupPlanPolicyInput {
+  groupId: string
+  planPolicy: TeamGroupPlanPolicy
+}
+
+/** 用户为某个协作组一次规划 1–30 条任务；字段与 `team_task plan` 的任务清单一致。 */
+export interface TeamGroupPlanTasksInput {
+  groupId: string
+  tasks: PlanTaskInput[]
 }
 
 export interface TeamGroupMembersInput {
@@ -285,11 +258,6 @@ export interface TeamGroupGoalInput {
   groupId: string
   goal: string
 }
-
-export type ChooseTeamWorkspaceResult =
-  | { cancelled: true }
-  | { kind: 'existing'; snapshot: TeamControlSnapshot }
-  | { kind: 'setup'; draft: TeamSetupDraft }
 
 /** 团队 MCP 接入结果：登记 Agent 注册身份并接管内嵌通道；失败以 IPC 异常传播。 */
 export interface McpInstallationResult {
@@ -477,20 +445,14 @@ export interface SgDesktopApi {
   installTaskMcp(): Promise<McpInstallationResult>
   getTeamControlSnapshot(): Promise<TeamControlSnapshot>
   detectCursorWorkspace(): Promise<CursorWorkspaceDetection>
-  prepareDetectedTeamWorkspace(): Promise<ChooseTeamWorkspaceResult>
-  chooseTeamWorkspace(): Promise<ChooseTeamWorkspaceResult>
-  createTeam(input: CreateTeamInput): Promise<TeamControlSnapshot>
+  /** 新建会话池（独立批次）：替换当前活动 run；每个会话一个独立席位，入组是之后的操作员动作。 */
   createIndependentSessions(input: CreateIndependentSessionsInput): Promise<TeamControlSnapshot>
   chooseIndependentWorkspace(): Promise<IndependentWorkspaceSelection | undefined>
-  createNextTeamRun(): Promise<TeamControlSnapshot>
   /**
-   * 显式结束当前运行（团队或独立批次）：run 进入 completed，本轮排队消息归档；
+   * 显式结束当前会话池：run 进入 completed，本轮排队消息归档；
    * 携带会话令牌的旧 Cursor 会话在下一次轮询收到围栏终止指令并自行退出。
    */
   endActiveRun(): Promise<TeamControlSnapshot>
-  prepareActiveTeamSetup(): Promise<TeamSetupDraft>
-  updateTeamGoal(goal: string): Promise<TeamControlSnapshot>
-  launchTeam(): Promise<TeamControlSnapshot>
   setSlotModelSelection(channelId: string, selection: CursorModelSelection): Promise<TeamControlSnapshot>
   /**
    * 会话池 · 协作组（只在独立批次 run 内可用）。成员关系变化落库后，拾光向相关席位投递
@@ -502,16 +464,25 @@ export interface SgDesktopApi {
   removeTeamGroupMember(input: TeamGroupMemberRef): Promise<TeamControlSnapshot>
   setTeamGroupLead(input: TeamGroupLeadInput): Promise<TeamControlSnapshot>
   updateTeamGroupGoal(input: TeamGroupGoalInput): Promise<TeamControlSnapshot>
+  /** 谁能 team_task plan：只对无 lead 的组产生实际效果（有 lead 时规划权始终归有效 lead）。 */
+  setTeamGroupPlanPolicy(input: TeamGroupPlanPolicyInput): Promise<TeamControlSnapshot>
   dissolveTeamGroup(input: { groupId: string }): Promise<TeamControlSnapshot>
-  getTeamCollaborationSnapshot(): Promise<TeamCollaborationSnapshot>
-  getManualHandoffOptions(slotId: string): Promise<TeamHandoffOptions>
+  /** 成员身份迁移的候选：源席位须在 active 组内，候选 = 池内全部独立席位（在线 / 离线都可选）。 */
+  getMembershipTransferOptions(slotId: string): Promise<MembershipTransferOptions>
   /**
-   * 离线团队席位的职责迁移（AgentSlot 换绑 / 主控权限转移）。`includeContext` 为真时，
-   * 主进程在迁移前解析原席位上下文文档、迁移成功后投递给接手通道，结果在 contextHandoff。
+   * 成员身份迁移（阶段 2 · 2C）：把协作组内席位的组身份（组角色 + lead）移交给池内另一个独立席位，
+   * 绑定 / 令牌 / Composer 不动。`includeContext` 为真时，主进程在迁移前解析原席位上下文文档、
+   * 迁移成功后投递给目标席位的通道，结果在 contextHandoff。
    */
-  manualHandoff(input: ManualTeamHandoffInput): Promise<ManualTeamHandoffOutcome & {
+  transferMembership(input: MembershipTransferInput): Promise<MembershipTransferOutcome & {
     team: TeamControlSnapshot
   }>
+  /**
+   * 用户为某个协作组规划任务（桌面侧唯一的任务写入口）：与 `team_task plan` 同一条聚合路径，
+   * 创建后由桌面编排器自动派单；返回新建的任务。
+   */
+  planTeamGroupTasks(input: TeamGroupPlanTasksInput): Promise<TeamTask[]>
+  getTeamCollaborationSnapshot(): Promise<TeamCollaborationSnapshot>
   onSnapshot(listener: (snapshot: DesktopSnapshot) => void): () => void
   /** 当前 TeamRun 的 Cursor 会话用量快照；结束冻结，下轮启动清零。 */
   getCursorUsageSnapshot(): Promise<CursorUsageSnapshot>
@@ -628,16 +599,9 @@ export const IPC = {
   taskMcpInstall: 'task-mcp:install',
   teamControlGet: 'team-control:get',
   teamControlDetectWorkspace: 'team-control:detect-workspace',
-  teamControlPrepareDetectedWorkspace: 'team-control:prepare-detected-workspace',
-  teamControlChooseWorkspace: 'team-control:choose-workspace',
-  teamControlCreateTeam: 'team-control:create-team',
   teamControlCreateIndependent: 'team-control:create-independent',
   teamControlChooseIndependentWorkspace: 'team-control:choose-independent-workspace',
-  teamControlNextRun: 'team-control:next-run',
   teamControlEndRun: 'team-control:end-run',
-  teamControlPrepareActiveSetup: 'team-control:prepare-active-setup',
-  teamControlUpdateGoal: 'team-control:update-goal',
-  teamControlLaunch: 'team-control:launch',
   teamControlSetSlotModelSelection: 'team-control:set-slot-model-selection',
   teamControlSnapshot: 'team-control:snapshot',
   teamGroupCreate: 'team-group:create',
@@ -645,9 +609,11 @@ export const IPC = {
   teamGroupRemoveMember: 'team-group:remove-member',
   teamGroupSetLead: 'team-group:set-lead',
   teamGroupUpdateGoal: 'team-group:update-goal',
+  teamGroupSetPlanPolicy: 'team-group:set-plan-policy',
   teamGroupDissolve: 'team-group:dissolve',
+  teamGroupTransferOptions: 'team-group:transfer-options',
+  teamGroupTransferMembership: 'team-group:transfer-membership',
+  teamGroupPlanTasks: 'team-group:plan-tasks',
   teamCollaborationGet: 'team-collaboration:get',
-  teamCollaborationSnapshot: 'team-collaboration:snapshot',
-  teamContinuityHandoffOptions: 'team-continuity:handoff-options',
-  teamContinuityHandoff: 'team-continuity:handoff'
+  teamCollaborationSnapshot: 'team-collaboration:snapshot'
 } as const

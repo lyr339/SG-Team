@@ -42,7 +42,6 @@
   outline: 2px solid var(--accent-border-strong);
   outline-offset: 2px;
 }
-.run-page .run-mode-switch button:focus-visible { outline-offset: -2px; }
 /* 步进器 overflow: hidden 会裁掉外扩的焦点环，数字框把环画在自己里面。 */
 .run-page .run-stepper input:focus-visible { outline-offset: -1px; }
 .run-page :is(.primary-button, .secondary-button, .run-header__ghost, .run-sheet__confirm, .run-stepper button):active:not(:disabled) {
@@ -263,60 +262,6 @@ html[data-card-transparency="clear"] :is(.run-panel, .run-seats, .run-header, .r
 .run-header__ghost.is-danger:hover:not(:disabled) { background: var(--red-soft); border-color: var(--red-border); }
 .run-header__ghost:disabled { opacity: 0.42; }
 
-/* ---------- 模式分段控件 ---------- */
-.run-mode-switch {
-  position: relative;
-  display: inline-grid;
-  grid-auto-flow: column;
-  grid-auto-columns: 1fr;
-  gap: 2px;
-  padding: 3px;
-  background: var(--surface-soft);
-  border: 1px solid var(--line);
-  border-radius: 13px;
-}
-.run-mode-switch__indicator {
-  position: absolute;
-  top: 3px;
-  bottom: 3px;
-  left: 0;
-  background: var(--surface-solid);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  box-shadow: var(--shadow-hairline);
-  transition: transform 240ms cubic-bezier(0.2, 0.8, 0.2, 1), width 240ms cubic-bezier(0.2, 0.8, 0.2, 1);
-  pointer-events: none;
-}
-.run-mode-switch button {
-  position: relative;
-  z-index: 1;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  padding: 10px 16px;
-  color: var(--muted);
-  background: transparent;
-  border: 0;
-  border-radius: 10px;
-  text-align: left;
-  transition: color 160ms ease;
-}
-.run-mode-switch button svg { width: 18px; height: 18px; }
-.run-mode-switch button span { display: grid; gap: 2px; min-width: 0; }
-.run-mode-switch button b { font-size: var(--fs-13); font-weight: 650; }
-.run-mode-switch button small { overflow: hidden; color: var(--muted); font-size: var(--fs-11); font-weight: 500; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
-.run-mode-switch button:hover:not(:disabled):not(.is-active) { color: var(--text-soft); background: color-mix(in srgb, var(--surface-solid) 45%, transparent); }
-.run-mode-switch button.is-active { color: var(--text); }
-.run-mode-switch button.is-active svg { color: var(--accent-deep); }
-.run-mode-switch button:disabled { cursor: default; opacity: 0.6; }
-.run-mode-switch.is-compact { border-radius: 11px; }
-.run-mode-switch.is-compact button { gap: 7px; padding: 6px 12px; }
-.run-mode-switch.is-compact button svg { width: 15px; height: 15px; }
-.run-mode-switch.is-compact button b { font-size: var(--fs-12); }
-.run-mode-switch.is-compact .run-mode-switch__indicator { border-radius: 8px; }
-
 /* ---------- 正文两栏 ---------- */
 .run-body {
   display: grid;
@@ -344,85 +289,6 @@ html[data-card-transparency="clear"] :is(.run-panel, .run-seats, .run-header, .r
   padding-top: 4px;
 }
 .run-panel__hint { flex-basis: 100%; color: var(--muted); font-size: var(--fs-11); line-height: 1.5; }
-.run-primary { display: inline-flex; align-items: center; gap: 7px; }
-.run-primary svg { width: 15px; height: 15px; }
-
-/* ---------- 团队：目标 / 流程 / 待处理 ---------- */
-.run-goal {
-  margin: 0;
-  max-height: 176px;
-  overflow: auto;
-  font-size: var(--fs-15);
-  line-height: 1.55;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.run-goal.is-empty { color: var(--faint); }
-.run-goal, .run-goal-editor { animation: run-fade-in 200ms ease both; }
-
-.run-goal-editor { display: grid; gap: 10px; }
-.run-goal-editor textarea {
-  min-height: 132px;
-  padding: 10px 12px;
-  color: var(--text);
-  background: var(--surface-solid);
-  border: 1px solid var(--line-strong);
-  border-radius: 10px;
-  font: inherit;
-  font-size: var(--fs-13);
-  line-height: 1.55;
-  resize: vertical;
-}
-.run-goal-editor textarea:focus-visible { outline: 2px solid var(--accent-border); outline-offset: 1px; }
-.run-goal-editor footer { display: flex; justify-content: end; gap: 8px; }
-
-.run-steps {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 6px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.run-steps li {
-  position: relative;
-  display: grid;
-  justify-items: center;
-  gap: 7px;
-  padding-top: 2px;
-  color: var(--muted);
-  font-size: var(--fs-11);
-  font-weight: 600;
-  text-align: center;
-}
-.run-steps li::before {
-  content: "";
-  position: absolute;
-  top: 12px;
-  right: calc(-50% - 3px);
-  left: calc(50% + 14px);
-  height: 1px;
-  background: var(--line-strong);
-}
-.run-steps li:last-child::before { display: none; }
-.run-steps li.is-done::before { background: color-mix(in srgb, var(--color-text-success) 55%, transparent); }
-.run-steps li.is-done { color: var(--text-soft); }
-.run-steps li.is-current { color: var(--text); }
-.run-steps li span { white-space: nowrap; }
-
-.run-gates {
-  display: grid;
-  gap: 6px;
-  margin: 0;
-  padding: 10px 12px;
-  list-style: none;
-  background: color-mix(in srgb, var(--amber-soft) 62%, var(--surface-solid));
-  border: 1px solid var(--amber-border-soft);
-  border-radius: 10px;
-}
-.run-gates li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 8px; align-items: baseline; color: var(--amber); font-size: var(--fs-12); font-weight: 600; }
-.run-gates li i { width: 6px; height: 6px; background: var(--amber); border-radius: 50%; transform: translateY(-1px); }
-.run-gates li small { grid-column: 2; color: color-mix(in srgb, var(--amber) 80%, var(--muted)); font-size: var(--fs-11); font-weight: 500; }
 
 /* ---------- 独立：字段 / 步进器 / 批次概况 ---------- */
 .run-field {
@@ -671,18 +537,6 @@ html[data-card-transparency="clear"] .run-group-drawer { background: color-mix(i
 .run-group-drawer__lead-pick input:disabled + span { opacity: 0.45; }
 
 /* ---------- 席位区 ---------- */
-.run-seats__guide {
-  margin: 0;
-  padding: 8px 12px;
-  color: var(--accent-deep);
-  background: var(--accent-wash);
-  border: 1px solid var(--accent-border-soft);
-  border-radius: 9px;
-  font-size: var(--fs-12);
-  font-weight: 600;
-}
-.run-seats.is-guided { box-shadow: 0 0 0 2px var(--accent-border-soft), var(--shadow-hairline); }
-
 .run-seats__list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
 /* 行 = 主按钮（弹性）+ 可选的「单独配置」标 + 运行态；隐式列只在有标时出现，没有标的行不留空列。 */
 .run-seat {
@@ -943,7 +797,7 @@ html[data-card-transparency="clear"] .run-seat { background: color-mix(in srgb, 
   padding: 40px 32px 30px;
   text-align: center;
 }
-/* 与页面同一套"相邻边距"：折叠的插槽（团队说明 / 提示条）不留空行。 */
+/* 与页面同一套"相邻边距"：折叠的插槽（提示条）不留空行。 */
 .run-start > * + * { margin-top: 22px; }
 .run-start > .run-slot { margin-top: 0; }
 .run-start .run-slot__inner > * { margin-top: 22px; }
@@ -964,24 +818,20 @@ html[data-card-transparency="clear"] .run-seat { background: color-mix(in srgb, 
 .run-start__intro h1 { margin: 0; font-size: 22px; font-weight: 650; letter-spacing: -0.01em; }
 .run-start__intro p { margin: 0; color: var(--muted); font-size: var(--fs-13); }
 .run-start__intro p strong { color: var(--text); font-weight: 600; }
-.run-start .run-mode-switch { width: min(100%, 640px); }
-.run-start .run-mode-switch button { align-items: start; padding: 12px 16px; }
-.run-start .run-mode-switch button svg { margin-top: 2px; }
-.run-start .run-mode-switch button small { white-space: normal; }
+/* 归档的旧团队 run 只留一句说明，不再有模式切换 / 团队说明区。 */
+.run-start__intro .run-start__note { max-width: 520px; color: var(--faint); font-size: var(--fs-12); line-height: 1.5; }
 .run-start .run-slot { width: 100%; }
 .run-start .run-slot__inner { display: grid; justify-items: center; }
-.run-start__team { display: grid; justify-items: center; gap: 14px; max-width: 460px; }
-.run-start__team p { margin: 0; color: var(--muted); font-size: var(--fs-12); line-height: 1.55; }
 .run-start .run-feedback { width: 100%; text-align: left; }
 
 /* ---------- 动效 ---------- */
 @keyframes run-fade-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @keyframes run-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 @media (prefers-reduced-motion: reduce) {
-  .run-body > *, .run-feedback, .run-sheet, .run-seat, .run-goal, .run-goal-editor, .run-group, .run-group-drawer, .run-seat__override { animation: none; }
+  .run-body > *, .run-feedback, .run-sheet, .run-seat, .run-stepper output, .run-group, .run-group-drawer, .run-seat__override { animation: none; }
   .run-seat.is-synced .run-seat__main, .run-seat.is-synced .run-seat__model strong { animation: none; }
   .run-batch-config__value.is-swapped, .run-batch-config__value.is-swapped > strong { animation: none; }
-  .run-mode-switch__indicator, .run-slot, .run-slot__inner > * { transition: none; }
+  .run-slot, .run-slot__inner > * { transition: none; }
   .run-state-chip i, .run-seat__badge i, .run-group-member__dot { animation: none; }
   .run-page :is(.primary-button, .secondary-button, .run-header__ghost, .run-sheet__confirm, .run-stepper button):active:not(:disabled) { transform: none; }
 }
@@ -989,20 +839,16 @@ html[data-card-transparency="clear"] .run-seat { background: color-mix(in srgb, 
 /* ---------- 响应式（容器查询，以页面宽度为准） ---------- */
 /* 宽：头部一行（信息块 | 控件组），两栏正文。 */
 @container run-page (max-width: 1000px) {
-  /* 头部两行：信息块在上，控件组在下（模式切换靠左、动作靠右）。 */
+  /* 头部两行：信息块在上，动作组在下。 */
   .run-header { grid-template-columns: minmax(0, 1fr); row-gap: 14px; }
   .run-header__controls { justify-content: space-between; }
-}
-@container run-page (max-width: 1000px) {
-  /* 正文单栏：模式区在上，席位在下。 */
+  /* 正文单栏：批次面板在上，席位在下。 */
   .run-body { grid-template-columns: minmax(0, 1fr); }
-  .run-steps li::before { left: calc(50% + 16px); right: calc(-50% + 2px); }
 }
 @container run-page (max-width: 680px) {
   .run-page__inner { padding: 12px 12px 24px; }
   .run-header { padding: 16px; }
   .run-header__controls { flex-direction: column; align-items: stretch; gap: 10px; }
-  .run-header__controls .run-mode-switch { width: 100%; }
   .run-header__actions { justify-content: stretch; }
   .run-header__actions .run-header__ghost { flex: 1 1 0; justify-content: center; }
   .run-banner { grid-template-columns: auto minmax(0, 1fr); }
@@ -1015,7 +861,6 @@ html[data-card-transparency="clear"] .run-seat { background: color-mix(in srgb, 
   .run-seats__create .run-warmup-button { width: 100%; }
   .run-warmup-status { max-width: none; }
   .run-warmup-status__text { white-space: normal; }
-  .run-steps li span { white-space: normal; }
   .run-field { grid-template-columns: minmax(0, 1fr) auto; }
   .run-field__label { grid-column: 1 / -1; }
   .run-batch { flex-wrap: wrap; gap: 14px 22px; }
@@ -1023,7 +868,4 @@ html[data-card-transparency="clear"] .run-seat { background: color-mix(in srgb, 
   .run-sheet { grid-template-columns: minmax(0, 1fr); }
   .run-sheet__actions { justify-content: end; }
   .run-start { padding: 28px 18px 22px; }
-  .run-start .run-mode-switch { grid-auto-flow: row; }
-  .run-start .run-mode-switch__indicator { display: none; }
-  .run-start .run-mode-switch button.is-active { background: var(--surface-solid); box-shadow: var(--shadow-hairline); }
 }

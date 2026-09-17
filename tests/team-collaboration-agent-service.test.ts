@@ -4,10 +4,11 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { TaskAgentService } from '../src/application/task-agent-service'
 import { TeamCollaborationAgentService } from '../src/application/team-collaboration-agent-service'
-import { createConfiguredTeamBundle, createDefaultTeamBundle } from '../src/domain/team-control'
+import { createConfiguredTeamBundle } from '../src/domain/team-control'
 import { SqliteTaskPoolRepository } from '../src/infrastructure/task-pool/sqlite-task-pool-repository'
 import { SqliteTeamCollaborationRepository } from '../src/infrastructure/team-collaboration/sqlite-team-collaboration-repository'
 import { SqliteTeamControlRepository } from '../src/infrastructure/team-control/sqlite-team-control-repository'
+import { createDefaultTeamBundle } from './legacy-team-fixtures'
 
 function fixture() {
   const path = join(mkdtempSync(join(tmpdir(), 'sg-team-agent-coordination-')), 'team.sqlite3')
@@ -305,46 +306,6 @@ describe('TeamCollaborationAgentService', () => {
       }, data.tasks, data.team)
       expect(builderTaskService.listAvailable().map((candidate) => candidate.id)).toEqual([task!.id])
       expect(reviewerTaskService.listAvailable()).toEqual([])
-    } finally {
-      data.collaboration.close()
-      data.tasks.close()
-      data.team.close()
-    }
-  })
-
-  it('starts a ready TeamRun when goal defined and all MCP installed', () => {
-    const data = fixture()
-    try {
-      const state = data.team.loadTeamControl()
-      const run = state.runs.find((candidate) => candidate.id === data.bundle.run.id)!
-      expect(run.status).toBe('draft')
-
-      // 填写目标并标记为 ready
-      data.team.updateRunGoal(run.id, '完成接口重构')
-      const readyState = data.team.loadTeamControl()
-      const readyRun = readyState.runs.find((candidate) => candidate.id === run.id)!
-      expect(readyState.slots.every((slot) => readyState.bindings.some((binding) => binding.slotId === slot.id))).toBe(true)
-
-      // 模拟启动
-      data.team.beginLaunch(run.id, Date.now(), 'test-binding-key')
-      const launchingState = data.team.loadTeamControl()
-      const launchingRun = launchingState.runs.find((candidate) => candidate.id === run.id)!
-      expect(launchingRun.status).toBe('launching')
-    } finally {
-      data.collaboration.close()
-      data.tasks.close()
-      data.team.close()
-    }
-  })
-
-  it('rejects start when goal is empty or MCP not fully installed', () => {
-    const data = fixture()
-    try {
-      const state = data.team.loadTeamControl()
-      const run = state.runs.find((candidate) => candidate.id === data.bundle.run.id)!
-
-      // 目标为空时无法启动
-      expect(() => data.team.beginLaunch(run.id, Date.now(), 'test-key')).toThrow(/尚未达到可启动状态/)
     } finally {
       data.collaboration.close()
       data.tasks.close()

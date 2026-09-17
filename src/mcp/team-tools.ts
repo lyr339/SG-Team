@@ -66,7 +66,7 @@ const channelSchema = {
 const taskIdSchema = z.string().min(1).max(200).optional()
   .describe('任务 id；省略时作用于当前唯一活动任务')
 const ttlSchema = z.number().int().min(5).max(600).optional()
-  .describe('续租时长（秒）；仅 renew 使用')
+  .describe('已废弃且不再生效：续租由服务端按在岗状态自动完成（阶段 2 · 2F）')
 const clientMessageIdSchema = z.string().regex(/^[a-zA-Z0-9:_-]{8,200}$/).optional()
   .describe('幂等键：同一键重复调用不会产生第二条消息')
 
@@ -252,7 +252,7 @@ export function registerTeamTools(server: McpServer, deps: TeamToolsDeps): void 
     'team_task',
     {
       title: '推进任务',
-      description: 'claim：原子领取（不传 taskId 按优先级领取下一条匹配能力的任务）；start：leased→running；renew：延长 Lease，长任务定期调用；progress：单调进度 0–99 + 阶段摘要；submit：提交完整交付并释放 Lease，任务进入 review（不是直接完成）；fail：报告明确失败原因，系统按 maxAttempts 回池或 failed；plan（主控专用）：仅在真实用户明确要求开始/分配/拆任务/执行后，原子创建 1–30 条带依赖与目标 AgentSlot 的可验收任务。所有动作重试安全。',
+      description: 'claim：原子领取（不传 taskId 按优先级领取下一条匹配能力的任务）；start：leased→running；renew：延长 Lease，长任务定期调用；progress：单调进度 0–99 + 阶段摘要；submit：提交完整交付并释放 Lease，任务进入 review（不是直接完成）；fail：报告明确失败原因，系统按 maxAttempts 回池或 failed；plan（有效主控；无 lead 且允许全员规划的组内任一成员）：仅在真实用户明确要求开始/分配/拆任务/执行后，原子创建 1–30 条带依赖与目标 AgentSlot 的可验收任务，之后由拾光自动分派。所有动作重试安全。',
       inputSchema: z.object(channelSchema).extend({
         action: z.enum(['claim', 'start', 'renew', 'progress', 'submit', 'fail', 'plan']),
         taskId: taskIdSchema,
@@ -276,7 +276,7 @@ export function registerTeamTools(server: McpServer, deps: TeamToolsDeps): void 
       }),
       annotations: { readOnlyHint: false, idempotentHint: false }
     },
-    async ({ channel_id, action, taskId, ttlSeconds, progress, summary, output, reason, tasks }) => safe(channel_id, (rt) => {
+    async ({ channel_id, action, taskId, progress, summary, output, reason, tasks }) => safe(channel_id, (rt) => {
       switch (action) {
         case 'claim': {
           const assignment = rt.service.claim(taskId)
@@ -311,11 +311,10 @@ export function registerTeamTools(server: McpServer, deps: TeamToolsDeps): void 
             })
           }
         }
+        // 阶段 2 · 2F：续租已由服务端按 presence 自动完成，本 action 保留为兼容 no-op
+        //（仍回当前到期时刻，ttl_seconds 不再生效），阶段 4 从工具面删除。
         case 'renew':
-          return {
-            action,
-            leaseExpiresAt: rt.service.renew(taskId, ttlSeconds === undefined ? undefined : ttlSeconds * 1_000)
-          }
+          return { action, leaseExpiresAt: rt.service.renew(taskId) }
         case 'progress': {
           const value = required(progress, action, 'progress')
           const task = rt.service.report(taskId, value, summary)
@@ -381,7 +380,7 @@ export function registerTeamTools(server: McpServer, deps: TeamToolsDeps): void 
       }),
       annotations: { readOnlyHint: false, idempotentHint: false }
     },
-    async ({ channel_id, action, taskId, ttlSeconds, decision, evidence, reason }) => safe(channel_id, (rt) => {
+    async ({ channel_id, action, taskId, decision, evidence, reason }) => safe(channel_id, (rt) => {
       switch (action) {
         case 'claim': {
           const review = rt.service.claimReview(taskId)
@@ -398,11 +397,9 @@ export function registerTeamTools(server: McpServer, deps: TeamToolsDeps): void 
               }
             : { action, review: null, message: '当前没有可领取的独立验收。', nextAction: waitingAction(channel_id) }
         }
+        // 同 team_task renew：兼容 no-op（阶段 2 · 2F）。
         case 'renew':
-          return {
-            action,
-            leaseExpiresAt: rt.service.renewReview(taskId, ttlSeconds === undefined ? undefined : ttlSeconds * 1_000)
-          }
+          return { action, leaseExpiresAt: rt.service.renewReview(taskId) }
         case 'submit': {
           const verdict = required(decision, action, 'decision')
           const proof = required(evidence, action, 'evidence')
@@ -580,7 +577,7 @@ export function registerTeamTools(server: McpServer, deps: TeamToolsDeps): void 
     'team_run',
     {
       title: '运行与主控',
-      description: 'start：TeamRun 满足条件（目标已填写、席位均已安装 MCP）时从 draft/ready 推进到 launching，指令投递由主进程异步完成；transfer_lead（主控/临时主控）：把主控权限临时转给指定在线成员；claim_lead（任何已绑定成员）：仅在有效主控有可验证终止证据（cursor_stopped 或已无有效绑定）时自荐接管，processing/need_reply_sync 表示主控正在执行、无 pong 不算证据；clear_acting_lead（主控/临时主控）：清除临时主控恢复原 lead；ping（主控/临时主控）：向 targetChannelId 发活性验证，目标应在 timeoutMs 内 pong；pong（任何成员）：响应收到的活性验证 pingId；liveness（主控/临时主控）：查询 targetChannelId 的活性状态。',
+      description: 'start：已无实际动作（协作组即建即用，没有启动这一步），恒返回 not_applicable；transfer_lead（主控/临时主控）：把主控权限临时转给指定在线成员；claim_lead（任何已绑定成员）：仅在有效主控有可验证终止证据（cursor_stopped 或已无有效绑定）时自荐接管，processing/need_reply_sync 表示主控正在执行、无 pong 不算证据；clear_acting_lead（主控/临时主控）：清除临时主控恢复原 lead；ping（主控/临时主控）：向 targetChannelId 发活性验证，目标应在 timeoutMs 内 pong；pong（任何成员）：响应收到的活性验证 pingId；liveness（主控/临时主控）：查询 targetChannelId 的活性状态。',
       inputSchema: z.object(channelSchema).extend({
         action: z.enum(['start', 'transfer_lead', 'claim_lead', 'clear_acting_lead', 'ping', 'pong', 'liveness']),
         targetSlotId: z.string().min(3).max(240).optional().describe('transfer_lead 必填：目标稳定 AgentSlot'),
@@ -648,37 +645,16 @@ export function registerTeamTools(server: McpServer, deps: TeamToolsDeps): void 
   )
 }
 
+/**
+ * `team_run start`：一次性团队 run 的启动状态机已退役（阶段 2 · 2B），协作组即建即用；
+ * 保留为 `not_applicable` 直到阶段 4 从工具面删除该动作（旧会话手里的 nextAction 文本仍可能指向它）。
+ */
 function startRun(rt: TeamChannelRuntime, channelId: string): Record<string, unknown> {
-  const control = requireControl(rt)
   const agent = currentAgent(rt)
-  const state = control.loadTeamControl()
-  const run = state.runs.find((candidate) => candidate.id === agent.runId)
-  if (!run) throw new TaskPoolError('run_not_found', '当前 Agent 不属于任何 TeamRun')
-  if (isSessionPoolRun(run)) {
-    // 会话池没有整体启动状态机：协作组即建即用，成员收到入组通知后 team_check_in 即在岗。
-    return {
-      runId: run.id,
-      status: 'not_applicable',
-      message: '会话池内的协作组即建即用，没有「启动」这一步；入组后 team_check_in 即已在岗，等待用户指令即可。',
-      nextAction: waitingAction(channelId)
-    }
-  }
-  if (!['draft', 'ready'].includes(run.status)) {
-    throw new TaskPoolError('run_not_startable', `TeamRun 当前状态为 ${run.status}，只有 draft/ready 可以启动`)
-  }
-  if (!run.goal.trim()) throw new TaskPoolError('goal_required', '请先填写并保存团队目标')
-  const bindings = state.bindings.filter((binding) => binding.runId === run.id)
-  const slots = state.slots.filter((slot) => slot.runId === run.id)
-  const boundSlotIds = new Set(bindings.map((binding) => binding.slotId))
-  const unboundSlots = slots.filter((slot) => !boundSlotIds.has(slot.id))
-  if (unboundSlots.length) {
-    throw new TaskPoolError('mcp_not_installed', `以下席位尚未安装 MCP：${unboundSlots.map((slot) => slot.name).join('、')}`)
-  }
-  control.beginLaunch(run.id, Date.now(), `start-run:${randomUUID()}`)
   return {
-    runId: run.id,
-    status: 'launching',
-    message: 'TeamRun 已启动，指令投递中。若投递失败将自动回滚为 ready。',
+    runId: agent.runId,
+    status: 'not_applicable',
+    message: '会话池内的协作组即建即用，没有「启动」这一步；入组后 team_check_in 即已在岗，等待用户指令即可。',
     nextAction: waitingAction(channelId)
   }
 }
@@ -696,7 +672,7 @@ function transferLead(
   }
   const state = control.loadTeamControl()
   const run = state.runs.find((candidate) => candidate.id === agent.runId)
-  if (!run || !['launching', 'running', 'attention'].includes(run.status)) {
+  if (!run || run.status !== 'running') {
     throw new TaskPoolError('run_inactive', '只有运行中的 TeamRun 可以转移主控')
   }
   const targetSlot = state.slots.find((slot) => slot.id === targetSlotId.trim() && slot.runId === run.id)
