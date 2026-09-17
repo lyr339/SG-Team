@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { TaskPoolAggregate, TaskPoolError } from '../src/domain/task-pool'
 
-function fixture() {
+/** `online` = 此刻在岗的 agentSessionId；测试中增删即模拟席位上下线（阶段 2 · 2F）。 */
+function fixture(online = new Set<string>()) {
   let now = 1_000
   let task = 0
   let attempt = 0
@@ -10,15 +11,20 @@ function fixture() {
     now: () => now,
     taskId: () => `task-${++task}`,
     attemptId: () => `attempt-${++attempt}`,
-    leaseToken: () => `lease-${++lease}`
+    leaseToken: () => `lease-${++lease}`,
+    holderOnline: (agentSessionId) => online.has(agentSessionId)
   })
   return {
     pool,
+    online,
+    at: () => now,
     advance(ms: number) {
       now += ms
     }
   }
 }
+
+const DEFAULT_TTL_MS = 5 * 60_000
 
 describe('TaskPoolAggregate', () => {
   it('rejects a cyclic plan atomically', () => {
@@ -121,6 +127,96 @@ describe('TaskPoolAggregate', () => {
     pool.plan('run-1', [{ key: 'build', title: '构建一' }])
     pool.plan('run-2', [{ key: 'build', title: '构建二' }])
     expect(pool.snapshot().taskOrder).toHaveLength(2)
+  })
+
+  it('在岗的 assignee：租约到期由服务端续租而不是回收（长命令期间不碰 MCP 也不丢任务）', () => {
+    const { pool, advance, at } = fixture(new Set(['agent-1']))
+    const [task] = pool.plan('run-1', [{ key: 'long-run', title: '长命令', maxAttempts: 2 }])
+    const leased = pool.leaseNext({ runId: 'run-1', agentSessionId: 'agent-1', ttlMs: 5_000 })!
+    pool.startAttempt(leased.attempt.id, leased.leaseToken)
+    const taskUpdatedAt = pool.snapshot().tasks[task!.id]!.updatedAt
+    const eventCount = pool.snapshot().events.length
+
+    // 6 分钟没有任何 MCP 调用，但通道 presence 仍在岗（CDP runtimeActiveAt 在刷）。
+    advance(360_000)
+    expect(pool.reclaimExpired()).toEqual([])
+    expect(pool.snapshot().tasks[task!.id]?.status).toBe('running')
+    expect(pool.snapshot().attempts[leased.attempt.id]?.leaseExpiresAt).toBe(at() + DEFAULT_TTL_MS)
+    // 自动续租不是任务进展：不写事件、不顶 task.updatedAt，但要 bump revision 才落盘。
+    expect(pool.snapshot().events).toHaveLength(eventCount)
+    expect(pool.snapshot().tasks[task!.id]?.updatedAt).toBe(taskUpdatedAt)
+
+    // 续到期之前再清扫是纯读：不再写第二次。
+    const revision = pool.snapshot().revision
+    expect(pool.reclaimExpired()).toEqual([])
+    expect(pool.snapshot().revision).toBe(revision)
+  })
+
+  it('在岗持有者自己写入时顺手续租：progress / submit 不必先 renew；renew 退化为兼容 no-op', () => {
+    const { pool, advance, at } = fixture(new Set(['agent-1']))
+    const [task] = pool.plan('run-1', [{ key: 'self-renew', title: '自续租' }])
+    const leased = pool.leaseNext({ runId: 'run-1', agentSessionId: 'agent-1', ttlMs: 5_000 })!
+    pool.startAttempt(leased.attempt.id, leased.leaseToken)
+    advance(5_001) // 租约已过期，但清扫器还没跑到
+
+    expect(pool.reportProgress(leased.attempt.id, leased.leaseToken, 60, '半程').progress).toBe(60)
+    expect(pool.snapshot().attempts[leased.attempt.id]?.leaseExpiresAt).toBe(at() + DEFAULT_TTL_MS)
+    // renew：不改到期时刻、不写事件，只回当前合法值。
+    const renewed = pool.renewLease(leased.attempt.id, leased.leaseToken)
+    expect(renewed).toBe(at() + DEFAULT_TTL_MS)
+    expect(pool.snapshot().events.some((event) => event.type.includes('renew'))).toBe(false)
+    expect(pool.submitForReview(leased.attempt.id, leased.leaseToken, '产物').status).toBe('review')
+    expect(pool.snapshot().tasks[task!.id]?.status).toBe('review')
+  })
+
+  it('离线的 assignee：到期即回收，任务回队并可被另一个席位重新领取', () => {
+    const { pool, online, advance } = fixture(new Set(['agent-1']))
+    const [task] = pool.plan('run-1', [{ key: 'offline-owner', title: '掉线任务', maxAttempts: 2 }])
+    const leased = pool.leaseNext({ runId: 'run-1', agentSessionId: 'agent-1', ttlMs: 5_000 })!
+    pool.startAttempt(leased.attempt.id, leased.leaseToken)
+    advance(360_000)
+    expect(pool.reclaimExpired()).toEqual([]) // 还在岗：先续租
+
+    // 席位确认离线（presence 三段窗口已判死）后再清扫：这时才回收。
+    online.delete('agent-1')
+    advance(DEFAULT_TTL_MS + 1)
+    expect(pool.reclaimExpired()).toEqual([task!.id])
+    expect(pool.snapshot().tasks[task!.id]?.status).toBe('queued')
+    expect(pool.snapshot().attempts[leased.attempt.id]).toMatchObject({ status: 'failed', error: 'lease_expired' })
+    // 离线的持有者即便拿着合法 token 也写不进去。
+    expect(() => pool.reportProgress(leased.attempt.id, leased.leaseToken, 80)).toThrowError(/失效/)
+    expect(pool.leaseNext({ runId: 'run-1', agentSessionId: 'agent-2' })?.task.id).toBe(task!.id)
+  })
+
+  it('验收租约同一口径：在岗的 reviewer 续租，离线才把验收放回队列', () => {
+    const { pool, online, advance } = fixture(new Set(['qa-1']))
+    const [task] = pool.plan('run-1', [{ key: 'review-presence', title: '验收在岗' }])
+    const implementation = pool.leaseNext({ runId: 'run-1', agentSessionId: 'dev-1' })!
+    pool.startAttempt(implementation.attempt.id, implementation.leaseToken)
+    pool.submitForReview(implementation.attempt.id, implementation.leaseToken, '可验收产物')
+    const review = pool.leaseReview({
+      runId: 'run-1', agentSessionId: 'qa-1', slotId: 'slot-qa', taskId: task!.id, ttlMs: 5_000
+    })!
+
+    advance(5_001)
+    expect(pool.reclaimExpired()).toEqual([])
+    expect(pool.snapshot().reviews[review.review.id]).toMatchObject({ status: 'leased', reviewerSessionId: 'qa-1' })
+    expect(pool.renewReview(review.review.id, review.leaseToken)).toBe(pool.snapshot().reviews[review.review.id]!.leaseExpiresAt)
+
+    online.delete('qa-1')
+    advance(DEFAULT_TTL_MS + 1)
+    expect(pool.reclaimExpired()).toEqual([task!.id])
+    expect(pool.snapshot().reviews[review.review.id]).toMatchObject({ status: 'queued' })
+    expect(pool.snapshot().attempts[implementation.attempt.id]).toMatchObject({ status: 'review', output: '可验收产物' })
+  })
+
+  it('没有注入在岗判定时保持「到期即回收」：忘记接线不会变成永不过期', () => {
+    const pool = new TaskPoolAggregate(undefined, { now: () => 1_000 })
+    const [task] = pool.plan('run-1', [{ key: 'no-port', title: '无活性端口' }])
+    const leased = pool.leaseNext({ runId: 'run-1', agentSessionId: 'agent-1', ttlMs: 5_000 })!
+    expect(leased.leaseExpiresAt).toBe(6_000)
+    const expired = new TaskPoolAggregate(pool.snapshot(), { now: () => 999_999 })
+    expect(expired.reclaimExpired()).toEqual([task!.id])
   })
 
   it('returns defensive snapshots and monotonic event sequences', () => {

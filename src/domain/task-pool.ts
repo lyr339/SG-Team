@@ -164,6 +164,15 @@ export interface TaskPoolDependencies {
   leaseToken?: () => string
   reviewId?: () => string
   reviewLeaseToken?: () => string
+  /**
+   * 持有者是否仍在岗（阶段 2 · 2F，决策 D3=a）：租约到期只在这里回答「否」时才回收，
+   * 回答「是」就由服务端续到 now + DEFAULT_LEASE_TTL_MS，Agent 不必自己 renew。
+   * 判定权威是通道 presence（`isPresenceOnline`：MCP 心跳与 CDP 运行时证据取较新者，
+   * processing 分相 5 分钟宽限）——Agent 跑长命令 / 长推理时按协议不碰 MCP，那是证据缺失
+   * 而不是死亡证据。主进程与 MCP 各自注入同一判定；**缺省视为不在岗**，保持 2F 之前
+   * 「到期即回收」的行为，不让忘记注入的调用方悄悄变成永不过期。
+   */
+  holderOnline?: (agentSessionId: string) => boolean
 }
 
 const DEFAULT_LEASE_TTL_MS = 5 * 60 * 1_000
@@ -237,6 +246,7 @@ export class TaskPoolAggregate {
   private readonly nextLeaseToken: () => string
   private readonly nextReviewId: () => string
   private readonly nextReviewLeaseToken: () => string
+  private readonly holderOnline: (agentSessionId: string) => boolean
 
   constructor(initialState: TaskPoolState = emptyTaskPoolState(), dependencies: TaskPoolDependencies = {}) {
     this.state = structuredClone(initialState)
@@ -246,6 +256,7 @@ export class TaskPoolAggregate {
     this.nextLeaseToken = dependencies.leaseToken ?? runtimeUuid
     this.nextReviewId = dependencies.reviewId ?? (() => `review-${runtimeUuid()}`)
     this.nextReviewLeaseToken = dependencies.reviewLeaseToken ?? runtimeUuid
+    this.holderOnline = dependencies.holderOnline ?? (() => false)
   }
 
   snapshot(): TaskPoolState {
@@ -429,15 +440,13 @@ export class TaskPoolAggregate {
     return structuredClone(attempt)
   }
 
-  renewLease(attemptId: string, leaseToken: string, ttlMs = DEFAULT_LEASE_TTL_MS): number {
-    const { task, attempt } = this.activeLease(attemptId, leaseToken)
-    const at = this.now()
-    attempt.leaseExpiresAt = at + boundedInteger(ttlMs, DEFAULT_LEASE_TTL_MS, MIN_LEASE_TTL_MS, MAX_LEASE_TTL_MS)
-    attempt.updatedAt = at
-    task.updatedAt = at
-    this.note('lease.renewed', task.id, attempt.id, attempt.agentSessionId)
-    this.bumpRevision()
-    return attempt.leaseExpiresAt
+  /**
+   * 兼容 no-op（阶段 2 · 2F，决策 D3=a）：续租已由服务端按 presence 完成，Agent 不需要再调。
+   * 仍校验租约归属并返回当前到期时刻（`activeLease` 在岗时已顺手续过），自定义 ttl 不再生效；
+   * 阶段 4 从 `team_task` 工具面删除。
+   */
+  renewLease(attemptId: string, leaseToken: string): number {
+    return this.activeLease(attemptId, leaseToken).attempt.leaseExpiresAt!
   }
 
   reportProgress(attemptId: string, leaseToken: string, progress: number, summary = ''): TaskAttempt {
@@ -551,15 +560,9 @@ export class TaskPoolAggregate {
     }
   }
 
-  renewReview(reviewId: string, leaseToken: string, ttlMs = DEFAULT_LEASE_TTL_MS): number {
-    const { task, review } = this.activeReviewLease(reviewId, leaseToken)
-    const at = this.now()
-    review.leaseExpiresAt = at + boundedInteger(ttlMs, DEFAULT_LEASE_TTL_MS, MIN_LEASE_TTL_MS, MAX_LEASE_TTL_MS)
-    review.updatedAt = at
-    task.updatedAt = at
-    this.note('review.lease_renewed', task.id, review.attemptId, review.reviewerSessionId)
-    this.bumpRevision()
-    return review.leaseExpiresAt
+  /** 兼容 no-op，同 `renewLease`（阶段 2 · 2F）：验收租约也由服务端按 presence 续。 */
+  renewReview(reviewId: string, leaseToken: string): number {
+    return this.activeReviewLease(reviewId, leaseToken).review.leaseExpiresAt!
   }
 
   submitReview(
@@ -800,6 +803,12 @@ export class TaskPoolAggregate {
     return [...released]
   }
 
+  /**
+   * 到期租约的回收（阶段 2 · 2F）：到期**且持有者已不在岗**才回收；还在岗的由服务端续租
+   * （`holderOnline`，见 TaskPoolDependencies）。续租只在租约真的到期那一刻发生，因此每条
+   * 在途任务最多每个 TTL 写一次，不是每轮清扫都写；也不记事件——自动续租是常态，写进
+   * 事件流只会把真正的历史挤出容量上限。
+   */
   reclaimExpired(): string[] {
     const at = this.now()
     const reclaimed = new Set<string>()
@@ -808,6 +817,10 @@ export class TaskPoolAggregate {
       if (!attempt.leaseExpiresAt || attempt.leaseExpiresAt > at) continue
       const task = this.state.tasks[attempt.taskId]
       if (!task || task.currentAttemptId !== attempt.id) continue
+      if (this.holderOnline(attempt.agentSessionId)) {
+        this.extendLease(attempt, at)
+        continue
+      }
       attempt.status = 'failed'
       attempt.error = 'lease_expired'
       attempt.completedAt = at
@@ -823,6 +836,10 @@ export class TaskPoolAggregate {
       if (!review.leaseExpiresAt || review.leaseExpiresAt > at) continue
       const task = this.state.tasks[review.taskId]
       if (!task || task.currentReviewId !== review.id || task.status !== 'review') continue
+      if (review.reviewerSessionId && this.holderOnline(review.reviewerSessionId)) {
+        this.extendLease(review, at)
+        continue
+      }
       const previousReviewer = review.reviewerSessionId
       review.status = 'queued'
       review.reviewerSessionId = undefined
@@ -891,8 +908,14 @@ export class TaskPoolAggregate {
     if (!attempt.leaseToken || attempt.leaseToken !== leaseToken) {
       throw new TaskPoolError('invalid_lease_token', 'Lease token 不匹配')
     }
-    if (!attempt.leaseExpiresAt || attempt.leaseExpiresAt <= this.now()) {
-      throw new TaskPoolError('lease_expired', 'Lease 已过期，等待调度器回收任务')
+    const at = this.now()
+    if (!attempt.leaseExpiresAt || attempt.leaseExpiresAt <= at) {
+      // 持有者正在写入本身就是在岗证据，但仍以 presence 为准（清扫器可能刚好还没跑到）：
+      // 在岗就顺手续租，progress / submit / fail 因此都不再需要 Agent 先调 renew（阶段 2 · 2F）。
+      if (!this.holderOnline(attempt.agentSessionId)) {
+        throw new TaskPoolError('lease_expired', 'Lease 已过期，等待调度器回收任务')
+      }
+      this.extendLease(attempt, at)
     }
     return { task, attempt }
   }
@@ -914,8 +937,12 @@ export class TaskPoolAggregate {
     if (!review.leaseToken || review.leaseToken !== leaseToken) {
       throw new TaskPoolError('invalid_review_lease_token', 'Review Lease token 不匹配')
     }
-    if (!review.leaseExpiresAt || review.leaseExpiresAt <= this.now()) {
-      throw new TaskPoolError('review_lease_expired', 'Review Lease 已过期，等待调度器重新分配')
+    const at = this.now()
+    if (!review.leaseExpiresAt || review.leaseExpiresAt <= at) {
+      if (!review.reviewerSessionId || !this.holderOnline(review.reviewerSessionId)) {
+        throw new TaskPoolError('review_lease_expired', 'Review Lease 已过期，等待调度器重新分配')
+      }
+      this.extendLease(review, at)
     }
     return { task, attempt, review }
   }
@@ -1009,6 +1036,17 @@ export class TaskPoolAggregate {
       at: this.now()
     })
     if (this.state.events.length > EVENT_CAP) this.state.events.splice(0, this.state.events.length - EVENT_CAP)
+  }
+
+  /**
+   * 在岗持有者的服务端续租（阶段 2 · 2F）：只在租约真的到期那一刻发生，所以每条在途任务
+   * 最多每个 TTL 写一次。不动 task.updatedAt——自动续租不是任务进展，不该把它顶到列表最前；
+   * 也不记事件——常态行为写进事件流只会挤掉真正的历史。bumpRevision 让事务落盘并推送。
+   */
+  private extendLease(holder: { leaseExpiresAt?: number; updatedAt: number }, at: number): void {
+    holder.leaseExpiresAt = at + DEFAULT_LEASE_TTL_MS
+    holder.updatedAt = at
+    this.bumpRevision()
   }
 
   private bumpRevision(): void {

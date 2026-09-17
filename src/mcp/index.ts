@@ -51,7 +51,14 @@ async function serveUnified(databasePath: string): Promise<void> {
       slotId: `standby-slot:${channelId}`,
       capabilities: [] as string[]
     }
-    const service = new TaskAgentService(repository, standbyIdentity, repository, teamRepository)
+    // 租约在岗判定（阶段 2 · 2F）：agentSessionId → 绑定通道 → presence，与主进程清扫器同一口径。
+    // 只有到期的租约才会问到这里，所以每次现查 bindings 足够便宜。
+    const holderOnline = (agentSessionId: string): boolean => {
+      const binding = teamRepository.loadTeamControl().bindings
+        .find((candidate) => candidate.agentSessionId === agentSessionId)
+      return binding !== undefined && isPresenceOnline(channelRepository.getPresence(binding.channelId), Date.now())
+    }
+    const service = new TaskAgentService(repository, standbyIdentity, repository, teamRepository, holderOnline)
     const collaboration = new TeamCollaborationAgentService(
       collaborationRepository,
       { ...standbyIdentity },

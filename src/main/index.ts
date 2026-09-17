@@ -596,7 +596,11 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   )
   teamCollaborationSweeper.startSweeper()
   teamMemoryService = new TeamMemoryService(teamMemoryRepository, teamControlService)
-  taskPoolService = new TaskPoolService(taskPoolRepository, teamControlService)
+  // 租约在岗判定（阶段 2 · 2F）：席位的 runtime.online 就是 relay 按 presence 算好的那一个判定，
+  // 与 MCP 进程同源；只有到期的租约才会问到这里。
+  taskPoolService = new TaskPoolService(taskPoolRepository, teamControlService, (agentSessionId) =>
+    teamControlService!.getSnapshot().members.some((member) =>
+      member.binding?.agentSessionId === agentSessionId && member.runtime?.online === true))
   taskPoolService.startSweeper()
   taskPoolService.startWatcher()
   const orchestrationError = (error: unknown): void => {

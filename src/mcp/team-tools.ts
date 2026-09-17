@@ -66,7 +66,7 @@ const channelSchema = {
 const taskIdSchema = z.string().min(1).max(200).optional()
   .describe('任务 id；省略时作用于当前唯一活动任务')
 const ttlSchema = z.number().int().min(5).max(600).optional()
-  .describe('续租时长（秒）；仅 renew 使用')
+  .describe('已废弃且不再生效：续租由服务端按在岗状态自动完成（阶段 2 · 2F）')
 const clientMessageIdSchema = z.string().regex(/^[a-zA-Z0-9:_-]{8,200}$/).optional()
   .describe('幂等键：同一键重复调用不会产生第二条消息')
 
@@ -276,7 +276,7 @@ export function registerTeamTools(server: McpServer, deps: TeamToolsDeps): void 
       }),
       annotations: { readOnlyHint: false, idempotentHint: false }
     },
-    async ({ channel_id, action, taskId, ttlSeconds, progress, summary, output, reason, tasks }) => safe(channel_id, (rt) => {
+    async ({ channel_id, action, taskId, progress, summary, output, reason, tasks }) => safe(channel_id, (rt) => {
       switch (action) {
         case 'claim': {
           const assignment = rt.service.claim(taskId)
@@ -311,11 +311,10 @@ export function registerTeamTools(server: McpServer, deps: TeamToolsDeps): void 
             })
           }
         }
+        // 阶段 2 · 2F：续租已由服务端按 presence 自动完成，本 action 保留为兼容 no-op
+        //（仍回当前到期时刻，ttl_seconds 不再生效），阶段 4 从工具面删除。
         case 'renew':
-          return {
-            action,
-            leaseExpiresAt: rt.service.renew(taskId, ttlSeconds === undefined ? undefined : ttlSeconds * 1_000)
-          }
+          return { action, leaseExpiresAt: rt.service.renew(taskId) }
         case 'progress': {
           const value = required(progress, action, 'progress')
           const task = rt.service.report(taskId, value, summary)
@@ -381,7 +380,7 @@ export function registerTeamTools(server: McpServer, deps: TeamToolsDeps): void 
       }),
       annotations: { readOnlyHint: false, idempotentHint: false }
     },
-    async ({ channel_id, action, taskId, ttlSeconds, decision, evidence, reason }) => safe(channel_id, (rt) => {
+    async ({ channel_id, action, taskId, decision, evidence, reason }) => safe(channel_id, (rt) => {
       switch (action) {
         case 'claim': {
           const review = rt.service.claimReview(taskId)
@@ -398,11 +397,9 @@ export function registerTeamTools(server: McpServer, deps: TeamToolsDeps): void 
               }
             : { action, review: null, message: '当前没有可领取的独立验收。', nextAction: waitingAction(channel_id) }
         }
+        // 同 team_task renew：兼容 no-op（阶段 2 · 2F）。
         case 'renew':
-          return {
-            action,
-            leaseExpiresAt: rt.service.renewReview(taskId, ttlSeconds === undefined ? undefined : ttlSeconds * 1_000)
-          }
+          return { action, leaseExpiresAt: rt.service.renewReview(taskId) }
         case 'submit': {
           const verdict = required(decision, action, 'decision')
           const proof = required(evidence, action, 'evidence')

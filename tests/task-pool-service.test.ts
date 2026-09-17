@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TaskPoolService } from '../src/application/task-pool-service'
 import { transactTaskPool } from '../src/application/task-pool-transaction'
 import { emptyTaskPoolSnapshot, newestTaskPoolSnapshot } from '../src/domain/task-pool'
@@ -6,6 +6,9 @@ import { InMemoryTaskPoolRepository } from '../src/infrastructure/task-pool/in-m
 
 describe('TaskPoolService', () => {
   const runProvider = { getActiveRunId: () => 'workspace-run' }
+
+  // 租约用例会拨快系统时钟（vi.setSystemTime 只替换 Date，域里用的就是 Date.now）；断言失败也要还原。
+  afterEach(() => { vi.useRealTimers() })
 
   it('persists real create and cancel operations and broadcasts snapshots', () => {
     const repository = new InMemoryTaskPoolRepository()
@@ -34,6 +37,28 @@ describe('TaskPoolService', () => {
     })
     expect(revisions).toEqual([0, 1, 2])
     unsubscribe()
+  })
+
+  it('清扫器按在岗判定续租 / 回收（阶段 2 · 2F）：在岗的任务不回队，离线的回队并推送', () => {
+    const repository = new InMemoryTaskPoolRepository()
+    const online = new Set(['agent-1'])
+    const service = new TaskPoolService(repository, runProvider, (agentSessionId) => online.has(agentSessionId))
+    const task = service.createTask({ title: '长命令任务' })
+    const leased = transactTaskPool(repository, (pool) =>
+      pool.leaseNext({ runId: 'workspace-run', agentSessionId: 'agent-1', ttlMs: 5_000 }))!
+    const expiresAt = leased.leaseExpiresAt
+
+    // 租约到期时 agent-1 仍在岗：清扫器续租，任务不回队。
+    vi.setSystemTime(expiresAt + 1_000)
+    expect(service.sweepExpiredLeases()).toEqual([])
+    expect(service.getSnapshot().tasks[task.id]?.status).toBe('leased')
+    expect(service.getSnapshot().attempts[leased.attempt.id]?.leaseExpiresAt).toBeGreaterThan(expiresAt)
+
+    // 席位离线后再到期：回收并回队。
+    online.delete('agent-1')
+    vi.setSystemTime(service.getSnapshot().attempts[leased.attempt.id]!.leaseExpiresAt! + 1_000)
+    expect(service.sweepExpiredLeases()).toEqual([task.id])
+    expect(service.getSnapshot().tasks[task.id]?.status).toBe('queued')
   })
 
   it('validates user-controlled text before touching the repository', () => {
