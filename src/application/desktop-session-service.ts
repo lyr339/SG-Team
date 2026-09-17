@@ -352,6 +352,12 @@ export class DesktopSessionService implements DesktopSessionBridge {
     streaming: boolean
     updatedAt: number
     blockFirstSeen: Map<string, number>
+    /**
+     * 由 ask_question 答题换回合带过来的旧块 id（见 questionAnswerCarryOver）。
+     * 它们不在新回合的快照窗口里，每一帧都会「缺席」——权威帧的撤下规则必须放过它们，
+     * 否则带过来的过程只活一帧。封口把块移出视图后这里的残留 id 无害。
+     */
+    carriedBlockIds?: ReadonlySet<string>
   }>()
   /**
    * 名册常驻状态行的 Cursor 侧事实（hook v32 / inspect 每帧携带的副标题 + 回合状态）。
@@ -1490,6 +1496,34 @@ export class DesktopSessionService implements DesktopSessionBridge {
     return observedAt - previous.updatedAt >= 2_000
   }
 
+  /**
+   * ask_question 答题触发的「换回合」要带着旧块走。
+   *
+   * 答案是经 submitChatMaybeAbortCurrent 作为跟进消息送进 Cursor 的，会新增一个 user
+   * 气泡；而 observer 以「最后一个 user 气泡」切回合（turnId + headers.slice(lastUserIdx+1)），
+   * 于是答题前的整段过程被排除在本帧快照之外。换回合又不承接旧块，过程卡就在答题
+   * 那一刻整块消失——旧块只进了 nativeProcessArchive，而归档只用于封口、从不下发渲染，
+   * 且 ask_question 发生在 record_reply 之前，压根没有回复可供封口。
+   *
+   * 这类换回合并不是真的新用户回合，签名是：上一视图里确有 ask_question 块，且该回合
+   * 尚未封口（没有任何回复带着它的 turn 落库）。命中才带，其余换回合仍遵循既有的
+   * 「不留旧 turn 孤儿块」。块 id 原样保留，后续封口与 persistedBlockIds 去重照常收口，
+   * 不会重复显示。plan/todos 是每帧重发的全局快照，不带。
+   */
+  private questionAnswerCarryOver(
+    channelId: string,
+    previous: { view: LiveProcessState } | undefined
+  ): ProcessBlock[] {
+    if (!previous?.view.blocks.some((block) => block.kind === 'tool' && block.question !== undefined)) return []
+    const sealed = (this.embeddedRelay?.conversationsOf(channelId) ?? []).some((entry) => (
+      entry.role === 'assistant' && entry.turn === previous.view.turn && Boolean(entry.processBlocks?.length)
+    ))
+    if (sealed) return []
+    return previous.view.blocks.filter((block) => (
+      !block.id.startsWith('cursor:todos:') && !block.id.startsWith('cursor:plan:')
+    ))
+  }
+
   private mergeProcessEvidence(
     channelId: string,
     evidence: CursorComposerRuntimeEvidence,
@@ -1604,7 +1638,10 @@ export class DesktopSessionService implements DesktopSessionBridge {
       ? rawStreamItems.filter((item) => !activeCommitted.has(item.id))
       : rawStreamItems
     const includeTodos = Boolean(todoId && !activeCommitted?.has(todoId))
-    const blockFirstSeen = sameTurn && previous
+    // 答题换回合：把未封口的旧块带进新回合，否则过程卡会在答题那一刻整块消失。
+    const carryOver = sameTurn ? [] : this.questionAnswerCarryOver(channelId, previous)
+    const keepsPrevious = Boolean(previous) && (sameTurn || carryOver.length > 0)
+    const blockFirstSeen = keepsPrevious && previous
       ? previous.blockFirstSeen
       : new Map<string, number>()
     const blockById = new Map<string, ProcessBlock>()
@@ -1612,8 +1649,14 @@ export class DesktopSessionService implements DesktopSessionBridge {
     // 上一帧全部块的查找表：权威帧会先清空再按本帧重建顺序，但 completedAt 等
     // 「首次观测即定格」的字段必须能从上一帧继承。
     const previousById = new Map<string, ProcessBlock>(
-      sameTurn && previous ? previous.view.blocks.map((block) => [block.id, block] as const) : []
+      keepsPrevious && previous ? previous.view.blocks.map((block) => [block.id, block] as const) : []
     )
+    const carriedBlockIds = new Set<string>(keepsPrevious ? previous?.carriedBlockIds ?? [] : [])
+    for (const block of carryOver) {
+      blockById.set(block.id, block)
+      blockOrder.push(block.id)
+      carriedBlockIds.add(block.id)
+    }
     if (sameTurn && previous) {
       // 权威帧（snapshotComplete，observer 写后快照）：本帧集合即当前回合可见
       // 窗口的权威状态，缺席块撤下——「部分水合 MCP 占位 → 完整水合后被过滤」
@@ -1634,6 +1677,12 @@ export class DesktopSessionService implements DesktopSessionBridge {
         // 再按本帧内容写回，避免清空后残留或后续回合仍黏在第一次出现的位置。
         if (block.id.startsWith('cursor:todos:') || block.id.startsWith('cursor:plan:')) continue
         if (authoritative) {
+          // 答题带过来的旧块永远不在本回合快照窗口里，缺席是常态，不能据此撤下。
+          if (carriedBlockIds.has(block.id)) {
+            blockById.set(block.id, block)
+            blockOrder.push(block.id)
+            continue
+          }
           // 完整权威帧：缺席即撤下。
           if (!stream.truncatedItemCount) continue
           // 截断帧：窗口起点可判定时只保留窗口外历史；不可判定（帧内项全部缺
@@ -1782,7 +1831,9 @@ export class DesktopSessionService implements DesktopSessionBridge {
         turn,
         blocks,
         truncatedItemCount: stream.truncatedItemCount,
-        startedAt: sameTurn && previous ? previous.view.startedAt : now,
+        // 带过旧块时沿用上一回合的起点：块的锚定按 startedAt 判定，用 now 会把
+        // 答题前的过程整体挪进答题之后。
+        startedAt: keepsPrevious && previous ? previous.view.startedAt : now,
         updatedAt: now,
         // RC-9：生成状态随 view 下发——渲染层据此识别「全部块已 done 但仍在
         // 生成」的直播过程（Cursor 常把生成中的 Thinking 标记为 done），
@@ -1794,7 +1845,8 @@ export class DesktopSessionService implements DesktopSessionBridge {
       generating,
       streaming,
       updatedAt: now,
-      blockFirstSeen
+      blockFirstSeen,
+      ...(carriedBlockIds.size ? { carriedBlockIds } : {})
     })
     return true
   }
