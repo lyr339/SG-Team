@@ -48,6 +48,7 @@
 | D5 | 服务端 | Cloudflare Workers + D1（免运维；免费额度覆盖初期） |
 | D6 | 老用户 | 发布前登记内测设备，每人赠一张内测季卡 |
 | D7 | 命名 | UI 叫「激活码」；代码模块叫 `license`；设置页独立分区「授权与激活」，与「奥仔卡密」物理分开 |
+| D8 | 自动化锁定（操作员点名强化） | 无卡密时锁定**自动化全链路**：自动化设置修改、奥仔卡密的保存/清除/处理、余额刷新、Roxy Key 保存、自动化运行触发。**双重门禁**：IPC 边界 + `onAllSessionsTriggered` 服务入口（触发路径不走自动化 IPC，见 §5.2 R15）。状态查看（含已存卡遮罩显示）与 `cancel` 永不锁定；降级时在途 run 允许跑完、只拦新触发 |
 
 ## 3. 免费 / 付费能力矩阵（最终版）
 
@@ -73,7 +74,7 @@
 | 一键批量拉起 | `registerAgentLaunchIpc` |
 | 通道数上限解除 | 通道创建路径 |
 | 账号金库 / 换号 / 机器码 | `registerCursorAccountIpc`、`cursor-account-switcher` |
-| 账号自动化 + 指纹窗口 | `registerAccountAutomationIpc` |
+| 账号自动化全链路（设置修改、运行触发、指纹窗口、奥仔卡密保存/处理/余额、Roxy 配置） | `registerAccountAutomationIpc`、`registerAozaiIpc`、`onAllSessionsTriggered` 服务入口（`src/main/index.ts:584` 挂接）；例外：状态查看与 `cancel` 永放行（见 D8 / R15） |
 | session-warmup / cdp-keeper | `registerSessionWarmupIpc`、`registerCdpKeeperIpc` |
 | workspace-review | `registerWorkspaceReviewIpc` |
 
@@ -125,6 +126,11 @@
 - **R11 `EntitlementGate`**（建议 `src/application/entitlement-gate.ts`）：能力枚举建议 `teamOrchestration | agentLaunch | accountVault | accountAutomation | sessionWarmup | cdpKeeper | workspaceReview | unlimitedChannels`。在各 `register*Ipc` 的处理函数边界调用 `gate.allows(...)`，拒绝返回统一错误 `{ code: 'LICENSE_REQUIRED', capability }`；通道创建路径实施免费层 2 通道限额（错误码 `CHANNEL_LIMIT`）。验收：无卡密时矩阵付费行逐项被拦，免费行逐项可用。
 - **R12 激活 UI**：设置页新增「授权与激活」分区（参考 `src/renderer/src/settings/SettingsPage.tsx` 现有分区写法）：输码激活、试用入口、状态展示（卡种/到期/设备名/宽限倒计时）、换绑引导、到期提醒；付费功能位置显示锁标 + 引导文案。与「奥仔卡密」分区保持距离，文案不得混用。
 - **R13 时钟防回拨**：license.json 持久化单调 `lastSeenAt`（取 max(now, 上次值)）；检测系统时钟大幅回拨（>48h）→ 强制一次在线校验，校验不过按宽限计时处理。
+- **R15 自动化双重门禁与运行策略（D8 落地）**：
+  - **IPC 层**：`registerAccountAutomationIpc` 的 `saveSettings` / `listBitProfiles` / `saveRoxyApiKey` 与 `registerAozaiIpc` 的 `saveCard` / `clearCard` / `refreshBalance` / `processAccount` / `processToken` 全部要求 `accountAutomation` 能力位；`getSettings` / `getRun` / `getRoxyApiKey` / `aozaiGetCardStatus`（只读状态）与 `cancel` **永不拦截**（用户必须永远能看到状态、能停下正在跑的东西）。
+  - **服务入口层**：`AccountAutomationService.onAllSessionsTriggered()` 开头查 Gate——**这是真正的运行触发点**（由批量拉起完成事件挂接，`src/main/index.ts:584`），不走自动化 IPC，只锁 IPC 会被绕过。无授权时该方法直接返回并记一条状态（UI 可见「需激活」），不抛错、不影响批量拉起本身的收尾。
+  - **降级运行策略**：降级瞬间若有在途自动化 run，允许其自然结束（中断会浪费已消耗的奥仔卡密、留下半成品账号），此后新触发一律被拦；自动化设置、已存奥仔卡密、Roxy Key 全部保留在盘，重新激活即恢复，符合「只锁能力、不锁数据」。
+  - **验收**：免费层预先开启自动化设置 → 激活付费功能试用后到期 → 触发一次批量拉起 → 自动化不启动且 UI 提示需激活；在途 run 在降级时不被杀。
 
 ### 5.3 MCP 进程
 
@@ -216,7 +222,7 @@ CREATE TABLE trials (
 | 阶段 | 内容 | 完成标准（DoD） |
 |---|---|---|
 | P1（1–2 天） | Workers + D1 五端点、发卡 CLI、密钥生成 | 100 张测试卡入库；curl 全流程通过：激活→心跳续签→封禁→心跳撤销→二次激活被拒；`wrangler deploy` 脚本入仓 |
-| P2（2–3 天） | LicenseService + Gate + 指纹 + license.json + 激活 UI | 无卡密启动=免费层（矩阵逐行验证）；激活即时解锁；篡改 license.json 回免费层；单测覆盖 Gate 每个能力位 |
+| P2（2–3 天） | LicenseService + Gate + 指纹 + license.json + 激活 UI | 无卡密启动=免费层（矩阵逐行验证）；激活即时解锁；篡改 license.json 回免费层；单测覆盖 Gate 每个能力位；**R15 自动化双重门禁验收通过（含 onAllSessionsTriggered 绕过路径测试）** |
 | P3（1–2 天） | MCP 门禁 + 通道限额 + 心跳宽限 + 防回拨 | 无授权 `team_*` 拒绝、通信工具放行；第 3 通道被拦；模拟断网 7 天不降级、第 8 天降级；全量 vitest 通过 |
 | P4（后置） | 发卡网对接说明、管理后台、内测赠卡批次 | 操作员按文档完成一次真实上架与发货 |
 | 总验收 | 三个真实场景 | 试用→购卡激活；退款→封禁生效；换机→换绑成功 |
@@ -246,3 +252,4 @@ CREATE TABLE trials (
 | 日期 | 版本 | 变更 | 作者 |
 |---|---|---|---|
 | 2026-09-18 | v1.0 | 初稿：决策 D1–D7 锁定，R1–R14 需求分解，P1–P4 里程碑 | CH-6 |
+| 2026-09-18 | v1.1 | 新增 D8 + R15：自动化全链路锁定（含奥仔卡密/Roxy），双重门禁（IPC + `onAllSessionsTriggered` 服务入口），降级运行策略与验收；矩阵付费行同步扩充 | CH-6 |
