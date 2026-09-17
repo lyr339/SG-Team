@@ -166,7 +166,7 @@ export function SettingsUpdate({ initialStatus, now = () => Date.now() }: Settin
     <>
       <SettingsSection
         title="版本状态"
-        aside={view && view.tone === 'accent' && !view.skippedNote ? <span className="app-update__badge">有新版本</span> : undefined}
+        aside={view?.badge ? <span className={`app-update__badge is-${view.badge.tone}`}>{view.badge.label}</span> : undefined}
       >
         <div className="app-update">
           {status?.applyResult ? (
@@ -181,15 +181,45 @@ export function SettingsUpdate({ initialStatus, now = () => Date.now() }: Settin
             </p>
           ) : null}
           {view ? (
-            <div className={`app-update__card is-${view.tone}${view.busy ? ' is-busy' : ''}`} aria-busy={view.busy}>
-              <div className="app-update__status">
-                <i className="app-update__dot" aria-hidden="true" />
-                <div className="app-update__copy">
-                  <strong className="app-update__headline">{view.headline}</strong>
-                  {view.detail ? <span className="app-update__detail" title={view.detailTitle}>{view.detail}</span> : null}
-                  {view.skippedNote ? <span className="app-update__note">{view.skippedNote}</span> : null}
-                  {view.snoozedNote ? <span className="app-update__note">{view.snoozedNote}</span> : null}
+            <div className={`app-update__card is-${view.tone}`} aria-busy={view.busy}>
+              {/* 英雄行：大号版本数字（当前 → 目标）+ 状态一句话在左，操作在右；状态色只在区块头的胶囊上。 */}
+              <div className="app-update__hero">
+                <div className="app-update__summary">
+                  <div className="app-update__versions">
+                    <div className="app-update__version">
+                      <span className="app-update__eyebrow">当前版本</span>
+                      <strong className="app-update__number">{status?.currentVersion}</strong>
+                    </div>
+                    {view.next ? (
+                      <>
+                        <span className="app-update__arrow" aria-hidden="true">→</span>
+                        <div className="app-update__version is-next">
+                          <span className="app-update__eyebrow">{view.next.label}</span>
+                          <strong className="app-update__number">{view.next.version}</strong>
+                        </div>
+                      </>
+                    ) : null}
+                  </div>
+                  <p className="app-update__headline">{view.headline}</p>
+                  {view.detail ? <p className="app-update__detail" title={view.detailTitle}>{view.detail}</p> : null}
+                  {view.skippedNote ? <p className="app-update__note">{view.skippedNote}</p> : null}
+                  {view.snoozedNote ? <p className="app-update__note">{view.snoozedNote}</p> : null}
                 </div>
+                {view.actions.length && !confirm ? (
+                  <div className="app-update__actions">
+                    {view.actions.map((action) => (
+                      <button
+                        key={action.id}
+                        type="button"
+                        className={`app-update__button${action.kind === 'primary' ? ' is-primary' : action.kind === 'link' ? ' is-link' : ''}`}
+                        disabled={action.disabled || (Boolean(busyAction) && action.id !== 'open-release')}
+                        onClick={() => void run(action.id)}
+                      >
+                        {action.label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
               </div>
               {view.progress ? (
                 <div className="app-update__progress">
@@ -226,21 +256,6 @@ export function SettingsUpdate({ initialStatus, now = () => Date.now() }: Settin
                 </div>
               ) : null}
               {blockedNote ? <p className="app-update__error" role="alert">{blockedNote}</p> : null}
-              {view.actions.length && !confirm ? (
-                <div className="app-update__actions">
-                  {view.actions.map((action) => (
-                    <button
-                      key={action.id}
-                      type="button"
-                      className={`app-update__button${action.kind === 'primary' ? ' is-primary' : action.kind === 'link' ? ' is-link' : ''}`}
-                      disabled={action.disabled || (Boolean(busyAction) && action.id !== 'open-release')}
-                      onClick={() => void run(action.id)}
-                    >
-                      {action.label}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
               {view.rollback && !confirm ? (
                 <div className="app-update__rollback">
                   <span>保留了 {view.rollback.version} 的备份，可以回滚。</span>

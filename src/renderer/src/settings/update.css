@@ -4,16 +4,36 @@
 /* 两个容器都直接住在 settings-section__body（自带 12/14 内边距）里：自己不再加一层，否则双重内缩。 */
 .app-update { min-width: 0; display: grid; gap: 12px; }
 
+/* 区块头右侧的状态胶囊：与存储清理页的风险胶囊同一外形（18px 高、全圆角、文字色 + 极淡底）。状态色只在这里。 */
 .app-update__badge {
-  padding: 2px 8px;
-  color: var(--accent-deep);
-  background: var(--accent-wash);
-  border: 1px solid var(--accent-border);
-  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  color: var(--muted);
+  background: var(--surface-soft);
+  border: 1px solid var(--line-faint);
+  border-radius: var(--border-radius-full);
   font-size: var(--fs-10);
   font-weight: 600;
+  line-height: 1;
   white-space: nowrap;
 }
+.app-update__badge.is-accent { color: var(--accent-deep); background: var(--accent-wash); border-color: var(--accent-border); }
+.app-update__badge.is-success { color: var(--color-text-success); background: var(--color-background-success); border-color: color-mix(in srgb, var(--color-text-success) 30%, transparent); }
+.app-update__badge.is-info { color: var(--color-text-info); background: var(--color-background-info); border-color: var(--color-border-info); }
+.app-update__badge.is-danger { color: var(--red); background: var(--red-soft); border-color: var(--red-border); }
+/* 忙态胶囊（检查 / 下载 / 安装 / 回滚）：文字前一枚细环在转，代替原来会脉冲的圆点。 */
+.app-update__badge.is-info::before {
+  content: '';
+  width: 9px; height: 9px;
+  margin-right: 6px;
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: app-update-spin 900ms linear infinite;
+}
+@keyframes app-update-spin { to { transform: rotate(360deg); } }
 
 .app-update__updated {
   margin: 0;
@@ -65,31 +85,41 @@
 .app-update__card {
   display: grid;
   gap: 12px;
-  padding: 12px 14px;
+  padding: 14px 16px 14px;
   background: var(--surface-pure);
   border: 1px solid var(--color-border-tertiary);
   border-radius: 12px;
 }
-.app-update__card.is-busy { border-color: var(--blue-border); }
 
-.app-update__status { display: grid; grid-template-columns: 10px minmax(0, 1fr); gap: 10px; align-items: start; }
-.app-update__dot {
-  width: 8px; height: 8px;
-  margin-top: 5px;
-  border-radius: 50%;
-  background: var(--muted);
+/* 英雄行：左边版本数字 + 状态句，右边操作；操作贴数字的基线对齐（与存储清理页头部同一手法）。 */
+.app-update__hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px 20px;
 }
-.app-update__card.is-accent .app-update__dot { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-wash); }
-.app-update__card.is-info .app-update__dot { background: var(--blue); animation: settings-nav-dot-pulse 1.6s ease-in-out infinite; }
-.app-update__card.is-success .app-update__dot { background: var(--color-text-success); }
-.app-update__card.is-danger .app-update__dot { background: var(--red); }
-.app-update__card.is-muted .app-update__dot { background: var(--line-strong); }
+.app-update__summary { min-width: 0; flex: 1 1 auto; display: grid; gap: 6px; }
+.app-update__versions { display: flex; align-items: flex-end; gap: 12px; }
+.app-update__version { display: grid; gap: 4px; }
+.app-update__eyebrow { color: var(--muted); font-size: var(--fs-10); font-weight: 600; letter-spacing: .04em; }
+.app-update__number {
+  color: var(--text);
+  font: 650 26px/1.1 var(--font-numeric);
+  letter-spacing: -.01em;
+  font-variant-numeric: tabular-nums;
+}
+/* 有目标版本时当前版本让位：数字降为次要色，目标版本承接品牌色。 */
+.app-update__versions:has(.is-next) .app-update__version:not(.is-next) .app-update__number { color: var(--text-soft); }
+.app-update__version.is-next .app-update__number { color: var(--accent-deep); }
+.app-update__card.is-muted .app-update__version.is-next .app-update__number,
+.app-update__card.is-danger .app-update__version.is-next .app-update__number,
+.app-update__card.is-info .app-update__version.is-next .app-update__number { color: var(--text); }
+.app-update__arrow { padding-bottom: 6px; color: var(--faint); font-size: var(--fs-13); line-height: 1; }
 
-.app-update__copy { min-width: 0; display: grid; gap: 3px; }
-.app-update__headline { color: var(--text); font-size: var(--fs-12); font-weight: 600; }
-.app-update__card.is-danger .app-update__headline { color: var(--red); }
-.app-update__detail { color: var(--muted); font-size: var(--fs-11); line-height: 1.5; overflow-wrap: anywhere; }
-.app-update__note { color: var(--text-soft); font-size: var(--fs-10); line-height: 1.5; }
+.app-update__headline { margin: 0; color: var(--text-soft); font-size: var(--fs-11); line-height: 1.5; overflow-wrap: anywhere; }
+.app-update__detail { margin: 0; color: var(--muted); font-size: var(--fs-10); line-height: 1.5; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.app-update__note { margin: 0; color: var(--text-soft); font-size: var(--fs-10); line-height: 1.5; }
+.app-update__hero > .app-update__actions { flex: 0 0 auto; justify-content: flex-end; padding-top: 14px; }
 
 .app-update__progress { display: grid; gap: 6px; }
 .app-update__bar {
@@ -290,5 +320,5 @@
 @media (prefers-reduced-motion: reduce) {
   .update-reminder { animation: none; }
   .app-update__bar > i { transition: none; }
-  .app-update__card.is-info .app-update__dot { animation: none; }
+  .app-update__badge.is-info::before { animation: none; border-right-color: currentColor; opacity: .5; }
 }

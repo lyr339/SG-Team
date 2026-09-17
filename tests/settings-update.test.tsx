@@ -86,29 +86,37 @@ describe('设置 › 软件更新', () => {
   const render = async (): Promise<void> => { await act(async () => root.render(<SettingsUpdate now={() => NOW} />)) }
   const button = (text: string): HTMLButtonElement => [...container.querySelectorAll<HTMLButtonElement>('button')].find((candidate) => candidate.textContent === text)!
   const click = async (text: string): Promise<void> => { await act(async () => button(text).click()) }
+  /** 英雄行里的大号版本数字（当前版本，以及有目标时的新版本 / 回滚目标）。 */
+  const numbers = (): string[] => [...container.querySelectorAll('.app-update__number')].map((node) => node.textContent ?? '')
 
   it('挂载即拉一次状态并订阅推送；idle 显示当前版本与「立即检查」，检查后变已是最新', async () => {
     const { api } = installApi(statusOf({ phase: 'idle', lastCheckedAt: NOW - 60_000 }))
     await render()
     expect(api.getAppUpdateStatus).toHaveBeenCalledTimes(1)
     expect(api.onAppUpdateStatus).toHaveBeenCalledTimes(1)
-    expect(container.querySelector('.app-update__headline')?.textContent).toBe('当前版本 0.3.2')
-    expect(container.querySelector('.app-update__detail')?.textContent).toBe('上次检查 今天 10:29')
+    // 英雄行：只有当前版本一个数字、没有圆点、没有胶囊；状态句说上次检查
+    expect(numbers()).toEqual(['0.3.2'])
+    expect(container.querySelector('.app-update__dot')).toBeNull()
+    expect(container.querySelector('.app-update__badge')).toBeNull()
+    expect(container.querySelector('.app-update__headline')?.textContent).toBe('上次检查 今天 10:29')
     await click('立即检查')
     expect(api.checkAppUpdate).toHaveBeenCalledTimes(1)
-    expect(container.querySelector('.app-update__headline')?.textContent).toBe('已是最新版本 0.3.2')
+    expect(container.querySelector('.app-update__badge')?.textContent).toBe('已是最新')
+    expect(container.querySelector('.app-update__badge')?.className).toContain('is-success')
   })
 
-  it('有新版：徽章、发布说明纯文本、下载 → 已就绪；安装先过门禁，确认后才真正安装', async () => {
+  it('有新版：胶囊、英雄行「当前 → 新版本」、发布说明纯文本、下载 → 待安装；安装先过门禁，确认后才真正安装', async () => {
     const { api } = installApi(statusOf({ phase: 'available', release, checkedAt: NOW }))
     await render()
     expect(container.querySelector('.app-update__badge')?.textContent).toBe('有新版本')
-    expect(container.querySelector('.app-update__headline')?.textContent).toBe('发现新版本 0.3.3')
+    expect(numbers()).toEqual(['0.3.2', '0.3.3'])
+    expect([...container.querySelectorAll('.app-update__eyebrow')].map((node) => node.textContent)).toEqual(['当前版本', '新版本'])
+    expect(container.querySelector('.app-update__headline')?.textContent).toMatch(/发布 · 111\.1 MB$/)
     expect([...container.querySelectorAll('.app-update__notes p')].map((node) => node.textContent)).toEqual(['v0.3.3', '- 第一条'])
     expect(container.querySelector('.app-update__notes')?.innerHTML).not.toContain('<h2>')
     await click('下载')
     expect(api.downloadAppUpdate).toHaveBeenCalledTimes(1)
-    expect(container.querySelector('.app-update__headline')?.textContent).toBe('0.3.3 已就绪')
+    expect(container.querySelector('.app-update__badge')?.textContent).toBe('待安装')
 
     await click('安装并重启')
     expect(api.installAppUpdate).toHaveBeenLastCalledWith({ confirmed: false })
@@ -123,19 +131,22 @@ describe('设置 › 软件更新', () => {
     await click('安装并重启')
     await click('仍然安装并重启')
     expect(api.installAppUpdate).toHaveBeenLastCalledWith({ confirmed: true })
-    expect(container.querySelector('.app-update__headline')?.textContent).toBe('正在安装 0.3.3…')
+    expect(container.querySelector('.app-update__badge')?.textContent).toBe('正在安装')
+    expect(container.querySelector('.app-update__headline')?.textContent).toBe('拾光即将退出；安装完成后会自动重新打开。')
     expect(container.querySelectorAll('.app-update__card .app-update__button')).toHaveLength(0)
   })
 
-  it('跳过 / 取消跳过 / 稍后只改设置：面板文案跟随，徽章随提醒消失', async () => {
+  it('跳过 / 取消跳过 / 稍后只改设置：面板文案跟随，胶囊变「已跳过」再变回', async () => {
     const { api } = installApi(statusOf({ phase: 'available', release, checkedAt: NOW }))
     await render()
     await click('跳过此版本')
     expect(api.skipAppUpdate).toHaveBeenCalledTimes(1)
     expect(container.querySelector('.app-update__note')?.textContent).toBe('已跳过 0.3.3，出现更高版本时再提醒')
-    expect(container.querySelector('.app-update__badge')).toBeNull()
+    expect(container.querySelector('.app-update__badge')?.textContent).toBe('已跳过')
+    expect(container.querySelector('.app-update__badge')?.className).toContain('is-muted')
     await click('取消跳过')
     expect(container.querySelector('.app-update__note')).toBeNull()
+    expect(container.querySelector('.app-update__badge')?.textContent).toBe('有新版本')
     await click('稍后')
     expect(api.snoozeAppUpdate).toHaveBeenCalledTimes(1)
     expect(container.querySelector('.app-update__note')?.textContent).toMatch(/^已选择稍后，.*后恢复提醒$/)
@@ -145,11 +156,13 @@ describe('设置 › 软件更新', () => {
   it('失败态：原因 + 重试回到有新版；打开发布页只调 IPC', async () => {
     const { api } = installApi(statusOf({ phase: 'failed', step: 'download', message: 'sha512 mismatch', at: NOW, release }))
     await render()
-    expect(container.querySelector('.app-update__headline')?.textContent).toBe('下载失败')
-    expect(container.querySelector('.app-update__detail')?.textContent).toBe('sha512 mismatch')
+    expect(container.querySelector('.app-update__badge')?.textContent).toBe('下载失败')
+    expect(container.querySelector('.app-update__badge')?.className).toContain('is-danger')
+    expect(container.querySelector('.app-update__headline')?.textContent).toBe('sha512 mismatch')
+    expect(numbers()).toEqual(['0.3.2', '0.3.3'])
     await click('重试')
     expect(api.dismissAppUpdateFailure).toHaveBeenCalledTimes(1)
-    expect(container.querySelector('.app-update__headline')?.textContent).toBe('发现新版本 0.3.3')
+    expect(container.querySelector('.app-update__badge')?.textContent).toBe('有新版本')
     await click('打开发布页')
     expect(api.openAppUpdateReleasePage).toHaveBeenCalledTimes(1)
   })
@@ -184,7 +197,7 @@ describe('设置 › 软件更新', () => {
     expect(cancel.disabled).toBe(false)
     await click('取消下载')
     expect(api.cancelAppUpdateDownload).toHaveBeenCalledTimes(1)
-    expect(container.querySelector('.app-update__headline')?.textContent).toBe('发现新版本 0.3.3')
+    expect(container.querySelector('.app-update__badge')?.textContent).toBe('有新版本')
     expect(button('下载').disabled).toBe(false)
   })
 
@@ -238,7 +251,8 @@ describe('设置 › 软件更新', () => {
   it('平台不支持：状态卡说明原因、只剩发布页，开关禁用', async () => {
     installApi(statusOf({ phase: 'unsupported', reason: '此平台的应用内更新尚未提供：请到发布页下载新版后手动替换。' }))
     await render()
-    expect(container.querySelector('.app-update__detail')?.textContent).toContain('发布页')
+    expect(container.querySelector('.app-update__badge')?.textContent).toBe('不支持应用内更新')
+    expect(container.querySelector('.app-update__headline')?.textContent).toContain('发布页')
     expect([...container.querySelectorAll('.app-update__card button')].map((node) => node.textContent)).toEqual(['打开发布页'])
     expect(container.querySelector<HTMLInputElement>('input[aria-label="自动检查新版本"]')?.disabled).toBe(true)
   })
@@ -289,7 +303,9 @@ describe('设置 › 软件更新', () => {
     await click('回滚到 0.3.2…')
     await click('回滚到 0.3.2 并重启')
     expect(api.rollbackAppUpdate).toHaveBeenLastCalledWith({ confirmed: true })
-    expect(container.querySelector('.app-update__headline')?.textContent).toBe('正在回滚到 0.3.2…')
+    expect(container.querySelector('.app-update__badge')?.textContent).toBe('正在回滚')
+    expect(numbers()).toEqual(['0.3.2', '0.3.2'])
+    expect([...container.querySelectorAll('.app-update__eyebrow')].map((node) => node.textContent)).toEqual(['当前版本', '回滚到'])
     expect(container.querySelector('.app-update__rollback')).toBeNull()
   })
 })

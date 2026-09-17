@@ -426,8 +426,33 @@ const scenes = [
   // 有新版时会话页右下角的小提醒框与齿轮角标（geometry probe：不遮挡输入框、齿轮上有角标）。
   ...['idle', 'up_to_date', 'available', 'downloading', 'downloaded', 'failed', 'offline', 'unsupported'].flatMap(phase =>
     ['light', 'dark'].map(colorScheme => ({
-      name: `settings-update-${phase.replace('_', '-')}-${colorScheme}`, hash: 'account:update', query: `update=${phase}`,
-      width: 1440, height: 900, colorScheme, storage: baseStorage({ colorMode: colorScheme }), clip: null
+      name: `settings-update-${phase.replaceAll('_', '-')}-${colorScheme}`, hash: 'account:update', query: `update=${phase}`,
+      width: 1440, height: 900, colorScheme, storage: baseStorage({ colorMode: colorScheme }), clip: null,
+      // 英雄行几何：没有圆点；操作在数字右侧且不与文案重叠、不出卡；胶囊（如有）在区块头里、单行。
+      actions: [{ wait: 200 }, { label: '英雄行', probe: `(() => {
+        if (document.querySelector('.app-update__dot')) throw new Error('状态卡不该再有圆点')
+        const card = document.querySelector('.app-update__card').getBoundingClientRect()
+        const summary = document.querySelector('.app-update__summary').getBoundingClientRect()
+        const numbers = [...document.querySelectorAll('.app-update__number')].map((node) => node.textContent)
+        if (!numbers.length || numbers.length > 2) throw new Error('英雄行数字个数不对：' + numbers.join(','))
+        const actions = document.querySelector('.app-update__hero .app-update__actions')
+        if (actions) {
+          const box = actions.getBoundingClientRect()
+          if (box.left < summary.right - 1) throw new Error('操作与文案横向重叠')
+          if (box.right > card.right + 1 || box.top < card.top - 1) throw new Error('操作出卡')
+          for (const button of actions.querySelectorAll('button')) {
+            if (button.getBoundingClientRect().height > 34) throw new Error('操作按钮换行了：' + button.textContent)
+          }
+        }
+        const badge = document.querySelector('.app-update__badge')
+        if (badge) {
+          const head = badge.closest('.settings-section__head').getBoundingClientRect()
+          const box = badge.getBoundingClientRect()
+          if (box.top < head.top || box.bottom > head.bottom) throw new Error('胶囊出了区块头')
+          if (box.height > 22) throw new Error('胶囊折行了：' + badge.textContent)
+        }
+        return { numbers, badge: badge ? badge.textContent : null, actions: actions ? actions.querySelectorAll('button').length : 0 }
+      })()` }]
     }))
   ),
   {
@@ -436,8 +461,11 @@ const scenes = [
       const confirm = document.querySelector('.app-update__confirm')
       if (!confirm) throw new Error('未出现门禁确认块')
       if (!confirm.textContent.includes('席位在线')) throw new Error('确认文案缺少在线席位后果')
-      if (document.querySelectorAll('.app-update__card > .app-update__actions').length) throw new Error('确认块出现时普通操作按钮应收起')
-      return { text: confirm.textContent.slice(0, 60) }
+      if (document.querySelectorAll('.app-update__hero .app-update__actions').length) throw new Error('确认块出现时普通操作按钮应收起')
+      if (document.querySelector('.app-update__dot')) throw new Error('状态卡不该再有圆点')
+      const numbers = [...document.querySelectorAll('.app-update__number')].map((node) => node.textContent)
+      if (numbers.length !== 2) throw new Error('英雄行应有当前 → 新版本两个数字：' + numbers.join(','))
+      return { text: confirm.textContent.slice(0, 60), numbers }
     })()` }]
   },
   // 自定义更新源展开：提示、镜像预设胶囊、输入 + 保存一行；点预设只填入输入框（保存按钮亮起、胶囊不亮）。
