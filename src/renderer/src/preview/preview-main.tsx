@@ -1132,115 +1132,102 @@ const api: SgDesktopApi = {
   dissolveTeamGroup: async () => structuredClone(state.team),
   planTeamGroupTasks: async () => [],
   getTeamCollaborationSnapshot: async () => structuredClone(collaborationSnapshot),
-  getManualHandoffOptions: async (slotId) => {
-    const source = state.team.members.find((member) => member.slot.id === slotId)
-    if (!source?.binding) throw new Error('待交接角色不存在')
+  getMembershipTransferOptions: async (slotId) => {
+    const view = state.team.groups.find((candidate) => (
+      candidate.group.status === 'active' && candidate.members.some((member) => member.slot.id === slotId)
+    ))
+    const source = view?.members.find((member) => member.slot.id === slotId)
+    if (!view || !source) throw new Error('该席位不在任何协作组内')
     return {
       runId: state.team.activeRun!.id,
+      groupId: view.group.id,
+      groupName: view.group.name,
       sourceSlotId: source.slot.id,
       sourceRoleName: source.role.name,
-      sourceChannelId: source.binding.channelId,
-      candidates: [
-        ...state.team.standbyChannels.filter((channel) => channel.agentSessionId).map((channel) => ({
-          agentSessionId: channel.agentSessionId!,
-          kind: 'standby' as const,
-          mode: 'role_rebind' as const,
-          channelId: channel.channelId,
-          roleName: channel.displayName,
-          eligible: channel.online && channel.waiting && channel.queueDepth === 0,
-          blocker: !channel.online ? '备用 Agent 已离线' : !channel.waiting ? '备用 Agent 尚未待命' : channel.queueDepth ? `队列中还有 ${channel.queueDepth} 条消息` : undefined,
-          impact: '备用 Agent 将直接接管，不会产生新的职责空缺'
-        })),
-        ...state.team.members.filter((member) => member.slot.solo !== true && member.slot.id !== source.slot.id && member.binding && member.runtime?.online).map((member) => ({
-        agentSessionId: member.binding!.agentSessionId,
-        kind: 'member' as const,
-        mode: source.role.templateKey === 'lead' ? 'lead_authority' as const : 'role_rebind' as const,
-        channelId: member.binding!.channelId,
-        slotId: member.slot.id,
-        roleName: member.role.name,
-        avatarId: member.slot.avatarId,
-        eligible: source.role.templateKey === 'lead'
-          ? true
-          : member.runtime!.waiting && member.runtime!.queueDepth === 0 && member.role.templateKey !== 'lead',
-        blocker: source.role.templateKey !== 'lead' && member.role.templateKey === 'lead'
-          ? '不能挪走当前唯一主控'
-          : undefined,
-        impact: source.role.templateKey === 'lead'
-          ? `保留${member.role.name}职责与现有任务，同时接管唯一主控权限`
-          : `${member.role.name}席将转为离线空缺`
-        }))
-      ]
+      sourceChannelId: source.binding?.channelId ?? source.slot.channelId,
+      transfersLead: view.effectiveLeadSlotId === source.slot.id,
+      candidates: state.team.members
+        .filter((member) => member.slot.solo === true)
+        .map((member) => {
+          const online = member.runtime?.online === true
+          return {
+            slotId: member.slot.id,
+            channelId: member.binding?.channelId ?? member.slot.channelId,
+            roleName: member.role.name,
+            avatarId: member.slot.avatarId,
+            online,
+            impact: online
+              ? '在线独立席位：入组通知随它的下一次轮询到达'
+              : '当前离线：通知与上下文会在其通道排队，等新会话上线后生效'
+          }
+        })
     }
   },
-  manualHandoff: async ({ sourceSlotId, replacementAgentSessionId }) => {
-    const source = state.team.members.find((member) => member.slot.id === sourceSlotId)!
-    const donor = state.team.members.find((member) => member.binding?.agentSessionId === replacementAgentSessionId)
-    const standby = state.team.standbyChannels.find((channel) => channel.agentSessionId === replacementAgentSessionId)
-    const sourceBinding = source.binding!
-    if (source.role.templateKey === 'lead' && donor) {
-      state.team = {
-        ...state.team,
-        revision: state.team.revision + 1,
-        activeRun: state.team.activeRun
-          ? { ...state.team.activeRun, actingLeadSlotId: donor.slot.id, updatedAt: Date.now() }
-          : undefined,
-        runs: state.team.runs.map((run) => run.id === state.team.activeRun?.id
-          ? { ...run, actingLeadSlotId: donor.slot.id, updatedAt: Date.now() }
-          : run)
-      }
-      pushTeam()
-      return {
-        handoff: {
-          mode: 'lead_authority' as const,
-          messageId: 'preview-lead-authority-message',
-          actingLeadSlotId: donor.slot.id,
-          recoveredTaskIds: []
-        },
-        team: structuredClone(state.team)
-      }
+  // 预览版成员身份迁移：A 恢复独立、B 顶上 A 的组角色（lead 随迁）；绑定 / 令牌不动。
+  transferMembership: async ({ groupId, fromSlotId, toSlotId }) => {
+    const view = state.team.groups.find((candidate) => candidate.group.id === groupId)!
+    const source = view.members.find((member) => member.slot.id === fromSlotId)!
+    const target = state.team.members.find((member) => member.slot.id === toSlotId)!
+    const transferredLead = view.effectiveLeadSlotId === fromSlotId
+    const groupRole = { ...source.role }
+    const restoredSource = {
+      ...source,
+      role: target.role,
+      slot: { ...source.slot, solo: true, groupId: undefined, roleId: target.role.id, homeRoleId: undefined, groupJoinedAt: undefined }
     }
-    const sourceChannel = sourceBinding.channelId
-    const replacementChannelId = donor?.binding?.channelId ?? standby!.channelId
-    const replacementAgentSessionIdResolved = donor?.binding?.agentSessionId ?? standby!.agentSessionId!
-    // 接手方的新绑定尚未签到（acknowledged_at 清空）：就绪度回到 ready，直到它 team_check_in。
-    source.binding = {
-      ...sourceBinding,
-      channelId: replacementChannelId,
-      agentSessionId: replacementAgentSessionIdResolved,
-      slotId: source.slot.id,
-      acknowledgedAt: undefined
-    }
-    source.slot = { ...source.slot, channelId: replacementChannelId, avatarId: donor?.slot.avatarId ?? source.slot.avatarId }
-    source.runtime = donor?.runtime
-      ? { ...donor.runtime, channelId: replacementChannelId }
-      : { channelId: replacementChannelId, status: 'waiting', online: true, waiting: true, queueDepth: 0, lastSeenAt: Date.now(), healthEvidence: ['备用 Agent 已接管'], workingFiles: [] }
-    source.readiness = 'ready'
-    if (donor?.binding) {
-      donor.binding = { ...sourceBinding, slotId: donor.slot.id, acknowledgedAt: undefined }
-      donor.slot = { ...donor.slot, channelId: sourceChannel }
-      donor.runtime = donor.runtime ? { ...donor.runtime, channelId: sourceChannel, online: false, waiting: false, status: 'offline' } : donor.runtime
-      donor.readiness = 'offline'
+    const joinedTarget = {
+      ...target,
+      role: groupRole,
+      slot: { ...target.slot, solo: false, groupId, roleId: groupRole.id, homeRoleId: target.slot.roleId, groupJoinedAt: Date.now() }
     }
     const failover = {
-      id: `team-handoff:manual:preview`, workspaceId: sourceBinding.workspaceId,
-      runId: sourceBinding.runId, slotId: source.slot.id, roleName: source.role.name,
-      fromChannelId: sourceChannel, fromAgentSessionId: sourceBinding.agentSessionId,
-      toChannelId: replacementChannelId, toAgentSessionId: replacementAgentSessionIdResolved,
-      status: 'waiting_for_agent' as const, reason: '用户手动交接', taskIds: [],
-      detectedAt: Date.now(), updatedAt: Date.now()
+      id: 'team-handoff:membership:preview',
+      workspaceId: source.binding?.workspaceId ?? 'preview',
+      runId: state.team.activeRun!.id,
+      slotId: source.slot.id,
+      roleName: groupRole.name,
+      fromChannelId: source.binding?.channelId ?? source.slot.channelId ?? '?',
+      fromAgentSessionId: source.binding?.agentSessionId ?? '',
+      toChannelId: target.binding?.channelId ?? target.slot.channelId,
+      toAgentSessionId: target.binding?.agentSessionId,
+      status: 'completed' as const,
+      reason: 'manual_membership_transfer',
+      taskIds: [],
+      detectedAt: Date.now(),
+      updatedAt: Date.now(),
+      completedAt: Date.now()
     }
     state.team = {
       ...state.team,
       revision: state.team.revision + 1,
-      standbyChannels: standby ? state.team.standbyChannels.filter((channel) => channel.agentSessionId !== replacementAgentSessionId) : state.team.standbyChannels,
+      members: state.team.members.map((member) => (
+        member.slot.id === fromSlotId ? restoredSource : member.slot.id === toSlotId ? joinedTarget : member
+      )),
+      groups: state.team.groups.map((candidate) => candidate.group.id === groupId
+        ? {
+            ...candidate,
+            group: {
+              ...candidate.group,
+              leadSlotId: transferredLead ? toSlotId : candidate.group.leadSlotId,
+              actingLeadSlotId: candidate.group.actingLeadSlotId === fromSlotId ? toSlotId : candidate.group.actingLeadSlotId
+            },
+            members: [...candidate.members.filter((member) => member.slot.id !== fromSlotId), joinedTarget],
+            effectiveLeadSlotId: transferredLead ? toSlotId : candidate.effectiveLeadSlotId
+          }
+        : candidate),
       failovers: [failover, ...state.team.failovers]
     }
     pushTeam()
     return {
-      handoff: {
-        mode: 'role_rebind',
+      transfer: {
+        groupId,
+        fromSlotId,
+        toSlotId,
+        toChannelId: failover.toChannelId,
+        roleName: groupRole.name,
+        transferredLead,
         failover,
-        messageId: 'preview-handoff-message', vacatedSlotId: donor?.slot.id
+        releasedTaskIds: []
       },
       team: structuredClone(state.team)
     }

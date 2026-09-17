@@ -8,7 +8,7 @@ import type { TeamMemorySnapshot } from '../domain/team-memory'
 import type { CursorAccountMetadata, CursorRuntimeAccountMatch } from '../domain/cursor-account'
 import type { CursorProUpgradeResult } from '../domain/cursor-checkout-profile'
 import type { CursorMembershipStatus } from '../domain/cursor-membership'
-import type { ManualTeamHandoffInput, ManualTeamHandoffOutcome, TeamHandoffOptions } from '../domain/team-handoff'
+import type { MembershipTransferInput, MembershipTransferOptions, MembershipTransferOutcome } from '../domain/team-handoff'
 import type { CursorWorkspaceDetection } from '../domain/cursor-workspace'
 import type { CursorModelOption, CursorModelSelection } from '../domain/cursor-model'
 import type { AozaiCardStatus, AozaiProcessResult, AozaiProgressEvent } from '../domain/aozai-service'
@@ -454,12 +454,13 @@ export interface SgDesktopApi {
    */
   planTeamGroupTasks(input: TeamGroupPlanTasksInput): Promise<TeamTask[]>
   getTeamCollaborationSnapshot(): Promise<TeamCollaborationSnapshot>
-  getManualHandoffOptions(slotId: string): Promise<TeamHandoffOptions>
+  getMembershipTransferOptions(slotId: string): Promise<MembershipTransferOptions>
   /**
-   * 离线团队席位的职责迁移（AgentSlot 换绑 / 主控权限转移）。`includeContext` 为真时，
-   * 主进程在迁移前解析原席位上下文文档、迁移成功后投递给接手通道，结果在 contextHandoff。
+   * 成员身份迁移（阶段 2 · 2C）：把协作组内席位的组身份（组角色 + lead）移交给池内另一个独立席位，
+   * 绑定 / 令牌 / Composer 不动。`includeContext` 为真时，主进程在迁移前解析原席位上下文文档、
+   * 迁移成功后投递给目标席位的通道，结果在 contextHandoff。
    */
-  manualHandoff(input: ManualTeamHandoffInput): Promise<ManualTeamHandoffOutcome & {
+  transferMembership(input: MembershipTransferInput): Promise<MembershipTransferOutcome & {
     team: TeamControlSnapshot
   }>
   onSnapshot(listener: (snapshot: DesktopSnapshot) => void): () => void

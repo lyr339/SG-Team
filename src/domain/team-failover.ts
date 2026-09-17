@@ -22,8 +22,3 @@ export interface TeamFailoverRecord {
   updatedAt: number
   completedAt?: number
 }
-
-export interface TeamFailoverRebindResult {
-  record: TeamFailoverRecord
-  bindingKey: string
-}

@@ -12,8 +12,6 @@ import type {
   TeamRestoreOperation
 } from '../domain/team-continuity'
 import { emptyTeamContinuitySnapshot } from '../domain/team-continuity'
-import type { TeamTakeoverCapsule } from '../domain/team-continuity'
-import { cursorComposerBindingMarker } from '../domain/cursor-telemetry'
 import type { TeamCollaborationRepository } from './team-collaboration-repository'
 import type { TeamContinuityRepository } from './team-continuity-repository'
 
@@ -139,23 +137,12 @@ function restoreDetail(state: TeamRestoreMember['state']): string {
   return labels[state]
 }
 
-function roleRestoreContent(
-  checkpoint: TeamCheckpoint,
-  member: TeamMemberView,
-  takeover?: {
-    failoverId: string
-    previousAgentSessionId: string
-    replacementChannelId: string
-    bindingKey: string
-    mode: 'automatic' | 'manual'
-  }
-): string {
+function roleRestoreContent(checkpoint: TeamCheckpoint, member: TeamMemberView): string {
   const capsule = checkpoint.capsule
   const taskIds = new Set(capsule.activeTasks
     .filter((task) => (
       task.targetSlotId === member.slot.id
       || task.assigneeSessionId === member.binding?.agentSessionId
-      || Boolean(takeover && task.assigneeSessionId === takeover.previousAgentSessionId)
     ))
     .map((task) => task.id))
   const tasks = capsule.activeTasks.filter((task) => taskIds.has(task.id)).slice(0, 12)
@@ -164,14 +151,8 @@ function roleRestoreContent(
     || (message.sender.type === 'agent' && message.sender.slotId === member.slot.id)
   )).slice(0, 12)
   const workingFiles = capsule.members.find((candidate) => candidate.slotId === member.slot.id)?.workingFiles ?? []
-  const takeoverLines = takeover ? [
-    `接替事件：${takeover.failoverId}`,
-    `${takeover.mode === 'manual' ? '用户已执行手动交接' : '系统已执行自动接替'}：你正在 CH-${takeover.replacementChannelId} 接替已掉线运行时；旧 Agent 已被封禁。`,
-    `Cursor 会话绑定标记：${cursorComposerBindingMarker({ bindingKey: takeover.bindingKey, channelId: takeover.replacementChannelId })}`
-  ] : []
   return [
-    takeover ? `【拾光 ${takeover.mode === 'manual' ? '手动交接' : '自动接替'}胶囊】` : '【拾光恢复胶囊】',
-    ...takeoverLines,
+    '【拾光恢复胶囊】',
     `检查点：${checkpoint.id}`,
     `稳定身份：${member.slot.id}；角色：${member.role.name}。`,
     `团队目标：${capsule.goal}`,
@@ -196,11 +177,10 @@ function roleRestoreContent(
       ? capsule.sharedMemory.slice(0, 12).map((memory) => `- [${memory.kind}] ${memory.title}：${memory.content.slice(0, 600)}`).join('\n')
       : '- 暂无已采纳共享记忆',
     '',
-    `${takeover ? '接替' : '恢复'}步骤：`,
-    ...(takeover ? ['1. 先调用 team_check_in，确认新的稳定角色和权限已经生效，并读取返回的团队上下文。'] : []),
-    `${takeover ? '2' : '1'}. 用 team_check_in 返回的 context 核对当前成员、消息和本轮关键上下文，再用 team_tasks({view:'mine'}) 核对任务。`,
-    `${takeover ? '3' : '2'}. 对未读消息调用 team_message({action:'read', messageId})；继续属于你的 leased/running 任务，不要重复创建任务。`,
-    `${takeover ? '4' : '3'}. 使用 team_message({action:'respond', messageId, content}) 回应本${takeover ? '接替' : '恢复'}消息，写清“已${takeover ? '接替' : '恢复'}”、当前任务和仍存在的阻塞。`,
+    '恢复步骤：',
+    `1. 用 team_check_in 返回的 context 核对当前成员、消息和本轮关键上下文，再用 team_tasks({view:'mine'}) 核对任务。`,
+    `2. 对未读消息调用 team_message({action:'read', messageId})；继续属于你的 leased/running 任务，不要重复创建任务。`,
+    `3. 使用 team_message({action:'respond', messageId, content}) 回应本恢复消息，写清“已恢复”、当前任务和仍存在的阻塞。`,
     '普通 record_reply 只同步给用户，不能替代恢复回执。'
   ].join('\n')
 }
@@ -345,41 +325,6 @@ export class TeamContinuityService {
     }
     this.emit()
     return this.getSnapshot().activeRestore!
-  }
-
-  createTakeoverCapsule(input: {
-    slotId: string
-    failoverId: string
-    previousAgentSessionId: string
-    replacementChannelId: string
-    bindingKey: string
-    checkpointId?: string
-    mode?: 'automatic' | 'manual'
-  }): TeamTakeoverCapsule {
-    const checkpoint = input.checkpointId
-      ? this.repository.getCheckpoint(input.checkpointId.trim())
-      : this.capture('automatic')
-    if (!checkpoint) throw new Error('当前 TeamRun 无法生成接替检查点')
-    const team = this.sources.team.getSnapshot()
-    if (checkpoint.runId !== team.activeRun?.id || checkpoint.workspaceId !== team.activeWorkspaceId) {
-      throw new Error('接替检查点不属于当前 TeamRun')
-    }
-    const member = team.members.find((candidate) => candidate.slot.id === input.slotId.trim())
-    if (!member) throw new Error('接替职责不属于当前 TeamRun')
-    const taskIds = checkpoint.capsule.activeTasks
-      .filter((task) => task.targetSlotId === member.slot.id || task.assigneeSessionId === input.previousAgentSessionId)
-      .map((task) => task.id)
-    return {
-      checkpointId: checkpoint.id,
-      taskIds,
-      content: roleRestoreContent(checkpoint, member, {
-        failoverId: input.failoverId,
-        previousAgentSessionId: input.previousAgentSessionId,
-        replacementChannelId: input.replacementChannelId,
-        bindingKey: input.bindingKey,
-        mode: input.mode ?? 'automatic'
-      })
-    }
   }
 
   dispose(): void {

@@ -19,7 +19,7 @@ import type { SettingsPageProps } from './settings/settings-view'
 import { ManualHandoffDialog } from './team/ManualHandoffDialog'
 import { SessionHandoffDialog } from './SessionHandoffDialog'
 import { resolveHandoffEntry } from './handoff-entry'
-import type { ManualTeamHandoffOutcome, TeamHandoffOptions } from '../../domain/team-handoff'
+import type { MembershipTransferOptions, MembershipTransferOutcome } from '../../domain/team-handoff'
 import type { CursorAccountMetadata, CursorRuntimeAccountMatch } from '../../domain/cursor-account'
 import type { CursorMembershipStatus } from '../../domain/cursor-membership'
 import type { CursorUpdatePreferences } from '../../domain/cursor-update'
@@ -134,7 +134,7 @@ export function App(): React.JSX.Element {
   })
   const [sessionListRequested, setSessionListRequested] = useState(false)
   const [teamNotice, setTeamNotice] = useState('')
-  const [handoffOptions, setHandoffOptions] = useState<TeamHandoffOptions>()
+  const [handoffOptions, setHandoffOptions] = useState<MembershipTransferOptions>()
   const [handoffBusy, setHandoffBusy] = useState(false)
   const [handoffError, setHandoffError] = useState('')
   const [cursorAccounts, setCursorAccounts] = useState<CursorAccountMetadata[]>([])
@@ -880,7 +880,7 @@ export function App(): React.JSX.Element {
       return { ...current, [workspaceChannelId]: existing ? `${existing}\n\n${text}` : text }
     })
   }, [workspaceChannelId])
-  // 「交接」三态：离线团队席位 → 职责迁移（可附带上下文）；其余在运行中的席位（独立或团队、
+  // 「交接」三态：离线入组席位 → 成员身份迁移（可附带上下文）；其余在运行中的席位（独立或入组、
   // 在线或离线）→ 上下文交接；运行已结束 / 非本轮席位 → 禁用并说明原因。
   const handoffEntry = resolveHandoffEntry({ member: selectedMember, run: teamControl.activeRun })
   const [contextHandoffChannel, setContextHandoffChannel] = useState<string>()
@@ -922,7 +922,7 @@ export function App(): React.JSX.Element {
     setHandoffBusy(true)
     setHandoffError('')
     try {
-      setHandoffOptions(await window.sgDesktop.getManualHandoffOptions(slotId))
+      setHandoffOptions(await window.sgDesktop.getMembershipTransferOptions(slotId))
     } catch (reason) {
       setHandoffError(reason instanceof Error ? reason.message : String(reason))
     } finally {
@@ -930,18 +930,19 @@ export function App(): React.JSX.Element {
     }
   }, [])
 
-  // 迁移成功后弹窗停在结果页（职责与上下文文档各自的结果），由用户点「完成」关闭；
-  // 会话区先切到接手通道，关闭后正好落在接手者的会话上。
+  // 迁移成功后弹窗停在结果页（成员身份与上下文文档各自的结果），由用户点「完成」关闭；
+  // 会话区先切到目标席位的通道，关闭后正好落在接手者的会话上。
   const confirmManualHandoff = useCallback(async (
-    input: { agentSessionId: string; includeContext: boolean }
-  ): Promise<ManualTeamHandoffOutcome | undefined> => {
+    input: { toSlotId: string; includeContext: boolean }
+  ): Promise<MembershipTransferOutcome | undefined> => {
     if (!handoffOptions) return undefined
     setHandoffBusy(true)
     setHandoffError('')
     try {
-      const { team, ...outcome } = await window.sgDesktop.manualHandoff({
-        sourceSlotId: handoffOptions.sourceSlotId,
-        replacementAgentSessionId: input.agentSessionId,
+      const { team, ...outcome } = await window.sgDesktop.transferMembership({
+        groupId: handoffOptions.groupId,
+        fromSlotId: handoffOptions.sourceSlotId,
+        toSlotId: input.toSlotId,
         includeContext: input.includeContext
       })
       acceptTeamControl(team)
@@ -953,9 +954,7 @@ export function App(): React.JSX.Element {
       acceptTaskPool(tasks)
       acceptCollaboration(messages)
       acceptSnapshot(desktop)
-      const replacementChannel = team.members
-        .find((member) => member.slot.id === handoffOptions.sourceSlotId)?.binding?.channelId
-      if (replacementChannel) setSelectedChannelId(replacementChannel)
+      if (outcome.transfer.toChannelId) setSelectedChannelId(outcome.transfer.toChannelId)
       return outcome
     } catch (reason) {
       setHandoffError(reason instanceof Error ? reason.message : String(reason))

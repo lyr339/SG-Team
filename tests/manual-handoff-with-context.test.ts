@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { manualHandoffWithContext, type ManualHandoffWithContextPorts } from '../src/application/manual-handoff-with-context'
+import { transferMembershipWithContext, type MembershipTransferWithContextPorts } from '../src/application/manual-handoff-with-context'
 import type { SessionHandoffContext, SessionHandoffResult } from '../src/domain/session-handoff'
 import { emptyTeamControlSnapshot, type TeamControlSnapshot, type TeamMemberView } from '../src/domain/team-control'
-import type { ManualTeamHandoffResult } from '../src/domain/team-handoff'
+import type { MembershipTransferResult } from '../src/domain/team-handoff'
 
 const SOURCE_CONTEXT: SessionHandoffContext = {
   channelId: '2',
@@ -15,15 +15,32 @@ const SOURCE_CONTEXT: SessionHandoffContext = {
   assistantMessageCount: 3
 }
 
-const MIGRATED: ManualTeamHandoffResult = { mode: 'role_rebind', messageId: 'msg-1', vacatedSlotId: undefined }
+function transferred(toChannelId: string | undefined): MembershipTransferResult {
+  return {
+    groupId: 'team-group:ws:g1',
+    fromSlotId: 'slot-builder',
+    toSlotId: 'slot-solo-7',
+    toChannelId,
+    roleName: '架构实现',
+    transferredLead: false,
+    failover: {
+      id: 'team-handoff:membership:test', workspaceId: 'ws', runId: 'team-run:ws:main',
+      slotId: 'slot-builder', roleName: '架构实现', fromChannelId: '2', fromAgentSessionId: 'agent-2',
+      toChannelId, toAgentSessionId: toChannelId ? 'agent-7' : undefined,
+      status: 'completed', reason: 'manual_membership_transfer', taskIds: [],
+      detectedAt: 1, updatedAt: 1, completedAt: 1
+    },
+    releasedTaskIds: []
+  }
+}
 
 function team(): TeamControlSnapshot {
   const run = {
-    id: 'team-run:ws:main', workspaceId: 'ws', name: '主运行', goal: '', templateId: 'software-core-v1',
-    status: 'running' as const, createdAt: 1, updatedAt: 1
+    id: 'team-run:ws:main', workspaceId: 'ws', name: '会话池', goal: '',
+    templateId: 'independent-session-v1', status: 'running' as const, createdAt: 1, updatedAt: 1
   }
   const builder: TeamMemberView = {
-    slot: { id: 'slot-builder', runId: run.id, roleId: 'role-builder', name: '实现席', avatarId: 'architect', channelId: '2', order: 0, createdAt: 1, updatedAt: 1 },
+    slot: { id: 'slot-builder', runId: run.id, roleId: 'role-builder', name: '实现席', avatarId: 'architect', channelId: '2', order: 0, createdAt: 1, updatedAt: 1, groupId: 'team-group:ws:g1' },
     role: { id: 'role-builder', runId: run.id, key: 'builder', templateKey: 'builder', name: '架构实现', mission: '', instructions: '', capabilities: [], skills: [], accent: 'mint', order: 0 },
     binding: {
       id: 'b-2', workspaceId: 'ws', runId: run.id, slotId: 'slot-builder', channelId: '2', agentSessionId: 'agent-2', generation: 'g1',
@@ -31,33 +48,39 @@ function team(): TeamControlSnapshot {
     },
     readiness: 'offline'
   }
+  const target: TeamMemberView = {
+    slot: { id: 'slot-solo-7', runId: run.id, roleId: 'role-solo-7', name: '独立席 7', avatarId: 'researcher', channelId: '7', order: 1, createdAt: 1, updatedAt: 1, solo: true },
+    role: { id: 'role-solo-7', runId: run.id, key: 'solo-7', templateKey: 'solo', name: '独立会话', mission: '', instructions: '', capabilities: [], skills: [], accent: 'sky', order: 1 },
+    binding: {
+      id: 'b-7', workspaceId: 'ws', runId: run.id, slotId: 'slot-solo-7', channelId: '7', agentSessionId: 'agent-7', generation: 'g1',
+      installedAt: 1, launchDetail: '', lastCheckInNote: '', composerBindingKey: 'k7'
+    },
+    readiness: 'ready'
+  }
   return {
     ...emptyTeamControlSnapshot(),
     activeRun: run,
     runs: [run],
-    members: [builder],
-    bindings: [builder.binding!],
-    runtimeChannels: [
-      { channelId: '2', displayName: '架构实现 · CH-2', status: 'offline', online: false, waiting: false, queueDepth: 0, registered: true, assignedSlotId: 'slot-builder', agentSessionId: 'agent-2' },
-      { channelId: '7', displayName: 'SG Team CH-7', status: 'waiting', online: true, waiting: true, queueDepth: 0, registered: true, agentSessionId: 'agent-7' }
-    ],
-    standbyChannels: [
-      { channelId: '7', displayName: 'SG Team CH-7', status: 'waiting', online: true, waiting: true, queueDepth: 0, registered: true, agentSessionId: 'agent-7' }
-    ]
+    members: [builder, target],
+    bindings: [builder.binding!, target.binding!]
   }
 }
 
-function harness(options: { deliverError?: string; migrateError?: string; contextError?: string } = {}) {
+function harness(options: {
+  deliverError?: string
+  transferError?: string
+  contextError?: string
+  toChannelId?: string | undefined
+} = {}) {
   const calls: string[] = []
   const snapshot = team()
-  const ports: ManualHandoffWithContextPorts = {
-    failover: {
-      manualHandoff: (input) => {
-        calls.push(`migrate:${input.sourceSlotId}->${input.replacementAgentSessionId}`)
-        if (options.migrateError) throw new Error(options.migrateError)
-        // 迁移改写绑定：原席位现在指向接手通道，原通道失去 Composer
-        snapshot.members[0]!.binding = { ...snapshot.members[0]!.binding!, channelId: '7', composerId: undefined }
-        return MIGRATED
+  const result = transferred('toChannelId' in options ? options.toChannelId : '7')
+  const ports: MembershipTransferWithContextPorts = {
+    groups: {
+      transferMembership: (input) => {
+        calls.push(`transfer:${input.fromSlotId}->${input.toSlotId}@${input.groupId}`)
+        if (options.transferError) throw new Error(options.transferError)
+        return result
       }
     },
     team: { getSnapshot: () => snapshot },
@@ -74,61 +97,55 @@ function harness(options: { deliverError?: string; migrateError?: string; contex
       }
     }
   }
-  return { ports, calls }
+  return { ports, calls, result }
 }
 
-describe('manualHandoffWithContext', () => {
-  it('resolves the source context before the migration and delivers it to the replacement channel afterwards', () => {
-    const { ports, calls } = harness()
-    const outcome = manualHandoffWithContext(ports, {
-      sourceSlotId: 'slot-builder', replacementAgentSessionId: 'agent-7', includeContext: true
-    })
-    expect(calls).toEqual(['context:2', 'migrate:slot-builder->agent-7', 'deliver:2->7'])
-    expect(outcome.handoff).toBe(MIGRATED)
+const INPUT = { groupId: 'team-group:ws:g1', fromSlotId: 'slot-builder', toSlotId: 'slot-solo-7' }
+
+describe('transferMembershipWithContext', () => {
+  it('resolves the source context before the transfer and delivers it to the target channel afterwards', () => {
+    const { ports, calls, result } = harness()
+    const outcome = transferMembershipWithContext(ports, { ...INPUT, includeContext: true })
+    expect(calls).toEqual(['context:2', 'transfer:slot-builder->slot-solo-7@team-group:ws:g1', 'deliver:2->7'])
+    expect(outcome.transfer).toBe(result)
     expect(outcome.contextHandoff).toMatchObject({ ok: true, result: { targetChannelId: '7', transcriptPath: '/transcripts/composer-2.jsonl' } })
   })
 
-  it('reports a failed context delivery without undoing the migration', () => {
-    const { ports, calls } = harness({ deliverError: 'CH-2 尚未绑定 Cursor Composer，找不到它的上下文文档' })
-    const outcome = manualHandoffWithContext(ports, {
-      sourceSlotId: 'slot-builder', replacementAgentSessionId: 'agent-7', includeContext: true
-    })
-    expect(calls).toEqual(['context:2', 'migrate:slot-builder->agent-7', 'deliver:2->7'])
-    expect(outcome.handoff).toBe(MIGRATED)
+  it('reports a failed context delivery without undoing the transfer', () => {
+    const { ports, calls, result } = harness({ deliverError: 'CH-2 尚未绑定 Cursor Composer，找不到它的上下文文档' })
+    const outcome = transferMembershipWithContext(ports, { ...INPUT, includeContext: true })
+    expect(calls).toEqual(['context:2', 'transfer:slot-builder->slot-solo-7@team-group:ws:g1', 'deliver:2->7'])
+    expect(outcome.transfer).toBe(result)
     expect(outcome.contextHandoff).toEqual({ ok: false, error: 'CH-2 尚未绑定 Cursor Composer，找不到它的上下文文档' })
   })
 
-  it('propagates a failed migration and never delivers anything', () => {
-    const { ports, calls } = harness({ migrateError: '候选 Agent 当前不可交接' })
-    expect(() => manualHandoffWithContext(ports, {
-      sourceSlotId: 'slot-builder', replacementAgentSessionId: 'agent-7', includeContext: true
-    })).toThrowError('候选 Agent 当前不可交接')
-    expect(calls).toEqual(['context:2', 'migrate:slot-builder->agent-7'])
+  it('propagates a failed transfer and never delivers anything', () => {
+    const { ports, calls } = harness({ transferError: '席位 slot-solo-7 已在其他协作组内（一个席位同一时刻只属于一个组）' })
+    expect(() => transferMembershipWithContext(ports, { ...INPUT, includeContext: true }))
+      .toThrowError('席位 slot-solo-7 已在其他协作组内（一个席位同一时刻只属于一个组）')
+    expect(calls).toEqual(['context:2', 'transfer:slot-builder->slot-solo-7@team-group:ws:g1'])
   })
 
-  it('still migrates when resolving the source context throws, and reports that error', () => {
-    const { ports, calls } = harness({ contextError: 'EACCES: transcript directory unreadable' })
-    const outcome = manualHandoffWithContext(ports, {
-      sourceSlotId: 'slot-builder', replacementAgentSessionId: 'agent-7', includeContext: true
-    })
-    expect(calls).toEqual(['context:2', 'migrate:slot-builder->agent-7'])
-    expect(outcome.handoff).toBe(MIGRATED)
+  it('still transfers when resolving the source context throws, and reports that error', () => {
+    const { ports, calls, result } = harness({ contextError: 'EACCES: transcript directory unreadable' })
+    const outcome = transferMembershipWithContext(ports, { ...INPUT, includeContext: true })
+    expect(calls).toEqual(['context:2', 'transfer:slot-builder->slot-solo-7@team-group:ws:g1'])
+    expect(outcome.transfer).toBe(result)
     expect(outcome.contextHandoff).toEqual({ ok: false, error: 'EACCES: transcript directory unreadable' })
   })
 
-  it('is a plain migration without includeContext', () => {
-    const { ports, calls } = harness()
-    const outcome = manualHandoffWithContext(ports, { sourceSlotId: 'slot-builder', replacementAgentSessionId: 'agent-7' })
-    expect(calls).toEqual(['migrate:slot-builder->agent-7'])
-    expect(outcome).toEqual({ handoff: MIGRATED })
+  it('is a plain transfer without includeContext', () => {
+    const { ports, calls, result } = harness()
+    const outcome = transferMembershipWithContext(ports, INPUT)
+    expect(calls).toEqual(['transfer:slot-builder->slot-solo-7@team-group:ws:g1'])
+    expect(outcome).toEqual({ transfer: result })
   })
 
-  it('reports when the replacement channel cannot be located instead of guessing a target', () => {
-    const { ports, calls } = harness()
-    const outcome = manualHandoffWithContext(ports, {
-      sourceSlotId: 'slot-builder', replacementAgentSessionId: 'agent-unknown', includeContext: true
-    })
-    expect(calls).toEqual(['context:2', 'migrate:slot-builder->agent-unknown'])
-    expect(outcome.contextHandoff).toEqual({ ok: false, error: '迁移前没有定位到原席位或接手通道，上下文文档未投递' })
+  it('falls back to the team snapshot for the target channel when the result omits it', () => {
+    const { ports, calls } = harness({ toChannelId: undefined })
+    const outcome = transferMembershipWithContext(ports, { ...INPUT, includeContext: true })
+    // 结果没带 toChannelId：从迁移前快照里按 toSlotId 找到 CH-7 照常投递。
+    expect(calls).toEqual(['context:2', 'transfer:slot-builder->slot-solo-7@team-group:ws:g1', 'deliver:2->7'])
+    expect(outcome.contextHandoff).toMatchObject({ ok: true, result: { targetChannelId: '7' } })
   })
 })

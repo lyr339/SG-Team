@@ -1342,7 +1342,7 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 .session-handoff__target.is-busy > em { color: var(--color-text-info); }
 .session-handoff__block textarea { min-height: 64px; padding: 8px 10px; color: var(--text); background: var(--canvas); border: var(--border-width-regular) solid var(--line); border-radius: 8px; font: inherit; font-size: var(--fs-11); line-height: 1.5; resize: vertical; }
 .session-handoff__block textarea:focus { outline: none; border-color: var(--accent-border-strong); }
-/* 职责迁移弹窗：随迁移附带上下文文档的选项（候选列表之下、页脚之上） */
+/* 成员身份迁移弹窗：随迁移附带上下文文档的选项（候选列表之下、页脚之上） */
 .handoff-context-option { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 10px; margin: 0 15px 12px; padding: 10px; background: var(--canvas); border: var(--border-width-regular) solid var(--line); border-radius: 10px; cursor: pointer; }
 .handoff-context-option:has(input:checked) { background: var(--accent-wash); border-color: var(--accent-border-strong); }
 .handoff-context-option input { width: 14px; height: 14px; margin: 2px 0 0; accent-color: var(--accent); }

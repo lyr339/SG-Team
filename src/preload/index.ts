@@ -116,8 +116,8 @@ const api: SgDesktopApi = {
   planTeamGroupTasks: (input) => ipcRenderer.invoke(IPC.teamGroupPlanTasks, input),
   getTeamCollaborationSnapshot: () => ipcRenderer.invoke(IPC.teamCollaborationGet),
   setWindowChromeColorMode: (mode) => ipcRenderer.invoke(IPC.windowSetChromeColorMode, mode),
-  getManualHandoffOptions: (slotId) => ipcRenderer.invoke(IPC.teamContinuityHandoffOptions, slotId),
-  manualHandoff: (input) => ipcRenderer.invoke(IPC.teamContinuityHandoff, input),
+  getMembershipTransferOptions: (slotId) => ipcRenderer.invoke(IPC.teamContinuityHandoffOptions, slotId),
+  transferMembership: (input) => ipcRenderer.invoke(IPC.teamContinuityHandoff, input),
   onSnapshot: (listener: (snapshot: DesktopSnapshot) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, snapshot: DesktopSnapshot): void => listener(snapshot)
     ipcRenderer.on(IPC.snapshot, handler)

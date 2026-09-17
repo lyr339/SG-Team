@@ -355,7 +355,9 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     teamControlRepository,
     localSessionBridge,
     cursorTelemetry,
-    teamCollaborationRepository
+    teamCollaborationRepository,
+    // 重建收口通知（阶段 2 · 2C）等 fail-soft 副作用的错误出口。
+    { onerror: (error) => process.stderr.write(`[team-control] ${error instanceof Error ? error.message : String(error)}\n`) }
   )
   teamControlService.startWatcher()
   // 调试端口只在这里定一次：Windows 上撞到 Hyper-V / WSL2 保留段就顺延；创建器、观察器、
@@ -635,11 +637,8 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   )
   teamOrchestrator.start()
   teamFailoverService = new TeamFailoverService(
-    teamControlRepository,
     teamControlService,
     taskPoolService,
-    teamCollaborationRepository,
-    teamContinuityService,
     { onerror: orchestrationError }
   )
   teamFailoverService.start()
@@ -931,10 +930,11 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     () => mainWindow
   )
   disposeTeamContinuityIpc = registerTeamContinuityIpc(
-    teamFailoverService,
+    // 成员身份迁移（阶段 2 · 2C）可附带上下文交接：上下文在迁移前解析、迁移后投递，
+    // 见 transferMembershipWithContext。
+    teamGroupService,
     teamControlService,
     () => mainWindow,
-    // 离线职责迁移可附带上下文交接：上下文在迁移前解析、迁移后投递，见 manualHandoffWithContext。
     sessionHandoffService
   )
   disposeTeamGroupIpc = registerTeamGroupIpc(

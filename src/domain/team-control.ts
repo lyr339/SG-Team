@@ -162,6 +162,8 @@ export type TeamGroupEventType =
   | 'member_joined'
   | 'member_left'
   | 'member_checked_in'
+  /** 入组席位换席重建完成（新 Cursor 会话已绑定），系统补投 joined 通知（阶段 2 · 2C）。 */
+  | 'member_rejoined_after_rebuild'
   | 'lead_changed'
   | 'acting_lead_changed'
   | 'goal_updated'
@@ -174,7 +176,7 @@ export interface TeamGroupEvent {
   type: TeamGroupEventType
   slotId?: string
   channelId?: string
-  /** `operator` 或 `agent:<slotId>`。 */
+  /** `operator`、`agent:<slotId>` 或 `system`（绑定观察者等系统路径）。 */
   actor: string
   detail?: string
   at: number
@@ -311,6 +313,15 @@ export interface TeamControlSnapshot extends Omit<TeamControlState, 'groups'> {
 
 /** 已解散的组在快照里保留的时长（阶段 3 的历史折叠区之前，只读卡片）。 */
 export const DISSOLVED_GROUP_VISIBLE_MS = 24 * 60 * 60_000
+
+/** 简报与成员关系通知里的 lead 标签：`主控协调 · CH-1`；无有效 lead 时 undefined（模板写「无」）。 */
+export function groupLeadLabel(view: TeamGroupView): string | undefined {
+  const lead = view.effectiveLeadSlotId
+    ? view.members.find((member) => member.slot.id === view.effectiveLeadSlotId)
+    : undefined
+  if (!lead) return undefined
+  return `${lead.role.name} · CH-${lead.binding?.channelId ?? lead.slot.channelId ?? '?'}`
+}
 
 /**
  * 把活动 run 的组行投影成视图：成员 = `slot.groupId === group.id`（按席位顺序），

@@ -282,12 +282,13 @@ describe('SessionHandoffService · 团队席位', () => {
     expect(sent[2]?.text).toContain('不是任务板任务')
   })
 
-  it('delivers from a pre-resolved source after the seat binding has moved to the replacement channel', () => {
+  it('delivers from a pre-resolved source after the source seat has lost its Composer', () => {
     const { service, sent, teamSnapshot, desktop } = teamHarness()
     const source = service.context('1')
     expect(source.transcript?.exists).toBe(true)
 
-    // 模拟 rebindSlot*：实现席的绑定改指向 CH-7，原通道不再有绑定与 Composer
+    // 模拟解析之后原席位的绑定被改写（换席重建 / 自动轮换清空 composer_id 与令牌；这里再把绑定挪到
+    // CH-7，让目标此刻是团队席位）：原通道不再有绑定与 Composer
     const builder = teamSnapshot.members[0]!
     builder.binding = { ...builder.binding!, channelId: '7', composerId: undefined, sessionToken: undefined }
     teamSnapshot.bindings = teamSnapshot.members.map((member) => member.binding!)

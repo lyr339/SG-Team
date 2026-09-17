@@ -110,12 +110,6 @@ export interface TeamContinuitySnapshot {
   updatedAt: number
 }
 
-export interface TeamTakeoverCapsule {
-  checkpointId: string
-  taskIds: string[]
-  content: string
-}
-
 export function emptyTeamContinuitySnapshot(
   workspaceId?: string,
   runId?: string

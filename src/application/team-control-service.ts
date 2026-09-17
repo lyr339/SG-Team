@@ -7,7 +7,9 @@ import type { AgentSession } from '../domain/agent-session'
 import type { CursorModelSelection } from '../domain/cursor-model'
 import { hasInFlightExecution, isAgentOnDuty } from '../domain/channel-message'
 import {
+  buildMembershipNotice,
   createConfiguredTeamBundle,
+  groupLeadLabel,
   isSessionPoolRun,
   projectGroups,
   type TeamControlSnapshot,
@@ -103,6 +105,7 @@ export class TeamControlService {
   private listeners = new Set<TeamControlListener>()
   private lastRevision: number
   private cachedState?: TeamControlState
+  private readonly onerror: (error: unknown) => void
   /** Date.now() can repeat within one millisecond; activeRun ordering requires a strict clock. */
   private lastRunCreatedAt = 0
   private watchTimer?: ReturnType<typeof setInterval>
@@ -112,8 +115,10 @@ export class TeamControlService {
     private readonly repository: TeamControlRepository,
     private readonly bridge: TeamControlBridge,
     private readonly telemetrySource?: CursorComposerTelemetrySource,
-    private readonly collaborationLifecycle?: Pick<TeamCollaborationRepository, 'clearRun'>
+    private readonly collaborationLifecycle?: Pick<TeamCollaborationRepository, 'clearRun'>,
+    options: { onerror?: (error: unknown) => void } = {}
   ) {
+    this.onerror = options.onerror ?? (() => undefined)
     const state = repository.loadTeamControl()
     this.lastRunCreatedAt = Math.max(0, ...state.runs.map((run) => run.createdAt))
     this.cachedState = state
@@ -243,8 +248,43 @@ export class TeamControlService {
       ...input,
       at: input.at ?? Date.now()
     })
-    if (changed) this.emit()
-    return changed
+    if (!changed) return false
+    this.emit()
+    // 重建收口（阶段 2 · 2C）：仓储只在 composer_id 为空时写入（首绑即定；同一 Composer 的重复上报
+    // 与换绑都返回 false），所以 changed 就是这个席位「无 Composer → 有」的那一次——一个新的 Cursor
+    // 会话顶上了它。席位若在组内：新会话的启动提示是 solo 版（2B-1 起唯一形态），对组一无所知，入组
+    // 时的 joined 通知已被上一个会话消费。这里补投一条 joined 通知并写审计事件。若入组通知恰好还在
+    // 队列里（席位在无会话期间入组），重复投递无害：通知语义幂等，check_messages 顺序送达。
+    this.noticeRebuiltGroupedSeat(input.runId, input.slotId)
+    return true
+  }
+
+  /** 换席重建完成的组内席位：写 member_rejoined_after_rebuild 审计事件 + 补投 joined 通知（fail-soft）。 */
+  private noticeRebuiltGroupedSeat(runId: string, slotId: string): void {
+    try {
+      const snapshot = this.getSnapshot()
+      if (snapshot.activeRun?.id !== runId) return
+      const view = snapshot.groups.find((candidate) => (
+        candidate.group.status === 'active' && candidate.members.some((member) => member.slot.id === slotId)
+      ))
+      const member = view?.members.find((candidate) => candidate.slot.id === slotId)
+      const channelId = member?.binding?.channelId ?? member?.slot.channelId
+      if (!view || !member || !channelId) return
+      this.repository.recordGroupMemberRebuilt({ groupId: view.group.id, slotId })
+      this.bridge.sendMessage({
+        channelId,
+        text: buildMembershipNotice({
+          kind: 'joined',
+          channelId,
+          group: view.group,
+          roleName: member.role.name,
+          leadLabel: groupLeadLabel(view)
+        }),
+        kind: 'membership'
+      })
+    } catch (error) {
+      this.onerror(error)
+    }
   }
 
   /**

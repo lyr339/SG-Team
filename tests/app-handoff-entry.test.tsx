@@ -6,7 +6,7 @@ import type { AgentSession } from '../src/domain/agent-session'
 import { emptyTaskPoolSnapshot } from '../src/domain/task-pool'
 import { emptyTeamControlSnapshot, type TeamControlSnapshot, type TeamMemberView } from '../src/domain/team-control'
 import { emptyTeamCollaborationSnapshot } from '../src/domain/team-collaboration'
-import type { TeamHandoffOptions } from '../src/domain/team-handoff'
+import type { MembershipTransferOptions } from '../src/domain/team-handoff'
 import type { DesktopSnapshot } from '../src/shared/desktop-api'
 import { App } from '../src/renderer/src/App'
 import { CONTEXT_HANDOFF_TITLE_TEAM, ROLES_HANDOFF_TITLE } from '../src/renderer/src/handoff-entry'
@@ -74,18 +74,21 @@ const snapshot: DesktopSnapshot = {
   updatedAt: 1
 }
 
-const manualHandoffOptions: TeamHandoffOptions = {
+const membershipTransferOptions: MembershipTransferOptions = {
   runId: RUN.id,
+  groupId: 'team-group:ws:g1',
+  groupName: '验收组',
   sourceSlotId: 'slot-reviewer',
   sourceRoleName: '质量验证',
   sourceChannelId: '5',
+  transfersLead: false,
   candidates: [{
-    agentSessionId: 'agent-2', kind: 'member', mode: 'role_rebind', channelId: '2', slotId: 'slot-builder',
-    roleName: '架构实现', avatarId: 'architect', eligible: true, impact: '架构实现席将转为离线空缺'
+    slotId: 'slot-solo-7', channelId: '7', roleName: '独立会话', avatarId: 'researcher',
+    online: true, impact: '在线独立席位：入组通知随它的下一次轮询到达'
   }]
 }
 
-const getManualHandoffOptions = vi.fn(async () => manualHandoffOptions)
+const getMembershipTransferOptions = vi.fn(async () => membershipTransferOptions)
 const getSessionHandoffContext = vi.fn(() => new Promise(() => {}))
 
 function installDesktopMock(): void {
@@ -111,7 +114,7 @@ function installDesktopMock(): void {
     getCursorUpdatePreferences: async () => ({}),
     detectCursorWorkspace: async () => ({ state: 'none', source: 'test', confidence: 0, candidates: [], detail: '' }),
     refreshAozaiBalance: async () => ({ saved: false }),
-    getManualHandoffOptions,
+    getMembershipTransferOptions,
     getSessionHandoffContext
   }
   const api = new Proxy(base, {
@@ -150,7 +153,7 @@ async function click(element: Element): Promise<void> {
 describe('App 会话页「交接」入口分流', () => {
   beforeEach(() => {
     ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
-    getManualHandoffOptions.mockClear()
+    getMembershipTransferOptions.mockClear()
     getSessionHandoffContext.mockClear()
     if (!window.Element.prototype.scrollTo) window.Element.prototype.scrollTo = () => {}
     if (!window.matchMedia) {
@@ -177,18 +180,18 @@ describe('App 会话页「交接」入口分流', () => {
     await click(button)
     expect(container.querySelector('.session-handoff')?.textContent).toContain('交接会话上下文')
     expect(getSessionHandoffContext).toHaveBeenCalledWith({ channelId: '2' })
-    expect(getManualHandoffOptions).not.toHaveBeenCalled()
+    expect(getMembershipTransferOptions).not.toHaveBeenCalled()
   })
 
-  it('离线团队席位（运行中）：按钮走职责迁移弹窗，并提供随迁移交接上下文的选项', async () => {
+  it('离线团队席位（运行中）：按钮走成员身份迁移弹窗，并提供随迁移交接上下文的选项', async () => {
     await renderApp('#sessions:5')
     const button = handoffButton()
     expect(button.disabled).toBe(false)
     expect(button.title).toBe(ROLES_HANDOFF_TITLE)
     await click(button)
-    expect(getManualHandoffOptions).toHaveBeenCalledWith('slot-reviewer')
+    expect(getMembershipTransferOptions).toHaveBeenCalledWith('slot-reviewer')
     const dialog = container.querySelector('.handoff-dialog:not(.session-handoff)')
-    expect(dialog?.textContent).toContain('交接 质量验证')
+    expect(dialog?.textContent).toContain('迁移成员身份：质量验证 · 协作组「验收组」')
     expect(dialog?.textContent).toContain('同时交接上下文文档')
     expect(getSessionHandoffContext).not.toHaveBeenCalled()
   })

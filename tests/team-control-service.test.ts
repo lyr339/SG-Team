@@ -386,6 +386,69 @@ describe('TeamControlService · 会话池', () => {
     }
   })
 
+  it('重建收口（2C）：入组席位重建完成后补投 joined 通知并写审计事件；独立席位与刷新不投递', () => {
+    const { repository, bridge, service } = poolFixture()
+    try {
+      const bindOf = (channelId: string) => service.getSnapshot().bindings.find((candidate) => candidate.channelId === channelId)!
+      const bind = (channelId: string, composerId: string) => {
+        const binding = bindOf(channelId)
+        return service.recordComposerBinding({
+          runId: binding.runId, slotId: binding.slotId, generation: binding.generation,
+          bindingKey: binding.composerBindingKey, composerId, method: 'channel_marker'
+        })
+      }
+      // 初次绑定（两席都未入组）：不投递任何成员关系通知。
+      expect(bind('1', 'composer-1')).toBe(true)
+      expect(bind('2', 'composer-2')).toBe(true)
+      expect(bridge.sent.filter((message) => message.kind === 'membership')).toHaveLength(0)
+
+      // CH-1 入组（直接走仓储：不经 TeamGroupService 的入组通知，保持 bridge.sent 干净）。
+      const snapshot = service.getSnapshot()
+      const slotId = snapshot.members.find((member) => member.slot.channelId === '1')!.slot.id
+      const { group } = repository.createGroup({
+        runId: snapshot.activeRun!.id,
+        name: '接口重构',
+        goal: '把查询路径收成一个入口',
+        members: [{ slotId, roleTemplateKey: 'lead' }],
+        leadSlotId: slotId
+      })
+
+      // 换席重建：轮换后新会话以新绑定键绑上新 Composer → 补投 joined 通知 + 审计事件。
+      bridge.patchSession('1', { online: false, connected: false, waiting: false, status: 'offline', connectionPhase: 'cursor_stopped' })
+      const tokenBefore = bindOf('1').sessionToken
+      expect(service.prepareComposerRelaunch('1')).toMatch(/^[0-9a-f-]{36}$/)
+      expect(bind('1', 'composer-1b')).toBe(true)
+      const notices = bridge.sent.filter((message) => message.kind === 'membership')
+      expect(notices).toHaveLength(1)
+      expect(notices[0]).toMatchObject({ channelId: '1', kind: 'membership' })
+      expect(notices[0]!.text).toContain('已加入协作组「接口重构」')
+      expect(notices[0]!.text).toContain('主控协调')
+      expect(notices[0]!.text).toContain('team_check_in')
+      expect(repository.listGroupEvents(group.id).at(-1)).toMatchObject({
+        type: 'member_rejoined_after_rebuild', slotId, channelId: '1', actor: 'system', detail: '主控协调'
+      })
+      // 席位的组关系与令牌语义不受通知影响：group_id 原样、令牌已在 prepare 时轮换。
+      const rebound = service.getSnapshot().members.find((member) => member.slot.channelId === '1')!
+      expect(rebound.slot.groupId).toBe(group.id)
+      expect(rebound.binding?.sessionToken).not.toBe(tokenBefore)
+
+      // 同一 Composer 的重复上报（遥测刷新）与换绑尝试：仓储视为无变化（首绑即定），不再投递第二条。
+      expect(bind('1', 'composer-1b')).toBe(false)
+      expect(bind('1', 'composer-1c')).toBe(false)
+      expect(bridge.sent.filter((message) => message.kind === 'membership')).toHaveLength(1)
+      expect(repository.listGroupEvents(group.id).filter((event) => event.type === 'member_rejoined_after_rebuild')).toHaveLength(1)
+
+      // 独立席位（CH-2）重建：无组可言，不投递。
+      bridge.patchSession('2', { online: false, connected: false, waiting: false, status: 'offline', connectionPhase: 'cursor_stopped' })
+      expect(service.prepareComposerRelaunch('2')).toMatch(/^[0-9a-f-]{36}$/)
+      expect(bind('2', 'composer-2b')).toBe(true)
+      expect(bridge.sent.filter((message) => message.kind === 'membership')).toHaveLength(1)
+    } finally {
+      service.dispose()
+      repository.close()
+    }
+  })
+
   it('uses verified Cursor activity for seat status instead of MCP heartbeat alone', () => {
     const telemetry: CursorComposerTelemetrySource = {
       readWorkspace: (_workspace, bindings) => ({

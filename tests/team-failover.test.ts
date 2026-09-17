@@ -2,25 +2,18 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { TeamCollaborationService } from '../src/application/team-collaboration-service'
-import { TeamContinuityService } from '../src/application/team-continuity-service'
 import { TeamControlService, type TeamControlBridge } from '../src/application/team-control-service'
 import { RUN_CLOSED_TASK_REASON, TeamFailoverService } from '../src/application/team-failover-service'
-import { TeamMemoryService } from '../src/application/team-memory-service'
 import { TaskPoolService } from '../src/application/task-pool-service'
 import { transactTaskPool } from '../src/application/task-pool-transaction'
 import { SqliteTaskPoolRepository } from '../src/infrastructure/task-pool/sqlite-task-pool-repository'
-import { SqliteTeamCollaborationRepository } from '../src/infrastructure/team-collaboration/sqlite-team-collaboration-repository'
-import { SqliteTeamContinuityRepository } from '../src/infrastructure/team-continuity/sqlite-team-continuity-repository'
 import { SqliteTeamControlRepository } from '../src/infrastructure/team-control/sqlite-team-control-repository'
-import { SqliteTeamMemoryRepository } from '../src/infrastructure/team-memory/sqlite-team-memory-repository'
 import type { DesktopSnapshot, SendMessageInput } from '../src/shared/desktop-api'
 
 /**
- * TeamFailoverService（阶段 2 · 2B 收敛后）只剩两件事：
- * 1. 活动 run 变为 completed 后把它的未完成任务取消一次（含启动时订阅回放补做）；
- * 2. 手动交接门面——production 里每个 running run 都是会话池，门面恒拒绝（阶段 2C 改为组成员身份迁移）。
- * 全员离线收尾 / standby 自动接替 / lead 自动转移随一次性团队 run 退役，对应用例一并删除。
+ * TeamFailoverService（阶段 2 · 2C 收敛后）只剩一件事：活动 run 变为 completed 后把它的
+ * 未完成任务取消一次（含启动时订阅回放补做）。全员离线收尾 / standby 自动接替 / lead 自动
+ * 转移随一次性团队 run 退役（2B-2）；手动交接门面改为 TeamGroupService.transferMembership（2C）。
  */
 
 class MutableBridge implements TeamControlBridge {
@@ -95,9 +88,6 @@ function poolFixture(options: { onerror?: (error: unknown) => void } = {}) {
   const path = join(mkdtempSync(join(tmpdir(), 'sg-team-pool-failover-')), 'team.sqlite3')
   const controlRepository = new SqliteTeamControlRepository(path)
   const taskRepository = new SqliteTaskPoolRepository(path)
-  const collaborationRepository = new SqliteTeamCollaborationRepository(path)
-  const continuityRepository = new SqliteTeamContinuityRepository(path)
-  const memoryRepository = new SqliteTeamMemoryRepository(path)
   const channelIds = ['1', '2', '3']
   const bridge = new MutableBridge(desktopSnapshot(channelIds))
   const control = new TeamControlService(controlRepository, bridge)
@@ -133,11 +123,6 @@ function poolFixture(options: { onerror?: (error: unknown) => void } = {}) {
     controlRepository.recordAgentCheckIn(controlRepository.resolveChannelAgentIdentity(channelId), 'ready')
   }
   const tasks = new TaskPoolService(taskRepository, control)
-  const collaboration = new TeamCollaborationService(collaborationRepository, control)
-  const memory = new TeamMemoryService(memoryRepository, control)
-  const continuity = new TeamContinuityService(continuityRepository, collaborationRepository, {
-    team: control, tasks, collaboration, memory
-  })
   const builder = control.getSnapshot().members.find((member) => member.slot.channelId === '2')!
   const task = transactTaskPool(taskRepository, (pool) => {
     const [planned] = pool.plan(runId, [{
@@ -155,21 +140,12 @@ function poolFixture(options: { onerror?: (error: unknown) => void } = {}) {
     pool.startAttempt(lease.attempt.id, lease.leaseToken)
     return planned!
   })
-  const failover = new TeamFailoverService(
-    controlRepository, control, tasks, collaborationRepository, continuity,
-    { now: () => 1_000, onerror: options.onerror }
-  )
+  const failover = new TeamFailoverService(control, tasks, { onerror: options.onerror })
   return {
     bridge, control, controlRepository, taskRepository, tasks, failover, runId, group, task, slotIdOf,
     close: () => {
       failover.stop()
-      continuity.dispose()
-      collaboration.dispose()
-      memory.dispose()
       control.dispose()
-      continuityRepository.close()
-      collaborationRepository.close()
-      memoryRepository.close()
       taskRepository.close()
       controlRepository.close()
     }
@@ -296,33 +272,4 @@ describe('TeamFailoverService', () => {
     }
   })
 
-  it('refuses manual role handoff inside the pool (channel = seat)', () => {
-    const data = poolFixture()
-    try {
-      data.bridge.setChannelOnline('2', false)
-      expect(() => data.failover.manualHandoffOptions(data.slotIdOf('2'))).toThrowError(
-        expect.objectContaining({ code: 'handoff_pool_run' })
-      )
-      expect(() => data.failover.manualHandoff({
-        sourceSlotId: data.slotIdOf('2'),
-        replacementAgentSessionId: 'alpha:ch-3:generation123'
-      })).toThrowError(expect.objectContaining({ code: 'handoff_pool_run' }))
-      expect(data.controlRepository.listFailovers(data.runId)).toEqual([])
-      expect(data.control.getSnapshot().members.find((member) => member.slot.channelId === '3')?.slot.solo).toBe(true)
-    } finally {
-      data.close()
-    }
-  })
-
-  it('refuses manual handoff once the run has ended', () => {
-    const data = poolFixture()
-    try {
-      data.control.endActiveRun()
-      expect(() => data.failover.manualHandoffOptions(data.slotIdOf('2'))).toThrowError(
-        expect.objectContaining({ code: 'handoff_run_inactive' })
-      )
-    } finally {
-      data.close()
-    }
-  })
 })

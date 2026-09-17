@@ -529,3 +529,119 @@ describe('TeamGroupService · lead、目标与解散', () => {
     }
   })
 })
+
+describe('TeamGroupService · 成员身份迁移（2C）', () => {
+  it('moves the membership to an independent seat: lease released, left/joined notices, lead informed, audit row', () => {
+    const data = poolFixture()
+    try {
+      const { groups } = data.service.createGroup({
+        name: '接口重构', goal: '收口查询路径',
+        members: [{ slotId: data.slotIdOf('1'), roleTemplateKey: 'lead' }, { slotId: data.slotIdOf('2'), roleTemplateKey: 'builder' }],
+        leadSlotId: data.slotIdOf('1')
+      })
+      const groupId = groups[0]!.group.id
+      // CH-2 持有一条 leased 任务：迁移后必须释放回队列。
+      const [task] = data.taskAgent('1').plan([{ key: 'build', title: '实现', targetSlotId: data.slotIdOf('2') }])
+      data.taskAgent('2').claim(task!.id)
+      data.bridge.sent.length = 0
+
+      const result = data.service.transferMembership({ groupId, fromSlotId: data.slotIdOf('2'), toSlotId: data.slotIdOf('3') })
+      expect(result).toMatchObject({
+        groupId, fromSlotId: data.slotIdOf('2'), toSlotId: data.slotIdOf('3'), toChannelId: '3',
+        roleName: '架构实现', transferredLead: false, releasedTaskIds: [task!.id]
+      })
+      expect(result.failover).toMatchObject({ status: 'completed', reason: 'manual_membership_transfer' })
+
+      // 成员关系：CH-2 独立、CH-3 以同角色入组；身份解析随之切换。
+      const snapshot = data.control.getSnapshot()
+      expect(snapshot.groups[0]!.members.map((member) => [member.slot.channelId, member.role.name])).toEqual([
+        ['1', '主控协调'], ['3', '架构实现']
+      ])
+      expect(snapshot.members.find((member) => member.slot.channelId === '2')?.slot).toMatchObject({ solo: true, groupId: undefined })
+      expect(code(() => data.controlRepository.resolveChannelAgentIdentity('2'))).toBe('not_in_group')
+      expect(data.controlRepository.resolveChannelAgentIdentity('3').groupId).toBe(groupId)
+
+      // 任务：租约取消、回 queued、定向清空。
+      expect(data.taskRepository.load().tasks[task!.id]).toMatchObject({
+        status: 'queued', assigneeSessionId: undefined, targetSlotId: undefined, failureReason: 'member_left'
+      })
+
+      // 通知：A left、B joined（带组名与角色）；lead 收到迁移 notice。
+      expect(data.bridge.sent.map((message) => [message.channelId, message.kind])).toEqual([
+        ['2', 'membership'], ['3', 'membership']
+      ])
+      expect(data.bridge.membershipTo('2')[0]).toContain('已被移出协作组「接口重构」')
+      expect(data.bridge.membershipTo('3')[0]).toContain('已加入协作组「接口重构」')
+      expect(data.bridge.membershipTo('3')[0]).toContain('架构实现')
+      const leadNotices = data.messagesTo(data.slotIdOf('1'))
+      expect(leadNotices).toHaveLength(1)
+      expect(leadNotices[0]!.content).toContain('成员身份已迁移')
+      expect(leadNotices[0]!.content).toContain('1 项任务已回到队列')
+      expect(data.errors).toEqual([])
+    } finally {
+      data.close()
+    }
+  })
+
+  it('carries the lead with the membership: the new seat gets joined + lead_changed, the old seat only left', () => {
+    const data = poolFixture()
+    try {
+      const { groups } = data.service.createGroup({
+        name: 'G', members: [{ slotId: data.slotIdOf('1'), roleTemplateKey: 'lead' }, { slotId: data.slotIdOf('2'), roleTemplateKey: 'builder' }],
+        leadSlotId: data.slotIdOf('1')
+      })
+      const groupId = groups[0]!.group.id
+      data.bridge.sent.length = 0
+
+      const result = data.service.transferMembership({ groupId, fromSlotId: data.slotIdOf('1'), toSlotId: data.slotIdOf('4') })
+      expect(result.transferredLead).toBe(true)
+      const snapshot = data.control.getSnapshot()
+      expect(snapshot.groups[0]!.group.leadSlotId).toBe(data.slotIdOf('4'))
+      expect(snapshot.groups[0]!.effectiveLeadSlotId).toBe(data.slotIdOf('4'))
+
+      // 通知序列：CH-1 left、CH-4 joined（lead 标签即自己）、CH-4 lead_changed。CH-1 已出组，left 通知
+      // 已说明它不再持有任何组内权限——不能再给它一条要它 team_check_in 的 lead_changed。
+      expect(data.bridge.sent.map((message) => [message.channelId, message.kind])).toEqual([
+        ['1', 'membership'], ['4', 'membership'], ['4', 'membership']
+      ])
+      expect(data.bridge.membershipTo('1')).toHaveLength(1)
+      expect(data.bridge.membershipTo('1')[0]).toContain('已被移出协作组「G」')
+      expect(data.bridge.membershipTo('4')[0]).toContain('已加入协作组「G」')
+      expect(data.bridge.membershipTo('4')[0]).toContain('主控协调 · CH-4')
+      expect(data.bridge.membershipTo('4')[1]).toContain('已成为本组唯一有效主控')
+      // lead 就是 B 自己：没有第三方 lead 要通知。
+      expect(data.messagesTo(data.slotIdOf('4'))).toEqual([])
+      expect(data.errors).toEqual([])
+    } finally {
+      data.close()
+    }
+  })
+
+  it('exposes transfer options only for grouped seats and only offers ungrouped candidates', () => {
+    const data = poolFixture()
+    try {
+      const { groups } = data.service.createGroup({
+        name: 'G', members: [{ slotId: data.slotIdOf('1'), roleTemplateKey: 'lead' }, { slotId: data.slotIdOf('2'), roleTemplateKey: 'builder' }],
+        leadSlotId: data.slotIdOf('1')
+      })
+      const options = data.service.membershipTransferOptions(data.slotIdOf('1'))
+      expect(options).toMatchObject({
+        groupId: groups[0]!.group.id, groupName: 'G',
+        sourceSlotId: data.slotIdOf('1'), sourceRoleName: '主控协调', sourceChannelId: '1', transfersLead: true
+      })
+      expect(options.candidates.map((candidate) => [candidate.slotId, candidate.channelId, candidate.online])).toEqual([
+        [data.slotIdOf('3'), '3', true], [data.slotIdOf('4'), '4', true]
+      ])
+      // 未入组席位没有可迁移的组身份。
+      expect(code(() => data.service.membershipTransferOptions(data.slotIdOf('3')))).toBe('transfer_source_not_grouped')
+      // 池结束后一律拒绝。
+      data.control.endActiveRun()
+      expect(code(() => data.service.membershipTransferOptions(data.slotIdOf('1')))).toBe('group_run_inactive')
+      expect(code(() => data.service.transferMembership({
+        groupId: groups[0]!.group.id, fromSlotId: data.slotIdOf('1'), toSlotId: data.slotIdOf('3')
+      }))).toBe('group_run_inactive')
+    } finally {
+      data.close()
+    }
+  })
+})
