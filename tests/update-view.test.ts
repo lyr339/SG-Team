@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AppUpdateRelease, AppUpdateStatus } from '../src/domain/app-update'
-import { buildUpdatePanelView, formatReleaseDate, formatUpdateTime } from '../src/renderer/src/settings/update-view'
+import { buildUpdatePanelView, formatReleaseDate, formatUpdateTime, groupReleaseNotes } from '../src/renderer/src/settings/update-view'
 
 const NOW = new Date(2026, 8, 17, 10, 30).getTime()
 const release: AppUpdateRelease = {
@@ -32,15 +32,15 @@ describe('软件更新 · 面板视图', () => {
     expect(formatReleaseDate(undefined)).toBeUndefined()
   })
 
-  it('idle：没事可说时无胶囊，一句上次检查；明确失败红胶囊 + 原文；按钮立即检查 + 发布页', () => {
+  it('idle：标签「拾光 <当前>」，没事可说时无胶囊，一句上次检查；明确失败红胶囊 + 原文；按钮立即检查 + 发布页', () => {
     const plain = buildUpdatePanelView(statusOf({ phase: 'idle' }), NOW)
-    expect(plain).toMatchObject({ tone: 'neutral', headline: '尚未检查过更新', busy: false })
+    expect(plain).toMatchObject({ tone: 'neutral', title: '拾光 0.3.2', headline: '尚未检查过更新', busy: false })
     expect(plain.badge).toBeUndefined()
-    expect(plain.next).toBeUndefined()
+    expect(plain.detail).toBeUndefined()
     expect(plain.actions.map((action) => action.id)).toEqual(['check', 'open-release'])
     expect(buildUpdatePanelView(statusOf({ phase: 'idle', lastCheckedAt: NOW - 60_000 }), NOW).headline).toBe('上次检查 今天 10:29')
     const failed = buildUpdatePanelView(statusOf({ phase: 'idle', lastCheckedAt: NOW - 5 * 60_000, lastError: 'ENOTFOUND' }), NOW)
-    expect(failed).toMatchObject({ tone: 'danger', badge: { label: '检查失败', tone: 'danger' }, headline: 'ENOTFOUND', detail: '上次检查 今天 10:25' })
+    expect(failed).toMatchObject({ tone: 'danger', badge: { label: '检查失败', tone: 'danger' }, title: '拾光 0.3.2', headline: 'ENOTFOUND', detail: '上次检查 今天 10:25' })
   })
 
   it('idle（网络失败）：中性胶囊、人话文案、原始错误只进悬停；自动检查关掉时不承诺重试', () => {
@@ -59,23 +59,25 @@ describe('软件更新 · 面板视图', () => {
     expect(explicit.detailTitle).toBeUndefined()
   })
 
-  it('unsupported / checking / up_to_date 的胶囊、文案与忙态', () => {
+  it('unsupported / checking / up_to_date 的胶囊、文案与忙态；标签都是「拾光 <当前>」', () => {
     expect(buildUpdatePanelView(statusOf({ phase: 'unsupported', reason: '开发模式下不检查更新。' }), NOW))
-      .toMatchObject({ tone: 'muted', badge: { label: '不支持应用内更新', tone: 'muted' }, headline: '开发模式下不检查更新。', actions: [{ id: 'open-release', label: '打开发布页', kind: 'link' }] })
+      .toMatchObject({ tone: 'muted', badge: { label: '不支持应用内更新', tone: 'muted' }, title: '拾光 0.3.2', headline: '开发模式下不检查更新。', actions: [{ id: 'open-release', label: '打开发布页', kind: 'link' }] })
     const checking = buildUpdatePanelView(statusOf({ phase: 'checking', startedAt: NOW }), NOW)
-    expect(checking).toMatchObject({ tone: 'info', badge: { label: '正在检查…', tone: 'info' }, busy: true })
+    expect(checking).toMatchObject({ tone: 'info', badge: { label: '正在检查…', tone: 'info' }, title: '拾光 0.3.2', busy: true })
     expect(checking.actions[0]).toMatchObject({ id: 'check', disabled: true })
     expect(buildUpdatePanelView(statusOf({ phase: 'up_to_date', checkedAt: NOW - 30_000 }), NOW))
-      .toMatchObject({ tone: 'success', badge: { label: '已是最新', tone: 'success' }, headline: '上次检查 今天 10:29' })
+      .toMatchObject({ tone: 'success', badge: { label: '已是最新', tone: 'success' }, title: '拾光 0.3.2', headline: '上次检查 今天 10:29' })
   })
 
-  it('available：目标版本进英雄行、发布日期与体积当状态句、说明段落、下载 / 跳过 / 稍后；跳过后胶囊变「已跳过」且只剩取消跳过', () => {
+  it('available：标签换成「新版本 x」、状态句是发布日期 · 体积 · 当前版本、说明段落、下载 / 跳过 / 稍后；跳过后胶囊变「已跳过」且只剩取消跳过', () => {
     const view = buildUpdatePanelView(statusOf({ phase: 'available', release, checkedAt: NOW }), NOW)
     expect(view.tone).toBe('accent')
     expect(view.badge).toEqual({ label: '有新版本', tone: 'accent' })
-    expect(view.next).toEqual({ label: '新版本', version: '0.3.3' })
-    expect(view.headline).toMatch(/^2026-09-1[67] 发布 · 111\.1 MB$/)
+    expect(view.title).toBe('新版本 0.3.3')
+    expect(view.headline).toMatch(/^2026-09-1[67] 发布 · 111\.1 MB · 当前 0\.3\.2$/)
     expect(view.detail).toBeUndefined()
+    // 清单没给发布日期与体积时，状态句只剩当前版本
+    expect(buildUpdatePanelView(statusOf({ phase: 'available', release: { version: '0.3.3', releaseUrl: release.releaseUrl }, checkedAt: NOW }), NOW).headline).toBe('当前 0.3.2')
     expect(view.notes).toEqual(['v0.3.3', '- 第一条', '- 第二条'])
     expect(view.actions.map((action) => action.id)).toEqual(['download', 'skip', 'snooze', 'open-release'])
     expect(view.skippedNote).toBeUndefined()
@@ -95,8 +97,9 @@ describe('软件更新 · 面板视图', () => {
     const downloading = buildUpdatePanelView(statusOf({ phase: 'downloading', release, receivedBytes: 58_233_772, totalBytes: 116_467_543, bytesPerSecond: 3_145_728, startedAt: NOW }), NOW)
     expect(downloading.progress).toEqual({ percent: 50, received: '55.5 MB', total: '111.1 MB', rate: '3.0 MB/s' })
     expect(downloading.badge).toEqual({ label: '下载中 50%', tone: 'info' })
-    expect(downloading.next).toEqual({ label: '新版本', version: '0.3.3' })
+    expect(downloading.title).toBe('新版本 0.3.3')
     expect(downloading.headline).toBe('正在下载安装包…')
+    expect(downloading.detail).toMatch(/^2026-09-1[67] 发布 · 111\.1 MB · 当前 0\.3\.2$/)
     expect(downloading.actions.map((action) => action.id)).toEqual(['cancel', 'open-release'])
     expect(downloading.busy).toBe(true)
     const unknownTotal = buildUpdatePanelView(statusOf({ phase: 'downloading', release, receivedBytes: 10, totalBytes: 0, startedAt: NOW }), NOW)
@@ -105,23 +108,25 @@ describe('软件更新 · 面板视图', () => {
 
     const downloaded = buildUpdatePanelView(statusOf({ phase: 'downloaded', release, downloadedAt: NOW }), NOW)
     expect(downloaded.badge).toEqual({ label: '待安装', tone: 'accent' })
-    expect(downloaded.next).toEqual({ label: '新版本', version: '0.3.3' })
+    expect(downloaded.title).toBe('新版本 0.3.3')
     expect(downloaded.headline).toMatch(/^已下载校验通过/)
+    expect(downloaded.detail).toMatch(/· 当前 0\.3\.2$/)
     expect(downloaded.actions.map((action) => action.id)).toEqual(['install', 'skip', 'snooze', 'open-release'])
 
     const installing = buildUpdatePanelView(statusOf({ phase: 'installing', release, startedAt: NOW }), NOW)
-    expect(installing).toMatchObject({ tone: 'info', badge: { label: '正在安装', tone: 'info' }, next: { label: '新版本', version: '0.3.3' }, actions: [], busy: true })
+    expect(installing).toMatchObject({ tone: 'info', badge: { label: '正在安装', tone: 'info' }, title: '新版本 0.3.3', detail: '当前 0.3.2', actions: [], busy: true })
   })
 
-  it('failed：胶囊带步骤名、状态句是原因、目标版本留在英雄行；有发布时按钮是重试，否则知道了', () => {
+  it('failed：胶囊带步骤名、状态句是原因、目标版本留在标签；有发布时按钮是重试，否则知道了', () => {
     expect(actionIds(statusOf({ phase: 'failed', step: 'download', message: 'sha512 mismatch', at: NOW, release }))).toEqual(['dismiss', 'open-release'])
     const view = buildUpdatePanelView(statusOf({ phase: 'failed', step: 'download', message: 'sha512 mismatch', at: NOW, release }), NOW)
-    expect(view).toMatchObject({ tone: 'danger', badge: { label: '下载失败', tone: 'danger' }, next: { label: '新版本', version: '0.3.3' }, headline: 'sha512 mismatch' })
-    expect(view.detail).toMatch(/发布 · 111\.1 MB$/)
+    expect(view).toMatchObject({ tone: 'danger', badge: { label: '下载失败', tone: 'danger' }, title: '新版本 0.3.3', headline: 'sha512 mismatch' })
+    expect(view.detail).toMatch(/发布 · 111\.1 MB · 当前 0\.3\.2$/)
     expect(view.actions[0]?.label).toBe('重试')
     const check = buildUpdatePanelView(statusOf({ phase: 'failed', step: 'check', message: 'x', at: NOW }), NOW)
     expect(check.badge?.label).toBe('检查失败')
-    expect(check.next).toBeUndefined()
+    expect(check.title).toBe('拾光 0.3.2')
+    expect(check.detail).toBeUndefined()
     expect(check.actions[0]?.label).toBe('知道了')
     expect(buildUpdatePanelView(statusOf({ phase: 'failed', step: 'install', message: 'EACCES', at: NOW, release }), NOW).badge?.label).toBe('安装失败')
     expect(buildUpdatePanelView(statusOf({ phase: 'failed', step: 'rollback', message: 'EPERM', at: NOW }), NOW).badge?.label).toBe('回滚失败')
@@ -141,16 +146,28 @@ describe('软件更新 · 面板视图', () => {
 
   it('available（downloadable=false）：状态句说明只能去发布页，主按钮改为发布页，没有下载入口', () => {
     const view = buildUpdatePanelView(statusOf({ phase: 'available', release: { ...release, downloadable: false }, checkedAt: NOW }), NOW)
-    expect(view.next).toEqual({ label: '新版本', version: '0.3.3' })
+    expect(view.title).toBe('新版本 0.3.3')
     expect(view.headline).toBe('此版本未提供应用内下载，请到发布页手动更新')
-    expect(view.detail).toMatch(/发布 · 111\.1 MB$/)
+    expect(view.detail).toMatch(/发布 · 111\.1 MB · 当前 0\.3\.2$/)
     expect(view.actions.map((action) => action.id)).toEqual(['open-release', 'skip', 'snooze'])
     expect(view.actions[0]).toMatchObject({ id: 'open-release', kind: 'primary' })
   })
 
-  it('rolling_back：忙态、无按钮，英雄行第二个数字标「回滚到」', () => {
-    expect(buildUpdatePanelView(statusOf({ phase: 'rolling_back', targetVersion: '0.3.2', startedAt: NOW }), NOW))
-      .toMatchObject({ tone: 'info', badge: { label: '正在回滚', tone: 'info' }, next: { label: '回滚到', version: '0.3.2' }, actions: [], busy: true })
+  it('rolling_back：忙态、无按钮，标签是「回滚到 x」、补充行给当前版本', () => {
+    expect(buildUpdatePanelView(statusOf({ phase: 'rolling_back', targetVersion: '0.3.1', startedAt: NOW }), NOW))
+      .toMatchObject({ tone: 'info', badge: { label: '正在回滚', tone: 'info' }, title: '回滚到 0.3.1', detail: '当前 0.3.2', actions: [], busy: true })
+  })
+
+  it('发布说明分块：连续的列表行合成一个列表并去掉记号，标题 / 段落各成一段', () => {
+    expect(groupReleaseNotes(['v0.3.3', '- 第一条', '* 第二条', '修复', '• 第三条'])).toEqual([
+      { kind: 'text', text: 'v0.3.3' },
+      { kind: 'list', items: ['第一条', '第二条'] },
+      { kind: 'text', text: '修复' },
+      { kind: 'list', items: ['第三条'] }
+    ])
+    expect(groupReleaseNotes([])).toEqual([])
+    // 只有记号没有内容的行不是列表项，原样成段
+    expect(groupReleaseNotes(['-'])).toEqual([{ kind: 'text', text: '-' }])
   })
 
   it('rollback 备份脚注：空闲相位给出（含数据回退警告），忙相位收起', () => {

@@ -4,7 +4,7 @@ import { APP_UPDATE_CHECK_INTERVAL_HOURS, APP_UPDATE_MIRROR_FEED, normalizeAppUp
 import { MenuSelect } from '../lobby/MenuSelect'
 import { ToggleSwitch } from '../lobby/ToggleSwitch'
 import { SettingsSection } from './SettingsSection'
-import { UPDATE_INTERVAL_OPTIONS, buildUpdatePanelView, type UpdateActionId } from './update-view'
+import { UPDATE_INTERVAL_OPTIONS, buildUpdatePanelView, groupReleaseNotes, type UpdateActionId } from './update-view'
 
 interface SettingsUpdateProps {
   /** 测试 / 预览可注入初始状态；生产从 window.sgDesktop 拉取并订阅推送。 */
@@ -53,7 +53,7 @@ export function applyResultText(result: AppUpdateApplyResult): { tone: 'success'
 type PendingConfirm = { action: 'install' | 'rollback'; gate: UpdateGate }
 
 /**
- * 设置页「软件更新」组：手动组件。状态卡 + 检查设置。主进程只推状态；这里只发意图，
+ * 设置页「软件更新」组：手动组件。版本状态（一行设置 + 更新内容 / 备份行）+ 检查设置。主进程只推状态；这里只发意图，
  * 不经 App.tsx 传 props（自取 window.sgDesktop），与在途工作零冲突。
  */
 export function SettingsUpdate({ initialStatus, now = () => Date.now() }: SettingsUpdateProps): React.JSX.Element {
@@ -181,29 +181,35 @@ export function SettingsUpdate({ initialStatus, now = () => Date.now() }: Settin
             </p>
           ) : null}
           {view ? (
-            <div className={`app-update__card is-${view.tone}`} aria-busy={view.busy}>
-              {/* 英雄行：大号版本数字（当前 → 目标）+ 状态一句话在左，操作在右；状态色只在区块头的胶囊上。 */}
-              <div className="app-update__hero">
-                <div className="app-update__summary">
-                  <div className="app-update__versions">
-                    <div className="app-update__version">
-                      <span className="app-update__eyebrow">当前版本</span>
-                      <strong className="app-update__number">{status?.currentVersion}</strong>
+            <>
+              {/*
+               * 一行设置（与 Cursor 维护页同一结构）：左边标签是版本（没有目标时「拾光 0.3.2」，有目标时
+               * 「新版本 0.3.3」/「回滚到 0.3.2」），下面一两行说明；右边是操作。状态色只在区块头的胶囊上。
+               */}
+              <div className={`settings-row app-update__row is-${view.tone}`} aria-busy={view.busy}>
+                <div className="settings-row__copy">
+                  <span className="settings-row__label app-update__title">{view.title}</span>
+                  <span className="settings-row__hint app-update__headline">{view.headline}</span>
+                  {view.detail ? <span className="settings-row__hint app-update__detail" title={view.detailTitle}>{view.detail}</span> : null}
+                  {view.skippedNote ? <span className="settings-row__hint app-update__note">{view.skippedNote}</span> : null}
+                  {view.snoozedNote ? <span className="settings-row__hint app-update__note">{view.snoozedNote}</span> : null}
+                  {view.progress ? (
+                    <div className="app-update__progress">
+                      <div
+                        className="app-update__bar"
+                        role="progressbar"
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={view.progress.percent}
+                        aria-label="下载进度"
+                      >
+                        <i style={{ width: `${view.progress.percent}%` }} />
+                      </div>
+                      <span className="app-update__readout">
+                        {view.progress.received} / {view.progress.total}{view.progress.rate ? ` · ${view.progress.rate}` : ''}
+                      </span>
                     </div>
-                    {view.next ? (
-                      <>
-                        <span className="app-update__arrow" aria-hidden="true">→</span>
-                        <div className="app-update__version is-next">
-                          <span className="app-update__eyebrow">{view.next.label}</span>
-                          <strong className="app-update__number">{view.next.version}</strong>
-                        </div>
-                      </>
-                    ) : null}
-                  </div>
-                  <p className="app-update__headline">{view.headline}</p>
-                  {view.detail ? <p className="app-update__detail" title={view.detailTitle}>{view.detail}</p> : null}
-                  {view.skippedNote ? <p className="app-update__note">{view.skippedNote}</p> : null}
-                  {view.snoozedNote ? <p className="app-update__note">{view.snoozedNote}</p> : null}
+                  ) : null}
                 </div>
                 {view.actions.length && !confirm ? (
                   <div className="app-update__actions">
@@ -221,28 +227,6 @@ export function SettingsUpdate({ initialStatus, now = () => Date.now() }: Settin
                   </div>
                 ) : null}
               </div>
-              {view.progress ? (
-                <div className="app-update__progress">
-                  <div
-                    className="app-update__bar"
-                    role="progressbar"
-                    aria-valuemin={0}
-                    aria-valuemax={100}
-                    aria-valuenow={view.progress.percent}
-                    aria-label="下载进度"
-                  >
-                    <i style={{ width: `${view.progress.percent}%` }} />
-                  </div>
-                  <span className="app-update__readout">
-                    {view.progress.received} / {view.progress.total}{view.progress.rate ? ` · ${view.progress.rate}` : ''}
-                  </span>
-                </div>
-              ) : null}
-              {view.notes.length ? (
-                <div className="app-update__notes">
-                  {view.notes.slice(0, 12).map((line, index) => <p key={`${index}-${line}`}>{line}</p>)}
-                </div>
-              ) : null}
               {confirm ? (
                 <div className="app-update__confirm" role="alertdialog" aria-label={confirm.action === 'install' ? '确认安装' : '确认回滚'}>
                   {confirm.action === 'rollback' && view.rollback ? <p>{view.rollback.note}</p> : null}
@@ -256,12 +240,25 @@ export function SettingsUpdate({ initialStatus, now = () => Date.now() }: Settin
                 </div>
               ) : null}
               {blockedNote ? <p className="app-update__error" role="alert">{blockedNote}</p> : null}
+              {view.notes.length ? (
+                <div className="settings-row settings-row--divided app-update__notes">
+                  <div className="settings-row__copy">
+                    <span className="settings-row__label">更新内容</span>
+                    {groupReleaseNotes(view.notes.slice(0, 12)).map((block, index) => block.kind === 'list'
+                      ? <ul key={index}>{block.items.map((item, position) => <li key={`${position}-${item}`}>{item}</li>)}</ul>
+                      : <p key={index}>{block.text}</p>)}
+                  </div>
+                </div>
+              ) : null}
               {view.rollback && !confirm ? (
-                <div className="app-update__rollback">
-                  <span>保留了 {view.rollback.version} 的备份，可以回滚。</span>
+                <div className="settings-row settings-row--divided app-update__rollback">
+                  <div className="settings-row__copy">
+                    <span className="settings-row__label">旧版备份</span>
+                    <span className="settings-row__hint">保留了 {view.rollback.version} 的备份，可以回滚。</span>
+                  </div>
                   <button
                     type="button"
-                    className="app-update__button is-link"
+                    className="app-update__button"
                     disabled={Boolean(busyAction)}
                     onClick={() => void run('rollback')}
                   >
@@ -269,7 +266,7 @@ export function SettingsUpdate({ initialStatus, now = () => Date.now() }: Settin
                   </button>
                 </div>
               ) : null}
-            </div>
+            </>
           ) : (
             <p className="app-update__loading">正在读取更新状态…</p>
           )}

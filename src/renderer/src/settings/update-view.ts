@@ -27,19 +27,19 @@ export interface UpdateAction {
 export type UpdateTone = 'neutral' | 'accent' | 'info' | 'success' | 'danger' | 'muted'
 
 /**
- * 状态卡的读法（对齐存储清理页的头部）：左边是大号版本数字——当前版本，有目标版本时画「→ 新版本」；
- * 右边是操作；区块头右侧一枚文字胶囊说状态（已是最新 / 有新版本 / 下载中 42% / 检查失败……）。
- * 状态色只落在胶囊、进度条与主按钮上，数字与正文保持炭色——不用圆点。
+ * 版本状态的读法：一行设置（与 Cursor 维护页同一结构）——左边标签是版本，下面一两行说明，右边是操作；
+ * 区块头右侧一枚文字胶囊说状态（已是最新 / 有新版本 / 下载中 42% / 检查失败……）。
+ * 状态色只落在胶囊、进度条与主按钮上，标签与正文保持炭色——没有圆点，也没有大号数字。
  */
 export interface UpdatePanelView {
   tone: UpdateTone
   /** 区块头右侧的状态胶囊；空闲且无事可说时不显示。 */
   badge?: { label: string; tone: UpdateTone }
-  /** 英雄行的第二个数字：新版本（有新版 / 下载 / 安装 / 失败）或回滚目标。 */
-  next?: { label: '新版本' | '回滚到'; version: string }
-  /** 数字下方的状态一句话：上次检查时间、发布日期与体积、人话说明、错误原因。 */
+  /** 行标签：没有目标版本时「拾光 0.3.2」；有新版时「新版本 0.3.3」；回滚时「回滚到 0.3.2」。 */
+  title: string
+  /** 标签下的状态一句话：上次检查时间、发布日期与体积、人话说明、错误原因。 */
   headline: string
-  /** 再往下一行更弱的补充（时间戳、发布信息）。 */
+  /** 再往下一行更弱的补充（发布信息、上次尝试时间；有目标版本时带上「当前 x」）。 */
   detail?: string
   /** detail 的悬停全文（网络失败时给原始错误码，正文只留人话）。 */
   detailTitle?: string
@@ -115,7 +115,10 @@ function buildPhaseView(status: AppUpdateStatus, now: number): UpdatePanelView {
       : [{ id: 'skip', label: '跳过此版本', kind: 'secondary' }, { id: 'snooze', label: '稍后', kind: 'secondary', disabled: Boolean(snoozedNote) }]
   )
 
-  const newVersion = (version: string): UpdatePanelView['next'] => ({ label: '新版本', version })
+  // 行标签：没有目标版本时是「拾光 <当前>」；有目标时标签换成目标，当前版本退到补充行的「当前 x」。
+  const current = `拾光 ${status.currentVersion}`
+  const newVersion = (version: string): string => `新版本 ${version}`
+  const facts = (meta?: string): string => [meta, `当前 ${status.currentVersion}`].filter(Boolean).join(' · ')
   // 有新版但被跳过：胶囊与色调都收成 muted，让「已跳过」的说明成为主角。
   const releaseBadge = (label: string): UpdatePanelView['badge'] => (skippedNote ? { label: '已跳过', tone: 'muted' } : { label, tone: 'accent' })
 
@@ -124,6 +127,7 @@ function buildPhaseView(status: AppUpdateStatus, now: number): UpdatePanelView {
       return {
         tone: 'muted',
         badge: { label: '不支持应用内更新', tone: 'muted' },
+        title: current,
         headline: state.reason,
         notes: [],
         actions: [openRelease],
@@ -133,7 +137,7 @@ function buildPhaseView(status: AppUpdateStatus, now: number): UpdatePanelView {
       // 网络类失败（瞬断、断网、被墙）不吓人：中性胶囊 + 人话 + 原始错误收进悬停；红色胶囊留给明确错误。
       const networkError = state.lastError !== undefined && state.lastErrorKind === 'network'
       const at = state.lastCheckedAt ? formatUpdateTime(state.lastCheckedAt, now) : undefined
-      const base = { notes: [], actions: [{ id: 'check', label: '立即检查', kind: 'primary' }, openRelease] as UpdateAction[], busy: false }
+      const base = { title: current, notes: [], actions: [{ id: 'check', label: '立即检查', kind: 'primary' }, openRelease] as UpdateAction[], busy: false }
       if (networkError) {
         return {
           ...base,
@@ -159,6 +163,7 @@ function buildPhaseView(status: AppUpdateStatus, now: number): UpdatePanelView {
       return {
         tone: 'info',
         badge: { label: '正在检查…', tone: 'info' },
+        title: current,
         headline: '正在向更新源核对版本…',
         notes,
         actions: [{ id: 'check', label: '正在检查', kind: 'primary', disabled: true }, openRelease],
@@ -168,6 +173,7 @@ function buildPhaseView(status: AppUpdateStatus, now: number): UpdatePanelView {
       return {
         tone: 'success',
         badge: { label: '已是最新', tone: 'success' },
+        title: current,
         headline: `上次检查 ${formatUpdateTime(state.checkedAt, now)}`,
         notes: [],
         actions: [{ id: 'check', label: '立即检查', kind: 'primary' }, openRelease],
@@ -180,9 +186,9 @@ function buildPhaseView(status: AppUpdateStatus, now: number): UpdatePanelView {
         return {
           tone: skippedNote ? 'muted' : 'accent',
           badge: releaseBadge('有新版本'),
-          next: newVersion(state.release.version),
+          title: newVersion(state.release.version),
           headline: '此版本未提供应用内下载，请到发布页手动更新',
-          ...(meta ? { detail: meta } : {}),
+          detail: facts(meta),
           notes,
           actions: [{ id: 'open-release', label: '打开发布页', kind: 'primary' }, ...skipActions()],
           ...(skippedNote ? { skippedNote } : {}),
@@ -190,11 +196,12 @@ function buildPhaseView(status: AppUpdateStatus, now: number): UpdatePanelView {
           busy: false
         }
       }
+      // 有新版：标签下只留一行事实——发布日期、体积、当前版本；下载与否由右边的按钮说。
       return {
         tone: skippedNote ? 'muted' : 'accent',
         badge: releaseBadge('有新版本'),
-        next: newVersion(state.release.version),
-        headline: meta ?? '可以下载并安装',
+        title: newVersion(state.release.version),
+        headline: facts(meta),
         notes,
         actions: [{ id: 'download', label: '下载', kind: 'primary' }, ...skipActions(), openRelease],
         ...(skippedNote ? { skippedNote } : {}),
@@ -209,9 +216,9 @@ function buildPhaseView(status: AppUpdateStatus, now: number): UpdatePanelView {
       return {
         tone: 'info',
         badge: { label: verifying ? '正在校验' : `下载中 ${percent}%`, tone: 'info' },
-        next: newVersion(state.release.version),
+        title: newVersion(state.release.version),
         headline: verifying ? '下载已完成；正在核对签名与版本，几秒后就绪。' : '正在下载安装包…',
-        ...(meta ? { detail: meta } : {}),
+        detail: facts(meta),
         notes,
         progress: {
           percent,
@@ -228,9 +235,9 @@ function buildPhaseView(status: AppUpdateStatus, now: number): UpdatePanelView {
       return {
         tone: skippedNote ? 'muted' : 'accent',
         badge: releaseBadge('待安装'),
-        next: newVersion(state.release.version),
+        title: newVersion(state.release.version),
         headline: '已下载校验通过。安装会退出拾光、运行安装器（按机安装会弹一次系统授权），装完自动重新打开。',
-        ...(meta ? { detail: meta } : {}),
+        detail: facts(meta),
         notes,
         actions: [{ id: 'install', label: '安装并重启', kind: 'primary' }, ...skipActions(), openRelease],
         ...(skippedNote ? { skippedNote } : {}),
@@ -242,8 +249,9 @@ function buildPhaseView(status: AppUpdateStatus, now: number): UpdatePanelView {
       return {
         tone: 'info',
         badge: { label: '正在安装', tone: 'info' },
-        next: newVersion(state.release.version),
+        title: newVersion(state.release.version),
         headline: '拾光即将退出；安装完成后会自动重新打开。',
+        detail: facts(),
         notes: [],
         actions: [],
         busy: true
@@ -252,8 +260,9 @@ function buildPhaseView(status: AppUpdateStatus, now: number): UpdatePanelView {
       return {
         tone: 'info',
         badge: { label: '正在回滚', tone: 'info' },
-        next: { label: '回滚到', version: state.targetVersion },
+        title: `回滚到 ${state.targetVersion}`,
         headline: '拾光即将退出；换回旧版后会自动重新打开。',
+        detail: facts(),
         notes: [],
         actions: [],
         busy: true
@@ -264,9 +273,9 @@ function buildPhaseView(status: AppUpdateStatus, now: number): UpdatePanelView {
       return {
         tone: 'danger',
         badge: { label: `${step}失败`, tone: 'danger' },
-        ...(state.release ? { next: newVersion(state.release.version) } : {}),
+        title: state.release ? newVersion(state.release.version) : current,
         headline: state.message,
-        ...(meta ? { detail: meta } : {}),
+        ...(state.release ? { detail: facts(meta) } : {}),
         notes,
         actions: [
           { id: 'dismiss', label: state.release ? '重试' : '知道了', kind: 'primary' },
@@ -276,6 +285,24 @@ function buildPhaseView(status: AppUpdateStatus, now: number): UpdatePanelView {
       }
     }
   }
+}
+
+export type ReleaseNoteBlock = { kind: 'text'; text: string } | { kind: 'list'; items: string[] }
+
+/** 发布说明的纯文本行 → 段落与列表：连续的「- 」「* 」「• 」行合成一个列表（去掉记号），其余行各成一段。 */
+export function groupReleaseNotes(lines: string[]): ReleaseNoteBlock[] {
+  const blocks: ReleaseNoteBlock[] = []
+  for (const line of lines) {
+    const item = /^[-*•]\s+(.*)$/.exec(line)?.[1]
+    const last = blocks[blocks.length - 1]
+    if (item !== undefined) {
+      if (last?.kind === 'list') last.items.push(item)
+      else blocks.push({ kind: 'list', items: [item] })
+    } else {
+      blocks.push({ kind: 'text', text: line })
+    }
+  }
+  return blocks
 }
 
 export const UPDATE_INTERVAL_OPTIONS = [

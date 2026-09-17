@@ -428,21 +428,30 @@ const scenes = [
     ['light', 'dark'].map(colorScheme => ({
       name: `settings-update-${phase.replaceAll('_', '-')}-${colorScheme}`, hash: 'account:update', query: `update=${phase}`,
       width: 1440, height: 900, colorScheme, storage: baseStorage({ colorMode: colorScheme }), clip: null,
-      // 英雄行几何：没有圆点；操作在数字右侧且不与文案重叠、不出卡；胶囊（如有）在区块头里、单行。
-      actions: [{ wait: 200 }, { label: '英雄行', probe: `(() => {
-        if (document.querySelector('.app-update__dot')) throw new Error('状态卡不该再有圆点')
-        const card = document.querySelector('.app-update__card').getBoundingClientRect()
-        const summary = document.querySelector('.app-update__summary').getBoundingClientRect()
-        const numbers = [...document.querySelectorAll('.app-update__number')].map((node) => node.textContent)
-        if (!numbers.length || numbers.length > 2) throw new Error('英雄行数字个数不对：' + numbers.join(','))
-        const actions = document.querySelector('.app-update__hero .app-update__actions')
+      // 一行设置的几何：没有圆点、没有内卡 / 英雄行 / 大号数字；行直接住在区块正文里，标签字号与维护页的行一致；
+      // 操作在文案右侧且不与文案重叠、不出正文、按钮不折行；胶囊（如有）在区块头里、单行。
+      actions: [{ wait: 200 }, { label: '版本状态行', probe: `(() => {
+        if (document.querySelector('.app-update__dot, .app-update__card, .app-update__hero, .app-update__number, .app-update__eyebrow')) throw new Error('版本状态不该再有圆点 / 内卡 / 英雄行 / 大号数字')
+        const row = document.querySelector('.app-update__row')
+        if (!row || !row.classList.contains('settings-row')) throw new Error('版本状态不是 settings-row')
+        const body = row.closest('.settings-section__body').getBoundingClientRect()
+        const copy = row.querySelector('.settings-row__copy').getBoundingClientRect()
+        const title = row.querySelector('.app-update__title')
+        if (!title || !title.textContent.trim()) throw new Error('状态行缺标签')
+        const titleSize = parseFloat(getComputedStyle(title).fontSize)
+        if (titleSize > 14) throw new Error('标签字号过大（又成英雄行了）：' + titleSize)
+        const actions = row.querySelector('.app-update__actions')
         if (actions) {
           const box = actions.getBoundingClientRect()
-          if (box.left < summary.right - 1) throw new Error('操作与文案横向重叠')
-          if (box.right > card.right + 1 || box.top < card.top - 1) throw new Error('操作出卡')
+          if (box.left < copy.right - 1) throw new Error('操作与文案横向重叠')
+          if (box.right > body.right + 1 || box.left < body.left - 1) throw new Error('操作出了区块正文')
           for (const button of actions.querySelectorAll('button')) {
             if (button.getBoundingClientRect().height > 34) throw new Error('操作按钮换行了：' + button.textContent)
           }
+        }
+        for (const divided of document.querySelectorAll('.app-update .settings-row--divided')) {
+          const box = divided.getBoundingClientRect()
+          if (box.left < body.left - 1 || box.right > body.right + 1) throw new Error('分隔行溢出区块正文')
         }
         const badge = document.querySelector('.app-update__badge')
         if (badge) {
@@ -451,21 +460,23 @@ const scenes = [
           if (box.top < head.top || box.bottom > head.bottom) throw new Error('胶囊出了区块头')
           if (box.height > 22) throw new Error('胶囊折行了：' + badge.textContent)
         }
-        return { numbers, badge: badge ? badge.textContent : null, actions: actions ? actions.querySelectorAll('button').length : 0 }
+        return { title: title.textContent, badge: badge ? badge.textContent : null, actions: actions ? actions.querySelectorAll('button').length : 0, rows: document.querySelectorAll('.app-update .settings-row').length }
       })()` }]
     }))
   ),
   {
-    name: 'settings-update-confirm-light', hash: 'account:update', query: 'update=downloaded', width: 1440, height: 900, colorScheme: 'light', storage: baseStorage({ colorMode: 'light' }), clip: '.app-update__card',
+    name: 'settings-update-confirm-light', hash: 'account:update', query: 'update=downloaded', width: 1440, height: 900, colorScheme: 'light', storage: baseStorage({ colorMode: 'light' }), clip: '.app-update',
     actions: [{ wait: 200 }, { click: '.app-update__button.is-primary' }, { wait: 200 }, { label: '门禁确认块', probe: `(() => {
       const confirm = document.querySelector('.app-update__confirm')
       if (!confirm) throw new Error('未出现门禁确认块')
       if (!confirm.textContent.includes('席位在线')) throw new Error('确认文案缺少在线席位后果')
-      if (document.querySelectorAll('.app-update__hero .app-update__actions').length) throw new Error('确认块出现时普通操作按钮应收起')
-      if (document.querySelector('.app-update__dot')) throw new Error('状态卡不该再有圆点')
-      const numbers = [...document.querySelectorAll('.app-update__number')].map((node) => node.textContent)
-      if (numbers.length !== 2) throw new Error('英雄行应有当前 → 新版本两个数字：' + numbers.join(','))
-      return { text: confirm.textContent.slice(0, 60), numbers }
+      if (document.querySelectorAll('.app-update__row .app-update__actions').length) throw new Error('确认块出现时普通操作按钮应收起')
+      if (document.querySelector('.app-update__dot, .app-update__hero, .app-update__number')) throw new Error('版本状态不该再有圆点 / 英雄行')
+      const title = document.querySelector('.app-update__title')?.textContent
+      if (title !== '新版本 0.3.3') throw new Error('确认时标签应仍是新版本：' + title)
+      const row = document.querySelector('.app-update__row').getBoundingClientRect()
+      if (confirm.getBoundingClientRect().top < row.bottom - 1) throw new Error('确认块应在状态行之下')
+      return { text: confirm.textContent.slice(0, 60), title }
     })()` }]
   },
   // 自定义更新源展开：提示、镜像预设胶囊、输入 + 保存一行；点预设只填入输入框（保存按钮亮起、胶囊不亮）。
@@ -493,12 +504,21 @@ const scenes = [
   { name: 'settings-update-applied-light', hash: 'account:update', query: 'update=idle&updated=applied', width: 1440, height: 900, colorScheme: 'light', storage: baseStorage({ colorMode: 'light' }), clip: '.app-update' },
   { name: 'settings-update-apply-failed-dark', hash: 'account:update', query: 'update=idle&updated=apply_failed', width: 1440, height: 900, colorScheme: 'dark', storage: baseStorage({ colorMode: 'dark' }), clip: '.app-update' },
   {
-    name: 'settings-update-rollback-confirm-light', hash: 'account:update', query: 'update=idle&rollback=1', width: 1440, height: 900, colorScheme: 'light', storage: baseStorage({ colorMode: 'light' }), clip: '.app-update__card',
-    actions: [{ wait: 200 }, { click: '.app-update__rollback button' }, { wait: 200 }, { label: '回滚确认块', probe: `(() => {
+    name: 'settings-update-rollback-confirm-light', hash: 'account:update', query: 'update=idle&rollback=1', width: 1440, height: 900, colorScheme: 'light', storage: baseStorage({ colorMode: 'light' }), clip: '.app-update',
+    actions: [{ wait: 200 }, { label: '备份行', probe: `(() => {
+      const row = document.querySelector('.app-update__rollback')
+      if (!row || !row.classList.contains('settings-row--divided')) throw new Error('备份应是 hairline 之下独立的一行设置')
+      const copy = row.querySelector('.settings-row__copy').getBoundingClientRect()
+      const button = row.querySelector('button').getBoundingClientRect()
+      if (button.left < copy.right - 1) throw new Error('回滚按钮与说明横向重叠')
+      const status = document.querySelector('.app-update__row').getBoundingClientRect()
+      if (row.getBoundingClientRect().top < status.bottom - 1) throw new Error('备份行应在状态行之下')
+      return { text: row.textContent.slice(0, 40) }
+    })()` }, { click: '.app-update__rollback button' }, { wait: 200 }, { label: '回滚确认块', probe: `(() => {
       const confirm = document.querySelector('.app-update__confirm')
       if (!confirm) throw new Error('点击回滚后未出现确认块')
       if (!confirm.textContent.includes('回滚会退出拾光')) throw new Error('确认块缺少数据回退警告')
-      if (document.querySelector('.app-update__rollback')) throw new Error('确认块出现时回滚脚注应收起')
+      if (document.querySelector('.app-update__rollback')) throw new Error('确认块出现时备份行应收起')
       return { text: confirm.textContent.slice(0, 60) }
     })()` }]
   },
