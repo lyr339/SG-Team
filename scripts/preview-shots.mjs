@@ -243,7 +243,38 @@ const scenes = [
     { name: `run-independent-ended-${suffix}`, run: true, query: 'independent=ended', colorScheme: colorMode, storage: baseStorage({ colorMode }) },
     // 会话池 · 协作组（阶段 1 最小 UI）：两个 active 组（一个 attention）+ 一个刚解散的组 + 一个独立席位；以及打开建组抽屉。
     { name: `run-independent-groups-${suffix}`, run: true, query: 'independent=groups', colorScheme: colorMode, storage: baseStorage({ colorMode }) },
-    { name: `run-independent-groups-drawer-${suffix}`, run: true, query: 'independent=groups', colorScheme: colorMode, storage: baseStorage({ colorMode }), actions: [{ click: '.run-groups > .run-section-head .run-link' }, { wait: 300 }] }
+    { name: `run-independent-groups-drawer-${suffix}`, run: true, query: 'independent=groups', colorScheme: colorMode, storage: baseStorage({ colorMode }), actions: [{ click: '.run-groups > .run-section-head .run-link' }, { wait: 300 }] },
+    // 会话配置（批次属性）：配置中点「修改」打开的统一弹层 / 换成 Claude Fable 5 并应用后的行内光晕（约 300ms 处）/
+    // 单席弹层页脚勾上「同时应用到其余席位」/ 单席改动后的「单独配置」标与批次行的注脚；运行中各席分叉、没有多数时的分布 + 「统一」。
+    { name: `run-batch-config-dialog-${suffix}`, run: true, query: 'setup=1', colorScheme: colorMode, storage: baseStorage({ colorMode }), clip: null, actions: [{ click: '.run-mode-switch button[aria-checked="false"]' }, { wait: 300 }, { click: '.run-batch-config__action' }, { wait: 350 }] },
+    {
+      name: `run-batch-config-applied-${suffix}`, run: true, query: 'setup=1', colorScheme: colorMode, storage: baseStorage({ colorMode }),
+      actions: [
+        { click: '.run-mode-switch button[aria-checked="false"]' }, { wait: 300 },
+        { click: '.run-batch-config__action' }, { wait: 300 },
+        { click: '.cursor-model-dialog .menu-select__button' }, { wait: 200 },
+        { eval: `[...document.querySelectorAll('.menu-select__menu [role="option"] button')].find((button) => button.textContent.includes('Claude Fable 5'))?.click()` }, { wait: 200 },
+        { eval: `[...document.querySelectorAll('.cursor-model-dialog footer button')].find((button) => button.textContent.startsWith('应用到'))?.click()` }, { wait: 300 }
+      ]
+    },
+    {
+      name: `run-seat-dialog-sync-${suffix}`, run: true, query: 'setup=1', colorScheme: colorMode, storage: baseStorage({ colorMode }), clip: null,
+      actions: [
+        { click: '.run-mode-switch button[aria-checked="false"]' }, { wait: 300 },
+        { click: 'button[aria-label="配置 CH-2 会话"]' }, { wait: 300 },
+        { click: '.cursor-model-dialog footer .toggle-switch' }, { wait: 250 }
+      ]
+    },
+    {
+      name: `run-seat-override-${suffix}`, run: true, query: 'setup=1', colorScheme: colorMode, storage: baseStorage({ colorMode }),
+      actions: [
+        { click: '.run-mode-switch button[aria-checked="false"]' }, { wait: 300 },
+        { click: 'button[aria-label="配置 CH-2 会话"]' }, { wait: 300 },
+        { click: 'button[aria-label="CH-2 弹层Fast Off"]' }, { wait: 150 },
+        { eval: `[...document.querySelectorAll('.cursor-model-dialog footer button')].find((button) => button.textContent === '保存')?.click()` }, { wait: 500 }
+      ]
+    },
+    { name: `run-independent-spread-${suffix}`, run: true, query: 'independent=spread', colorScheme: colorMode, storage: baseStorage({ colorMode }) }
   ]),
   // 切换模式的确认面（团队 → 独立，仍有在线席位）。
   { name: 'run-switch-sheet', run: true, colorScheme: 'light', storage: baseStorage(), actions: [{ click: '.run-mode-switch button[aria-checked="false"]' }, { wait: 300 }] },
@@ -258,6 +289,16 @@ const scenes = [
     { name: `run-independent-mixed-w${width}`, run: true, width, height: 820, query: 'independent=mixed', colorScheme: 'dark', storage: baseStorage({ colorMode: 'dark' }), clip: null }
   ]),
   { name: 'run-start-independent-w600', run: true, width: 600, height: 900, query: 'setup=1', colorScheme: 'light', storage: baseStorage(), clip: null, actions: [{ click: '.run-mode-switch button[aria-checked="false"]' }, { wait: 300 }] },
+  // 窄窗里的「单独配置」标：席位行折成两行后，标与运行态徽标仍在同一行、不挤掉模型摘要。
+  {
+    name: 'run-seat-override-w600', run: true, width: 600, height: 1400, query: 'setup=1', colorScheme: 'light', storage: baseStorage(), clip: '.run-seats',
+    actions: [
+      { click: '.run-mode-switch button[aria-checked="false"]' }, { wait: 300 },
+      { click: 'button[aria-label="配置 CH-2 会话"]' }, { wait: 300 },
+      { click: 'button[aria-label="CH-2 弹层Fast Off"]' }, { wait: 150 },
+      { eval: `[...document.querySelectorAll('.cursor-model-dialog footer button')].find((button) => button.textContent === '保存')?.click()` }, { wait: 500 }
+    ]
+  },
   { name: 'run-compose-w720', run: true, width: 720, height: 900, colorScheme: 'light', storage: baseStorage(), clip: null, actions: [{ click: '.run-mode-switch button[aria-checked="false"]' }, { wait: 300 }, { click: '.run-sheet__confirm' }, { wait: 400 }] },
   // 头部控件位置守恒：切换模式 → 确认 → 进入配置态，分段控件、两个动作按钮和头部高度必须一个像素都不动。
   {

@@ -5,6 +5,7 @@ import {
   cursorModelSelectionSummary,
   fixedCursorModelContext,
   normalizeCursorModelSelection,
+  sameCursorModelSelection,
   withCursorModelParameter,
   withCursorModelMaxMode
 } from '../src/renderer/src/cursor-model-selection'
@@ -126,6 +127,22 @@ describe('Cursor model variant linkage', () => {
     expect(next.parameters.find((parameter) => parameter.id === 'fast')?.value).toBe('false')
     expect(next.parameters.find((parameter) => parameter.id === 'context')?.value).toBe('1m')
     expect(next.maxMode).toBe(true)
+  })
+
+  it('compares selections by model, MAX Mode and parameter set, ignoring parameter order', () => {
+    const reordered: CursorModelSelection = {
+      ...oneMillion,
+      parameters: [...oneMillion.parameters].reverse()
+    }
+    expect(sameCursorModelSelection(oneMillion, reordered)).toBe(true)
+    expect(sameCursorModelSelection(oneMillion, { ...oneMillion, maxMode: false })).toBe(false)
+    expect(sameCursorModelSelection(oneMillion, { ...oneMillion, modelId: 'gpt-5.6-luna' })).toBe(false)
+    expect(sameCursorModelSelection(oneMillion, withCursorModelParameter(oneMillion, gptSol, 'fast', 'true'))).toBe(false)
+    expect(sameCursorModelSelection(oneMillion, { ...oneMillion, parameters: oneMillion.parameters.slice(0, 2) })).toBe(false)
+    // 缺省的 MAX Mode 视为关。
+    expect(sameCursorModelSelection({ ...oneMillion, maxMode: false }, { ...oneMillion, maxMode: undefined })).toBe(true)
+    expect(sameCursorModelSelection(undefined, undefined)).toBe(true)
+    expect(sameCursorModelSelection(oneMillion, undefined)).toBe(false)
   })
 
   it('normalizes an old impossible 1M + Fast selection to a real Cursor variant', () => {

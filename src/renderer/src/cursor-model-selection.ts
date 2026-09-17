@@ -73,6 +73,22 @@ function parameterMap(selection: Pick<CursorModelSelection, 'parameters'>): Map<
   return new Map(selection.parameters.map((parameter) => [parameter.id, parameter.value]))
 }
 
+/** 两份选择是否指向同一个模型、同一组参数（参数顺序无关；MAX Mode 缺省视为关）。 */
+export function sameCursorModelSelection(
+  left: CursorModelSelection | undefined,
+  right: CursorModelSelection | undefined
+): boolean {
+  if (!left || !right) return left === right
+  if (left.modelId !== right.modelId || (left.maxMode === true) !== (right.maxMode === true)) return false
+  const leftValues = parameterMap(left)
+  const rightValues = parameterMap(right)
+  if (leftValues.size !== rightValues.size) return false
+  for (const [id, value] of leftValues) {
+    if (rightValues.get(id) !== value) return false
+  }
+  return true
+}
+
 function selectionFromVariant(
   selection: CursorModelSelection,
   option: CursorModelOption,

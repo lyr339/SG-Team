@@ -205,26 +205,39 @@ if (previewRunStatus && initialTeam.activeRun) {
     blockers: ['Agent MCP 尚未接入全部本轮通道', '并非所有 Agent 通道都已在线待命']
   }
 }
-// 运行页独立批次走查：?independent=live|mixed|ended|groups
-//（席位形态：全部待命 / 待命+执行中+离线+待确认 / 已结束 / 会话池里两个协作组 + 一个刚解散的组）。
-const independentScene = (['live', 'mixed', 'ended', 'groups'] as const).find((scene) => scene === previewParameters.get('independent'))
+// 运行页独立批次走查：?independent=live|mixed|spread|ended|groups
+//（席位形态：全部待命 / 待命+执行中+离线+待确认（CH-2 单独配置了另一模型）/ 各席配置分叉、没有多数 /
+//  已结束 / 会话池里两个协作组 + 一个刚解散的组）。
+const independentScene = (['live', 'mixed', 'spread', 'ended', 'groups'] as const).find((scene) => scene === previewParameters.get('independent'))
 if (independentScene && initialTeam.activeRun) {
   const solo = initialTeam.members.find((member) => member.slot.solo === true)!
   const shapes = independentScene === 'live'
     ? ['waiting', 'waiting', 'waiting'] as const
     : independentScene === 'groups'
       ? ['waiting', 'working', 'waiting', 'offline', 'waiting'] as const
-      : ['waiting', 'working', 'offline', 'unconfirmed'] as const
+      : independentScene === 'spread'
+        ? ['waiting', 'waiting', 'working', 'waiting'] as const
+        : ['waiting', 'working', 'offline', 'unconfirmed'] as const
   const status = independentScene === 'ended' ? 'completed' as const : 'running' as const
   const run = { ...initialTeam.activeRun, name: 'wedge-demo · 独立批次 #3', templateId: 'independent-session-v1', status }
   initialTeam.activeRun = run
   initialTeam.runs = [run]
+  // 目录里的 Claude Fable 5（默认参数）：mixed 场景只给 CH-2，spread 场景给 CH-3 / CH-4（2 : 2，没有多数）。
+  const fable = desktopSnapshot.cursorModels?.find((model) => model.modelId === 'claude-fable-5')
+  const fableSelection = fable ? { modelId: fable.modelId, displayName: fable.displayName, parameters: structuredClone(fable.parameters), maxMode: false } : undefined
+  const divergedChannels = independentScene === 'mixed' ? ['2'] : independentScene === 'spread' ? ['3', '4'] : []
   initialTeam.members = shapes.map((shape, index) => {
     const channelId = String(index + 1)
     const base = { channelId, queueDepth: 0, lastSeenAt: previewNow - (index + 1) * 40_000, healthEvidence: [], workingFiles: [] }
     return {
       ...solo,
-      slot: { ...solo.slot, id: `slot:solo-${channelId}`, name: `独立席 ${channelId}`, channelId },
+      slot: {
+        ...solo.slot,
+        id: `slot:solo-${channelId}`,
+        name: `独立席 ${channelId}`,
+        channelId,
+        ...(divergedChannels.includes(channelId) && fableSelection ? { modelSelection: fableSelection } : {})
+      },
       binding: solo.binding ? { ...solo.binding, channelId } : undefined,
       runtime: shape === 'unconfirmed'
         ? undefined

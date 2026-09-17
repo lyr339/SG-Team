@@ -1,4 +1,5 @@
 import { formatFullClock, formatRelativeClock } from '../format'
+import { RunBatchConfig, type RunBatchConfigProps } from './RunBatchConfig'
 import { RunGroupsPanel, type RunGroupActions } from './RunGroupsPanel'
 import type { RunView } from './run-view'
 
@@ -18,10 +19,12 @@ interface RunIndependentPanelProps {
   onNewBatch: () => void
   /** 会话池的协作组操作；不提供时不显示协作组区（预览 / 旧调用方）。 */
   groupActions?: RunGroupActions
+  /** 批次的「会话配置」行（统一的模型与参数）；不提供时不显示（旧调用方）。 */
+  modelConfig?: RunBatchConfigProps
 }
 
 /**
- * 独立模式专属区。配置中：目标工程 + 会话数量；运行中：批次概况 + 新建批次。
+ * 独立模式专属区。配置中：目标工程 + 会话数量 + 会话配置；运行中：批次概况 + 会话配置 + 新建批次。
  * 创建按钮在席位区底部（与团队模式的「一键创建会话」同一位置）。
  */
 export function RunIndependentPanel({
@@ -33,7 +36,8 @@ export function RunIndependentPanel({
   onCountChange,
   onChooseWorkspace,
   onNewBatch,
-  groupActions
+  groupActions,
+  modelConfig
 }: RunIndependentPanelProps): React.JSX.Element {
   const waiting = view.seats.filter((seat) => seat.state === 'waiting').length
   const working = view.seats.filter((seat) => seat.state === 'working').length
@@ -71,6 +75,8 @@ export function RunIndependentPanel({
             <button type="button" aria-label="增加" disabled={busy || count >= INDEPENDENT_MAX_SESSIONS} onClick={() => onCountChange(Math.min(INDEPENDENT_MAX_SESSIONS, count + 1))}>+</button>
           </div>
         </div>
+
+        {modelConfig ? <RunBatchConfig {...modelConfig} disabled={busy || modelConfig.disabled} /> : null}
       </section>
     )
   }
@@ -97,6 +103,9 @@ export function RunIndependentPanel({
           ) : null}
         </dl>
       </div>
+
+      {/* 运行中的批次：改的是每个席位下一次新建 Composer 的配置；结束后席位只作记录，不再提供。 */}
+      {modelConfig && !ended ? <RunBatchConfig {...modelConfig} disabled={busy || modelConfig.disabled} /> : null}
 
       {view.cursorWorkspaceChanged ? (
         <p className="run-callout is-warning">

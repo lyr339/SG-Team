@@ -3,6 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentLaunchRequest } from '../src/domain/agent-launch'
+import type { CursorModelSelection } from '../src/domain/cursor-model'
 import { emptyTeamControlSnapshot, type TeamControlSnapshot } from '../src/domain/team-control'
 import type { CreateIndependentSessionsInput } from '../src/shared/desktop-api'
 import { RunPage, type RunPageProps } from '../src/renderer/src/run/RunPage'
@@ -56,7 +57,8 @@ describe('RunPage（一个工程一个活跃运行：团队 / 独立两种模式
       onCreateIndependentSessions: vi.fn(async (_input: CreateIndependentSessionsInput) => donePlan),
       onChooseIndependentWorkspace: vi.fn(async () => undefined),
       onEndActiveRun: vi.fn(async () => {}),
-      onOpenSessions: vi.fn()
+      onOpenSessions: vi.fn(),
+      onPersistModelSelection: vi.fn(async (_channelId: string, _selection: CursorModelSelection) => team)
     }
     await act(async () => root.render(
       <RunPage
@@ -296,6 +298,166 @@ describe('RunPage（一个工程一个活跃运行：团队 / 独立两种模式
       expect(container.querySelector<HTMLButtonElement>('.run-stepper button[aria-label="减少"]')?.disabled).toBe(true)
       expect(buttonNamed('创建 1 个独立会话')).toBeTruthy()
       expect(container.querySelectorAll('.run-seat')).toHaveLength(1)
+    })
+
+  })
+
+  describe('会话配置：批次的一项属性，与目标工程、会话数量并列', () => {
+    const COMPOSER_FAST = 'Fast · MAX Mode Off · Context 200K · Standard'
+    const COMPOSER_SLOW = 'Fast Off · MAX Mode Off · Context 200K · Standard'
+    const fable = desktopSnapshot.cursorModels!.find((model) => model.modelId === 'claude-fable-5')!
+    const fableSelection = (): CursorModelSelection => ({ modelId: fable.modelId, displayName: fable.displayName, parameters: structuredClone(fable.parameters), maxMode: false })
+    /** 给运行中批次的若干席位一份已持久化的模型配置（其余席位沿用 Cursor 当前模型）。 */
+    const withSeatModels = (team: TeamControlSnapshot, models: Record<string, CursorModelSelection>): TeamControlSnapshot => {
+      for (const member of team.members) {
+        const selection = models[member.slot.channelId ?? '']
+        if (selection) member.slot.modelSelection = selection
+      }
+      return team
+    }
+    const batchRow = (): HTMLElement | null => container.querySelector('.run-batch-config')
+    const batchModel = (): string | undefined => container.querySelector('.run-batch-config__value strong > span')?.textContent ?? undefined
+    const batchSummary = (): string | undefined => container.querySelector('.run-batch-config__value > small')?.textContent ?? undefined
+    const batchNote = (): string | null => container.querySelector('.run-batch-config__note')?.textContent ?? null
+    const batchTag = (): string | null => container.querySelector('.run-batch-config__tag')?.textContent ?? null
+    const batchAction = (): HTMLButtonElement => container.querySelector<HTMLButtonElement>('.run-batch-config__action')!
+    const seatSummaries = (): Array<string | null> => [...container.querySelectorAll('.run-seat__model small')].map((node) => node.textContent)
+    const overrideChips = (): HTMLElement[] => [...container.querySelectorAll<HTMLElement>('.run-seat__override')]
+    const dialogButton = (label: string): HTMLButtonElement => {
+      const button = [...document.querySelectorAll<HTMLButtonElement>('.cursor-model-dialog button')].find((candidate) => candidate.textContent === label)
+      if (!button) throw new Error(`dialog button "${label}" not found`)
+      return button
+    }
+
+    it('配置批次：一行显示沿用 Cursor 当前模型的统一配置；「修改」一次改全部，之后新增的席位也沿用，创建时逐席位带上', async () => {
+      const { onCreateIndependentSessions, onPersistModelSelection } = await render(emptyTeamControlSnapshot(), { startMode: 'independent' })
+      // 预览目录里 Cursor 当前选中的是 Composer 2.5 · Fast：批次行标「Cursor 当前」，三席默认沿用；席位区不再有单独的统一入口。
+      expect(batchRow()?.textContent).toContain('会话配置')
+      expect(batchModel()).toBe('Composer 2.5')
+      expect(batchTag()).toBe('Cursor 当前')
+      expect(batchSummary()).toBe(COMPOSER_FAST)
+      expect(batchAction().textContent).toBe('修改')
+      expect(batchAction().getAttribute('aria-label')).toBe('修改全部 3 个席位的会话配置')
+      expect(seatSummaries()).toEqual(Array(3).fill(COMPOSER_FAST))
+      expect(container.querySelector('.run-seats__unify')).toBeNull()
+
+      await click(batchAction())
+      const dialog = document.querySelector('[role="dialog"]')!
+      expect(dialog.getAttribute('aria-label')).toBe('全部席位 会话配置')
+      expect(dialog.textContent).toContain('全部 3 个席位 · 模型与参数')
+      await click(document.querySelector<HTMLButtonElement>('button[aria-label="全部席位 弹层Fast Off"]')!)
+      await click(dialogButton('应用到 3 个席位'))
+      expect(document.querySelector('[role="dialog"]')).toBeNull()
+      // 配置批次阶段席位尚不存在：不落库，只进草稿。
+      expect(onPersistModelSelection).not.toHaveBeenCalled()
+      // 批次行换装：显式统一后不再标「Cursor 当前」，值块带一次性的换装动画类；每一行泛光晕确认。
+      expect(batchTag()).toBeNull()
+      expect(batchSummary()).toBe(COMPOSER_SLOW)
+      expect(container.querySelector('.run-batch-config__value.is-swapped')).not.toBeNull()
+      expect(seatSummaries()).toEqual(Array(3).fill(COMPOSER_SLOW))
+      expect(container.querySelectorAll('.run-seat.is-synced')).toHaveLength(3)
+      expect(overrideChips()).toHaveLength(0)
+
+      // 统一之后再加两席：新席位沿用统一配置，而不是退回 Cursor 当前模型。
+      await click(container.querySelector<HTMLButtonElement>('.run-stepper button[aria-label="增加"]')!)
+      await click(container.querySelector<HTMLButtonElement>('.run-stepper button[aria-label="增加"]')!)
+      expect(container.querySelectorAll('.run-seat')).toHaveLength(5)
+      expect(seatSummaries()).toEqual(Array(5).fill(COMPOSER_SLOW))
+      expect(batchAction().getAttribute('aria-label')).toBe('修改全部 5 个席位的会话配置')
+
+      await click(buttonNamed('创建 5 个独立会话'))
+      const sessions = onCreateIndependentSessions.mock.calls[0]?.[0].sessions ?? []
+      expect(sessions).toHaveLength(5)
+      expect(sessions.map((session) => session.modelSelection?.parameters.find((parameter) => parameter.id === 'fast')?.value)).toEqual(Array(5).fill('false'))
+    })
+
+    it('配置批次：单独改一席后该席标「单独配置」、批次行注明例外；点 × 恢复为统一配置', async () => {
+      const { onPersistModelSelection } = await render(emptyTeamControlSnapshot(), { startMode: 'independent' })
+      await click(container.querySelector<HTMLButtonElement>('button[aria-label="配置 CH-2 会话"]')!)
+      await click(document.querySelector<HTMLButtonElement>('button[aria-label="CH-2 弹层Fast Off"]')!)
+      await click(dialogButton('保存'))
+      expect(seatSummaries()).toEqual([COMPOSER_FAST, COMPOSER_SLOW, COMPOSER_FAST])
+      const chips = overrideChips()
+      expect(chips).toHaveLength(1)
+      expect(chips[0]!.closest('.run-seat')?.querySelector('.run-seat__channel')?.textContent).toBe('CH-2')
+      expect(chips[0]!.getAttribute('title')).toBe(`恢复为统一配置：Composer 2.5 · ${COMPOSER_FAST}`)
+      // 基线没变：仍是 Cursor 当前模型，只是多了一席例外。
+      expect(batchTag()).toBe('Cursor 当前')
+      expect(batchSummary()).toBe(COMPOSER_FAST)
+      expect(batchNote()).toBe('另有 1 席单独配置')
+
+      await click(container.querySelector<HTMLButtonElement>('button[aria-label="恢复 CH-2 为统一配置"]')!)
+      expect(overrideChips()).toHaveLength(0)
+      expect(batchNote()).toBeNull()
+      expect(seatSummaries()).toEqual(Array(3).fill(COMPOSER_FAST))
+      expect(onPersistModelSelection).not.toHaveBeenCalled()
+    })
+
+    it('运行中的批次：「修改」逐席位落库后才更新行，行内泛光晕，批次行随之换装', async () => {
+      const persisted: string[] = []
+      const team = independentTeam(['waiting', 'offline', 'offline'])
+      await render(team, { onPersistModelSelection: vi.fn(async (channelId: string) => { persisted.push(channelId); return team }) })
+      // 运行中的席位本就一致：基线是共同配置，不标「Cursor 当前」。
+      expect(batchModel()).toBe('Composer 2.5')
+      expect(batchTag()).toBeNull()
+      await click(batchAction())
+      await click(document.querySelector<HTMLButtonElement>('button[aria-label="全部席位 弹层Fast Off"]')!)
+      await click(dialogButton('应用到 3 个席位'))
+      expect(persisted).toEqual(['1', '2', '3'])
+      expect(document.querySelector('[role="dialog"]')).toBeNull()
+      expect(container.querySelectorAll('.run-seat.is-synced')).toHaveLength(3)
+      expect(batchSummary()).toBe(COMPOSER_SLOW)
+      expect(seatSummaries()).toEqual(Array(3).fill(COMPOSER_SLOW))
+    })
+
+    it('运行中的批次：多数席位共用的配置是基线，少数席位标「单独配置」，恢复会把基线写回该席位', async () => {
+      const team = withSeatModels(independentTeam(['waiting', 'waiting', 'waiting', 'offline']), { '2': fableSelection() })
+      const onPersistModelSelection = vi.fn(async (_channelId: string, _selection: CursorModelSelection) => team)
+      await render(team, { onPersistModelSelection })
+      expect(batchModel()).toBe('Composer 2.5')
+      expect(batchNote()).toBe('另有 1 席单独配置')
+      const chips = overrideChips()
+      expect(chips).toHaveLength(1)
+      expect(chips[0]!.closest('.run-seat')?.querySelector('.run-seat__model strong')?.textContent).toBe('Claude Fable 5')
+
+      await click(container.querySelector<HTMLButtonElement>('button[aria-label="恢复 CH-2 为统一配置"]')!)
+      expect(onPersistModelSelection).toHaveBeenCalledTimes(1)
+      expect(onPersistModelSelection.mock.calls[0]?.[0]).toBe('2')
+      expect(onPersistModelSelection.mock.calls[0]?.[1]).toMatchObject({ modelId: 'composer-2.5' })
+      expect(overrideChips()).toHaveLength(0)
+      expect(batchNote()).toBeNull()
+      expect(seatSummaries()).toEqual(Array(4).fill(COMPOSER_FAST))
+    })
+
+    it('运行中的批次：恢复落库失败走页面提示条，该席仍标为单独配置', async () => {
+      const team = withSeatModels(independentTeam(['waiting', 'waiting', 'waiting']), { '3': fableSelection() })
+      await render(team, { onPersistModelSelection: vi.fn(async () => { throw new Error('写入席位配置失败') }) })
+      await click(container.querySelector<HTMLButtonElement>('button[aria-label="恢复 CH-3 为统一配置"]')!)
+      expect(status()?.className).toContain('is-error')
+      expect(status()?.textContent).toContain('写入席位配置失败')
+      expect(overrideChips()).toHaveLength(1)
+    })
+
+    it('运行中的批次：各席分叉又没有多数时显示分布，动作变成「统一」，没有席位被标成例外', async () => {
+      await render(withSeatModels(independentTeam(['waiting', 'waiting', 'waiting', 'waiting']), { '3': fableSelection(), '4': fableSelection() }))
+      expect(container.querySelector('.run-batch-config.is-spread')).not.toBeNull()
+      expect(batchModel()).toBe('各席配置不同')
+      expect(batchSummary()).toBe('2 席 Composer 2.5 · 2 席 Claude Fable 5')
+      expect(batchAction().textContent).toBe('统一')
+      expect(overrideChips()).toHaveLength(0)
+      // 「统一」弹层以第一席的现状起草。
+      await click(batchAction())
+      expect(document.querySelector('[role="dialog"]')?.getAttribute('aria-label')).toBe('全部席位 会话配置')
+      expect(document.querySelector('.cursor-model-dialog .menu-select__button')?.textContent).toContain('Composer 2.5')
+      await click(document.querySelector<HTMLButtonElement>('button[aria-label="关闭会话配置"]')!)
+    })
+
+    it('已结束的批次与团队运行都没有会话配置行，也不标单独配置', async () => {
+      await render(independentTeam(['offline'], 'completed'))
+      expect(batchRow()).toBeNull()
+      await render(withSeatModels(teamRun('waiting', 'running'), { '2': fableSelection() }))
+      expect(batchRow()).toBeNull()
+      expect(overrideChips()).toHaveLength(0)
     })
   })
 

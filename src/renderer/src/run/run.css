@@ -467,9 +467,50 @@ html[data-card-transparency="clear"] :is(.run-panel, .run-seats, .run-header, .r
 .run-batch__breakdown dt { color: var(--muted); font-size: var(--fs-11); }
 .run-batch__breakdown dd { margin: 0; font-size: var(--fs-15); font-weight: 650; font-variant-numeric: tabular-nums; }
 
+/* ---------- 独立：会话配置（批次属性） ----------
+   与目标工程、会话数量同一套「标签 / 值 / 动作」语法：厂商色块 + 模型名（+「Cursor 当前」标）/ 参数摘要 / 修改。
+   各席分叉时值变成分布描述，动作变成「统一」。 */
+/* 名字一行放不下「Cursor 当前」标时，标折到下一行，而不是把模型名截成省略号。 */
+.run-batch-config__value strong { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 7px; min-width: 0; }
+.run-batch-config__value strong > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-batch-config__swatch {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  background: var(--model-provider-fg, var(--muted));
+  border: 1px solid var(--model-provider-border, var(--line));
+  border-radius: 3px;
+  box-shadow: 0 0 0 2px var(--model-provider-bg, var(--surface-soft));
+}
+.run-batch-config__tag {
+  flex: none;
+  padding: 0 6px;
+  color: var(--muted);
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 600;
+  line-height: 1.6;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+.run-batch-config__note { color: var(--text-soft); }
+.run-batch-config__action { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.run-batch-config__action svg { width: 14px; height: 14px; }
+/* 运行中的批次卡：概况数字与配置行之间一条 hairline，配置行读作批次的一项属性而不是数字的注脚。 */
+.run-batch + .run-batch-config { padding-top: 12px; border-top: 1px solid var(--line); }
+/* 统一落地：值块重新挂载，轻轻上浮、模型名短暂点亮——与席位行的光晕同一拍。 */
+.run-batch-config__value.is-swapped { animation: run-batch-config-swap 480ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.run-batch-config__value.is-swapped > strong { animation: run-seat-sync-text 1100ms ease both; }
+@keyframes run-batch-config-swap { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+
 /* ---------- 会话池 · 协作组（阶段 1 最小 UI） ---------- */
 .run-groups { display: grid; gap: 10px; padding-top: 4px; border-top: 1px dashed var(--line); }
 .run-groups > .run-section-head { padding-top: 8px; }
+/* 标题与「建组」不折行；说明文字吸收全部宽度变化。 */
+.run-groups > .run-section-head strong, .run-groups > .run-section-head .run-link { flex: none; white-space: nowrap; }
 .run-groups > .run-section-head span { flex: 1 1 auto; }
 .run-groups .run-callout { margin: 0; }
 .run-link.is-danger { color: var(--red); }
@@ -623,9 +664,12 @@ html[data-card-transparency="clear"] .run-group-drawer { background: color-mix(i
 .run-seats.is-guided { box-shadow: 0 0 0 2px var(--accent-border-soft), var(--shadow-hairline); }
 
 .run-seats__list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+/* 行 = 主按钮（弹性）+ 可选的「单独配置」标 + 运行态；隐式列只在有标时出现，没有标的行不留空列。 */
 .run-seat {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  grid-auto-columns: auto;
   align-items: center;
   gap: 8px;
   padding-right: 12px;
@@ -639,6 +683,17 @@ html[data-card-transparency="clear"] .run-group-drawer { background: color-mix(i
 html[data-card-transparency="clear"] .run-seat { background: color-mix(in srgb, var(--surface-solid) 40%, transparent); }
 .run-seat:hover { border-color: var(--color-border-primary); box-shadow: var(--shadow-hairline); }
 .run-seat.is-pending { border-style: dashed; }
+/* 统一配置落地：每行自上而下依次泛一层主题色光晕、模型名短暂点亮，随后淡出——确认「全都改了」。 */
+.run-seat.is-synced .run-seat__main { animation: run-seat-sync 1100ms ease both; animation-delay: calc(var(--seat-index, 0) * 45ms); }
+.run-seat.is-synced .run-seat__model strong { animation: run-seat-sync-text 1100ms ease both; animation-delay: calc(var(--seat-index, 0) * 45ms); }
+@keyframes run-seat-sync {
+  0%, 30% { background: var(--accent-wash); box-shadow: inset 2px 0 0 var(--accent); }
+  100% { background: transparent; box-shadow: none; }
+}
+@keyframes run-seat-sync-text {
+  0%, 30% { color: var(--accent-deep); }
+  100% { color: inherit; }
+}
 .run-seat__main {
   display: grid;
   grid-template-columns: 52px minmax(0, 0.9fr) minmax(0, 1.4fr) auto;
@@ -723,6 +778,42 @@ html[data-card-transparency="clear"] .run-seat { background: color-mix(in srgb, 
 }
 .run-seat__progress.is-failed { color: var(--red); }
 .run-seat__progress.is-done { color: var(--color-text-success); }
+
+/* 单独配置：与批次统一配置不同的席位打一枚可撤销的标，× 恢复。中性描边，不与「待创建」的主题色徽标抢眼。 */
+.run-seat__override {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 22px;
+  padding: 0 3px 0 8px;
+  color: var(--muted);
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: var(--fs-11);
+  font-style: normal;
+  font-weight: 600;
+  white-space: nowrap;
+  animation: run-pop 180ms ease both;
+}
+.run-seat__override > span { padding-right: 2px; }
+.run-seat__override button {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  color: var(--faint);
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
+  font-size: var(--fs-12);
+  line-height: 1;
+  transition: color 120ms ease, background 120ms ease;
+}
+.run-seat__override button:hover:not(:disabled) { color: var(--accent-deep); background: var(--accent-wash); }
+.run-seat__override button:disabled { opacity: 0.45; }
+.run-seat__override:has(button:hover:not(:disabled)) { color: var(--text-soft); border-color: var(--accent-border-soft); }
 
 .run-seats__hint { margin: 0; color: var(--muted); font-size: var(--fs-11); line-height: 1.5; }
 
@@ -867,7 +958,9 @@ html[data-card-transparency="clear"] .run-seat { background: color-mix(in srgb, 
 @keyframes run-fade-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @keyframes run-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 @media (prefers-reduced-motion: reduce) {
-  .run-body > *, .run-feedback, .run-sheet, .run-seat, .run-goal, .run-goal-editor, .run-stepper output, .run-group, .run-group-drawer { animation: none; }
+  .run-body > *, .run-feedback, .run-sheet, .run-seat, .run-goal, .run-goal-editor, .run-stepper output, .run-group, .run-group-drawer, .run-seat__override { animation: none; }
+  .run-seat.is-synced .run-seat__main, .run-seat.is-synced .run-seat__model strong { animation: none; }
+  .run-batch-config__value.is-swapped, .run-batch-config__value.is-swapped > strong { animation: none; }
   .run-mode-switch__indicator, .run-slot, .run-slot__inner > * { transition: none; }
   .run-state-chip i, .run-seat__badge i, .run-group-member__dot { animation: none; }
   .run-page :is(.primary-button, .secondary-button, .run-header__ghost, .run-sheet__confirm, .run-stepper button):active:not(:disabled) { transform: none; }

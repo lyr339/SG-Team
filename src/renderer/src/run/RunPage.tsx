@@ -7,8 +7,9 @@ import type { DetectedCursorWorkspace } from '../../../domain/cursor-workspace'
 import type { TeamControlSnapshot, WorkspaceRunMode } from '../../../domain/team-control'
 import type { CreateIndependentSessionsInput, IndependentWorkspaceSelection } from '../../../shared/desktop-api'
 import { BrandMark } from '../BrandMark'
-import { cursorModelSelectionFromOption, normalizeCursorModelSelection } from '../cursor-model-selection'
+import { cursorModelSelectionFromOption, cursorModelSelectionSummary, normalizeCursorModelSelection, sameCursorModelSelection } from '../cursor-model-selection'
 import { TeamIcon } from '../UiIcons'
+import { describeSelectionSpread, majoritySelection, type RunBatchConfigProps } from './RunBatchConfig'
 import { ReplaceRunSheet } from './ReplaceRunSheet'
 import { RunHeader } from './RunHeader'
 import type { RunGroupActions } from './RunGroupsPanel'
@@ -124,7 +125,10 @@ export function RunPage({
     onStartModeChange?.(mode)
   }
   const [count, setCount] = useState(DEFAULT_INDEPENDENT_COUNT)
-  const [draftSelections, setDraftSelections] = useState<{ runId?: string; byChannel: Record<string, CursorModelSelection> }>({ byChannel: {} })
+  // `uniform`：批次「会话配置」里显式统一过的那份——配置批次时先统一再加数量，新增的席位也沿用它，而不是退回 Cursor 当前模型。
+  const [draftSelections, setDraftSelections] = useState<{ runId?: string; byChannel: Record<string, CursorModelSelection>; uniform?: CursorModelSelection }>({ byChannel: {} })
+  // 最近一次统一落地的时刻：席位列表据此泛一次光晕作确认。
+  const [syncedAt, setSyncedAt] = useState<number>()
   const [chosenWorkspace, setChosenWorkspace] = useState<{ selection: IndependentWorkspaceSelection; detectedId?: string }>()
   const [editingGoal, setEditingGoal] = useState(false)
   const [guideSeats, setGuideSeats] = useState(false)
@@ -189,19 +193,51 @@ export function RunPage({
 
   const defaultSelection = cursorModelSelectionFromOption(cursorModels.find((model) => model.selected) ?? cursorModels[0])
   const selections = useMemo(() => {
-    const drafts = draftSelections.runId === runId ? draftSelections.byChannel : {}
+    const current = draftSelections.runId === runId
+    const drafts = current ? draftSelections.byChannel : {}
+    const uniform = current ? draftSelections.uniform : undefined
     const channels = composingIndependent ? composeChannels : view.seats.map((seat) => seat.channelId)
     return Object.fromEntries(channels.flatMap((channelId) => {
       const persisted = composingIndependent ? undefined : view.seats.find((seat) => seat.channelId === channelId)?.modelSelection
-      const candidate = drafts[channelId] ?? persisted ?? defaultSelection
+      const candidate = drafts[channelId] ?? persisted ?? uniform ?? defaultSelection
       const option = candidate ? cursorModels.find((model) => model.modelId === candidate.modelId) : undefined
       const normalized = candidate && option ? normalizeCursorModelSelection(candidate, option) : defaultSelection
       return normalized ? [[channelId, normalized] as const] : []
     }))
   }, [composeChannels, composingIndependent, cursorModels, defaultSelection, draftSelections, runId, view.seats])
 
+  /**
+   * 批次的统一配置基线：显式统一过的那份 > 配置中沿用 Cursor 当前模型 > 运行中多数席位共用的那份；
+   * 运行中各席已分叉又没有多数，就没有基线（显示分布，提供「统一」）。与基线不同的席位是「单独配置」。
+   * 已结束的批次只作记录，不再谈配置。
+   */
+  const independentBatch = composingIndependent || (view.mode === 'independent' && view.phase !== 'completed')
+  const batchModel = useMemo(() => {
+    const channels = composingIndependent ? composeChannels : view.seats.map((seat) => seat.channelId)
+    const explicit = draftSelections.runId === runId ? draftSelections.uniform : undefined
+    const explicitOption = explicit ? cursorModels.find((model) => model.modelId === explicit.modelId) : undefined
+    const current = channels.map((channelId) => selections[channelId])
+    const uniform = explicit && explicitOption
+      ? normalizeCursorModelSelection(explicit, explicitOption)
+      : composingIndependent
+        ? defaultSelection
+        : majoritySelection(current)
+    const option = uniform ? cursorModels.find((model) => model.modelId === uniform.modelId) : undefined
+    const overridden = uniform ? channels.filter((channelId) => !sameCursorModelSelection(selections[channelId], uniform)) : []
+    return {
+      channels,
+      uniform,
+      implicit: composingIndependent && !explicit,
+      overridden,
+      spread: uniform ? undefined : describeSelectionSpread(current),
+      fallback: current[0],
+      restoreHint: uniform ? `恢复为统一配置：${uniform.displayName} · ${cursorModelSelectionSummary(uniform, option)}` : undefined
+    }
+  }, [composeChannels, composingIndependent, cursorModels, defaultSelection, draftSelections, runId, selections, view.seats])
+  const overriddenChannels = new Set(independentBatch ? batchModel.overridden : [])
+
   const seatRows: RunSeatRow[] = composingIndependent
-    ? composeChannels.map((channelId) => ({ channelId, name: `会话 ${channelId}`, pending: true }))
+    ? composeChannels.map((channelId) => ({ channelId, name: `会话 ${channelId}`, pending: true, overridden: overriddenChannels.has(channelId) }))
     : view.seats.map((seat) => ({
         channelId: seat.channelId,
         name: seat.name,
@@ -209,7 +245,8 @@ export function RunPage({
         roleName: seat.solo ? undefined : seat.groupName ? `${seat.groupName} · ${seat.roleName}` : seat.roleName,
         state: seat.state,
         lastSeenAt: seat.lastSeenAt,
-        pending: view.phase !== 'completed' && seat.pending
+        pending: view.phase !== 'completed' && seat.pending,
+        overridden: overriddenChannels.has(seat.channelId)
       }))
   const pendingRequests: AgentLaunchRequest[] = view.pendingSeats.map((seat) => ({
     channelId: seat.channelId,
@@ -373,10 +410,54 @@ export function RunPage({
     // 已存在的席位先持久化再提交本地状态；失败时弹层保持打开并显示错误。
     if (!composingIndependent && onPersistModelSelection) await onPersistModelSelection(channelId, selection)
     setDraftSelections((current) => ({
+      ...(current.runId === runId ? current : { byChannel: {} }),
       runId,
       byChannel: { ...(current.runId === runId ? current.byChannel : {}), [channelId]: structuredClone(selection) }
     }))
   }
+
+  /** 统一配置：同一份写到每个席位，并成为批次基线。已存在的席位逐个持久化（中途失败即停，弹层留在原地报错）。 */
+  const saveModelForAll = async (channelIds: string[], selection: CursorModelSelection): Promise<void> => {
+    if (!composingIndependent && onPersistModelSelection) {
+      for (const channelId of channelIds) await onPersistModelSelection(channelId, selection)
+    }
+    setDraftSelections((current) => ({
+      runId,
+      uniform: structuredClone(selection),
+      byChannel: {
+        ...(current.runId === runId ? current.byChannel : {}),
+        ...Object.fromEntries(channelIds.map((channelId) => [channelId, structuredClone(selection)]))
+      }
+    }))
+    setSyncedAt(Date.now())
+  }
+
+  /** 单独配置的席位恢复到批次基线：配置中只需丢掉草稿；运行中把基线写回该席位（失败走页面提示条）。 */
+  const resetModelToUniform = async (channelId: string): Promise<void> => {
+    const uniform = batchModel.uniform
+    if (!uniform) return
+    await run('reset-model', async () => {
+      if (!composingIndependent && onPersistModelSelection) await onPersistModelSelection(channelId, uniform)
+      setDraftSelections((current) => {
+        const byChannel = { ...(current.runId === runId ? current.byChannel : {}) }
+        if (composingIndependent) delete byChannel[channelId]
+        else byChannel[channelId] = structuredClone(uniform)
+        return { ...(current.runId === runId ? current : {}), runId, byChannel }
+      })
+    })
+  }
+
+  const batchModelConfig: RunBatchConfigProps | undefined = independentBatch ? {
+    models: cursorModels,
+    seatCount: batchModel.channels.length,
+    uniform: batchModel.uniform,
+    implicit: batchModel.implicit,
+    overriddenCount: batchModel.overridden.length,
+    spread: batchModel.spread,
+    fallback: batchModel.fallback,
+    disabled: agentLaunchPlan?.state === 'running',
+    onSave: (selection) => saveModelForAll(batchModel.channels, selection)
+  } : undefined
 
   const enableCdp = onEnableCursorCdp ? () => void run('enable-cdp', async () => {
     const result = await onEnableCursorCdp()
@@ -430,6 +511,10 @@ export function RunPage({
       onRunWarmup={onRunSessionWarmup ? () => void run('warmup', onRunSessionWarmup) : undefined}
       onCreate={composingIndependent ? createIndependentBatch : createPendingSessions}
       onModelSave={saveModel}
+      onModelSaveAll={saveModelForAll}
+      onModelReset={independentBatch && batchModel.uniform ? resetModelToUniform : undefined}
+      restoreHint={batchModel.restoreHint}
+      syncedAt={syncedAt}
       onEnableCdp={enableCdp}
       onToggleAutoHeal={toggleAutoHeal}
       onCancelCountdown={onCancelCdpAutoHealCountdown ? () => void onCancelCdpAutoHealCountdown() : undefined}
@@ -474,6 +559,7 @@ export function RunPage({
                 onCountChange={setCount}
                 onChooseWorkspace={chooseIndependentWorkspace}
                 onNewBatch={newBatch}
+                modelConfig={batchModelConfig}
               />
               {seats ?? <div className="run-empty">Cursor 工程识别完成后即可配置独立会话。</div>}
             </div>
@@ -537,6 +623,7 @@ export function RunPage({
             onCountChange={setCount}
             onChooseWorkspace={chooseIndependentWorkspace}
             onNewBatch={newBatch}
+            modelConfig={batchModelConfig}
           />
         ) : view.mode === 'independent' ? (
           <RunIndependentPanel
@@ -548,6 +635,7 @@ export function RunPage({
             onChooseWorkspace={chooseIndependentWorkspace}
             onNewBatch={newBatch}
             groupActions={groupActions}
+            modelConfig={batchModelConfig}
           />
         ) : (
           <RunTeamPanel
