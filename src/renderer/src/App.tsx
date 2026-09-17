@@ -5,7 +5,7 @@ import type {
   DesktopSnapshot
 } from '../../shared/desktop-api'
 import { emptyTaskPoolSnapshot, newestTaskPoolSnapshot } from '../../domain/task-pool'
-import { usageBelongsToRun, type CursorUsageSnapshot } from '../../domain/cursor-usage'
+import type { CursorUsageSnapshot } from '../../domain/cursor-usage'
 import { emptyTeamControlSnapshot, type TeamRunStatus } from '../../domain/team-control'
 import { emptyTeamCollaborationSnapshot } from '../../domain/team-collaboration'
 import { DesktopShell, type AppModule } from './DesktopShell'
@@ -816,14 +816,12 @@ export function App(): React.JSX.Element {
     return {
       ...snapshot,
       sessions: snapshot.sessions.map((session) => {
-        // 用量关联回退：binding.composerId 缺失（绑定滞后/被 run 收尾清空）时，
-        // 以通道最新转录定位的 composer 查表——遥测层已全局水合该映射。
-        // 快照含历史 run 的账（统计页用）；徽章只认当前 run，否则新会话建立前会顶着旧 run 的数字。
-        const usageComposerId = session.composerId ?? session.telemetryChannelComposerId
-        const usage = usageComposerId ? cursorUsage[usageComposerId] : undefined
-        const withUsage = usage && usage.turns > 0 && usageBelongsToRun(usage, teamControl.activeRun?.id)
-          ? { ...session, usage }
-          : session
+        // 徽章只认席位当前绑定的 Composer 的账（会话生命周期 = Composer 生命周期，阶段 2 · 2E）：
+        // 只有在绑的 Composer 会入账，席位重建 / 换池后新会话绑定前不显示数字——不回退到通道最新
+        // 转录定位的 composer，那在新会话建立前仍指向旧会话，只会顶着旧账。
+        // 快照含出绑后封口的历史账（统计页用），结束后的账仍在绑，徽章保持最后一笔数值。
+        const usage = session.composerId ? cursorUsage[session.composerId] : undefined
+        const withUsage = usage && usage.turns > 0 ? { ...session, usage } : session
         const member = memberByChannel.get(session.channelId)
         if (!member) return withUsage
         const task = taskPool.taskOrder
@@ -841,17 +839,36 @@ export function App(): React.JSX.Element {
         }
       })
     }
-  }, [cursorUsage, snapshot, taskPool, teamControl.activeRun?.id, teamControl.activeRun?.actingLeadSlotId, teamControl.members])
-  // 统计页席位来源：引用随 sessions 走——推流高频渲染下不触发统计视图模型重算。
-  const statsSeats = useMemo(() => visibleSnapshot.sessions.map((session) => ({
-    channelId: session.channelId,
-    roleName: session.roleName,
-    displayName: session.displayName,
-    avatarId: session.avatarId,
-    online: session.online,
-    composerId: session.composerId,
-    telemetryChannelComposerId: session.telemetryChannelComposerId
-  })), [visibleSnapshot.sessions])
+  }, [cursorUsage, snapshot, taskPool, teamControl.activeRun?.actingLeadSlotId, teamControl.members])
+  // 统计页席位来源：引用随 sessions 走（sessions 本身已随 members 重算）——推流高频渲染下不触发统计视图模型重算。
+  // slotId 让重建前旧 Composer 的账（账上带入账时的席位）仍归到这个席位。
+  const statsSeats = useMemo(() => {
+    const slotByChannel = new Map(teamControl.members.flatMap((member) => {
+      const channelId = member.binding?.channelId ?? member.slot.channelId
+      return channelId ? [[channelId, member.slot.id] as const] : []
+    }))
+    return visibleSnapshot.sessions.map((session) => ({
+      channelId: session.channelId,
+      roleName: session.roleName,
+      displayName: session.displayName,
+      avatarId: session.avatarId,
+      online: session.online,
+      composerId: session.composerId,
+      telemetryChannelComposerId: session.telemetryChannelComposerId,
+      slotId: slotByChannel.get(session.channelId)
+    }))
+  }, [visibleSnapshot.sessions, teamControl.members])
+  // 统计页组来源：活动 run 的 active 组 → 成员通道号；组求和 = 成员席位之和（阶段 2 · 2E）。
+  const statsGroups = useMemo(() => teamControl.groups
+    .filter((view) => view.group.status === 'active')
+    .map((view) => ({
+      key: view.group.id,
+      label: view.group.name,
+      channelIds: view.members.flatMap((member) => {
+        const channelId = member.binding?.channelId ?? member.slot.channelId
+        return channelId ? [channelId] : []
+      })
+    })), [teamControl.groups])
   const selectedSession = visibleSnapshot.sessions.find((session) => session.channelId === selectedChannelId)
   const selectedMember = teamControl.members.find((member) => (
     (member.binding?.channelId ?? member.slot.channelId) === selectedSession?.channelId
@@ -1274,9 +1291,11 @@ export function App(): React.JSX.Element {
       }
     },
     onRevealCursorStorage: (id) => { void window.sgDesktop.revealCursorStorage(id).catch(() => {}) },
-    // 统计页（纯只读投影）：全部会话用量 + 当前席位来源，历史 Composer 的账由视图模型归入「历史会话」。
+    // 统计页（纯只读投影）：全部会话用量 + 当前席位 / 组来源；重建前旧 Composer 的账按席位标签归席位，
+    // 归不到席位的由视图模型归入「历史会话」。
     usageSnapshot: cursorUsage,
     statsSeats,
+    statsGroups,
     onSetModelDataPolicyAutoAcknowledge: async (enabled) => {
       let message = '已关闭自动确认；官网已有确认保持不变'
       if (enabled) {

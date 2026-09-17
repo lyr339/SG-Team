@@ -9,8 +9,10 @@ import { priceForModel, totalUsageTokens } from '../../../domain/cursor-usage'
  * 无账本的旧会话（quality = legacy / V2）折叠为 lastTurnAt 上的一笔近似回合，
  * 质量列如实标注，不伪装成精确值。
  *
- * 席位归属：composerId（含遥测回退 id）→ 当前会话席位；查不到的 composer 归入
- * 「历史会话」组——席位轮换 / run 更替后旧 Composer 的账不消失，只换归属。
+ * 席位归属（阶段 2 · 2E，三层求和：席位 / 组 / 池）：composerId（含遥测回退 id）→ 当前会话席位；
+ * 查不到时按账上的 slotId（入账时所绑席位）归到同一席位——席位重建后旧 Composer 的账仍算这个席位
+ * （明细里标「旧会话」）；两者都查不到（被替换的池、无绑定上下文的旧账）归入「历史会话」组。
+ * 组 = 成员席位之和，池 = 全部席位（含历史）之和。
  */
 
 export type StatsRange = 'today' | '7d' | '30d'
@@ -30,6 +32,25 @@ export interface StatsSeatSource {
   online: boolean
   composerId?: string
   telemetryChannelComposerId?: string
+  /** 席位 id（AgentSlot）：账上的 slotId 据此归属重建前的旧 Composer。 */
+  slotId?: string
+}
+
+/** 组来源投影（App 从 teamControl.groups 映射的 active 组；成员按通道号对应席位）。 */
+export interface StatsGroupSource {
+  key: string
+  label: string
+  channelIds: readonly string[]
+}
+
+/** 按组求和（范围内、不随席位筛选收窄）：= 成员席位之和。 */
+export interface StatsGroupRow {
+  key: string
+  label: string
+  seatCount: number
+  costUsd: number
+  tokens: number
+  turns: number
 }
 
 /** 光谱带 / 图例的席位分组；history 表示无法归属到当前席位的旧 Composer。 */
@@ -129,8 +150,10 @@ export interface SessionStatsView {
   cumulative: { costUsd: number; tokens: number }
   seatGroups: StatsSeatGroup[]
   spectrum: StatsSpectrumSegment[]
-  /** 光谱带的分母（永远全量，不随席位筛选收窄）。 */
+  /** 光谱带的分母 = 池的范围内总量（永远全量，不随席位筛选收窄）。 */
   spectrumTotals: { costUsd: number; tokens: number }
+  /** 按组求和（与光谱带同一口径：范围内全量）；按成本降序。没有 active 组时为空。 */
+  groups: StatsGroupRow[]
   bucketUnit: 'hour' | 'day'
   buckets: StatsBucket[]
   maxBucketCost: number
@@ -235,6 +258,8 @@ function emptyBuckets(range: StatsRange, now: number): { unit: 'hour' | 'day'; s
 export interface SessionStatsInput {
   usage: CursorUsageSnapshot
   seats: readonly StatsSeatSource[]
+  /** 活动 run 的 active 组；缺省不出组层。 */
+  groups?: readonly StatsGroupSource[]
   range: StatsRange
   now: number
   /** 光谱带选中的席位（含 'history'）；缺省不筛选。 */
@@ -260,10 +285,12 @@ export function buildSessionStatsView(input: SessionStatsInput): SessionStatsVie
   }))
   const groupByKey = new Map(seatGroups.map((group) => [group.key, group]))
   const seatKeyByComposer = new Map<string, string>()
+  const seatKeyBySlot = new Map<string, string>()
   seats.forEach((seat) => {
     for (const composerId of [seat.composerId, seat.telemetryChannelComposerId]) {
       if (composerId && !seatKeyByComposer.has(composerId)) seatKeyByComposer.set(composerId, `ch:${seat.channelId}`)
     }
+    if (seat.slotId && !seatKeyBySlot.has(seat.slotId)) seatKeyBySlot.set(seat.slotId, `ch:${seat.channelId}`)
   })
 
   const { unit, start, step, buckets } = emptyBuckets(range, now)
@@ -274,7 +301,7 @@ export function buildSessionStatsView(input: SessionStatsInput): SessionStatsVie
 
   const totals = { costUsd: 0, tokens: 0, turns: 0, freshInput: 0, output: 0, cacheRead: 0, cacheWrite: 0, savingsUsd: 0, exactTurns: 0 }
   let fullCostSum = 0
-  const spectrumBySeat = new Map<string, { costUsd: number; tokens: number }>()
+  const spectrumBySeat = new Map<string, { costUsd: number; tokens: number; turns: number }>()
   const modelMap = new Map<string, { costUsd: number; tokens: number; turns: number }>()
   const rows: StatsSessionRow[] = []
   let usedHistory = false
@@ -284,17 +311,21 @@ export function buildSessionStatsView(input: SessionStatsInput): SessionStatsVie
     cumulative.costUsd += entry.estimatedCostUsd
     cumulative.tokens += totalUsageTokens(entry)
 
-    const composerSeatKey = seatKeyByComposer.get(entry.composerId) ?? STATS_HISTORY_SEAT.key
+    // 归属：席位当前 composer → 账上的席位标签（重建前的旧 Composer）→ 历史会话。
+    const currentSeatKey = seatKeyByComposer.get(entry.composerId)
+    const composerSeatKey = currentSeatKey ?? (entry.slotId ? seatKeyBySlot.get(entry.slotId) : undefined) ?? STATS_HISTORY_SEAT.key
     const group = groupByKey.get(composerSeatKey) ?? STATS_HISTORY_SEAT
+    const previousSession = currentSeatKey === undefined && group.key !== STATS_HISTORY_SEAT.key
     const inRange = normalizeTurns(entry).filter((turn) => turn.at >= start && turn.at <= now)
     if (inRange.length === 0) continue
     if (group.key === STATS_HISTORY_SEAT.key) usedHistory = true
 
-    // 光谱带永远呈现全部席位的范围内量（筛选只影响其余模块，用高亮表达）。
-    const spectrumEntry = spectrumBySeat.get(group.key) ?? { costUsd: 0, tokens: 0 }
+    // 光谱带永远呈现全部席位的范围内量（筛选只影响其余模块，用高亮表达）；组 / 池求和同源。
+    const spectrumEntry = spectrumBySeat.get(group.key) ?? { costUsd: 0, tokens: 0, turns: 0 }
     for (const turn of inRange) {
       spectrumEntry.costUsd += turn.costUsd
       spectrumEntry.tokens += turn.freshInput + turn.cacheRead + turn.cacheWrite + turn.output
+      spectrumEntry.turns += 1
     }
     spectrumBySeat.set(group.key, spectrumEntry)
 
@@ -305,7 +336,9 @@ export function buildSessionStatsView(input: SessionStatsInput): SessionStatsVie
       seatKey: group.key,
       colorIndex: group.colorIndex,
       title: group.key === STATS_HISTORY_SEAT.key ? STATS_HISTORY_SEAT.label : group.label,
-      sub: group.key === STATS_HISTORY_SEAT.key ? entry.composerId.slice(0, 8) : group.sub ?? '',
+      sub: group.key === STATS_HISTORY_SEAT.key
+        ? entry.composerId.slice(0, 8)
+        : `${group.sub ?? ''}${previousSession ? ' · 旧会话' : ''}`,
       avatarId: group.avatarId,
       online: group.online,
       modelLabel: entry.pricedModel,
@@ -373,12 +406,32 @@ export function buildSessionStatsView(input: SessionStatsInput): SessionStatsVie
 
   const spectrumGroups = usedHistory || spectrumBySeat.has(STATS_HISTORY_SEAT.key) ? [...seatGroups, STATS_HISTORY_SEAT] : seatGroups
   const spectrum: StatsSpectrumSegment[] = spectrumGroups
-    .map((seat) => ({ seat, ...(spectrumBySeat.get(seat.key) ?? { costUsd: 0, tokens: 0 }) }))
+    .map((seat) => {
+      const { costUsd, tokens } = spectrumBySeat.get(seat.key) ?? { costUsd: 0, tokens: 0 }
+      return { seat, costUsd, tokens }
+    })
     .filter((segment) => segment.costUsd > 0 || segment.tokens > 0)
   const spectrumTotals = spectrum.reduce(
     (sum, segment) => ({ costUsd: sum.costUsd + segment.costUsd, tokens: sum.tokens + segment.tokens }),
     { costUsd: 0, tokens: 0 }
   )
+
+  // 组层：成员席位（按通道号）范围内量之和，与光谱带同一口径、不随席位筛选收窄；成本高者在前。
+  const seatChannelKeys = new Set(seatGroups.map((group) => group.key))
+  const groups: StatsGroupRow[] = (input.groups ?? [])
+    .map((source) => {
+      const memberKeys = [...new Set(source.channelIds.map((channelId) => `ch:${channelId}`))].filter((key) => seatChannelKeys.has(key))
+      const row: StatsGroupRow = { key: source.key, label: source.label, seatCount: memberKeys.length, costUsd: 0, tokens: 0, turns: 0 }
+      for (const key of memberKeys) {
+        const seat = spectrumBySeat.get(key)
+        if (!seat) continue
+        row.costUsd += seat.costUsd
+        row.tokens += seat.tokens
+        row.turns += seat.turns
+      }
+      return row
+    })
+    .sort((left, right) => right.costUsd - left.costUsd || right.tokens - left.tokens || left.label.localeCompare(right.label))
 
   // 每席位 token 构成（跟随筛选，与明细同源）：席位序 + 历史殿后，token 多者在前。
   const seatMixMap = new Map<string, StatsSeatMixRow>()
@@ -416,6 +469,7 @@ export function buildSessionStatsView(input: SessionStatsInput): SessionStatsVie
     seatGroups: usedHistory ? [...seatGroups, STATS_HISTORY_SEAT] : seatGroups,
     spectrum,
     spectrumTotals,
+    groups,
     bucketUnit: unit,
     buckets,
     maxBucketCost: buckets.reduce((max, bucket) => Math.max(max, bucket.costUsd), 0),

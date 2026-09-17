@@ -56,7 +56,8 @@ import { restartCursorWithCdp } from '../infrastructure/cursor/cursor-cdp-restar
 import { CursorCdpKeeper } from '../infrastructure/cursor/cursor-cdp-keeper'
 import { CursorCdpSettingsStore } from '../application/cursor-cdp-settings-store'
 import { registerCdpKeeperIpc } from './register-cdp-keeper-ipc'
-import { CursorUsageTracker, cursorUsageRunDecision } from '../application/cursor-usage-tracker'
+import { CursorUsageTracker, type BoundComposer } from '../application/cursor-usage-tracker'
+import type { TeamControlSnapshot } from '../domain/team-control'
 import { CursorUsageStore } from '../infrastructure/cursor/cursor-usage-store'
 import { registerCursorUsageIpc } from './register-cursor-usage-ipc'
 import { CursorUpdatePreferencesStore } from '../infrastructure/cursor/cursor-update-preferences'
@@ -132,8 +133,6 @@ let teamControlService: TeamControlService | undefined
 let desktopSessionService: DesktopSessionService | undefined
 let cursorStreamObserver: CursorStreamObserver | undefined
 let cursorUsageTrackerRef: CursorUsageTracker | undefined
-/** 当前 run 已绑定的 composer；窗口中的其他会话不进入本轮账。 */
-let usageComposerIds = new Set<string>()
 let teamCollaborationRepository: SqliteTeamCollaborationRepository | undefined
 let teamMessageDispatcher: TeamMessageDispatcher | undefined
 let teamMemoryRepository: SqliteTeamMemoryRepository | undefined
@@ -366,10 +365,11 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     channelMessageRelay,
     cursorCdpCreator,
     // 原生 composer 计数：write hook 实时推送，既有 inspect 为同源补充；无新轮询。
+    // 只有活动 run 在绑的 composer 入账——由 tracker 按绑定集合把关（setBoundComposers）。
     (input) => {
       const tracker = cursorUsageTrackerRef
       const usage = input.usage
-      if (!tracker || !usage.generationId || !usageComposerIds.has(input.composerId)) return
+      if (!tracker || !usage.generationId) return
       if (usage.inputTokens || usage.outputTokens || usage.cacheReadTokens || usage.cacheWriteTokens) {
         tracker.recordTurnSnapshot({ composerId: input.composerId, ...usage, occurredAt: input.observedAt })
       } else if (usage.contextTokensUsed) {
@@ -396,13 +396,15 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   })
   const cursorUsageStore = new CursorUsageStore(join(app.getPath('userData'), 'cursor-usage.json'))
   const initialUsageTeam = teamControlService.getSnapshot()
-  usageComposerIds = new Set(initialUsageTeam.members.flatMap((member) => member.binding?.composerId ? [member.binding.composerId] : []))
+  /**
+   * 活动 run 已绑定的 composer 及其席位（席位 ↔ Composer，阶段 2 · 2E）：账本的开关、入账资格与
+   * 席位标签都以此为准——会话生命周期 = Composer 生命周期，不跟 run。
+   */
+  const boundComposersOf = (team: TeamControlSnapshot): BoundComposer[] =>
+    team.members.flatMap((member) => member.binding?.composerId
+      ? [{ composerId: member.binding.composerId, slotId: member.slot.id }]
+      : [])
   let usageRunId = initialUsageTeam.activeRun?.id
-  let usageRunStatus = initialUsageTeam.activeRun?.status
-  const initialUsageDecision = cursorUsageRunDecision(
-    { runId: usageRunId, status: usageRunStatus },
-    { runId: usageRunId, status: usageRunStatus }
-  )
   const cursorUsageTracker = new CursorUsageTracker({
     // 事件不带模型：记录时向会话快照查该 composer 当前模型（查不到走默认价格档）。
     resolveModelForComposer: (composerId) => {
@@ -410,11 +412,12 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
       const session = sessions.find((candidate) => candidate.composerId === composerId)
       return session?.executionProfile?.modelId ?? session?.modelName
     },
-    // 文件跨 run 保留全部账本（统计页 30 天窗口）；归属由每行 runId 表达，当前 run 由 tracker 打标。
+    // 文件跨会话池保留全部账本（统计页 30 天窗口）；出绑 / 结束的账由 tracker 封口与裁旧。
     initialSnapshot: cursorUsageStore.load(),
-    persistSnapshot: (snapshot) => cursorUsageStore.save(usageRunId, snapshot),
-    collecting: initialUsageDecision.collecting,
-    runId: usageRunId
+    persistSnapshot: (snapshot) => cursorUsageStore.save(snapshot),
+    // run 只有 running / completed 两态：显式结束后不再采集，直到新池出现。
+    collecting: initialUsageTeam.activeRun?.status === 'running',
+    boundComposers: boundComposersOf(initialUsageTeam)
   })
   cursorUsageTrackerRef = cursorUsageTracker
   cursorStreamObserver = new CursorStreamObserver({
@@ -422,8 +425,9 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     fetchPageSocketUrl: () => cursorCdpCreator.resolveWorkbenchSocket(activeTeamWorkspacePath()),
     onWriteSignal: (composerId) => streamService.notifyComposerWriteSignal(composerId),
     onProcessEvent: (event) => streamService.notifyNativeProcessSnapshot(event),
-    onUsageEvent: (event) => { if (usageComposerIds.has(event.composerId)) cursorUsageTracker.record(event) },
-    onUsageSample: (sample) => { if (usageComposerIds.has(sample.composerId)) cursorUsageTracker.recordRequestSample(sample) },
+    // 入账资格由 tracker 按绑定集合把关（setBoundComposers），这里不再各自过滤。
+    onUsageEvent: (event) => cursorUsageTracker.record(event),
+    onUsageSample: (sample) => cursorUsageTracker.recordRequestSample(sample),
     onStatus: (status) => streamService.setNativeProcessStreamStatus(status)
   })
   void cursorStreamObserver.attach()
@@ -643,20 +647,15 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
       activeRunId = nextRunId
       taskPoolService?.notifyRunChanged()
     }
-    const usageDecision = cursorUsageRunDecision(
-      { runId: usageRunId, status: usageRunStatus },
-      { runId: nextRunId, status: nextRunStatus }
-    )
-    if (usageDecision.reset) {
-      // 先切文件级 runId（persistSnapshot 闭包读它），再让 tracker 冻结归档旧 run、切归属——
-      // 不清账：统计页跨 run 累计，会话卡徽章由渲染层按 runId 过滤掉旧 run。
+    if (nextRunId !== usageRunId) {
+      // 换了池（新池一出生就是 running；切到没有 run / 只剩已结束 run 的工作区则停采）。
+      // 不清账：旧池的 Composer 随下面的绑定集合出绑而封口，统计页跨池累计，超出保留窗口再裁。
       usageRunId = nextRunId
-      cursorUsageTracker.reset(nextRunId)
-      cursorUsageTracker.setCollecting(true)
+      cursorUsageTracker.setCollecting(nextRunStatus === 'running')
     }
-    usageRunStatus = nextRunStatus
-    usageComposerIds = new Set(snapshot.members.flatMap((member) => member.binding?.composerId ? [member.binding.composerId] : []))
-    // 不跟随短暂在线/离线状态停采；用户明确结束时由 IPC 回调冻结。
+    // 账本的开与关跟着「席位 ↔ Composer 绑定」走：出绑封口、在绑开放、席位重建自然开新账。
+    cursorUsageTracker.setBoundComposers(boundComposersOf(snapshot))
+    // 不跟随短暂在线/离线状态停采；用户明确结束时由 IPC 回调（onRunEnded）补收最后一笔再封口。
   })
   disposeIpc = registerSessionIpc(desktopSessionService, () => mainWindow)
   const cursorCdpSettingsStore = new CursorCdpSettingsStore(join(app.getPath('userData'), 'cursor-cdp.json'))
@@ -891,9 +890,10 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
           if (!workspace || usageRunId !== endedRunId) return
           const evidence = await cursorCdpCreator.inspectComposerRuntime(workspace.path, ids)
           if (usageRunId !== endedRunId) return
+          // 结束不清绑定：这些 composer 仍在 tracker 的绑定集合里，补收的最后一笔照常入账。
           for (const [composerId, row] of Object.entries(evidence)) {
             const usage = row.usage
-            if (!usage?.generationId || !usageComposerIds.has(composerId)) continue
+            if (!usage?.generationId) continue
             if (usage.inputTokens || usage.outputTokens || usage.cacheReadTokens || usage.cacheWriteTokens) {
               cursorUsageTracker.recordTurnSnapshot({ composerId, ...usage, occurredAt: row.observedAt })
             } else if (usage.contextTokensUsed) {

@@ -522,13 +522,37 @@ if (['1', 'long'].includes(previewParameters.get('railactivity') ?? '')) {
     ? { ...session, status: 'running', connectionPhase: 'processing', waiting: false, online: true, awaitingUser: session.channelId === '5' }
     : session)
 }
-// 统计页走查：?stats=1 —— 三个在册席位 + 两个历史 Composer，账本铺满 30 天，
-// 小时（今天）与天（7/30 天）两种分桶、四桶构成、多模型分布、历史归属一次看全。
+// 统计页走查：?stats=1 —— 三个在册席位（CH-1 另有一个重建前的 Composer）+ 两个历史 Composer + 两个组，
+// 账本铺满 30 天，小时（今天）与天（7/30 天）两种分桶、四桶构成、多模型分布、
+// 席位 / 组 / 池三层与「旧会话」「历史会话」两种归属一次看全。
 const statsPreviewMode = previewParameters.has('stats')
+/** 统计页走查里「重建前的旧 Composer」带的席位标签 = CH-1 的席位 id（阶段 2 · 2E）。 */
+let statsRebuiltSlotId: string | undefined
 if (statsPreviewMode) {
   state.desktop.sessions = state.desktop.sessions.map((session) => session.channelId === '3'
     ? { ...session, composerId: 'composer-03' }
     : session)
+  // 组层走查：CH-1 + CH-2 成「接口重构」、CH-3 成「验收」——分组卡 = 成员席位之和、条宽 = 占池份额；
+  // 两个 hist-* 不属任何席位，池 > 组之和的差额即「历史会话」。
+  if (initialTeam.activeRun) {
+    const seatOf = (channelId: string): (typeof initialTeam.members)[number] =>
+      initialTeam.members.find((member) => member.slot.channelId === channelId)!
+    statsRebuiltSlotId = seatOf('1').slot.id
+    const groupBase = {
+      runId: initialTeam.activeRun.id, goal: '', planPolicy: 'lead_only' as const,
+      createdAt: previewNow - 6 * 3_600_000, updatedAt: previewNow - 20 * 60_000
+    }
+    initialTeam.groups = [
+      {
+        group: { ...groupBase, id: 'team-group:stats:refactor', name: '接口重构', status: 'active', leadSlotId: seatOf('1').slot.id },
+        members: [seatOf('1'), seatOf('2')], effectiveLeadSlotId: seatOf('1').slot.id, attention: false
+      },
+      {
+        group: { ...groupBase, id: 'team-group:stats:acceptance', name: '验收', status: 'active', leadSlotId: seatOf('3').slot.id },
+        members: [seatOf('3')], effectiveLeadSlotId: seatOf('3').slot.id, attention: false
+      }
+    ]
+  }
 }
 
 function previewStatsTurn(at: number, modelId: string, scale: number): UsageTurn {
@@ -543,20 +567,22 @@ function previewStatsTurn(at: number, modelId: string, scale: number): UsageTurn
 
 function previewStatsUsage(): CursorUsageSnapshot {
   const hour = 3_600_000
-  // [composerId, 模型, 回合的「几小时前」序列]：近端密（今天有小时节奏）、远端疏（30 天有形状）。
-  const composers: Array<[string, string, number[]]> = [
+  // [composerId, 模型, 回合的「几小时前」序列, 席位标签]：近端密（今天有小时节奏）、远端疏（30 天有形状）。
+  const composers: Array<[string, string, number[], string?]> = [
     ['composer-01', 'claude-fable-5', [0.4, 1.3, 2.6, 3.2, 4.7, 6.3, 7.9, 9.4, 25, 29, 49, 74, 97, 121, 168, 240, 380, 520, 700]],
     ['composer-02', 'claude-fable-5', [0.8, 1.9, 3.5, 5.2, 8.3, 24, 48, 72, 120, 170, 238, 312, 430, 560]],
     ['composer-03', 'gpt-5-6-sol', [1.1, 2.3, 6.5, 26, 50, 95, 144, 199, 300]],
+    // CH-1 重建前的 Composer：账上带席位标签，归本席位并在明细里标「旧会话」。
+    ['composer-01-prev', 'claude-fable-5-1', [12, 15, 34, 58, 210], statsRebuiltSlotId],
     ['hist-4f2a9c1e', 'claude-fable-5-1', [128, 250, 405, 552, 640]],
     ['hist-b83d07aa', 'composer-2-5-fast', [88, 295, 630]]
   ]
-  return Object.fromEntries(composers.map(([composerId, modelId, hoursAgo]) => {
+  return Object.fromEntries(composers.map(([composerId, modelId, hoursAgo, slotId]) => {
     const turns = Object.fromEntries(hoursAgo.map((back, index) => [
       `gen-${composerId}-${index}`,
       previewStatsTurn(previewNow - Math.round(back * hour), modelId, 0.55 + ((index * 7) % 9) * 0.45)
     ]))
-    return [composerId, projectUsage(composerId, { turns })]
+    return [composerId, projectUsage(composerId, { turns }, slotId)]
   }))
 }
 

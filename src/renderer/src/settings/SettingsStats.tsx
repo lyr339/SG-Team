@@ -18,12 +18,13 @@ import {
   type StatsSpectrumSegment
 } from './stats-view'
 
-type StatsProps = Pick<SettingsPageProps, 'usageSnapshot' | 'statsSeats'> & { active?: boolean }
+type StatsProps = Pick<SettingsPageProps, 'usageSnapshot' | 'statsSeats' | 'statsGroups'> & { active?: boolean }
 
 const TABLE_ROW_CAP = 20
 // 缺省引用恒定：props 缺席时不因 {} / [] 的新建引用而击穿 useMemo。
 const EMPTY_USAGE: NonNullable<SettingsPageProps['usageSnapshot']> = {}
 const EMPTY_SEATS: NonNullable<SettingsPageProps['statsSeats']> = []
+const EMPTY_GROUPS: NonNullable<SettingsPageProps['statsGroups']> = []
 
 /** 数值缓动滚动（400ms，尊重 prefers-reduced-motion；面板隐藏时直接落位）。 */
 function useAnimatedNumber(target: number, animate: boolean): number {
@@ -61,7 +62,7 @@ function tooltipAlign(index: number, count: number): 'start' | 'center' | 'end' 
   return ratio < 0.18 ? 'start' : ratio > 0.82 ? 'end' : 'center'
 }
 
-export function SettingsStats({ usageSnapshot, statsSeats, active }: StatsProps): React.JSX.Element {
+export function SettingsStats({ usageSnapshot, statsSeats, statsGroups, active }: StatsProps): React.JSX.Element {
   const [range, setRange] = useState<StatsRange>('today')
   const [metric, setMetric] = useState<StatsMetric>('cost')
   const [seatKey, setSeatKey] = useState<string>()
@@ -81,16 +82,17 @@ export function SettingsStats({ usageSnapshot, statsSeats, active }: StatsProps)
 
   const usage = usageSnapshot ?? EMPTY_USAGE
   const seats = statsSeats ?? EMPTY_SEATS
+  const groups = statsGroups ?? EMPTY_GROUPS
   // 快照推送到达即重算；「截至」时间与推送同步，不做每秒跳动。
   // 分组隐藏（active=false）期间冻结上一次视图：推送高频到达时隐藏面板零重算，
   // 重新激活的那一次渲染因 active 翻转而取新数据。
   const frozenView = useRef<ReturnType<typeof buildSessionStatsView>>(undefined)
   const view = useMemo(() => {
     if (active === false && frozenView.current) return frozenView.current
-    const next = buildSessionStatsView({ usage, seats, range, now: Date.now(), seatKey })
+    const next = buildSessionStatsView({ usage, seats, groups, range, now: Date.now(), seatKey })
     frozenView.current = next
     return next
-  }, [usage, seats, range, seatKey, active])
+  }, [usage, seats, groups, range, seatKey, active])
   const refreshedAt = useMemo(() => Date.now(), [usageSnapshot])
 
   const animate = active !== false
@@ -455,6 +457,37 @@ export function SettingsStats({ usageSnapshot, statsSeats, active }: StatsProps)
             </ul>
           )}
         </section>
+
+        {/* 组层（阶段 2 · 2E）：组 = 成员席位之和，条宽 = 占池的份额；不随席位筛选收窄。没有 active 组时不出卡。 */}
+        {view.groups.length > 0 ? (
+          <section className="stats-card" aria-label="分组用量">
+            <header>
+              <strong>分组</strong>
+              <span>{view.groups.length} 个组 · 占池份额</span>
+            </header>
+            {view.rangeEmpty ? (
+              <p className="stats-card__empty">此范围内没有用量</p>
+            ) : (
+              <ul className="stats-groups">
+                {view.groups.map((group) => {
+                  const denominator = metricOf(view.spectrumTotals)
+                  return (
+                    <li key={group.key}>
+                      <span className="stats-groups__name" title={group.label}>{group.label}</span>
+                      <span className="stats-groups__meta">
+                        {group.seatCount} 席 · {group.turns} 回合 · {metric === 'cost' ? formatTokenCount(group.tokens) : formatCostUsd(group.costUsd)}
+                      </span>
+                      <span className="stats-groups__cost">{metric === 'cost' ? formatCostUsd(group.costUsd) : formatTokenCount(group.tokens)}</span>
+                      <i className="stats-groups__bar" aria-hidden="true">
+                        <b style={{ width: `${Math.max(denominator > 0 ? metricOf(group) / denominator * 100 : 0, 2)}%` }} />
+                      </i>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+          </section>
+        ) : null}
       </div>
 
       <section className="stats-card stats-card--table" aria-label="会话明细">
