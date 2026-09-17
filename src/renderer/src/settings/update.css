@@ -9,8 +9,8 @@
 .app-update__badge {
   display: inline-flex;
   align-items: center;
-  height: 20px;
-  padding: 0 8px;
+  height: 18px;
+  padding: 0 7px;
   color: var(--muted);
   background: var(--surface-soft);
   border: 1px solid var(--line-faint);
@@ -118,6 +118,9 @@
   line-height: 1.55;
 }
 .app-update__confirm > p { margin: 0; }
+/* 回滚会用更新前的库快照覆盖当前库——破坏性与「装个新版」不是一回事，底色与主按钮都换成危险色；
+   正文保持炭色（色彩纪律：只给容器与主按钮上色，不把整段话染红）。 */
+.app-update__confirm.is-danger { background: var(--color-background-danger); border-color: var(--color-border-danger); }
 
 .app-update__error { margin: 0; color: var(--red); font-size: var(--fs-11); line-height: 1.5; }
 .app-update__loading { margin: 0; color: var(--muted); font-size: var(--fs-11); }
@@ -139,6 +142,8 @@
 .app-update__button:disabled { opacity: .5; cursor: not-allowed; }
 .app-update__button.is-primary { color: var(--accent-deep); background: var(--accent-wash); border-color: var(--accent-border); }
 .app-update__button.is-primary:hover:not(:disabled) { border-color: var(--accent-border-strong); }
+.app-update__button.is-primary.is-danger { color: var(--red); background: var(--red-soft); border-color: var(--red-border); }
+.app-update__button.is-primary.is-danger:hover:not(:disabled) { border-color: var(--red); }
 .app-update__button.is-link { padding: 0 4px; color: var(--muted); background: transparent; border-color: transparent; font-weight: 500; }
 .app-update__button.is-link:hover:not(:disabled) { color: var(--accent-deep); border-color: transparent; text-decoration: underline; }
 

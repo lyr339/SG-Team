@@ -476,7 +476,11 @@ const scenes = [
       if (title !== '新版本 0.3.3') throw new Error('确认时标签应仍是新版本：' + title)
       const row = document.querySelector('.app-update__row').getBoundingClientRect()
       if (confirm.getBoundingClientRect().top < row.bottom - 1) throw new Error('确认块应在状态行之下')
-      return { text: confirm.textContent.slice(0, 60), title }
+      // 打开它的按钮已经卸载：真浏览器里焦点必须落在确认块的主按钮上，否则会掉回 body。
+      const primary = confirm.querySelector('.app-update__button.is-primary')
+      if (document.activeElement !== primary) throw new Error('确认块打开后焦点应在主按钮上，实际在：' + document.activeElement.tagName)
+      if (confirm.classList.contains('is-danger') || primary.classList.contains('is-danger')) throw new Error('装个新版不是破坏性操作，不该用危险色')
+      return { text: confirm.textContent.slice(0, 60), title, focused: primary.textContent }
     })()` }]
   },
   // 自定义更新源展开：提示、镜像预设胶囊、输入 + 保存一行；点预设只填入输入框（保存按钮亮起、胶囊不亮）。
@@ -519,7 +523,12 @@ const scenes = [
       if (!confirm) throw new Error('点击回滚后未出现确认块')
       if (!confirm.textContent.includes('回滚会退出拾光')) throw new Error('确认块缺少数据回退警告')
       if (document.querySelector('.app-update__rollback')) throw new Error('确认块出现时备份行应收起')
-      return { text: confirm.textContent.slice(0, 60) }
+      // 回滚会用旧库快照覆盖当前库：确认块与主按钮都必须是危险色，跟「安装新版」那块一眼分得开。
+      const primary = confirm.querySelector('.app-update__button.is-primary')
+      if (!confirm.classList.contains('is-danger')) throw new Error('回滚确认块应走危险色')
+      if (!primary.classList.contains('is-danger')) throw new Error('回滚的主按钮应走危险色')
+      if (document.activeElement !== primary) throw new Error('确认块打开后焦点应在主按钮上，实际在：' + document.activeElement.tagName)
+      return { text: confirm.textContent.slice(0, 60), background: getComputedStyle(confirm).backgroundColor, focused: primary.textContent }
     })()` }]
   },
   ...['light', 'dark'].map(colorScheme => ({

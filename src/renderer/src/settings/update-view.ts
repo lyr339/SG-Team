@@ -1,6 +1,8 @@
 import {
+  classifyAppUpdateError,
   releaseNotesToPlainText,
   shouldRemindAppUpdate,
+  type AppUpdateFailureStep,
   type AppUpdateStatus
 } from '../../../domain/app-update'
 import { formatFileSize } from '../../../shared/format-file-size'
@@ -14,6 +16,8 @@ export type UpdateActionId =
   | 'unskip'
   | 'snooze'
   | 'dismiss'
+  /** 失败后的一键重来：清掉失败态并立刻重新下载（`dismiss` 只清状态，不配叫「重试」）。 */
+  | 'retry-download'
   | 'open-release'
   | 'rollback'
 
@@ -75,6 +79,24 @@ export function formatReleaseDate(iso: string | undefined): string | undefined {
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return undefined
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
+
+const FAILURE_STEP_NAMES: Record<AppUpdateFailureStep, string> = {
+  check: '检查',
+  download: '下载',
+  install: '安装',
+  rollback: '回滚'
+}
+
+/**
+ * 失败的人话：发生了什么、拾光此刻是哪个版本、下一步能做什么。技术原文不丢，退到下面的弱色行里——
+ * 「sha512 checksum mismatch, expected …」当正文没人读得懂，但要能照抄来反馈。
+ */
+const FAILURE_HEADLINES: Record<AppUpdateFailureStep, string> = {
+  check: '没能问到更新源；稍后再试，或到发布页查看。',
+  download: '安装包没下完或没通过校验；重试即可，反复失败可在下方换用镜像源，或到发布页手动下载。',
+  install: '安装没有完成，拾光仍是当前版本；重新下载后再装一次，或到发布页手动安装。',
+  rollback: '回滚没有完成，当前版本没有改变；原因见数据目录 updates/apply.log。'
 }
 
 function releaseDetail(release: { releaseDate?: string; sizeBytes?: number }): string | undefined {
@@ -268,17 +290,24 @@ function buildPhaseView(status: AppUpdateStatus, now: number): UpdatePanelView {
         busy: true
       }
     case 'failed': {
-      const step = state.step === 'download' ? '下载' : state.step === 'install' ? '安装' : state.step === 'rollback' ? '回滚' : '检查'
-      const meta = state.release ? releaseDetail(state.release) : undefined
+      // 下载是唯一走网络的失败步骤：瞬断不是判决，沿用检查失败那套中性读法，别为一次网络波动报红。
+      const network = state.step === 'download' && classifyAppUpdateError(state.message) === 'network'
+      // 「重试」必须真能一键重来。dismiss 后状态回到 available，那里唯一能接着做的是重新下载：
+      // 下载 / 安装失败都从这里重来，回滚与检查失败没有一键可重的下一步，就老实叫「知道了」。
+      const recoverable = state.release !== undefined && (state.step === 'download' || state.step === 'install')
       return {
-        tone: 'danger',
-        badge: { label: `${step}失败`, tone: 'danger' },
+        tone: network ? 'neutral' : 'danger',
+        badge: network
+          ? { label: '下载未完成', tone: 'neutral' }
+          : { label: `${FAILURE_STEP_NAMES[state.step]}失败`, tone: 'danger' },
         title: state.release ? newVersion(state.release.version) : current,
-        headline: state.message,
-        ...(state.release ? { detail: facts(meta) } : {}),
+        headline: network ? '下载中断了，多半是网络波动；重试即可，反复失败可在下方换用镜像源。' : FAILURE_HEADLINES[state.step],
+        detail: state.message,
         notes,
         actions: [
-          { id: 'dismiss', label: state.release ? '重试' : '知道了', kind: 'primary' },
+          recoverable
+            ? { id: 'retry-download', label: state.step === 'download' ? '重试下载' : '重新下载', kind: 'primary' }
+            : { id: 'dismiss', label: '知道了', kind: 'primary' },
           openRelease
         ],
         busy: false

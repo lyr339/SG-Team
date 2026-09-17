@@ -164,20 +164,32 @@ describe('设置 › 软件更新', () => {
     expect(button('稍后').disabled).toBe(true)
   })
 
-  it('失败态：原因 + 重试回到有新版；打开发布页只调 IPC', async () => {
-    const { api } = installApi(statusOf({ phase: 'failed', step: 'download', message: 'sha512 mismatch', at: NOW, release }))
+  it('失败态：正文是人话、技术原文退到弱行；「重试下载」真的重来一次，不是把人丢回上一屏', async () => {
+    const { api } = installApi(statusOf({ phase: 'failed', step: 'download', message: 'sha512 checksum mismatch, expected 5f2a got 91c0', at: NOW, release }))
     await render()
     expect(container.querySelector('.app-update__badge')?.textContent).toBe('下载失败')
     expect(container.querySelector('.app-update__badge')?.className).toContain('is-danger')
-    expect(container.querySelector('.app-update__headline')?.textContent).toBe('sha512 mismatch')
+    expect(container.querySelector('.app-update__headline')?.textContent).toBe('安装包没下完或没通过校验；重试即可，反复失败可在下方换用镜像源，或到发布页手动下载。')
+    expect(container.querySelector('.app-update__detail')?.textContent).toBe('sha512 checksum mismatch, expected 5f2a got 91c0')
     expect(container.querySelector('.app-update__row')?.className).toContain('is-danger')
     expect(title()).toBe('新版本 0.3.3')
-    expect(container.querySelector('.app-update__detail')?.textContent).toMatch(/· 当前 0\.3\.2$/)
-    await click('重试')
+    await click('重试下载')
+    // 一次点击走完「清失败态 → 重新发起下载」，用户不必再找一次「下载」。
     expect(api.dismissAppUpdateFailure).toHaveBeenCalledTimes(1)
-    expect(container.querySelector('.app-update__badge')?.textContent).toBe('有新版本')
+    expect(api.downloadAppUpdate).toHaveBeenCalledTimes(1)
+    expect(container.querySelector('.app-update__badge')?.textContent).toBe('待安装')
     await click('打开发布页')
     expect(api.openAppUpdateReleasePage).toHaveBeenCalledTimes(1)
+  })
+
+  it('失败态（网络瞬断）：不报红、走中性胶囊与人话，原始错误仍在弱行', async () => {
+    installApi(statusOf({ phase: 'failed', step: 'download', message: 'net::ERR_CONNECTION_CLOSED', at: NOW, release }))
+    await render()
+    expect(container.querySelector('.app-update__badge')?.textContent).toBe('下载未完成')
+    expect(container.querySelector('.app-update__badge')?.className).toContain('is-neutral')
+    expect(container.querySelector('.app-update__row')?.className).not.toContain('is-danger')
+    expect(container.querySelector('.app-update__headline')?.textContent).toBe('下载中断了，多半是网络波动；重试即可，反复失败可在下方换用镜像源。')
+    expect(container.querySelector('.app-update__detail')?.textContent).toBe('net::ERR_CONNECTION_CLOSED')
   })
 
   it('下载中：进度条 aria 值与读数、取消按钮；推送更新会刷新进度', async () => {
@@ -299,6 +311,36 @@ describe('设置 › 软件更新', () => {
     expect(failed.className).toContain('is-danger')
     expect(failed.getAttribute('role')).toBe('alert')
     expect(failed.textContent).toContain('更新到 0.3.3 失败，已恢复 0.3.2（codesign_failed）')
+  })
+
+  it('确认块是 alertdialog：打开即接管焦点，Esc 与「取消」都收起并把焦点还给打开它的按钮', async () => {
+    installApi(statusOf({ phase: 'downloaded', release, downloadedAt: NOW }))
+    await render()
+    await click('安装并重启')
+    // 行内那组按钮整体卸载了：焦点必须交给确认块的主按钮，否则会掉回 <body>，键盘用户得从页首重新 Tab。
+    expect(document.activeElement).toBe(button('仍然安装并重启'))
+    const confirm = container.querySelector<HTMLElement>('.app-update__confirm')!
+    await act(async () => { confirm.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
+    expect(container.querySelector('.app-update__confirm')).toBeNull()
+    expect(document.activeElement).toBe(button('安装并重启'))
+
+    await click('安装并重启')
+    await click('取消')
+    expect(container.querySelector('.app-update__confirm')).toBeNull()
+    expect(document.activeElement).toBe(button('安装并重启'))
+  })
+
+  it('回滚确认与安装确认一眼分得开：破坏性的那个连同主按钮都走危险色', async () => {
+    installApi(statusOf({ phase: 'downloaded', release, downloadedAt: NOW }, { rollback: { version: '0.3.1', createdAt: NOW - 3_600_000, dir: 'D:\\backup\\0.3.1-1' } }))
+    await render()
+    await click('安装并重启')
+    expect(container.querySelector('.app-update__confirm')?.className).not.toContain('is-danger')
+    expect(button('仍然安装并重启').className).not.toContain('is-danger')
+    await click('取消')
+
+    await click('回滚到 0.3.1…')
+    expect(container.querySelector('.app-update__confirm')?.className).toContain('is-danger')
+    expect(button('回滚到 0.3.1 并重启').className).toContain('is-danger')
   })
 
   it('回滚：备份行的按钮先拿门禁、必出确认块（含数据回退警告），确认后才真正回滚', async () => {

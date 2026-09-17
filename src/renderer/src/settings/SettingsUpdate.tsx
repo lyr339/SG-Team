@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { AppUpdateApplyResult, AppUpdateSettings, AppUpdateStatus, UpdateGate } from '../../../domain/app-update'
 import { APP_UPDATE_CHECK_INTERVAL_HOURS, APP_UPDATE_MIRROR_FEED, normalizeAppUpdateSettings } from '../../../domain/app-update'
 import { MenuSelect } from '../lobby/MenuSelect'
@@ -63,6 +63,23 @@ export function SettingsUpdate({ initialStatus, now = () => Date.now() }: Settin
   const [feedDraft, setFeedDraft] = useState<string>()
   const [updatedNoteDismissed, setUpdatedNoteDismissed] = useState(false)
   const [busyAction, setBusyAction] = useState<UpdateActionId>()
+  const panelRef = useRef<HTMLDivElement>(null)
+  const confirmButtonRef = useRef<HTMLButtonElement>(null)
+  /** 取消 / Esc 关掉确认块后要还焦的那个动作（打开它的按钮此刻还没挂回来）。 */
+  const restoreFocusTo = useRef<PendingConfirm['action'] | undefined>(undefined)
+
+  // 确认块是 alertdialog：打开就把焦点交给主按钮（Enter 继续、Esc 取消），关掉再还给打开它的按钮——
+  // 否则那一组按钮整体卸载，焦点会掉回 <body>，键盘用户得从页首重新 Tab。
+  useEffect(() => {
+    if (confirm) {
+      confirmButtonRef.current?.focus()
+      return
+    }
+    const action = restoreFocusTo.current
+    if (!action) return
+    restoreFocusTo.current = undefined
+    panelRef.current?.querySelector<HTMLButtonElement>(`[data-action="${action}"]`)?.focus()
+  }, [confirm])
 
   useEffect(() => {
     const api = updateApi()
@@ -86,6 +103,16 @@ export function SettingsUpdate({ initialStatus, now = () => Date.now() }: Settin
     void api.saveAppUpdateSettings(next).then(setStatus).catch(() => {})
   }
 
+  /**
+   * 下载的 IPC 直到下载结束（完成 / 取消 / 失败）才返回：不能 await 它，否则它会占住 busyAction，
+   * 整个下载期间「取消下载」都点不动。进度与终态都由状态推送驱动，这里只在结束时兜底收一次状态。
+   */
+  const startDownload = (api: UpdateApi): void => {
+    void api.downloadAppUpdate().then(setStatus).catch((reason: unknown) => {
+      setBlockedNote(reason instanceof Error ? reason.message : String(reason))
+    })
+  }
+
   const run = async (id: UpdateActionId): Promise<void> => {
     const api = updateApi()
     if (!api || busyAction) return
@@ -94,12 +121,14 @@ export function SettingsUpdate({ initialStatus, now = () => Date.now() }: Settin
     try {
       switch (id) {
         case 'check': setStatus(await api.checkAppUpdate()); break
+        case 'retry-download':
+          // 叫「重试」就要真的重来一次：先清掉失败态（主进程随之回到「有新版」），再立刻发起下载，
+          // 而不是把用户丢回上一屏、让他自己再点一次「下载」。
+          setStatus(await api.dismissAppUpdateFailure())
+          startDownload(api)
+          break
         case 'download':
-          // 下载的 IPC 直到下载结束（完成 / 取消 / 失败）才返回：不能用它占住 busyAction，否则整个
-          // 下载期间「取消下载」点不动。进度与终态都由状态推送驱动，这里只在结束时兜底收一次状态。
-          void api.downloadAppUpdate().then(setStatus).catch((reason: unknown) => {
-            setBlockedNote(reason instanceof Error ? reason.message : String(reason))
-          })
+          startDownload(api)
           break
         case 'cancel': setStatus(await api.cancelAppUpdateDownload()); break
         case 'install': {
@@ -158,9 +187,18 @@ export function SettingsUpdate({ initialStatus, now = () => Date.now() }: Settin
     void api.dismissAppUpdateApplyResult().then(setStatus).catch(() => {})
   }
 
+  /** 取消 / Esc：记下要还焦的动作，再收起确认块（还焦本身在 confirm 的 effect 里，那时按钮才挂回来）。 */
+  const closeConfirm = (): void => {
+    restoreFocusTo.current = confirm?.action
+    setConfirm(undefined)
+  }
+
   const feedValue = feedDraft ?? settings.feedUrl ?? ''
   const feedDirty = feedDraft !== undefined && feedDraft.trim() !== (settings.feedUrl ?? '')
   const unsupported = status?.state.phase === 'unsupported'
+  const applyResult = status?.applyResult ? applyResultText(status.applyResult) : undefined
+  // 回滚要用更新前的库快照覆盖当前库，是全应用最具破坏性的一步：确认块与主按钮都换危险色，跟普通安装一眼分得开。
+  const confirmDanger = confirm?.action === 'rollback'
 
   return (
     <>
@@ -168,10 +206,10 @@ export function SettingsUpdate({ initialStatus, now = () => Date.now() }: Settin
         title="版本状态"
         aside={view?.badge ? <span className={`app-update__badge is-${view.badge.tone}`}>{view.badge.label}</span> : undefined}
       >
-        <div className="app-update">
-          {status?.applyResult ? (
-            <p className={`app-update__updated is-${applyResultText(status.applyResult).tone}`} role={applyResultText(status.applyResult).tone === 'danger' ? 'alert' : 'status'}>
-              <span>{applyResultText(status.applyResult).text}</span>
+        <div className="app-update" ref={panelRef}>
+          {applyResult ? (
+            <p className={`app-update__updated is-${applyResult.tone}`} role={applyResult.tone === 'danger' ? 'alert' : 'status'}>
+              <span>{applyResult.text}</span>
               <button type="button" aria-label="收起" onClick={dismissApplyResult}>×</button>
             </p>
           ) : status?.launchedAfterUpdate && !updatedNoteDismissed ? (
@@ -217,6 +255,7 @@ export function SettingsUpdate({ initialStatus, now = () => Date.now() }: Settin
                       <button
                         key={action.id}
                         type="button"
+                        data-action={action.id}
                         className={`app-update__button${action.kind === 'primary' ? ' is-primary' : action.kind === 'link' ? ' is-link' : ''}`}
                         disabled={action.disabled || (Boolean(busyAction) && action.id !== 'open-release')}
                         onClick={() => void run(action.id)}
@@ -228,14 +267,29 @@ export function SettingsUpdate({ initialStatus, now = () => Date.now() }: Settin
                 ) : null}
               </div>
               {confirm ? (
-                <div className="app-update__confirm" role="alertdialog" aria-label={confirm.action === 'install' ? '确认安装' : '确认回滚'}>
+                <div
+                  className={`app-update__confirm${confirmDanger ? ' is-danger' : ''}`}
+                  role="alertdialog"
+                  aria-label={confirm.action === 'install' ? '确认安装' : '确认回滚'}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Escape') return
+                    event.stopPropagation()
+                    closeConfirm()
+                  }}
+                >
                   {confirm.action === 'rollback' && view.rollback ? <p>{view.rollback.note}</p> : null}
                   {confirm.gate.verdict === 'confirm' ? confirm.gate.reasons.map((reason) => <p key={reason}>{reason}</p>) : null}
                   <div className="app-update__actions">
-                    <button type="button" className="app-update__button is-primary" disabled={Boolean(busyAction)} onClick={() => void confirmPending()}>
+                    <button
+                      type="button"
+                      ref={confirmButtonRef}
+                      className={`app-update__button is-primary${confirmDanger ? ' is-danger' : ''}`}
+                      disabled={Boolean(busyAction)}
+                      onClick={() => void confirmPending()}
+                    >
                       {confirm.action === 'install' ? '仍然安装并重启' : `回滚到 ${view.rollback?.version ?? status?.rollback?.version ?? ''} 并重启`}
                     </button>
-                    <button type="button" className="app-update__button" onClick={() => setConfirm(undefined)}>取消</button>
+                    <button type="button" className="app-update__button" onClick={closeConfirm}>取消</button>
                   </div>
                 </div>
               ) : null}
@@ -258,6 +312,7 @@ export function SettingsUpdate({ initialStatus, now = () => Date.now() }: Settin
                   </div>
                   <button
                     type="button"
+                    data-action="rollback"
                     className="app-update__button"
                     disabled={Boolean(busyAction)}
                     onClick={() => void run('rollback')}

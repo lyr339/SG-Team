@@ -117,19 +117,43 @@ describe('软件更新 · 面板视图', () => {
     expect(installing).toMatchObject({ tone: 'info', badge: { label: '正在安装', tone: 'info' }, title: '新版本 0.3.3', detail: '当前 0.3.2', actions: [], busy: true })
   })
 
-  it('failed：胶囊带步骤名、状态句是原因、目标版本留在标签；有发布时按钮是重试，否则知道了', () => {
-    expect(actionIds(statusOf({ phase: 'failed', step: 'download', message: 'sha512 mismatch', at: NOW, release }))).toEqual(['dismiss', 'open-release'])
-    const view = buildUpdatePanelView(statusOf({ phase: 'failed', step: 'download', message: 'sha512 mismatch', at: NOW, release }), NOW)
-    expect(view).toMatchObject({ tone: 'danger', badge: { label: '下载失败', tone: 'danger' }, title: '新版本 0.3.3', headline: 'sha512 mismatch' })
-    expect(view.detail).toMatch(/发布 · 111\.1 MB · 当前 0\.3\.2$/)
-    expect(view.actions[0]?.label).toBe('重试')
+  it('failed：正文是人话、技术原文退到弱行、目标版本留在标签', () => {
+    const view = buildUpdatePanelView(statusOf({ phase: 'failed', step: 'download', message: 'sha512 checksum mismatch, expected 5f2a got 91c0', at: NOW, release }), NOW)
+    expect(view).toMatchObject({ tone: 'danger', badge: { label: '下载失败', tone: 'danger' }, title: '新版本 0.3.3' })
+    // 正文不再是技术串，但原文一字不改地留在下面一行——读得懂，也照抄得出来。
+    expect(view.headline).toBe('安装包没下完或没通过校验；重试即可，反复失败可在下方换用镜像源，或到发布页手动下载。')
+    expect(view.detail).toBe('sha512 checksum mismatch, expected 5f2a got 91c0')
     const check = buildUpdatePanelView(statusOf({ phase: 'failed', step: 'check', message: 'x', at: NOW }), NOW)
     expect(check.badge?.label).toBe('检查失败')
     expect(check.title).toBe('拾光 0.3.2')
-    expect(check.detail).toBeUndefined()
-    expect(check.actions[0]?.label).toBe('知道了')
+    expect(check.headline).toBe('没能问到更新源；稍后再试，或到发布页查看。')
     expect(buildUpdatePanelView(statusOf({ phase: 'failed', step: 'install', message: 'EACCES', at: NOW, release }), NOW).badge?.label).toBe('安装失败')
     expect(buildUpdatePanelView(statusOf({ phase: 'failed', step: 'rollback', message: 'EPERM', at: NOW }), NOW).badge?.label).toBe('回滚失败')
+  })
+
+  it('failed：能一键重来的才叫「重试」，回滚 / 检查失败老实叫「知道了」', () => {
+    // dismiss 后状态回到 available，那里唯一能接着做的是重新下载：下载与安装失败都从这里重来。
+    const download = buildUpdatePanelView(statusOf({ phase: 'failed', step: 'download', message: 'sha512 mismatch', at: NOW, release }), NOW)
+    expect(actionIds(statusOf({ phase: 'failed', step: 'download', message: 'sha512 mismatch', at: NOW, release }))).toEqual(['retry-download', 'open-release'])
+    expect(download.actions[0]?.label).toBe('重试下载')
+    const install = buildUpdatePanelView(statusOf({ phase: 'failed', step: 'install', message: 'EACCES', at: NOW, release }), NOW)
+    expect(install.actions[0]).toMatchObject({ id: 'retry-download', label: '重新下载' })
+    // 回滚失败没有 release，dismiss 只能回到 idle：没有一键可重的下一步，就别叫「重试」。
+    expect(buildUpdatePanelView(statusOf({ phase: 'failed', step: 'rollback', message: 'EPERM', at: NOW }), NOW).actions[0])
+      .toMatchObject({ id: 'dismiss', label: '知道了' })
+    expect(buildUpdatePanelView(statusOf({ phase: 'failed', step: 'check', message: 'x', at: NOW }), NOW).actions[0])
+      .toMatchObject({ id: 'dismiss', label: '知道了' })
+  })
+
+  it('failed（下载遇网络瞬断）：与检查失败同一读法——中性胶囊、不报红、人话正文', () => {
+    const view = buildUpdatePanelView(statusOf({ phase: 'failed', step: 'download', message: 'net::ERR_CONNECTION_CLOSED', at: NOW, release }), NOW)
+    expect(view).toMatchObject({ tone: 'neutral', badge: { label: '下载未完成', tone: 'neutral' } })
+    expect(view.headline).toBe('下载中断了，多半是网络波动；重试即可，反复失败可在下方换用镜像源。')
+    expect(view.detail).toBe('net::ERR_CONNECTION_CLOSED')
+    expect(view.actions[0]?.label).toBe('重试下载')
+    // 服务端的明确答复不是网络波动：照旧报红。
+    expect(buildUpdatePanelView(statusOf({ phase: 'failed', step: 'download', message: '返回 HTTP 500', at: NOW, release }), NOW))
+      .toMatchObject({ tone: 'danger', badge: { label: '下载失败' } })
   })
 
   it('downloading（verify）：胶囊改为正在校验、进度满格、速率与取消都收起、文案改为校验解压', () => {
