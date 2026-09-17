@@ -701,7 +701,8 @@ body.is-resizing-columns .resizable-columns { transition: none; }
    曾试过胶囊标签（状态点 + 组名 + 计数收进圆角胶囊）：像徽章不像分栏，同日改为书签。 */
 .session-group { flex: 0 0 auto; }
 .session-group + .session-group { margin-top: 6px; }
-/* 与名册行同一套四色状态灯（定义见名册行）：只落在书签左脊上。 */
+/* 与名册行同一套四色状态灯（定义见名册行）：只落在书签左脊上。分区是协作组（阶段 3），
+   脊色取分区内最紧要那一行的状态——折叠后它是这一段唯一还看得见的状态提示。 */
 .session-group.is-waiting { --rail-state: var(--color-text-success); }
 .session-group.is-active { --rail-state: var(--signal-busy); }
 .session-group.is-attention { --rail-state: var(--color-text-info); }
@@ -733,6 +734,10 @@ body.is-resizing-columns .resizable-columns { transition: none; }
 .session-group__tab::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--rail-state); }
 .session-group__header:hover .session-group__tab { background: color-mix(in srgb, var(--color-text-tertiary) 20%, var(--color-background-secondary)); }
 .session-group__tab > b { color: var(--muted); font: 650 var(--fs-10)/1 var(--font-numeric); font-variant-numeric: lining-nums tabular-nums; }
+/* 组内有成员已确认离线：琥珀 pill + 文字（与名册行的排队 pill 同一语言，从不只靠颜色），挂在书签
+   之后、尾线之前；折叠后仍然可见——需要用户决定交接还是移出。书签左脊的状态色说的是「组在做什么」，
+   这枚 pill 说的是「有事要你决定」，两者各管一件事。 */
+.session-group__attention { flex: 0 0 auto; padding: 2px 6px; color: var(--color-text-warning); background: var(--color-background-warning); border-radius: var(--border-radius-full); font-size: var(--fs-10); font-style: normal; font-weight: 600; line-height: 1; white-space: nowrap; }
 .session-group__rule { flex: 1 1 auto; height: 1px; background: var(--color-border-tertiary); }
 /* chevron 骑在尾线末端：绝对定位不占 flex 空间，尾线一直画到右缘；浮现时用实底垫住身下那一小段线。
    展开态只在悬停 / 聚焦时浮现（列表本身已经说明了「开着」），折叠态常显并转向。 */

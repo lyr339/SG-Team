@@ -1,6 +1,6 @@
 # 交接任务书：会话池 + 动态分组 · 阶段 3 渲染层「会话与分组」
 
-> **状态（2026-09-13）：待动工；依赖阶段 1 的 IPC 与快照（`snapshot.groups`），可与阶段 2 并行。** 路线图见 `DYNAMIC-GROUPS-ROADMAP.md`。
+> **状态（2026-09-18）：进行中，分支 `feat/dynamic-groups-phase3`，worktree `E:\SG-phase3`，基于阶段 2 合回 main `72396ae` 后的 `1ac3d3c`（09-17 曾在阶段 2 旧基线上落过一版名册分区 `523d410`，因 main 同期改版了名册（书签组条、折叠锚定、光刃选中），按用户决定对齐基线后重做，旧提交已被覆盖）。已落地：名册按组分区（§2 左栏 / §3.2 / §8 测试 2 的分区、排序、折叠持久化与 attention 上浮）。** 其余（多选与建组、拖放改组、`PoolPage`、组卡片、`ConfirmSheet`、`TransferMembershipDialog`、截图矩阵）待做；进度见第 10 节。路线图见 `DYNAMIC-GROUPS-ROADMAP.md`。
 >
 > **09-16 更新（阶段 2 · 2B-1 已落地，`feat/dynamic-groups-phase2` `7fb9a5f`）**：本书「删除清单」里的 `RunModeSwitch`、`RunTeamPanel`、`TeamSetupPage`、`team-setup.css`、`team-skill-defaults`、`App.tsx` 的 `teamSetup / runStartMode / onReconfigure / onLaunch / onNextRun`、`run-view.ts` 的团队分支与 `run-view.test.ts` 团队用例、`team-setup-page.test.tsx` 都已经不存在；`RunHeader` 已无模式切换（只剩批次概况与结束）。接手时按「已删」处理，`PoolHeader` 从现状 `RunHeader` 改造即可。`preview/mock-data.ts` 的基础快照仍是一个 legacy 团队 run（默认预览落在「旧团队运行已归档」开始页；池场景走 `?independent=`），换成池快照留给本阶段。
 >
@@ -144,6 +144,7 @@ export function consequenceOf(view: PoolView, action: PoolAction, target: { grou
 - 分区键从状态改为 `groupId ?? 'independent'`；组头视图 `RailGroupHeader { id, name, lead?, attention, collapsed, memberCount }`；组内排序 = 状态（执行中 → 需关注 → 待命 → 离线）再 slot_order；用户拖动排序仍持久化（key 加组前缀）。
 - 标题 `角色名 · CH-N` 不变；未入组席位角色名恒「独立执行 N」。
 - 头部摘要改为 `2 组 · 4 会话 · 1 需关注`。
+- **09-18 落地口径**（与上文的偏差）：组头视图就是 `SessionRailSection { id, kind, label, state, attention, leadChannelId?, sessions }`，来源 `RailGroupSource { id, name, channelIds, leadChannelId?, attention }` 由 `App` 从 `teamControl.groups` 的 active 组投影一次（统计页的组求和共用）；名册只认通道号。`state` = 分区内最紧要一行的状态，落在书签左脊上（main 09-16 的书签组条把脊色留给状态，分区改成组之后脊色不能没有含义——折叠后它是这一段唯一的状态提示）。拖动排序不加组前缀：仍是一份全局顺序，只在**同状态段**内重排（指示线与落点都夹在段内，越过它落下的行会被状态排序拉回，指示线不该在那里说谎）；折叠键升到 `shiguang.sessionGroups.collapsed.v2`（值是组 id / `independent`，v1 首次读取时清掉）。attention 徽标文字是「成员离线」而不是「需关注」——头部摘要里的「需关注」数的是待回答 / 待拍板 / 待验收的**行**，两个词指两件事。
 
 ***
 
@@ -214,3 +215,4 @@ export function consequenceOf(view: PoolView, action: PoolAction, target: { grou
 | 时间 | 模块 | 完成内容 | 验证 |
 |---|---|---|---|
 | 09-13 | 文档 | 建立本任务书；D4 待用户拍板 | 只读，无代码改动 |
+| 09-17 19:00–19:15 · 09-18 00:25–01:10 | 名册分区 | （CH-3）名册从「状态分区」改为「组即一级分区」（D4=a）；第一版落在阶段 2 旧基线上（`523d410`），main 同期把名册改成了书签组条 + 折叠锚定 + 光刃选中，按用户决定对齐基线（main → phase2 → phase3）后在新名册上重做。① `session-rail-view.ts`：`RailGroupSource`（组 → 成员通道号 + lead 通道 + attention）、`SessionRailSection`（`state` = 段内最紧要一行的状态）与 `buildSessionRailSections`：active 组按来源顺序成段、空组不出段、未入组席位统一落「独立」段并殿后；组内先按状态紧要度（执行中 → 需关注 → 待命 → 离线）排，同状态保留传入顺序（= 手动排序，`sort` 稳定）；席位同时出现在两个组时归先声明的那个。`SESSION_RAIL_GROUPS` 删除，`sessionRailGroupOf` 仍是唯一那个函数（组内次序、行状态点、书签脊色三者同源）。② `sessionRailSummary` 改口径 `2 组 · 4 会话 · 1 需关注 · 排队 3`（无组不报「0 组」）。③ `SessionSidebar` 消费分区：书签组条沿用 main 的几何（32px、旗 + 尾线 + chevron、脊色 = `is-<state>`），`data-section` 标 id；组头挂「成员离线」琥珀 pill（带 `aria-label`，位于 Collapsible 之外所以折叠后仍可见）；`aria-label` 区分组会话 / 独立会话；折叠键 `shiguang.sessionGroups.collapsed.v2`，v1 首次读取清掉；折叠锚定（`anchorCollapse` / `session-group-collapse.ts`）与 `keepMounted` 原样保留。④ 拖拽：只在同状态段内重排——`rankBandOf` 算出被拖行所在的连续同状态段，`dragover` 的指示线与 `drop` 的落点都夹进段内（`moveSessionWithinGroup` 只映射段内槽位），独占一段状态的行不可拖；被拖行状态变化不再中止手势（分区不随状态变），被移出组才中止。⑤ `App`：`activeGroups` 投影一次，名册与统计页 `statsGroups` 共用。⑥ 预览 `?sessions=many` 带两个组（「验收」attention）+ 独立段 5 行；`preview-shots.mjs` 的名册探针改用 `[data-section=…]` 选段，浏览器里实跑折叠几何探针（组条 32px 不变、未滚动时不动）与滚动锚定探针（418 → 368 → 360 → 358，组条钉在 0，徽标折叠后仍可见）均通过。 | typecheck、knip、`npm run build`；`session-rail-view.test.ts` +2（分区 / 排序 / 空组 / 重叠归属 / 书签状态；摘要口径）、`session-sidebar-drag.test.tsx` 重写 5 例 +1（分区与徽标与 title、v2 折叠键与 keepMounted、锚定折叠改选 `data-section`、方向键漫游按组、跨段拖放拒绝与状态变化不中止、同状态段夹取指示线与落点、可拖判定按段）；全量 206 文件 / 2089 用例（2087 通过 + 2 skipped） |

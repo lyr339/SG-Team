@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DesktopSnapshot } from '../src/shared/desktop-api'
 import { SessionSidebar } from '../src/renderer/src/SessionSidebar'
+import type { RailGroupSource } from '../src/renderer/src/session-rail-view'
 import {
   applySessionOrder,
   moveSessionToBoundary,
@@ -150,17 +151,23 @@ describe('SessionSidebar 拖拽重排', () => {
     await renderSnapshot(snapshotOf(ids))
   }
 
-  async function renderSnapshot(snapshot: DesktopSnapshot): Promise<void> {
+  async function renderSnapshot(snapshot: DesktopSnapshot, groups?: readonly RailGroupSource[]): Promise<void> {
     await act(async () => {
       root.render(
         <SessionSidebar
           snapshot={snapshot}
           selectedChannelId="1"
           onSelectSession={() => {}}
+          groups={groups}
         />
       )
     })
   }
+
+  const section = (id: string): HTMLElement => container.querySelector<HTMLElement>(`.session-group[data-section="${id}"]`)!
+  const headerOf = (id: string): HTMLButtonElement => section(id).querySelector<HTMLButtonElement>('.session-group__header')!
+  const rowNames = (): Array<string | null | undefined> => Array.from(container.querySelectorAll('.session-row'))
+    .map((row) => row.querySelector('.session-row__name')?.textContent)
 
   it('逐通道传递实时活动与 Cursor 侧事实；更新不串席位，离线行常驻为 Completed 且不影响卡片选择', async () => {
     const snapshot = snapshotWith([
@@ -206,60 +213,90 @@ describe('SessionSidebar 拖拽重排', () => {
     expect(rows().find((row) => row.textContent?.includes('Thinking'))?.classList.contains('is-offline')).toBe(false)
   })
 
-  it('动态展示四类状态组与头部摘要；折叠状态持久化，折叠内容 inert 但常驻（不卸载重建）', async () => {
+  it('名册按协作组分区，独立段殿后；组头书签带成员数与「成员离线」徽标，脊色取组内最紧要一行；头部摘要报组 / 会话 / 需关注 / 排队', async () => {
+    localStorage.setItem('shiguang.sessionGroups.collapsed.v1', JSON.stringify(['waiting']))
     await renderSnapshot(snapshotWith([
       { id: 'run', displayName: '运行席', status: 'running', waiting: false, connectionPhase: 'processing', queueDepth: 1 },
       { id: 'attention', displayName: '关注席', status: 'blocked', waiting: false, connectionPhase: 'approval' },
       { id: 'waiting', displayName: '待命席', status: 'idle', waiting: false, connectionPhase: 'keepalive' },
       { id: 'offline', displayName: '离线席', online: false, status: 'reviving', waiting: false, connectionPhase: 'reviving', queueDepth: 2 }
-    ]))
-    const headers = Array.from(container.querySelectorAll('.session-group__header'))
-    expect(headers.map((header) => header.textContent?.replace(/\s/g, ''))).toEqual([
-      '执行中1', '需关注1', '待命1', '离线1'
+    ]), [
+      { id: 'g-refactor', name: '接口重构', channelIds: ['3', '1'], leadChannelId: '1', attention: false },
+      { id: 'g-review', name: '验收', channelIds: ['4'], attention: true },
+      { id: 'g-empty', name: '空组', channelIds: ['9'], attention: false }
     ])
+    const headers = Array.from(container.querySelectorAll('.session-group__header'))
+    // 组按来源顺序成段（空组不出段），未入组的关注席落「独立」段；组内执行中排在待命之前。
+    expect(headers.map((header) => header.textContent?.replace(/\s/g, ''))).toEqual(['接口重构2', '验收1成员离线', '独立1'])
+    expect(rowNames()).toEqual(['运行席', '待命席', '离线席', '关注席'])
     expect(headers.every((header) => header.getAttribute('aria-expanded') === 'true')).toBe(true)
-    // 头部：标题 + 摘要（代替旧版三段筛选器）+ 总数。
+    expect(Array.from(container.querySelectorAll('.session-group')).map((node) => node.className)).toEqual([
+      'session-group is-group is-active', 'session-group is-group is-offline', 'session-group is-independent is-attention'
+    ])
+    // 头部：标题 + 摘要 + 总数。
     const header = container.querySelector('.session-pane > .inspector-section__header')!
     expect(header.querySelector('strong')?.textContent).toBe('会话')
-    expect(header.querySelector('span')?.textContent).toBe('1 执行中 · 1 需关注 · 1 待命 · 1 离线 · 排队 3')
+    expect(header.querySelector('span')?.textContent).toBe('2 组 · 4 会话 · 1 需关注 · 排队 3')
     expect(header.querySelector('.session-pane__count')?.textContent).toBe('4')
-    expect(container.querySelector('.session-filters')).toBeNull()
 
-    // 组条是一枚书签：组名 + 计数在旗上，旗尾一条 hairline 横到右缘，chevron 落在线末；文本不含多余字符。
-    const activeHeader = headers[0]!
-    expect(activeHeader.querySelector('.session-group__tab > span')?.textContent).toBe('执行中')
-    expect(activeHeader.querySelector('.session-group__tab > b')?.textContent).toBe('1')
-    expect(activeHeader.querySelector('.session-group__tab + .session-group__rule + svg.session-group__chevron')).not.toBeNull()
-    expect(activeHeader.querySelector('.session-group__chip')).toBeNull()
-
-    const waitingHeader = container.querySelector<HTMLButtonElement>('.session-group.is-waiting .session-group__header')!
-    const waitingRow = container.querySelector<HTMLElement>('.session-group.is-waiting .session-row')!
-    await act(async () => waitingHeader.click())
-    const collapsible = container.querySelector('.session-group.is-waiting .inspector-collapsible')!
-    expect(waitingHeader.getAttribute('aria-expanded')).toBe('false')
-    expect(collapsible.classList.contains('is-open')).toBe(false)
-    expect(collapsible.hasAttribute('inert')).toBe(true)
-    expect(JSON.parse(localStorage.getItem('shiguang.sessionGroups.collapsed.v1')!)).toContain('waiting')
-    await act(async () => { await new Promise((done) => setTimeout(done, 260)) })
-    // 折叠只是 inert + 裁切：行留在 DOM 里，同一个节点；展开时第一帧就有内容，头像 / 状态行不重建。
-    expect(container.querySelector('.session-group.is-waiting .session-group__list')).not.toBeNull()
-    expect(container.querySelector('.session-group.is-waiting .session-row')).toBe(waitingRow)
-    expect(waitingRow.closest('[inert]')).toBe(collapsible)
-    await act(async () => waitingHeader.click())
-    expect(collapsible.hasAttribute('inert')).toBe(false)
-    expect(container.querySelector('.session-group.is-waiting .session-row')).toBe(waitingRow)
-    // 其余组不受影响。
-    expect(container.querySelector('.session-group.is-offline .session-group__list')).not.toBeNull()
+    // 组条是一枚书签：组名 + 计数在旗上，旗尾一条 hairline 横到右缘，chevron 落在线末；徽标带文字与 aria-label。
+    const refactorHeader = headerOf('g-refactor')
+    expect(refactorHeader.querySelector('.session-group__tab > span')?.textContent).toBe('接口重构')
+    expect(refactorHeader.querySelector('.session-group__tab > b')?.textContent).toBe('2')
+    expect(refactorHeader.querySelector('.session-group__tab + .session-group__rule + svg.session-group__chevron')).not.toBeNull()
+    expect(refactorHeader.querySelector('.session-group__attention')).toBeNull()
+    expect(refactorHeader.getAttribute('title')).toBe('协作组「接口重构」· 2 名成员')
+    const badge = headerOf('g-review').querySelector('.session-group__tab + .session-group__attention + .session-group__rule')
+    expect(badge).not.toBeNull()
+    expect(headerOf('g-review').querySelector('.session-group__attention')?.getAttribute('aria-label')).toContain('已确认离线')
+    expect(headerOf('g-review').getAttribute('title')).toBe('协作组「验收」· 1 名成员，有成员已确认离线')
+    expect(headerOf('independent').getAttribute('title')).toBe('未入组的独立会话')
+    expect(section('g-refactor').querySelector('.session-group__list')?.getAttribute('aria-label')).toBe('接口重构组会话')
+    expect(section('independent').querySelector('.session-group__list')?.getAttribute('aria-label')).toBe('独立会话')
+    // v1（状态分区）的折叠键不再被读取，并在首次读取时清掉。
+    expect(localStorage.getItem('shiguang.sessionGroups.collapsed.v1')).toBeNull()
   })
 
-  it('折叠会被夹断或被钉住的组时，scrollTop 用与列表同一时长 / 曲线缓动到终态，而不是让浏览器在某一帧硬夹', async () => {
+  it('折叠状态按组 id 持久化（v2 键），折叠内容 inert 但常驻（不卸载重建），徽标在折叠后仍可见', async () => {
     await renderSnapshot(snapshotWith([
       { id: 'run', displayName: '运行席', status: 'running', waiting: false, connectionPhase: 'processing' },
       { id: 'waiting', displayName: '待命席' },
       { id: 'offline', displayName: '离线席', online: false, status: 'offline', waiting: false, connectionPhase: '' }
-    ]))
+    ]), [{ id: 'g-review', name: '验收', channelIds: ['2', '3'], attention: true }])
+    const reviewHeader = headerOf('g-review')
+    const reviewRow = section('g-review').querySelector<HTMLElement>('.session-row')!
+    await act(async () => reviewHeader.click())
+    const collapsible = section('g-review').querySelector('.inspector-collapsible')!
+    expect(reviewHeader.getAttribute('aria-expanded')).toBe('false')
+    expect(collapsible.classList.contains('is-open')).toBe(false)
+    expect(collapsible.hasAttribute('inert')).toBe(true)
+    expect(JSON.parse(localStorage.getItem('shiguang.sessionGroups.collapsed.v2')!)).toEqual(['g-review'])
+    expect(reviewHeader.querySelector('.session-group__attention')?.closest('[inert]')).toBeNull()
+    await act(async () => { await new Promise((done) => setTimeout(done, 260)) })
+    // 折叠只是 inert + 裁切：行留在 DOM 里，同一个节点；展开时第一帧就有内容，头像 / 状态行不重建。
+    expect(section('g-review').querySelector('.session-group__list')).not.toBeNull()
+    expect(section('g-review').querySelector('.session-row')).toBe(reviewRow)
+    expect(reviewRow.closest('[inert]')).toBe(collapsible)
+    await act(async () => reviewHeader.click())
+    expect(collapsible.hasAttribute('inert')).toBe(false)
+    expect(section('g-review').querySelector('.session-row')).toBe(reviewRow)
+    expect(JSON.parse(localStorage.getItem('shiguang.sessionGroups.collapsed.v2')!)).toEqual([])
+    // 其余段不受影响。
+    expect(section('independent').querySelector('.session-group__list')).not.toBeNull()
+  })
+
+  const anchoredRoster = async (): Promise<void> => {
+    await renderSnapshot(snapshotWith([
+      { id: 'run', displayName: '运行席', status: 'running', waiting: false, connectionPhase: 'processing' },
+      { id: 'waiting', displayName: '待命席' },
+      { id: 'offline', displayName: '离线席', online: false, status: 'offline', waiting: false, connectionPhase: '' }
+    ]), [{ id: 'g-b', name: 'B', channelIds: ['2'], attention: false }])
+  }
+
+  it('折叠会被夹断或被钉住的组时，scrollTop 用与列表同一时长 / 曲线缓动到终态，而不是让浏览器在某一帧硬夹', async () => {
+    await anchoredRoster()
     const list = container.querySelector<HTMLElement>('.session-list')!
-    const section = container.querySelector<HTMLElement>('.session-group.is-waiting')!
+    const section = container.querySelector<HTMLElement>('.session-group[data-section="g-b"]')!
     const body = section.querySelector<HTMLElement>('.inspector-collapsible')!
     // 几何：内容 1000、视口 600、滚到 300；待命组从 250 起、列表 210 高 → 组条已被钉住（300 > 250），
     // 折叠后最大 scrollTop = 1000 − 210 − 600 = 190 → 终态取 min(300, 190, 250) = 190。
@@ -291,13 +328,9 @@ describe('SessionSidebar 拖拽重排', () => {
   })
 
   it('折叠不会被夹断、组条也没被钉住时不动 scrollTop（保持不动就是最平滑的）', async () => {
-    await renderSnapshot(snapshotWith([
-      { id: 'run', displayName: '运行席', status: 'running', waiting: false, connectionPhase: 'processing' },
-      { id: 'waiting', displayName: '待命席' },
-      { id: 'offline', displayName: '离线席', online: false, status: 'offline', waiting: false, connectionPhase: '' }
-    ]))
+    await anchoredRoster()
     const list = container.querySelector<HTMLElement>('.session-list')!
-    const section = container.querySelector<HTMLElement>('.session-group.is-waiting')!
+    const section = container.querySelector<HTMLElement>('.session-group[data-section="g-b"]')!
     const body = section.querySelector<HTMLElement>('.inspector-collapsible')!
     let scrollTop = 40
     Object.defineProperty(list, 'scrollTop', { configurable: true, get: () => scrollTop, set: (value: number) => { scrollTop = value } })
@@ -315,16 +348,17 @@ describe('SessionSidebar 拖拽重排', () => {
     }
   })
 
-  it('方向键在可见行之间漫游，Home / End 跳到首尾；折叠组内的行不在候选里；只有选中行进入 Tab 序列', async () => {
+  it('方向键在可见行之间漫游，Home / End 跳到首尾；折叠段内的行不在候选里；只有选中行进入 Tab 序列', async () => {
+    // A、B、X 成一组（组内按状态排：执行中 X → 待命 A、B），O 独立殿后。
     await renderSnapshot(snapshotWith([
       { id: 'a', displayName: '待命 A' },
       { id: 'b', displayName: '待命 B' },
       { id: 'x', displayName: '执行 X', status: 'running', waiting: false, connectionPhase: 'processing' },
       { id: 'o', displayName: '离线 O', online: false, status: 'offline', waiting: false, connectionPhase: '' }
-    ]))
+    ]), [{ id: 'g', name: '组', channelIds: ['1', '2', '3'], attention: false }])
     const rows = () => Array.from(container.querySelectorAll<HTMLButtonElement>('.session-row'))
     const nameOf = (row: Element | null | undefined) => row?.querySelector('.session-row__name')?.textContent
-    // 分组顺序：执行中 X → 待命 A（选中，channel 1）、B → 离线 O。
+    // 组内顺序：执行中 X → 待命 A（选中，channel 1）、B；独立段：离线 O。
     expect(rows().map(nameOf)).toEqual(['执行 X', '待命 A', '待命 B', '离线 O'])
     expect(rows().map((row) => row.tabIndex)).toEqual([-1, 0, -1, -1])
 
@@ -345,9 +379,8 @@ describe('SessionSidebar 拖拽重排', () => {
     await press('End')
     expect(nameOf(document.activeElement)).toBe('离线 O')
 
-    // 折叠离线组后，End 落在最后一个可见行。
-    const offlineHeader = container.querySelector<HTMLButtonElement>('.session-group.is-offline .session-group__header')!
-    await act(async () => offlineHeader.click())
+    // 折叠「独立」段后，End 落在最后一个可见行。
+    await act(async () => headerOf('independent').click())
     await act(async () => rows()[0]!.focus())
     await press('End')
     expect(nameOf(document.activeElement)).toBe('待命 B')
@@ -379,27 +412,53 @@ describe('SessionSidebar 拖拽重排', () => {
     expect(container.querySelector('.session-pane > .inspector-section__header span')?.textContent).toBe('正在连接通道…')
   })
 
-  it('跨状态组拖放不改排序，被拖卡片动态换组会安全取消', async () => {
+  it('跨段拖放不改排序（改组不靠拖拽）；被拖行自身换段会安全取消，只是状态变化则手势继续', async () => {
     const initial = snapshotWith([
       { id: 'a', displayName: '待命 A' },
       { id: 'b', displayName: '待命 B' },
       { id: 'x', displayName: '执行 X', status: 'running', waiting: false, connectionPhase: 'processing' }
     ])
-    await renderSnapshot(initial)
-    const waitingCard = container.querySelector<HTMLButtonElement>('.session-group.is-waiting .session-row')!
-    const activeList = container.querySelector<HTMLElement>('.session-group.is-active .session-group__list')!
-    await act(async () => waitingCard.dispatchEvent(dragEvent('dragstart')))
-    await act(async () => activeList.dispatchEvent(dragEvent('drop', 0)))
+    const grouped: RailGroupSource[] = [{ id: 'g', name: '组', channelIds: ['1', '2'], attention: false }]
+    await renderSnapshot(initial, grouped)
+    const groupedCard = section('g').querySelector<HTMLButtonElement>('.session-row')!
+    const independentList = section('independent').querySelector<HTMLElement>('.session-group__list')!
+    await act(async () => groupedCard.dispatchEvent(dragEvent('dragstart')))
+    await act(async () => independentList.dispatchEvent(dragEvent('drop', 0)))
     expect(localStorage.getItem('shiguang.sessionOrder.v1')).toBeNull()
 
-    await act(async () => waitingCard.dispatchEvent(dragEvent('dragstart')))
+    // 被拖行的状态变了但仍在同一段：手势不中断（分区不再随状态变）。
+    await act(async () => groupedCard.dispatchEvent(dragEvent('dragstart')))
     await renderSnapshot(snapshotWith([
       { id: 'a', displayName: '待命 A', status: 'running', waiting: false, connectionPhase: 'processing' },
       { id: 'b', displayName: '待命 B' },
       { id: 'x', displayName: '执行 X', status: 'running', waiting: false, connectionPhase: 'processing' }
-    ]))
+    ]), grouped)
+    expect(container.querySelector('.session-list__slot.is-dragging')).not.toBeNull()
+    // 被拖行被移出组（组来源变化）：手势中止，什么都不写。
+    await renderSnapshot(initial, [{ id: 'g', name: '组', channelIds: ['2'], attention: false }])
     expect(container.querySelector('.session-list__slot.is-dragging')).toBeNull()
     expect(localStorage.getItem('shiguang.sessionOrder.v1')).toBeNull()
+  })
+
+  it('指示线与落点都夹在同状态段里：待命行拖到执行中行之上，仍落在待命段的开头', async () => {
+    // 独立段：执行中 X 在前，待命 A、B、C 在后（A 选中）。
+    await renderSnapshot(snapshotWith([
+      { id: 'a', displayName: '待命 A' },
+      { id: 'b', displayName: '待命 B' },
+      { id: 'c', displayName: '待命 C' },
+      { id: 'x', displayName: '执行 X', status: 'running', waiting: false, connectionPhase: 'processing' }
+    ]))
+    expect(rowNames()).toEqual(['执行 X', '待命 A', '待命 B', '待命 C'])
+    const { list, slots } = mockSessionListGeometry(container)
+    // 拖 C，指到列表最顶端（X 之上）：指示线画在待命段第一行（A）之前，而不是 X 之前。
+    await act(async () => slots[3]!.querySelector('button')!.dispatchEvent(dragEvent('dragstart')))
+    await act(async () => list.dispatchEvent(dragEvent('dragover', 0)))
+    expect(slots[0]!.classList.contains('is-drop-before')).toBe(false)
+    expect(slots[1]!.classList.contains('is-drop-before')).toBe(true)
+    await act(async () => list.dispatchEvent(dragEvent('drop', 0)))
+    // 落点 = 待命段开头；X 的槽位不动。
+    expect(JSON.parse(localStorage.getItem('shiguang.sessionOrder.v1')!)).toEqual(['c', 'a', 'b', 'x'])
+    expect(rowNames()).toEqual(['执行 X', '待命 C', '待命 A', '待命 B'])
   })
 
   it('卡片上半区显示前置边界，最终顺序与指示线一致', async () => {
@@ -487,18 +546,19 @@ describe('SessionSidebar 拖拽重排', () => {
     expect(localStorage.getItem('shiguang.sessionOrder.v1')).toBeNull()
   })
 
-  it('只有同组里不止一行时才可拖拽；单独一行的组没有可重排的余地', async () => {
-    await renderSnapshot(snapshotWith([
+  it('只有同一段里同状态不止一行时才可拖拽；独占一段状态的行没有可重排的余地', async () => {
+    const roster = snapshotWith([
       { id: 'a', displayName: '待命 A' },
       { id: 'b', displayName: '待命 B' },
       { id: 'x', displayName: '执行 X', status: 'running', waiting: false, connectionPhase: 'processing' }
-    ]))
-    const rows = Array.from(container.querySelectorAll<HTMLButtonElement>('.session-row'))
-    expect(rows.map((row) => [row.querySelector('.session-row__name')?.textContent, row.draggable])).toEqual([
-      ['执行 X', false],
-      ['待命 A', true],
-      ['待命 B', true]
     ])
+    const draggables = () => Array.from(container.querySelectorAll<HTMLButtonElement>('.session-row'))
+      .map((row) => [row.querySelector('.session-row__name')?.textContent, row.draggable])
+    await renderSnapshot(roster)
+    expect(draggables()).toEqual([['执行 X', false], ['待命 A', true], ['待命 B', true]])
+    // 同一组里 A 与 X 状态不同，各自独占一段：都不可拖；独立段只剩 B 一行，也不可拖。
+    await renderSnapshot(roster, [{ id: 'g', name: '组', channelIds: ['1', '3'], attention: false }])
+    expect(draggables()).toEqual([['执行 X', false], ['待命 A', false], ['待命 B', false]])
   })
 
   it('点击行打开对应通道；选中行带 aria-current', async () => {

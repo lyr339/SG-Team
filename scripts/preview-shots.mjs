@@ -611,9 +611,9 @@ const scenes = [
   { name: 'sessions-rail-clear', rail: true, query: 'sessions=many', colorScheme: 'light', storage: railStorage({ cardOpacity: 0 }) },
   { name: 'sessions-rail-clear-dark', rail: true, query: 'sessions=many', colorScheme: 'dark', storage: railStorage({ cardOpacity: 0, colorMode: 'dark' }) },
   { name: 'sessions-rail-narrow', rail: true, width: 1180, height: 760, query: 'sessions=many', colorScheme: 'light', storage: railStorage({ railWidth: 286 }) },
-  { name: 'sessions-rail-hover-row', rail: true, query: 'sessions=many', colorScheme: 'light', storage: railStorage(), actions: [{ hover: '.session-group.is-attention .session-list__slot:first-child .session-row' }] },
+  { name: 'sessions-rail-hover-row', rail: true, query: 'sessions=many', colorScheme: 'light', storage: railStorage(), actions: [{ hover: '.session-group[data-section="team-group:many:review"] .session-list__slot:first-child .session-row' }] },
   { name: 'sessions-rail-keyboard', rail: true, query: 'sessions=many', colorScheme: 'light', storage: railStorage(), actions: [{ eval: `document.querySelector('.session-row.is-selected').focus()` }, { key: 'ArrowDown', code: 'ArrowDown' }, { key: 'ArrowDown', code: 'ArrowDown' }] },
-  { name: 'sessions-rail-collapsed', rail: true, query: 'sessions=many', colorScheme: 'light', storage: railStorage(), actions: [{ click: '.session-group.is-active .session-group__header' }, { wait: 300 }] },
+  { name: 'sessions-rail-collapsed', rail: true, query: 'sessions=many', colorScheme: 'light', storage: railStorage(), actions: [{ click: '.session-group[data-section="team-group:many:review"] .session-group__header' }, { wait: 300 }] },
   {
     name: 'sessions-rail-collapsing', rail: true, query: 'sessions=many', colorScheme: 'light', storage: railStorage(), clip: null,
     actions: [{
@@ -621,8 +621,8 @@ const scenes = [
       probe: `new Promise((done, fail) => {
         const samples = []
         const list = document.querySelector('.session-list')
-        const header = document.querySelector('.session-group.is-waiting .session-group__header')
-        const slot = () => document.querySelector('.session-group.is-waiting .inspector-collapsible')
+        const header = document.querySelector('.session-group[data-section="team-group:many:review"] .session-group__header')
+        const slot = () => document.querySelector('.session-group[data-section="team-group:many:review"] .inspector-collapsible')
         const headerTop = () => header.getBoundingClientRect().top - list.getBoundingClientRect().top
         const top0 = headerTop()
         header.click()
@@ -647,7 +647,7 @@ const scenes = [
       label: '钉住的组条折叠：滚动锚定采样（0/60/120/200/320ms）',
       probe: `new Promise((done, fail) => {
         const list = document.querySelector('.session-list')
-        const section = document.querySelector('.session-group.is-attention')
+        const section = document.querySelector('.session-group[data-section="team-group:many:review"]')
         const header = section.querySelector('.session-group__header')
         const body = section.querySelector('.inspector-collapsible')
         list.scrollTop = section.offsetTop + 60

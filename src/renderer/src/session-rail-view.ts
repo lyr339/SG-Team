@@ -7,18 +7,15 @@ import { contextPercent, statusLabel } from './format'
 import type { ProcessTurnStep } from './process-turn-view'
 
 /**
- * 会话侧栏（名册）的视图折叠：分组、状态色调、标题拆分与头部摘要都在这里决定，
- * 行组件与侧栏只负责摆放。分组即色调——同一个函数同时决定「排在哪一组」与
- * 「状态点是什么颜色」，两者永远一致。
+ * 会话侧栏（名册）的视图折叠：分区、状态色调、标题拆分与头部摘要都在这里决定，
+ * 行组件与侧栏只负责摆放。
+ *
+ * 一级分区是**协作组**（阶段 3 · D4=a）：名册本来就是常驻导航，而组是席位的属性，
+ * 放在席位旁边最直接，运行页因此不必再渲染同一批席位。状态（执行中 / 需关注 / 待命 /
+ * 离线）降级为行内状态点、**分区内的排序键**与分区书签的状态色——`sessionRailGroupOf`
+ * 仍是唯一那一个函数，同时决定「分区内排在哪」「状态点什么颜色」「书签什么颜色」，三者永远一致。
  */
 export type SessionRailGroupId = 'active' | 'attention' | 'waiting' | 'offline'
-
-export const SESSION_RAIL_GROUPS: ReadonlyArray<{ id: SessionRailGroupId; label: string; detail: string }> = [
-  { id: 'active', label: '执行中', detail: '正在启动、恢复或处理任务' },
-  { id: 'attention', label: '需关注', detail: '等待拍板、验收或重新进入待命' },
-  { id: 'waiting', label: '待命', detail: '已在线并持续等待新消息' },
-  { id: 'offline', label: '离线', detail: '当前没有可信的 Cursor 运行时活性' }
-]
 
 type RailSessionFacts = Pick<AgentSession, 'online' | 'status' | 'runtimeEvidence' | 'awaitingUser' | 'waiting' | 'connectionPhase'>
 
@@ -52,19 +49,106 @@ export function sessionRailTitle(session: Pick<AgentSession, 'displayName' | 'ch
   return { name: name || 'SG Team', channel }
 }
 
-/** 头部摘要：各状态组的数量 + 排队总数，代替旧版的三段筛选器。 */
-export function sessionRailSummary(sessions: ReadonlyArray<RailSessionFacts & Pick<AgentSession, 'queueDepth'>>): string {
-  if (!sessions.length) return ''
-  const counts = new Map<SessionRailGroupId, number>()
-  let queued = 0
-  for (const session of sessions) {
-    const group = sessionRailGroupOf(session)
-    counts.set(group, (counts.get(group) ?? 0) + 1)
-    queued += Math.max(0, session.queueDepth ?? 0)
+/** 未入组席位所在分区的 id：组 id 由服务端生成（`team-group:…`），不会与它相撞。 */
+export const RAIL_INDEPENDENT_SECTION_ID = 'independent'
+
+/**
+ * 组来源投影（App 从 `teamControl.groups` 的 active 组映射而来）。名册只认通道号：
+ * 席位 ↔ 通道一一对应，用它匹配就不必把 slot / binding 的形状带进渲染层。
+ */
+export interface RailGroupSource {
+  id: string
+  name: string
+  /** 成员通道号；顺序无关，分区内的次序由状态与用户手动排序决定。 */
+  channelIds: readonly string[]
+  /** 有效 lead 的通道号（组可以没有 lead）。 */
+  leadChannelId?: string
+  /** 有成员确认离线：组头挂徽标，由用户决定交接还是移出。 */
+  attention: boolean
+}
+
+/** 名册的一级分区：一个 active 组一段，未入组席位统一落「独立」段。 */
+export interface SessionRailSection<Session> {
+  id: string
+  kind: 'group' | 'independent'
+  label: string
+  /**
+   * 分区书签的状态色 = 分区内最紧要那一行的状态（排序后的首行）：折叠之后它是这一段
+   * 唯一还看得见的状态提示——「有人在干活」「全员离线」一眼可辨。
+   */
+  state: SessionRailGroupId
+  /** 组内有成员确认离线（`TeamGroupView.attention`）；「独立」段恒为 false。 */
+  attention: boolean
+  leadChannelId?: string
+  sessions: Session[]
+}
+
+/** 分区内排序：先按状态紧要程度，再落回传入顺序（= 用户的手动排序，`sort` 稳定）。 */
+const SECTION_SORT_RANK: Record<SessionRailGroupId, number> = { active: 0, attention: 1, waiting: 2, offline: 3 }
+
+/**
+ * 会话 → 名册分区。组按来源顺序成段，空组不出段（没有成员的组在名册里没有意义，它仍在
+ * 运行页的组卡片上）；「独立」段恒排在全部组之后。席位同时出现在两个组时归先声明的那个。
+ * 传入的 sessions 应已应用用户手动排序。
+ */
+export function buildSessionRailSections<Session extends RailSessionFacts & { channelId: string }>(
+  sessions: readonly Session[],
+  groups: readonly RailGroupSource[]
+): Array<SessionRailSection<Session>> {
+  const sectionIdByChannel = new Map<string, string>()
+  for (const group of groups) {
+    for (const channelId of group.channelIds) {
+      if (!sectionIdByChannel.has(channelId)) sectionIdByChannel.set(channelId, group.id)
+    }
   }
-  const parts = SESSION_RAIL_GROUPS
-    .filter((group) => (counts.get(group.id) ?? 0) > 0)
-    .map((group) => `${counts.get(group.id)} ${group.label}`)
+  const members = new Map<string, Session[]>()
+  for (const session of sessions) {
+    const sectionId = sectionIdByChannel.get(session.channelId) ?? RAIL_INDEPENDENT_SECTION_ID
+    const bucket = members.get(sectionId)
+    if (bucket) bucket.push(session)
+    else members.set(sectionId, [session])
+  }
+  const section = (
+    bucket: Session[],
+    shape: Pick<SessionRailSection<Session>, 'id' | 'kind' | 'label' | 'attention' | 'leadChannelId'>
+  ): SessionRailSection<Session> => {
+    const sorted = [...bucket].sort((left, right) => SECTION_SORT_RANK[sessionRailGroupOf(left)] - SECTION_SORT_RANK[sessionRailGroupOf(right)])
+    return { ...shape, state: sessionRailGroupOf(sorted[0]!), sessions: sorted }
+  }
+  const sections = groups.flatMap((group): Array<SessionRailSection<Session>> => {
+    const bucket = members.get(group.id)
+    return bucket?.length
+      ? [section(bucket, {
+          id: group.id,
+          kind: 'group',
+          label: group.name,
+          attention: group.attention,
+          ...(group.leadChannelId ? { leadChannelId: group.leadChannelId } : {})
+        })]
+      : []
+  })
+  const independent = members.get(RAIL_INDEPENDENT_SECTION_ID)
+  if (independent?.length) {
+    sections.push(section(independent, { id: RAIL_INDEPENDENT_SECTION_ID, kind: 'independent', label: '独立', attention: false }))
+  }
+  return sections
+}
+
+/**
+ * 头部摘要：`2 组 · 4 会话 · 1 需关注 · 排队 3`。组是一级事实所以排在最前（没有组就不报「0 组」）；
+ * 状态只报「需关注」这一个需要人介入的计数，其余状态已由每行的状态点表达，不在摘要里重复。
+ */
+export function sessionRailSummary(
+  sections: ReadonlyArray<SessionRailSection<RailSessionFacts & Pick<AgentSession, 'queueDepth'>>>
+): string {
+  const sessions = sections.flatMap((section) => section.sessions)
+  if (!sessions.length) return ''
+  const groupCount = sections.filter((section) => section.kind === 'group').length
+  const attention = sessions.filter((session) => sessionRailGroupOf(session) === 'attention').length
+  const queued = sessions.reduce((total, session) => total + Math.max(0, session.queueDepth ?? 0), 0)
+  const parts = groupCount ? [`${groupCount} 组`] : []
+  parts.push(`${sessions.length} 会话`)
+  if (attention > 0) parts.push(`${attention} 需关注`)
   if (queued > 0) parts.push(`排队 ${queued}`)
   return parts.join(' · ')
 }

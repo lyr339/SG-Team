@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { ProcessBlock } from '../src/domain/conversation-entry'
 import type { LiveAgentResponseState, LiveProcessState, LiveStatusLineState } from '../src/shared/desktop-api'
 import {
+  buildSessionRailSections,
   contextRingDash,
   sessionRailActivity,
   sessionRailGroupOf,
@@ -48,6 +49,60 @@ describe('session-rail-view 分组与色调', () => {
   })
 })
 
+describe('session-rail-view 名册分区（阶段 3 · D4=a：组即一级分区）', () => {
+  const seat = (channelId: string, patch: Partial<Parameters<typeof sessionRailGroupOf>[0]> = {}) => ({ ...facts(patch), channelId })
+  const working = { status: 'running' as const, waiting: false, connectionPhase: 'processing' }
+  const blocked = { status: 'blocked' as const, waiting: false, connectionPhase: 'approval' }
+  const offline = { online: false, status: 'offline' as const }
+
+  it('组按来源顺序成段、独立段殿后；空组不出段；组内按状态紧要度排序，同状态保留传入（手动）顺序', () => {
+    const sessions = [
+      seat('1'),                    // 待命
+      seat('2', offline),           // 离线
+      seat('3', working),           // 执行中
+      seat('4'),                    // 待命
+      seat('5', blocked),           // 需关注
+      seat('6', working),           // 执行中（独立）
+      seat('7')                     // 待命（独立）
+    ]
+    const sections = buildSessionRailSections(sessions, [
+      { id: 'g-review', name: '验收', channelIds: ['5', '4'], attention: true },
+      { id: 'g-empty', name: '空组', channelIds: ['404'], attention: false },
+      { id: 'g-refactor', name: '接口重构', channelIds: ['1', '2', '3'], leadChannelId: '1', attention: false }
+    ])
+    expect(sections.map((section) => [section.id, section.kind, section.label, section.state, section.attention, section.leadChannelId])).toEqual([
+      ['g-review', 'group', '验收', 'attention', true, undefined],
+      ['g-refactor', 'group', '接口重构', 'active', false, '1'],
+      ['independent', 'independent', '独立', 'active', false, undefined]
+    ])
+    expect(sections.map((section) => section.sessions.map((session) => session.channelId))).toEqual([
+      ['5', '4'],
+      ['3', '1', '2'],
+      ['6', '7']
+    ])
+    // 状态是排序键而不是分区：同一段里待命行仍按传入顺序（1 在 4 之前的手动顺序保留在各自段内）。
+    const reordered = buildSessionRailSections([seat('4'), seat('1'), seat('3', working)], [
+      { id: 'g', name: 'G', channelIds: ['1', '3', '4'], attention: false }
+    ])
+    expect(reordered[0]!.sessions.map((session) => session.channelId)).toEqual(['3', '4', '1'])
+  })
+
+  it('没有组来源时全部会话落「独立」段；席位同时出现在两个组时归先声明的组；书签状态取最紧要一行', () => {
+    const solo = buildSessionRailSections([seat('1', offline), seat('2', offline)], [])
+    expect(solo).toHaveLength(1)
+    expect(solo[0]).toMatchObject({ id: 'independent', kind: 'independent', state: 'offline', attention: false })
+    const overlapping = buildSessionRailSections([seat('1'), seat('2')], [
+      { id: 'a', name: 'A', channelIds: ['1'], attention: false },
+      { id: 'b', name: 'B', channelIds: ['1', '2'], attention: false }
+    ])
+    expect(overlapping.map((section) => [section.id, section.sessions.map((session) => session.channelId)])).toEqual([
+      ['a', ['1']],
+      ['b', ['2']]
+    ])
+    expect(buildSessionRailSections([], [{ id: 'a', name: 'A', channelIds: ['1'], attention: false }])).toEqual([])
+  })
+})
+
 describe('session-rail-view 标题与摘要', () => {
   it('把「角色 · CH-N」拆成角色名与通道号；未绑定通道只留 SG Team', () => {
     expect(sessionRailTitle({ displayName: '架构实现 · CH-2', channelId: '2' })).toEqual({ name: '架构实现', channel: 'CH-2' })
@@ -56,15 +111,18 @@ describe('session-rail-view 标题与摘要', () => {
     expect(sessionRailTitle({ displayName: '', channelId: '9' })).toEqual({ name: 'SG Team', channel: 'CH-9' })
   })
 
-  it('摘要按固定顺序列出非空状态组，并汇总排队数；空名册返回空串', () => {
+  it('摘要：组数在前、会话总数、需关注计数与排队总数；没有组不报「0 组」；空名册返回空串', () => {
+    const queued = (queueDepth: number, patch: Partial<Parameters<typeof sessionRailGroupOf>[0]> = {}) => ({ ...facts(patch), queueDepth })
+    const group = (id: string, sessions: Array<ReturnType<typeof queued>>) => ({ id, kind: 'group' as const, label: id, state: 'waiting' as const, attention: false, sessions })
+    const independent = (sessions: Array<ReturnType<typeof queued>>) => ({ id: 'independent', kind: 'independent' as const, label: '独立', state: 'waiting' as const, attention: false, sessions })
     expect(sessionRailSummary([])).toBe('')
+    expect(sessionRailSummary([independent([])])).toBe('')
     expect(sessionRailSummary([
-      { ...facts(), queueDepth: 0 },
-      { ...facts({ status: 'running', waiting: false, connectionPhase: 'processing' }), queueDepth: 1 },
-      { ...facts({ online: false, status: 'offline' }), queueDepth: 2 },
-      { ...facts({ online: false, status: 'offline' }), queueDepth: 0 }
-    ])).toBe('1 执行中 · 1 待命 · 2 离线 · 排队 3')
-    expect(sessionRailSummary([{ ...facts(), queueDepth: 0 }])).toBe('1 待命')
+      group('a', [queued(0), queued(1, { status: 'running', waiting: false, connectionPhase: 'processing' })]),
+      group('b', [queued(2, { status: 'blocked', waiting: false, connectionPhase: 'approval' })]),
+      independent([queued(0, { online: false, status: 'offline' })])
+    ])).toBe('2 组 · 4 会话 · 1 需关注 · 排队 3')
+    expect(sessionRailSummary([independent([queued(0), queued(0)])])).toBe('2 会话')
   })
 
   it('上下文光环：百分比直接映射为 pathLength=100 的 dasharray；极小值保底可见；空值不画', () => {

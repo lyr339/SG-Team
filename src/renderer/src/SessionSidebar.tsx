@@ -12,10 +12,11 @@ import {
   readSessionOrder
 } from './session-order'
 import {
-  SESSION_RAIL_GROUPS,
+  buildSessionRailSections,
   sessionRailGroupOf,
   sessionRailSummary,
-  type SessionRailGroupId
+  type RailGroupSource,
+  type SessionRailSection
 } from './session-rail-view'
 import { SESSION_GROUP_COLLAPSE_MS, collapseEasing, collapseScrollTarget } from './session-group-collapse'
 
@@ -23,28 +24,48 @@ interface SessionSidebarProps {
   snapshot: DesktopSnapshot
   selectedChannelId?: string
   onSelectSession: (channelId: string) => void
+  /** 活动 run 的 active 组：名册据此分区（阶段 3 · D4=a）。缺省 = 全部席位都在「独立」段。 */
+  groups?: readonly RailGroupSource[]
   /** 空态的去处：还没有任何会话时，把用户带到「运行」页去创建。 */
   onOpenRun?: () => void
 }
 
-const COLLAPSED_GROUPS_STORAGE_KEY = 'shiguang.sessionGroups.collapsed.v1'
+// v1 存的是状态分区 id（执行中 / 待命 …）；阶段 3 起分区是组，键值是组 id 与 'independent'，语义不同故升版。
+const COLLAPSED_SECTIONS_STORAGE_KEY = 'shiguang.sessionGroups.collapsed.v2'
+const LEGACY_COLLAPSED_GROUPS_KEY = 'shiguang.sessionGroups.collapsed.v1'
 
-function readCollapsedGroups(): ReadonlySet<SessionRailGroupId> {
+function readCollapsedSections(): ReadonlySet<string> {
   try {
-    const parsed: unknown = JSON.parse(localStorage.getItem(COLLAPSED_GROUPS_STORAGE_KEY) ?? '[]')
-    const valid = new Set(SESSION_RAIL_GROUPS.map((group) => group.id))
-    return new Set(Array.isArray(parsed)
-      ? parsed.filter((id): id is SessionRailGroupId => typeof id === 'string' && valid.has(id as SessionRailGroupId))
-      : [])
+    localStorage.removeItem(LEGACY_COLLAPSED_GROUPS_KEY)
+    const parsed: unknown = JSON.parse(localStorage.getItem(COLLAPSED_SECTIONS_STORAGE_KEY) ?? '[]')
+    return new Set(Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : [])
   } catch {
     return new Set()
   }
 }
 
-function persistCollapsedGroups(groups: ReadonlySet<SessionRailGroupId>): void {
+function persistCollapsedSections(sections: ReadonlySet<string>): void {
   try {
-    localStorage.setItem(COLLAPSED_GROUPS_STORAGE_KEY, JSON.stringify([...groups]))
+    localStorage.setItem(COLLAPSED_SECTIONS_STORAGE_KEY, JSON.stringify([...sections]))
   } catch { /* 当前进程内的折叠状态仍然有效。 */ }
+}
+
+/**
+ * 分区内同状态的连续一段（分区已按状态排序，所以同状态必然相邻）：拖拽重排只在这一段里有意义——
+ * 越过它落下的行会被状态排序立刻拉回来，指示线不该在那里说谎。返回的是插入边界的闭区间。
+ */
+function rankBandOf<Session extends Parameters<typeof sessionRailGroupOf>[0] & { id: string }>(
+  section: SessionRailSection<Session>,
+  sessionId: string
+): { start: number; end: number } | undefined {
+  const index = section.sessions.findIndex((session) => session.id === sessionId)
+  if (index < 0) return undefined
+  const state = sessionRailGroupOf(section.sessions[index]!)
+  let start = index
+  while (start > 0 && sessionRailGroupOf(section.sessions[start - 1]!) === state) start -= 1
+  let end = index + 1
+  while (end < section.sessions.length && sessionRailGroupOf(section.sessions[end]!) === state) end += 1
+  return { start, end }
 }
 
 function boundaryAt(list: HTMLElement, clientY: number): number {
@@ -116,19 +137,21 @@ function moveRowFocus(list: HTMLElement, current: HTMLElement, key: string): boo
 }
 
 /**
- * 会话侧栏：一份名册。状态事实决定动态分组（执行中 / 需关注 / 待命 / 离线），
- * 手动顺序只决定同组内的相对位置；分组标题吸顶、可折叠并持久化；
- * 方向键在行间漫游，Enter / 空格打开；组内拖拽重排，跨组不伪造运行状态。
+ * 会话侧栏：一份名册。协作组是一级分区（阶段 3 · D4=a），未入组席位落「独立」段；
+ * 状态（执行中 / 需关注 / 待命 / 离线）降级为行内状态点、分区内的排序键与书签状态色，
+ * 手动顺序决定同状态内的相对位置。分区书签吸顶、可折叠并持久化；方向键在行间漫游，
+ * Enter / 空格打开；同状态段内拖拽重排，跨段不伪造组归属（改组是组头菜单与运行页的动作，不靠拖拽）。
  */
 export function SessionSidebar({
   snapshot,
   selectedChannelId,
   onSelectSession,
+  groups: groupSources,
   onOpenRun
 }: SessionSidebarProps): React.JSX.Element {
   const [order, setOrder] = useState<string[] | undefined>(() => readSessionOrder())
-  const [collapsedGroups, setCollapsedGroups] = useState<ReadonlySet<SessionRailGroupId>>(() => readCollapsedGroups())
-  const [dragOrigin, setDragOrigin] = useState<{ sessionId: string; groupId: SessionRailGroupId } | null>(null)
+  const [collapsedGroups, setCollapsedGroups] = useState<ReadonlySet<string>>(() => readCollapsedSections())
+  const [dragOrigin, setDragOrigin] = useState<{ sessionId: string; groupId: string } | null>(null)
   const [insertionIndex, setInsertionIndex] = useState<number | null>(null)
   const listRef = useRef<HTMLElement>(null)
   const cancelAnchorRef = useRef<(() => void) | undefined>(undefined)
@@ -138,19 +161,25 @@ export function SessionSidebar({
     () => applySessionOrder(snapshot.sessions, order, (session) => session.id),
     [order, snapshot.sessions]
   )
-  const groups = useMemo(() => SESSION_RAIL_GROUPS.flatMap((group) => {
-    const members = orderedSessions.filter((session) => sessionRailGroupOf(session) === group.id)
-    return members.length ? [{ ...group, sessions: members }] : []
-  }), [orderedSessions])
-  const summary = useMemo(() => sessionRailSummary(snapshot.sessions), [snapshot.sessions])
+  const groups = useMemo(
+    () => buildSessionRailSections(orderedSessions, groupSources ?? []),
+    [groupSources, orderedSessions]
+  )
+  const summary = useMemo(() => sessionRailSummary(groups), [groups])
   const rosterSignature = useMemo(
     () => snapshot.sessions.map((session) => session.id).sort().join('\u0000'),
     [snapshot.sessions]
   )
-  const draggedCurrentSession = dragOrigin
-    ? orderedSessions.find((session) => session.id === dragOrigin.sessionId)
+  const draggedCurrentGroupId = dragOrigin
+    ? groups.find((section) => section.sessions.some((session) => session.id === dragOrigin.sessionId))?.id
     : undefined
-  const draggedCurrentGroupId = draggedCurrentSession ? sessionRailGroupOf(draggedCurrentSession) : undefined
+  // 被拖行所在的同状态段：指示线与落点都夹在这一段里（见 rankBandOf）。
+  const dragBand = dragOrigin && draggedCurrentGroupId
+    ? rankBandOf(groups.find((section) => section.id === draggedCurrentGroupId)!, dragOrigin.sessionId)
+    : undefined
+  const clampToBand = (boundary: number): number => dragBand
+    ? Math.max(dragBand.start, Math.min(dragBand.end, boundary))
+    : boundary
   // 选中行进入 Tab 序列；没有选中行（或它在折叠组里）时把第一行交给 Tab。
   const selectedVisible = groups.some((group) => !collapsedGroups.has(group.id)
     && group.sessions.some((session) => session.channelId === selectedChannelId))
@@ -161,14 +190,14 @@ export function SessionSidebar({
     setInsertionIndex(null)
   }
 
-  // 席位增删或被拖行自身换组才中止；其他会话的实时状态变化不打断手势。
+  // 席位增删或被拖行自身换段（改组 / 迁出）才中止；其他会话的实时状态变化不打断手势。
   useEffect(() => resetDrag(), [rosterSignature])
   useEffect(() => {
     if (dragOrigin && draggedCurrentGroupId !== dragOrigin.groupId) resetDrag()
   }, [dragOrigin, draggedCurrentGroupId])
   useEffect(() => () => cancelAnchorRef.current?.(), [])
 
-  const toggleGroup = (groupId: SessionRailGroupId, section: HTMLElement | null): void => {
+  const toggleGroup = (groupId: string, section: HTMLElement | null): void => {
     const collapsing = !collapsedGroups.has(groupId)
     cancelAnchorRef.current?.()
     cancelAnchorRef.current = undefined
@@ -178,18 +207,19 @@ export function SessionSidebar({
       const next = new Set(current)
       if (next.has(groupId)) next.delete(groupId)
       else next.add(groupId)
-      persistCollapsedGroups(next)
+      persistCollapsedSections(next)
       return next
     })
   }
 
-  const handleDrop = (groupId: SessionRailGroupId, boundary: number): void => {
+  const handleDrop = (groupId: string, boundary: number): void => {
     if (!dragOrigin || dragOrigin.groupId !== groupId) return
     const group = groups.find((candidate) => candidate.id === groupId)
-    if (!group) return resetDrag()
+    if (!group || !dragBand) return resetDrag()
+    // 只重排同状态段占据的槽位：状态排序不会再把落下的行拉走，落点就是指示线所在。
     const ids = orderedSessions.map((session) => session.id)
-    const groupIds = group.sessions.map((session) => session.id)
-    const next = moveSessionWithinGroup(ids, groupIds, dragOrigin.sessionId, boundary)
+    const bandIds = group.sessions.slice(dragBand.start, dragBand.end).map((session) => session.id)
+    const next = moveSessionWithinGroup(ids, bandIds, dragOrigin.sessionId, clampToBand(boundary) - dragBand.start)
     if (next.some((id, index) => id !== ids[index])) {
       setOrder(next)
       persistSessionOrder(next)
@@ -227,7 +257,7 @@ export function SessionSidebar({
           event.preventDefault()
           event.dataTransfer.dropEffect = 'move'
           scrollNearEdge(event.currentTarget, event.clientY)
-          setInsertionIndex(lastGroup.sessions.length)
+          setInsertionIndex(clampToBand(lastGroup.sessions.length))
         }}
         onDrop={(event) => {
           if (event.target !== event.currentTarget || !tailDropEnabled || !lastGroup) return
@@ -238,33 +268,45 @@ export function SessionSidebar({
         {groups.length ? groups.map((group) => {
           const collapsed = collapsedGroups.has(group.id)
           const markerActive = dragOrigin?.groupId === group.id
+          const isGroup = group.kind === 'group'
+          const title = isGroup
+            ? `协作组「${group.label}」· ${group.sessions.length} 名成员${group.attention ? '，有成员已确认离线' : ''}`
+            : '未入组的独立会话'
           return (
-            <section key={group.id} className={`session-group is-${group.id}${collapsed ? ' is-collapsed' : ''}`}>
+            <section
+              key={group.id}
+              className={`session-group is-${group.kind} is-${group.state}${collapsed ? ' is-collapsed' : ''}`}
+              data-section={group.id}
+            >
               <button
                 type="button"
                 className="session-group__header"
                 onClick={(event) => toggleGroup(group.id, event.currentTarget.closest<HTMLElement>('.session-group'))}
                 aria-expanded={!collapsed}
-                title={`${group.detail}${collapsed ? '（已折叠，点击展开）' : ''}`}
+                title={`${title}${collapsed ? '（已折叠，点击展开）' : ''}`}
               >
                 <span className="session-group__tab">
                   <span>{group.label}</span>
                   <b>{group.sessions.length}</b>
                 </span>
+                {group.attention ? (
+                  // 折叠时仍然可见：组里有人已确认离线，用户需要决定交接还是移出——徽标带文字，不只靠颜色。
+                  <em className="session-group__attention" aria-label="有成员已确认离线：交接给其他席位，或移出组">成员离线</em>
+                ) : null}
                 <i className="session-group__rule" aria-hidden="true" />
                 <svg className="session-group__chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.4" /></svg>
               </button>
               <Collapsible open={!collapsed} keepMounted>
                 <div
                   className="session-group__list"
-                  aria-label={`${group.label}会话`}
+                  aria-label={isGroup ? `${group.label}组会话` : '独立会话'}
                   onDragOver={(event) => {
                     if (!markerActive) return
                     event.preventDefault()
                     event.dataTransfer.dropEffect = 'move'
                     const scroller = event.currentTarget.closest<HTMLElement>('.session-list') ?? event.currentTarget
                     scrollNearEdge(scroller, event.clientY)
-                    setInsertionIndex(boundaryAt(event.currentTarget, event.clientY))
+                    setInsertionIndex(clampToBand(boundaryAt(event.currentTarget, event.clientY)))
                   }}
                   onDragLeave={(event) => {
                     if (!markerActive) return
@@ -285,6 +327,8 @@ export function SessionSidebar({
                     const dropBefore = markerActive && insertionIndex === index
                     const dropAfter = markerActive && insertionIndex === group.sessions.length && index === group.sessions.length - 1
                     const selected = session.channelId === selectedChannelId
+                    // 只有同状态段里不止一行才有可重排的余地；独占一段的行拖起来也无处可落。
+                    const band = rankBandOf(group, session.id)
                     return (
                       <div
                         key={session.id}
@@ -299,7 +343,7 @@ export function SessionSidebar({
                           statusLine={snapshot.liveStatusLine?.[session.channelId]}
                           now={now}
                           tabIndex={selected || (!selectedVisible && session.id === firstVisibleId) ? 0 : -1}
-                          draggable={group.sessions.length > 1}
+                          draggable={Boolean(band && band.end - band.start > 1)}
                           onDragStart={(event) => {
                             event.dataTransfer.effectAllowed = 'move'
                             event.dataTransfer.setData('application/x-shiguang-session', 'reorder')
@@ -321,7 +365,7 @@ export function SessionSidebar({
             title={connecting ? '正在连接通道…' : '还没有会话'}
             hint={connecting
               ? '拾光正在等待 SG Team 通道就绪'
-              : '在「运行」页创建团队或独立批次后，每个席位会作为一行出现在这里'}
+              : '在「运行」页创建批次后，每个会话会作为一行出现在这里；运行中可随时把几个会话组成协作组'}
             action={!connecting && onOpenRun
               ? <button type="button" className="inspector-link" onClick={onOpenRun}>前往运行页</button>
               : undefined}
