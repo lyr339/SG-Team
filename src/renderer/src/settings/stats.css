@@ -477,7 +477,9 @@ html[data-card-transparency="clear"] .stats-card { background: color-mix(in srgb
 }
 
 /* ---------- 会话明细表 ---------- */
-.stats-card--table { overflow-x: auto; }
+/* 横向滚动只包表格：滚动条若挂在整卡上，卡片单列 grid 轨道会被表格的 min-content 撑宽，
+   表头右侧的会话数与底部翻页条会被一起推出可视区，得横向滚动才够得着。 */
+.stats-table__scroll { overflow-x: auto; }
 
 .stats-table {
   width: 100%;
@@ -495,9 +497,6 @@ html[data-card-transparency="clear"] .stats-card { background: color-mix(in srgb
   white-space: nowrap;
 }
 
-/* 数字列表头与单元格同为右对齐，同一根轴线。 */
-.stats-table th.is-num { text-align: right; }
-
 .stats-table td {
   padding: 8px 9px;
   border-bottom: 1px solid var(--line-faint);
@@ -505,8 +504,16 @@ html[data-card-transparency="clear"] .stats-card { background: color-mix(in srgb
 }
 
 .stats-table tbody tr { transition: background 120ms ease; }
-.stats-table tbody tr:hover { background: var(--color-background-secondary); }
+.stats-table tbody tr:hover:not(.stats-table__pad) { background: var(--color-background-secondary); }
 .stats-table tbody tr:last-child td { border-bottom: 0; }
+
+/* 换页时整块淡入，不做硬切（tbody 以页码为 key 重挂一次触发）。 */
+.stats-table tbody { animation: stats-page-in 160ms ease; }
+@keyframes stats-page-in { from { opacity: 0; } }
+
+/* 末页补位行：只占位不显形，让每页等高——否则翻到不足一页的末页，卡片会塌掉两百多像素。 */
+.stats-table__pad { visibility: hidden; }
+.stats-table__pad td { border-bottom-color: transparent; }
 
 .stats-table__sort {
   border: 0;
@@ -545,17 +552,19 @@ html[data-card-transparency="clear"] .stats-card { background: color-mix(in srgb
   color: var(--text-soft);
 }
 
+/* 全表左对齐：数字列与表头共用同一左缘。表头的排序箭头拖在标签之后，
+   右对齐时它会把表头文字顶离右缘、与单元格数字错开——左对齐后箭头不再参与对齐轴。 */
 .stats-table__num {
-  text-align: right;
+  text-align: left;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
 .stats-table__num.is-cost { font-weight: 650; }
 
-/* 成本列数据条：accent 淡洗背景从数字轴（右缘）生长，零行高增量；相对全量行最大成本。 */
+/* 成本列数据条：accent 淡洗背景从数字轴（左缘）生长，零行高增量；相对全量行最大成本。 */
 .stats-table td.is-cost {
-  background: linear-gradient(to left, var(--accent-wash) var(--cost-share, 0%), transparent var(--cost-share, 0%));
+  background: linear-gradient(to right, var(--accent-wash) var(--cost-share, 0%), transparent var(--cost-share, 0%));
 }
 
 .stats-table__quality {
@@ -574,12 +583,46 @@ html[data-card-transparency="clear"] .stats-card { background: color-mix(in srgb
 
 .stats-table__time { color: var(--faint); white-space: nowrap; }
 
-.stats-table__rest td {
-  text-align: center;
+/* 卡片内翻页条：页码在左、上一页 / 下一页在右，超过一页才渲染。
+   按钮外框沿用控制行分段器（.stats-range）的边框优先语言；箭头复用 ChevronDown 旋转。 */
+.stats-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 9px;
   color: var(--faint);
-  padding: 11px 9px;
+  font-size: var(--fs-10);
   font-variant-numeric: tabular-nums;
 }
+
+.stats-pager__nav {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+}
+
+.stats-pager__nav button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 24px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-soft);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.stats-pager__nav button:hover:not(:disabled) { background: var(--color-background-secondary); color: var(--text); }
+.stats-pager__nav button:disabled { color: var(--faint); opacity: 0.45; cursor: default; }
+
+.stats-pager__chevron { width: 12px; height: 12px; }
+.stats-pager__chevron.is-prev { transform: rotate(90deg); }
+.stats-pager__chevron.is-next { transform: rotate(-90deg); }
 
 /* ---------- 空态 ---------- */
 .stats-empty {
@@ -608,4 +651,6 @@ html[data-card-transparency="clear"] .stats-card { background: color-mix(in srgb
   .settings-stats *::before {
     transition: none !important;
   }
+
+  .stats-table tbody { animation: none; }
 }

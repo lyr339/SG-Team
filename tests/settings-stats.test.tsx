@@ -98,12 +98,12 @@ describe('统计页组件', () => {
     const segment = container.querySelector<HTMLButtonElement>('.stats-spectrum__segment')!
     await act(async () => { segment.click() })
     expect(container.querySelector('.stats-filter-chip')?.textContent).toContain('主控席')
-    const rows = [...container.querySelectorAll('.stats-table tbody tr:not(.stats-table__rest)')]
+    const rows = [...container.querySelectorAll('.stats-table tbody tr')]
     expect(rows).toHaveLength(1)
     expect(rows[0]!.textContent).toContain('主控席')
     await act(async () => { container.querySelector<HTMLButtonElement>('.stats-filter-chip')!.click() })
     expect(container.querySelector('.stats-filter-chip')).toBeNull()
-    expect(container.querySelectorAll('.stats-table tbody tr:not(.stats-table__rest)').length).toBeGreaterThan(1)
+    expect(container.querySelectorAll('.stats-table tbody tr').length).toBeGreaterThan(1)
   })
 
   it('明细默认按成本降序，点表头翻转方向并标注 aria-sort', async () => {
@@ -134,10 +134,14 @@ describe('统计页组件', () => {
     expect(tokensHeader.getAttribute('aria-sort')).toBe('descending')
   })
 
-  it('数字列表头右对齐（is-num），每席位构成给出命中率', async () => {
+  it('全表左对齐：表头不再带右对齐钩子；不足一页不出翻页条；每席位构成给出命中率', async () => {
     const { usage, seats } = fixture(Date.now())
     await render({ usageSnapshot: usage, statsSeats: seats, active: true })
-    expect(container.querySelectorAll('.stats-table th.is-num')).toHaveLength(3)
+    expect(container.querySelectorAll('.stats-table th.is-num')).toHaveLength(0)
+    expect(container.querySelectorAll('.stats-table__num').length).toBeGreaterThan(0)
+    expect(container.querySelector('.stats-pager')).toBeNull()
+    // 只有一页时不补位，否则三行数据会被撑成八行高。
+    expect(container.querySelector('.stats-table__pad')).toBeNull()
     const seatMixRows = container.querySelectorAll('.stats-seatmix li')
     expect(seatMixRows.length).toBeGreaterThan(0)
     expect([...seatMixRows].some((row) => row.textContent?.includes('命中'))).toBe(true)
@@ -222,6 +226,74 @@ describe('统计页组件', () => {
     const shares = cells.map((cell) => Number.parseFloat(cell.style.getPropertyValue('--cost-share')))
     expect(shares.every((share) => share >= 0 && share <= 100)).toBe(true)
     expect(Math.max(...shares)).toBeCloseTo(100, 0)
+  })
+
+  /** 超过一页的夹具：N 个席位各一回合、成本相同（排序按 composerId 决胜），全部落在今天。 */
+  function manySeats(now: number, count = 11): { usage: CursorUsageSnapshot; seats: StatsSeatSource[] } {
+    const composerIds = Array.from({ length: count }, (_, index) => `c-${String(index + 1).padStart(2, '0')}`)
+    return {
+      usage: Object.fromEntries(composerIds.map((id, index) => [
+        id,
+        projectUsage(id, { turns: { g0: turnAt(now - index * 60_000) } })
+      ])),
+      seats: composerIds.map((id, index) => ({
+        channelId: String(index + 1), roleName: `席位${index + 1}`, displayName: `席位${index + 1}`, online: true, composerId: id
+      }))
+    }
+  }
+  const pagerButton = (label: '上一页' | '下一页'): HTMLButtonElement => (
+    container.querySelector<HTMLButtonElement>(`.stats-pager button[aria-label="${label}"]`)!
+  )
+
+  it('明细超过 8 行在卡片内翻页：每页 8 行、页码、边界按钮禁用', async () => {
+    const { usage, seats } = manySeats(Date.now())
+    await render({ usageSnapshot: usage, statsSeats: seats, active: true })
+    expect(container.querySelector('.stats-card--table header span')?.textContent).toBe('11 个会话')
+    // 横向滚动只包表格：翻页条若落进滚动容器，会被表格的 min-content 宽度推出可视区。
+    expect(container.querySelector('.stats-table__scroll > .stats-table')).not.toBeNull()
+    expect(container.querySelector('.stats-table__scroll .stats-pager')).toBeNull()
+    expect(container.querySelectorAll('.stats-table tbody tr')).toHaveLength(8)
+    expect(container.querySelector('.stats-pager')?.textContent).toContain('第 1 / 2 页')
+    expect(pagerButton('上一页').disabled).toBe(true)
+    expect(pagerButton('下一页').disabled).toBe(false)
+    const firstPageTitles = [...container.querySelectorAll('.stats-table__seat-name strong')].map((node) => node.textContent)
+    await act(async () => { pagerButton('下一页').click() })
+    const secondPageTitles = [...container.querySelectorAll('.stats-table__seat-name strong')].map((node) => node.textContent)
+    expect(secondPageTitles).toHaveLength(3)
+    expect(secondPageTitles.some((title) => firstPageTitles.includes(title))).toBe(false)
+    // 末页补位：3 行真数据 + 5 行等高占位，每页高度恒定，翻页不会把卡片抽掉两百多像素。
+    expect(container.querySelectorAll('.stats-table tbody tr')).toHaveLength(8)
+    expect(container.querySelectorAll('.stats-table__pad[aria-hidden="true"]')).toHaveLength(5)
+    expect(container.querySelector('.stats-pager')?.textContent).toContain('第 2 / 2 页')
+    expect(pagerButton('下一页').disabled).toBe(true)
+    expect(pagerButton('上一页').disabled).toBe(false)
+    await act(async () => { pagerButton('上一页').click() })
+    expect(container.querySelectorAll('.stats-table tbody tr')).toHaveLength(8)
+  })
+
+  it('翻页后改排序 / 席位筛选回到第 1 页；快照缩水时页码夹紧到最后一页', async () => {
+    const now = Date.now()
+    const { usage, seats } = manySeats(now)
+    await render({ usageSnapshot: usage, statsSeats: seats, active: true })
+    await act(async () => { pagerButton('下一页').click() })
+    expect(container.querySelector('.stats-pager')?.textContent).toContain('第 2 / 2 页')
+    // 改排序：数据集变了，回到第一页。
+    const turnsHeader = [...container.querySelectorAll<HTMLButtonElement>('.stats-table th button')]
+      .find((button) => button.textContent?.startsWith('回合'))!
+    await act(async () => { turnsHeader.click() })
+    expect(container.querySelector('.stats-pager')?.textContent).toContain('第 1 / 2 页')
+    // 停在第 2 页时快照只剩 3 个会话：不经任何点击，页码直接夹到唯一的一页，翻页条消失。
+    await act(async () => { pagerButton('下一页').click() })
+    const shrunk: CursorUsageSnapshot = Object.fromEntries(Object.entries(usage).slice(0, 3))
+    await render({ usageSnapshot: shrunk, statsSeats: seats, active: true })
+    expect(container.querySelectorAll('.stats-table tbody tr')).toHaveLength(3)
+    expect(container.querySelector('.stats-pager')).toBeNull()
+    // 席位筛选把行数压进一页：翻页条消失、只剩该席位一行。
+    await render({ usageSnapshot: usage, statsSeats: seats, active: true })
+    expect(container.querySelector('.stats-pager')).not.toBeNull()
+    await act(async () => { container.querySelector<HTMLButtonElement>('.stats-spectrum__segment')!.click() })
+    expect(container.querySelectorAll('.stats-table tbody tr')).toHaveLength(1)
+    expect(container.querySelector('.stats-pager')).toBeNull()
   })
 
   it('节奏柱悬浮卡的席位行超过 4 个时折叠为「另有 N 个席位」', async () => {
