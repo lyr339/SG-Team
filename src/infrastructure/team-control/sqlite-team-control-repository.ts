@@ -250,6 +250,21 @@ function tableHasColumn(database: DatabaseSync, table: string, column: string): 
     .some((row) => String(row.name) === column)
 }
 
+function tableExists(database: DatabaseSync, table: string): boolean {
+  return Boolean(database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table))
+}
+
+/**
+ * 阶段 2 · 2D 退役的团队连续性（自动检查点 / 一键恢复）表，按外键依赖自子向父排列：
+ * team_restore_members → team_restore_operations → team_checkpoints → team_continuity_meta。
+ */
+const RETIRED_CONTINUITY_TABLES = [
+  'team_restore_members',
+  'team_restore_operations',
+  'team_checkpoints',
+  'team_continuity_meta'
+] as const
+
 function normalizedNote(value: string): string {
   return value.replace(/\s+/g, ' ').trim().slice(0, 2_000)
 }
@@ -2005,5 +2020,11 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
       ON runtime_bindings(run_id, composer_id) WHERE composer_id IS NOT NULL;
       CREATE INDEX IF NOT EXISTS idx_agent_slots_group ON agent_slots(group_id) WHERE group_id IS NOT NULL;
     `)
+    // 团队连续性（自动检查点 / 一键恢复）随阶段 2 · 2D 退役：池模型下的恢复是席位重建 + 上下文交接 +
+    // 入组通知 + team_check_in 实时简报，检查点没有读者。旧构建建过的四张表按存在性删除（同样不升
+    // schema 版本；DROP 在另一进程刚删过时以 IF EXISTS 幂等），删表顺序按外键自子向父。
+    if (RETIRED_CONTINUITY_TABLES.some((table) => tableExists(this.database, table))) {
+      this.database.exec(RETIRED_CONTINUITY_TABLES.map((table) => `DROP TABLE IF EXISTS ${table};`).join('\n'))
+    }
   }
 }

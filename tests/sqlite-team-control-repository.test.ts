@@ -956,4 +956,50 @@ describe('SqliteTeamControlRepository 会话围栏令牌', () => {
       migrated.close()
     }
   })
+
+  it('drops the retired team-continuity tables left behind by older builds, idempotently (2D)', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'sg-team-control-continuity-drop-')), 'control.sqlite3')
+    const seeded = new SqliteTeamControlRepository(path)
+    const team = installed(seeded, 'cont', ['1'])
+    seeded.close()
+    // 模拟旧构建的 continuity 仓储建过的四张表（含指向 team_runs / agent_slots 的外键与已写入的行）。
+    const old = new DatabaseSync(path)
+    old.exec('PRAGMA foreign_keys = ON')
+    old.exec(`
+      CREATE TABLE team_continuity_meta (id INTEGER PRIMARY KEY CHECK (id = 1), schema_version INTEGER NOT NULL, revision INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+      CREATE TABLE team_checkpoints (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES team_workspaces(id) ON DELETE CASCADE, run_id TEXT NOT NULL REFERENCES team_runs(id) ON DELETE CASCADE, reason TEXT NOT NULL, digest TEXT NOT NULL, capsule_json TEXT NOT NULL, created_at INTEGER NOT NULL);
+      CREATE TABLE team_restore_operations (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, run_id TEXT NOT NULL REFERENCES team_runs(id) ON DELETE CASCADE, checkpoint_id TEXT NOT NULL REFERENCES team_checkpoints(id) ON DELETE RESTRICT, status TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+      CREATE TABLE team_restore_members (restore_id TEXT NOT NULL REFERENCES team_restore_operations(id) ON DELETE CASCADE, slot_id TEXT NOT NULL REFERENCES agent_slots(id) ON DELETE CASCADE, role_name TEXT NOT NULL, message_id TEXT, PRIMARY KEY (restore_id, slot_id));
+      INSERT INTO team_continuity_meta VALUES (1, 1, 3, 0);
+    `)
+    old.prepare('INSERT INTO team_checkpoints VALUES (?, ?, ?, ?, ?, ?, ?)').run('cp-1', team.workspace.id, team.run.id, 'automatic', 'a'.repeat(64), '{}', 1)
+    old.prepare('INSERT INTO team_restore_operations VALUES (?, ?, ?, ?, ?, ?, ?)').run('r-1', team.workspace.id, team.run.id, 'cp-1', 'waiting', 1, 1)
+    old.prepare('INSERT INTO team_restore_members VALUES (?, ?, ?, NULL)').run('r-1', team.slots[0]!.id, '主控协调')
+    old.close()
+
+    const tables = (): string[] => {
+      const db = new DatabaseSync(path)
+      try {
+        return (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'team_%' ORDER BY name").all() as Array<{ name: string }>)
+          .map((row) => row.name)
+      } finally {
+        db.close()
+      }
+    }
+    const migrated = new SqliteTeamControlRepository(path)
+    migrated.close()
+    const after = tables()
+    for (const table of ['team_continuity_meta', 'team_checkpoints', 'team_restore_operations', 'team_restore_members']) {
+      expect(after).not.toContain(table)
+    }
+    // 现役表与数据不受影响；再次打开是无操作。
+    const reopened = new SqliteTeamControlRepository(path)
+    try {
+      expect(reopened.loadTeamControl().runs.map((run) => run.id)).toContain(team.run.id)
+      expect(reopened.resolveChannelSessionOwner('1')).toMatchObject({ runId: team.run.id, bound: true })
+    } finally {
+      reopened.close()
+    }
+    expect(tables()).toEqual(after)
+  })
 })

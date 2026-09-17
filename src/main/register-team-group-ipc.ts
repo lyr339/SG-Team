@@ -1,4 +1,8 @@
 import { ipcMain, type BrowserWindow } from 'electron'
+import {
+  transferMembershipWithContext,
+  type MembershipTransferWithContextPorts
+} from '../application/membership-transfer-with-context'
 import type { TeamGroupService } from '../application/team-group-service'
 import type { PlanTaskInput } from '../domain/task-pool'
 import { TEAM_ROLE_TEMPLATES, type TeamGroupPlanPolicy } from '../domain/team-control'
@@ -96,13 +100,18 @@ export interface TeamGroupIpcOptions {
   isSessionLaunchRunning?: () => boolean
 }
 
+/** 成员身份迁移随迁上下文文档所需的两个端口：团队快照（定位原席位通道）与会话上下文交接。 */
+export type MembershipTransferContextPorts = Omit<MembershipTransferWithContextPorts, 'groups'>
+
 /**
- * 会话池 · 协作组的 IPC 面（任务书 §5.7 + 阶段 2 · 2A 的规划策略）：成员关系操作全部只做形状校验后交给
- * TeamGroupService；业务校验（池状态、席位归属、lead 规则）在仓储事务里，以异常传播给渲染层。
- * 快照推送仍走 team-control 的订阅通道（成员关系变化会推进 team-control revision）。
+ * 会话池 · 协作组的 IPC 面（任务书 §5.7 + 阶段 2 · 2A 的规划策略 + 2C 的成员身份迁移）：成员关系操作全部
+ * 只做形状校验后交给 TeamGroupService；业务校验（池状态、席位归属、lead 规则）在仓储事务里，以异常传播
+ * 给渲染层。快照推送仍走 team-control 的订阅通道（成员关系变化会推进 team-control revision）。
+ * 「同时交接上下文文档」在主进程内与迁移串成一次调用（transferMembershipWithContext）。
  */
 export function registerTeamGroupIpc(
   service: TeamGroupService,
+  transferContext: MembershipTransferContextPorts,
   getWindow: () => BrowserWindow | undefined,
   options: TeamGroupIpcOptions = {}
 ): () => void {
@@ -176,6 +185,26 @@ export function registerTeamGroupIpc(
     const raw = objectOf(value, '解散参数')
     return service.dissolveGroup({ groupId: requiredString(raw.groupId, '协作组 id', 240) })
   })
+  ipcMain.handle(IPC.teamGroupTransferOptions, (event, slotId: unknown) => {
+    assertTrustedSender(event, getWindow)
+    return service.membershipTransferOptions(requiredString(slotId, '席位 id', 240))
+  })
+  ipcMain.handle(IPC.teamGroupTransferMembership, (event, value: unknown) => {
+    assertTrustedSender(event, getWindow)
+    assertNoSessionLaunch()
+    const raw = objectOf(value, '迁移参数')
+    if (raw.includeContext !== undefined && typeof raw.includeContext !== 'boolean') throw new Error('迁移参数无效')
+    const outcome = transferMembershipWithContext(
+      { groups: service, ...transferContext },
+      {
+        groupId: requiredString(raw.groupId, '协作组 id', 240),
+        fromSlotId: requiredString(raw.fromSlotId, '原席位 id', 240),
+        toSlotId: requiredString(raw.toSlotId, '目标席位 id', 240),
+        includeContext: raw.includeContext === true
+      }
+    )
+    return { ...outcome, team: transferContext.team.getSnapshot() }
+  })
   // 规划任务不改成员关系，不受一键会话创建阻塞：任务只是入池，派单由编排器在成员就绪后进行。
   ipcMain.handle(IPC.teamGroupPlanTasks, (event, value: unknown) => {
     assertTrustedSender(event, getWindow)
@@ -193,6 +222,8 @@ export function registerTeamGroupIpc(
     ipcMain.removeHandler(IPC.teamGroupUpdateGoal)
     ipcMain.removeHandler(IPC.teamGroupSetPlanPolicy)
     ipcMain.removeHandler(IPC.teamGroupDissolve)
+    ipcMain.removeHandler(IPC.teamGroupTransferOptions)
+    ipcMain.removeHandler(IPC.teamGroupTransferMembership)
     ipcMain.removeHandler(IPC.teamGroupPlanTasks)
   }
 }

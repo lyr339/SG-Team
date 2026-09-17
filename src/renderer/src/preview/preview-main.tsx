@@ -18,7 +18,6 @@ import { App } from '../App'
 import { applyAppearancePreferences, readAppearancePreferences } from '../appearance-preferences'
 import {
   collaborationSnapshot,
-  continuitySnapshot,
   desktopSnapshot,
   memorySnapshot,
   taskPoolSnapshot,

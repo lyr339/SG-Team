@@ -3,7 +3,6 @@ import type { ConversationEntry, ProcessBlock } from '../domain/conversation-ent
 import type { PlanTaskInput, TaskPoolSnapshot, TeamTask } from '../domain/task-pool'
 import type { TeamControlSnapshot, TeamGroupPlanPolicy } from '../domain/team-control'
 import type { TeamCollaborationSnapshot } from '../domain/team-collaboration'
-import type { TeamContinuitySnapshot } from '../domain/team-continuity'
 import type { TeamMemorySnapshot } from '../domain/team-memory'
 import type { CursorAccountMetadata, CursorRuntimeAccountMatch } from '../domain/cursor-account'
 import type { CursorProUpgradeResult } from '../domain/cursor-checkout-profile'
@@ -448,12 +447,7 @@ export interface SgDesktopApi {
   /** 谁能 team_task plan：只对无 lead 的组产生实际效果（有 lead 时规划权始终归有效 lead）。 */
   setTeamGroupPlanPolicy(input: TeamGroupPlanPolicyInput): Promise<TeamControlSnapshot>
   dissolveTeamGroup(input: { groupId: string }): Promise<TeamControlSnapshot>
-  /**
-   * 用户为某个协作组规划任务（桌面侧唯一的任务写入口）：与 `team_task plan` 同一条聚合路径，
-   * 创建后由桌面编排器自动派单；返回新建的任务。
-   */
-  planTeamGroupTasks(input: TeamGroupPlanTasksInput): Promise<TeamTask[]>
-  getTeamCollaborationSnapshot(): Promise<TeamCollaborationSnapshot>
+  /** 成员身份迁移的候选：源席位须在 active 组内，候选 = 池内全部独立席位（在线 / 离线都可选）。 */
   getMembershipTransferOptions(slotId: string): Promise<MembershipTransferOptions>
   /**
    * 成员身份迁移（阶段 2 · 2C）：把协作组内席位的组身份（组角色 + lead）移交给池内另一个独立席位，
@@ -463,6 +457,12 @@ export interface SgDesktopApi {
   transferMembership(input: MembershipTransferInput): Promise<MembershipTransferOutcome & {
     team: TeamControlSnapshot
   }>
+  /**
+   * 用户为某个协作组规划任务（桌面侧唯一的任务写入口）：与 `team_task plan` 同一条聚合路径，
+   * 创建后由桌面编排器自动派单；返回新建的任务。
+   */
+  planTeamGroupTasks(input: TeamGroupPlanTasksInput): Promise<TeamTask[]>
+  getTeamCollaborationSnapshot(): Promise<TeamCollaborationSnapshot>
   onSnapshot(listener: (snapshot: DesktopSnapshot) => void): () => void
   /** 当前 TeamRun 的 Cursor 会话用量快照；结束冻结，下轮启动清零。 */
   getCursorUsageSnapshot(): Promise<CursorUsageSnapshot>
@@ -579,9 +579,9 @@ export const IPC = {
   teamGroupUpdateGoal: 'team-group:update-goal',
   teamGroupSetPlanPolicy: 'team-group:set-plan-policy',
   teamGroupDissolve: 'team-group:dissolve',
+  teamGroupTransferOptions: 'team-group:transfer-options',
+  teamGroupTransferMembership: 'team-group:transfer-membership',
   teamGroupPlanTasks: 'team-group:plan-tasks',
   teamCollaborationGet: 'team-collaboration:get',
-  teamCollaborationSnapshot: 'team-collaboration:snapshot',
-  teamContinuityHandoffOptions: 'team-continuity:handoff-options',
-  teamContinuityHandoff: 'team-continuity:handoff'
+  teamCollaborationSnapshot: 'team-collaboration:snapshot'
 } as const

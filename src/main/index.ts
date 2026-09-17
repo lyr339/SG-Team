@@ -19,14 +19,11 @@ import { TeamCollaborationService } from '../application/team-collaboration-serv
 import { TeamCollaborationSweeper } from '../application/team-collaboration-sweeper'
 import { TeamMemoryService } from '../application/team-memory-service'
 import { registerTeamCollaborationIpc } from './register-team-collaboration-ipc'
-import { SqliteTeamContinuityRepository } from '../infrastructure/team-continuity/sqlite-team-continuity-repository'
 import { SqliteChannelMessageRepository } from '../infrastructure/channel-messages/sqlite-channel-message-repository'
 import { ChannelMessageRelay } from '../application/channel-message-relay'
 import { reconcileGlobalChannelServers } from '../infrastructure/cursor/global-mcp-registrar'
 import { resolveTaskMcpServerPath } from './task-mcp-runtime'
-import { TeamContinuityService } from '../application/team-continuity-service'
 import { TeamFailoverService } from '../application/team-failover-service'
-import { registerTeamContinuityIpc } from './register-team-continuity-ipc'
 import { TeamGroupService } from '../application/team-group-service'
 import { registerTeamGroupIpc } from './register-team-group-ipc'
 import { TaskDispatcher } from '../application/task-dispatcher'
@@ -108,7 +105,6 @@ let disposeTaskPoolIpc: (() => void) | undefined
 let disposeMcpInstallerIpc: (() => void) | undefined
 let disposeTeamControlIpc: (() => void) | undefined
 let disposeTeamCollaborationIpc: (() => void) | undefined
-let disposeTeamContinuityIpc: (() => void) | undefined
 let disposeTeamGroupIpc: (() => void) | undefined
 let disposeRunContext: (() => void) | undefined
 let disposeCursorAccountIpc: (() => void) | undefined
@@ -144,8 +140,6 @@ let teamMemoryRepository: SqliteTeamMemoryRepository | undefined
 let teamCollaborationService: TeamCollaborationService | undefined
 let teamCollaborationSweeper: TeamCollaborationSweeper | undefined
 let teamMemoryService: TeamMemoryService | undefined
-let teamContinuityRepository: SqliteTeamContinuityRepository | undefined
-let teamContinuityService: TeamContinuityService | undefined
 let channelMessageRepository: SqliteChannelMessageRepository | undefined
 let channelMessageRelay: ChannelMessageRelay | undefined
 let localSessionBridge: LocalSessionBridge | undefined
@@ -321,7 +315,6 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   teamControlRepository = new SqliteTeamControlRepository(databasePath)
   teamCollaborationRepository = new SqliteTeamCollaborationRepository(databasePath)
   teamMemoryRepository = new SqliteTeamMemoryRepository(databasePath)
-  teamContinuityRepository = new SqliteTeamContinuityRepository(databasePath)
   channelMessageRepository = new SqliteChannelMessageRepository(databasePath)
   // 数据目录改名后，历史消息附件里的绝对路径跟着改写（幂等，无匹配即无操作）。
   const remappedAttachments = channelMessageRepository.remapAttachmentRoots(
@@ -602,16 +595,6 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   taskPoolService = new TaskPoolService(taskPoolRepository, teamControlService)
   taskPoolService.startSweeper()
   taskPoolService.startWatcher()
-  teamContinuityService = new TeamContinuityService(
-    teamContinuityRepository,
-    teamCollaborationRepository,
-    {
-      team: teamControlService,
-      tasks: taskPoolService,
-      collaboration: teamCollaborationService,
-      memory: teamMemoryService
-    }
-  )
   const orchestrationError = (error: unknown): void => {
     process.stderr.write(`[team-orchestrator] ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`)
   }
@@ -929,16 +912,11 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     teamCollaborationService,
     () => mainWindow
   )
-  disposeTeamContinuityIpc = registerTeamContinuityIpc(
-    // 成员身份迁移（阶段 2 · 2C）可附带上下文交接：上下文在迁移前解析、迁移后投递，
-    // 见 transferMembershipWithContext。
-    teamGroupService,
-    teamControlService,
-    () => mainWindow,
-    sessionHandoffService
-  )
   disposeTeamGroupIpc = registerTeamGroupIpc(
     teamGroupService,
+    // 成员身份迁移（阶段 2 · 2C）可附带上下文交接：上下文在迁移前解析、迁移后投递，
+    // 见 transferMembershipWithContext。
+    { team: teamControlService, handoff: sessionHandoffService },
     () => mainWindow,
     { isSessionLaunchRunning: () => agentSessionLauncher.getPlan()?.state === 'running' }
   )
@@ -959,7 +937,6 @@ app.on('before-quit', () => {
   teamFailoverService?.stop()
   teamOrchestrator?.stop()
   teamMessageDispatcher?.dispose()
-  teamContinuityService?.dispose()
   teamCollaborationService?.dispose()
   teamCollaborationSweeper?.stopSweeper()
   teamMemoryService?.dispose()
@@ -971,7 +948,6 @@ app.on('before-quit', () => {
   disposeMcpInstallerIpc?.()
   disposeTeamControlIpc?.()
   disposeTeamCollaborationIpc?.()
-  disposeTeamContinuityIpc?.()
   disposeTeamGroupIpc?.()
   disposeRunContext?.()
   disposeCursorAccountIpc?.()
@@ -995,7 +971,6 @@ app.on('before-quit', () => {
   channelMessageRepository?.close()
   teamCollaborationRepository?.close()
   teamMemoryRepository?.close()
-  teamContinuityRepository?.close()
   taskPoolRepository?.close()
 })
 

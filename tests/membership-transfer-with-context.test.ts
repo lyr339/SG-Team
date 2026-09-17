@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { transferMembershipWithContext, type MembershipTransferWithContextPorts } from '../src/application/manual-handoff-with-context'
+import { transferMembershipWithContext, type MembershipTransferWithContextPorts } from '../src/application/membership-transfer-with-context'
 import type { SessionHandoffContext, SessionHandoffResult } from '../src/domain/session-handoff'
 import { emptyTeamControlSnapshot, type TeamControlSnapshot, type TeamMemberView } from '../src/domain/team-control'
 import type { MembershipTransferResult } from '../src/domain/team-handoff'
