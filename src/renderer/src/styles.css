@@ -707,14 +707,17 @@ body.is-resizing-columns .resizable-columns { transition: none; }
 .session-group__tab {
   position: relative; flex: 0 0 auto; height: 22px; display: inline-flex; align-items: center; gap: 6px;
   padding: 0 15px 0 11px;
-  background: var(--surface-soft);
+  /* 旗身要比组条的实底深一档才读得出「一枚标签」：曾用 surface-soft，与白底只差 3%，几乎看不见
+    （2026-09-18 用户反馈）。往 secondary 底色里掺 12% 的 tertiary 文字色——浅色下约 #e2e6eb，
+     深色下约 #212731，两端都比实底明确一级，仍是无色相的灰。 */
+  background: color-mix(in srgb, var(--color-text-tertiary) 12%, var(--color-background-secondary));
   /* 右端 45° 收尖成书签；clip-path 会裁掉边框，所以旗身是平色，状态脊用 ::before 画在旗内。 */
   clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 50%, calc(100% - 8px) 100%, 0 100%);
   font-size: var(--fs-11); font-weight: 650; line-height: 22px; letter-spacing: .02em; white-space: nowrap;
   transition: background 120ms ease;
 }
 .session-group__tab::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--rail-state); }
-.session-group__header:hover .session-group__tab { background: color-mix(in srgb, var(--surface-soft) 70%, var(--color-border-tertiary)); }
+.session-group__header:hover .session-group__tab { background: color-mix(in srgb, var(--color-text-tertiary) 20%, var(--color-background-secondary)); }
 .session-group__tab > b { color: var(--muted); font: 650 var(--fs-10)/1 var(--font-numeric); font-variant-numeric: lining-nums tabular-nums; }
 .session-group__rule { flex: 1 1 auto; height: 1px; background: var(--color-border-tertiary); }
 /* chevron 骑在尾线末端：绝对定位不占 flex 空间，尾线一直画到右缘；浮现时用实底垫住身下那一小段线。
