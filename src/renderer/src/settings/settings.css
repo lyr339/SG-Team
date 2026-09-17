@@ -258,7 +258,8 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
 .settings-status-strip .lobby-account__current { min-width: 0; }
 
 /* 账号卡片网格：auto-fill + minmax(250px, 1fr)——目标每行 3 张（设置页内容区 800px → 3×260px）。
-   min 250 保证四按钮操作行（处理/无感切换/切换并重启/删除 ≈ 241px）不挤；
+   min 250 容得下操作行的三个常驻按钮 + 「⋯」（≈ 202px）；次要动作进了溢出菜单后，
+   按钮数不再随账号状态变化，这个下限不会再被新增按钮悄悄撑破；
    1fr 让列均分容器：会话栏拉宽把内容区压到 ~611px 时降为 2 列 300px，而不是 1 列留白。
    单卡 460px 封顶：单列超宽容器（如窄断点单列）时卡片不拉满——卡片过宽会让卡内右侧留下大白块。 */
 .settings-account-list {
@@ -386,7 +387,9 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
 
 .settings-account-list .account-card__meta .account-membership-inline { margin-right: 0; }
 
-/* 操作行：贴卡片底部，按钮右对齐可换行。 */
+/* 操作行：贴卡片底部。行内只放无感切换 / 切换并重启 / 删除三个，次要动作在「⋯」里，
+   按钮数不再随账号状态浮动——否则有的卡换行、有的不换，等高卡片会把不换行那张的
+   按钮压到卡底，两张卡的按钮一上一下。wrap 仅作极窄宽度下的兜底。 */
 .settings-account-list .account-card__actions {
   margin-top: auto;
   min-height: 32px;
@@ -396,6 +399,58 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
   flex-wrap: wrap;
   row-gap: 3px;
 }
+
+/* 「⋯」触发器：贴操作行左端，与右侧的切换 / 删除拉开距离。 */
+.account-actions-menu__trigger {
+  margin-right: auto;
+  width: 28px;
+  min-height: 25px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  font-size: var(--fs-10);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.account-actions-menu__trigger:hover:not(:disabled),
+.account-actions-menu__trigger.is-open { color: var(--text); background: var(--accent-wash); }
+/* 有动作在跑：触发器改显进度文案，按文字宽度撑开。 */
+.account-actions-menu__trigger.is-busy { width: auto; padding: 0 7px; color: var(--accent); opacity: 0.85; }
+.account-actions-menu__glyph { width: 15px; height: 15px; }
+
+.account-actions-menu {
+  z-index: 240;
+  min-width: 132px;
+  display: grid;
+  padding: 5px;
+  background: var(--surface-solid);
+  border: var(--border-width-regular) solid var(--color-border-secondary);
+  border-radius: 10px;
+  box-shadow: var(--shadow-3);
+}
+
+.account-actions-menu button {
+  width: 100%;
+  min-height: 30px;
+  padding: 6px 9px;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  font-size: var(--fs-10);
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.account-actions-menu button:hover:not(:disabled),
+.account-actions-menu button:focus-visible:not(:disabled) { color: var(--accent-deep); background: var(--accent-wash); outline: none; }
+.account-actions-menu button:disabled { color: var(--faint); cursor: default; }
 
 /* 窗口绑定控件：读作行内元信息的紧凑 chip；已绑定态略强，未绑定（默认窗口）保持克制。
    min-width 96px 保证「默认窗口 ▾」全显——flex 行内先压缩到此宽度再换行，不出现「默认窗…」截断。 */

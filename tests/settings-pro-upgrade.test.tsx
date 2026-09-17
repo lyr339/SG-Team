@@ -66,9 +66,13 @@ describe('升级 Pro：账号卡片按钮 + 自动化页账单资料表单', () 
     await act(async () => root.render(<SettingsAutomation {...props} />))
   }
 
-  const upgradeButton = (): HTMLButtonElement | null =>
-    [...container.querySelectorAll<HTMLButtonElement>('.account-card__actions button')]
-      .find((button) => button.textContent?.includes('升级 Pro') || button.textContent?.includes('结账中')) ?? null
+  // 「升级 Pro」是次要动作，收在账号卡操作行的「⋯」里（弹层 portal 到 document.body）。
+  const menuTrigger = (): HTMLButtonElement | null =>
+    container.querySelector<HTMLButtonElement>('.account-actions-menu__trigger')
+  const openMenu = async (): Promise<void> => { await act(async () => menuTrigger()!.click()) }
+  const menuItem = (text: string): HTMLButtonElement | undefined =>
+    [...document.body.querySelectorAll<HTMLButtonElement>('.account-actions-menu button')]
+      .find((button) => button.textContent?.includes(text))
 
   const checkoutInput = (label: string): HTMLInputElement => {
     const span = [...container.querySelectorAll<HTMLSpanElement>('.settings-checkout-form label > span')]
@@ -85,29 +89,33 @@ describe('升级 Pro：账号卡片按钮 + 自动化页账单资料表单', () 
     })
   }
 
-  it('账号卡片：点击「升级 Pro」按账号粒度置忙并把账号 id 交给回调', async () => {
+  it('账号卡片：「⋯」里点「升级 Pro」按账号粒度置忙并把账号 id 交给回调', async () => {
     let release!: () => void
     const onStartProUpgrade = vi.fn(() => new Promise<void>((resolve) => { release = resolve }))
     await renderAccounts(accountsPropsFor({ onStartProUpgrade }))
 
-    const button = upgradeButton()!
-    expect(button).not.toBeNull()
-    expect(button.disabled).toBe(false)
-    await act(async () => button.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true })))
+    await openMenu()
+    const item = menuItem('升级 Pro')!
+    expect(item).not.toBeUndefined()
+    expect(item.disabled).toBe(false)
+    await act(async () => item.click())
 
     expect(onStartProUpgrade).toHaveBeenCalledTimes(1)
     expect(onStartProUpgrade).toHaveBeenCalledWith('acc-1')
-    expect(upgradeButton()!.textContent).toBe('结账中…')
-    expect(upgradeButton()!.disabled).toBe(true)
+    // 菜单收起，进度文案提到触发器上——不点开也看得见在跑。
+    expect(document.body.querySelector('.account-actions-menu')).toBeNull()
+    expect(menuTrigger()!.textContent).toBe('结账中…')
+    expect(menuTrigger()!.disabled).toBe(true)
 
     await act(async () => release())
-    expect(upgradeButton()!.textContent).toBe('升级 Pro')
-    expect(upgradeButton()!.disabled).toBe(false)
+    expect(menuTrigger()!.disabled).toBe(false)
+    await openMenu()
+    expect(menuItem('升级 Pro')!.disabled).toBe(false)
   })
 
-  it('账号卡片：未提供回调时不渲染按钮；结果反馈亮在账号区', async () => {
+  it('账号卡片：未提供回调时连「⋯」都不渲染；结果反馈亮在账号区', async () => {
     await renderAccounts(accountsPropsFor())
-    expect(upgradeButton()).toBeNull()
+    expect(menuTrigger()).toBeNull()
 
     await renderAccounts(accountsPropsFor({
       onStartProUpgrade: async () => {},

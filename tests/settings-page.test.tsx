@@ -400,9 +400,10 @@ describe('SettingsPage', () => {
       })} />
     )
 
-    // 账号库存：选择 / 切换并重启 / 处理 / 删除
+    // 账号库存：切换并重启 / 删除 常驻行内；处理等次要动作收在「⋯」弹层里（静态标记下未展开，
+    // 其行为见 account-actions-menu.test.tsx），这里只确认入口还在。
     expect(html).toContain('work@example.com')
-    expect(html).toContain('>处理</button>')
+    expect(html).toContain('account-actions-menu__trigger')
     expect(html).toContain('>切换并重启</button>')
     expect(html).toContain('>删除</button>')
     // 获取路径并列（external 来源下从浏览器导入为工作流主路径）

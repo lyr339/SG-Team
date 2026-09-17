@@ -68,6 +68,10 @@ export function ChevronDownIcon(props: IconProps): React.JSX.Element {
   return <Icon {...props}><path d="m6.5 9 5.5 5.5L17.5 9" {...stroke} /></Icon>
 }
 
+export function MoreIcon(props: IconProps): React.JSX.Element {
+  return <Icon {...props}><circle cx="5.5" cy="12" r="1.5" fill="currentColor" /><circle cx="12" cy="12" r="1.5" fill="currentColor" /><circle cx="18.5" cy="12" r="1.5" fill="currentColor" /></Icon>
+}
+
 export function SettingsIcon(props: IconProps): React.JSX.Element {
   return <Icon {...props}><circle cx="12" cy="12" r="3.1" {...stroke} /><path d="M12 3.5v2M12 18.5v2M3.5 12h2M18.5 12h2M6 6l1.45 1.45M16.55 16.55 18 18M18 6l-1.45 1.45M7.45 16.55 6 18" {...stroke} /></Icon>
 }
