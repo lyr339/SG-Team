@@ -116,12 +116,14 @@ Presence phases seen by the desktop: `waiting` / `keepalive` / `processing` / `n
 ## Workflow contract
 
 ```text
-team_tasks(view) -> team_task(claim) -> team_task(start) -> team_task(renew | progress)* -> team_task(submit)
-                                                                                        \-> team_task(fail) -> queued or failed
-team_tasks(view: 'reviews') -> team_review(claim) -> team_review(renew)* -> team_review(submit: accept | reject)
+team_tasks(view) -> team_task(claim) -> team_task(start) -> team_task(progress)* -> team_task(submit)
+                                                                                \-> team_task(fail) -> queued or failed
+team_tasks(view: 'reviews') -> team_review(claim) -> team_review(submit: accept | reject)
 ```
 
 Claim, start and submit are retry-safe. The lease token remains inside SQLite and the process-bound service. A process with a different generation cannot operate the attempt.
+
+**Leases renew themselves** (phase 2 · 2F, decision D3=a). A lease is reclaimed only when it has run out *and* its holder's channel is offline by the presence rule (`isPresenceOnline`: MCP heartbeats and CDP runtime evidence, whichever is newer, with the 5-minute processing grace). While the holder is online the server extends the lease, so a long build or a long turn — which by protocol touches no MCP tool — no longer loses the task. `renew` on `team_task` / `team_review` is kept as a compatible no-op that returns the current expiry (`ttlSeconds` is ignored) and is removed from the tool surface in phase 4; agents should not call it.
 
 Run the stdio smoke with:
 
