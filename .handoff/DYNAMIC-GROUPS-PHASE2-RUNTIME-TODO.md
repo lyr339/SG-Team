@@ -1,6 +1,6 @@
 # 交接任务书：会话池 + 动态分组 · 阶段 2 运行时语义收口
 
-> **状态（2026-09-17）：阶段 2 全部落地——2A、2B（2B-1 + 2B-2）、2C、2D（continuity 按池模型整体退役，见 §5.1）、2E（账本随 Composer 与绑定走，统计页三层求和，见 §6.1）、2F（租约按 presence 自动续，见 §7.3）（分支 `feat/dynamic-groups-phase2`，worktree `E:\SG-phase2`；09-17 19:00 推送到 GitHub，随后按用户决定把 main `72396ae`（32 个提交）合回本分支——见 §8 末行与 ARCHITECTURE「Session pool phase 2 rebased on reality」）。** 路线图见 `DYNAMIC-GROUPS-ROADMAP.md`；真机验收按用户要求在此之后一次进行。
+> **状态（2026-09-17）：阶段 2 全部落地——2A、2B（2B-1 + 2B-2）、2C、2D（continuity 按池模型整体退役，见 §5.1）、2E（账本随 Composer 与绑定走，统计页三层求和，见 §6.1）、2F（租约按 presence 自动续，见 §7.3）（分支 `feat/dynamic-groups-phase2`，worktree `E:\SG-phase2`；09-17 19:00 推送到 GitHub，随后按用户决定把 main `72396ae`（32 个提交）合回本分支——见 §8 末行与 ARCHITECTURE「Session pool phase 2 rebased on reality」；09-18 用户为打新版决定提前合回 main：`ae3d74f`）。** 路线图见 `DYNAMIC-GROUPS-ROADMAP.md`；真机验收按用户要求在此之后一次进行。
 > 每完成一步在第 8 节追加一行；中断后接手者只读第 0、8、9 节即可定位。真机验收按用户要求合并到全部阶段完成后一次进行。
 >
 > 项目：拾光 / SG Team（`shiguang-team`） · 工作区：仓库根目录（macOS / Windows 均可）
