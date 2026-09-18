@@ -334,7 +334,7 @@ describe('SessionWorkspace', () => {
         { path: 'src/domain/team-control.ts', dir: 'src/domain/', stem: 'team-control', ext: '.ts', icon: 'typescript' as const, ambiguous: false, additions: 18, deletions: 20, status: 'modified' as const, source: 'git' as const },
         { path: 'src/mcp/index.ts', dir: 'src/mcp/', stem: 'index', ext: '.ts', icon: 'typescript' as const, ambiguous: false, additions: 22, deletions: 37, status: 'modified' as const, source: 'git' as const }
       ],
-      additions: 40, deletions: 57, working: true, estimated: false, scope: 'turn' as const
+      additions: 40, deletions: 57, working: true, estimated: false, totalsSource: 'sum' as const, scope: 'turn' as const
     }
     const html = renderWorkspace({
       session: { status: 'running', waiting: false, connectionPhase: 'processing', deliveryMode: 'queued', queueDepth: 1 },

@@ -669,7 +669,8 @@ body.is-resizing-columns .resizable-columns { transition: none; }
   /* 名册是阅读面：与右栏正文同一条不透明度下限，透明卡片模式下行文字仍可读。 */
   --rail-reading-opacity: max(0.92, var(--card-opacity));
   min-width: 0; min-height: 0;
-  display: grid; grid-template-rows: auto minmax(0, 1fr);
+  /* 第三行是多选浮动条：没有选中时不渲染，轨道收为 0；有选中时名册收缩让位，从不遮挡最后一行。 */
+  display: grid; grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: hidden;
   color: var(--text);
   background: var(--surface);
@@ -722,6 +723,10 @@ body.is-resizing-columns .resizable-columns { transition: none; }
 }
 .session-group__header:hover { color: var(--text); }
 .session-group__header:focus-visible { outline: 2px solid var(--color-ring-primary); outline-offset: -2px; border-radius: 6px; }
+/* 跨分区拖放的目标高亮：1px 品牌描边 + 淡底，不用阴影；此刻的判定已知会被拒（lead / 组间直拖）时红调预警，
+   落下时浮动条里写明原因。 */
+.session-group__header.is-drop-target { outline: 1px solid var(--accent); outline-offset: -1px; border-radius: 6px; background: var(--accent-wash); }
+.session-group__header.is-drop-rejected { outline: 1px solid var(--red-border-soft); outline-offset: -1px; border-radius: 6px; background: var(--red-soft); }
 .session-group__tab {
   position: relative; flex: 0 0 auto; height: 22px; display: inline-flex; align-items: center; gap: 6px;
   padding: 0 15px 0 11px;
@@ -749,8 +754,9 @@ body.is-resizing-columns .resizable-columns { transition: none; }
 .session-group.is-collapsed .session-group__chevron { transform: rotate(-90deg); }
 .session-group__list { min-width: 0; display: grid; }
 
-/* 拖拽重排：源行半透明；插入线覆盖在 N + 1 个边界上，压在行间 hairline 上，不参与布局。 */
-.session-list__slot { position: relative; min-width: 0; display: grid; }
+/* 拖拽重排：源行半透明；插入线覆盖在 N + 1 个边界上，压在行间 hairline 上，不参与布局。
+   z-index 0 建立槽位自己的堆叠上下文：槽内的浮层（复选框圆盘、插入线）不越过吸顶组头（z 1）。 */
+.session-list__slot { position: relative; z-index: 0; min-width: 0; display: grid; }
 .session-list__slot + .session-list__slot { border-top: 1px solid var(--color-border-tertiary); }
 .session-list__slot.is-dragging { opacity: .4; }
 .session-list__slot.is-dragging .session-row { cursor: grabbing; }
@@ -758,8 +764,9 @@ body.is-resizing-columns .resizable-columns { transition: none; }
 /* ---------- 行悬停操作层（置顶 / 清除） ----------
    行本身是 <button>，操作钮作为槽位里的兄弟节点绝对定位在右上角：不嵌套按钮、
    不改变行布局（零位移）。悬停或行获得键盘焦点时浮现（visibility 切换保证隐藏时
-   不占 Tab 序）；拖拽重排期间整层撤下，不挡放置目标。实底小板 + 细边让它浮在
-   状态词之上仍可辨认。 */
+   不占 Tab 序）；拖拽重排期间整层撤下，不挡放置目标；多选进行中也整层撤下——
+   批量动作归底部浮动条，单行快捷钮只会制造误点。与多选圆盘（头像位、左侧）分踞
+   行的两端，悬停可同现不相扰。实底小板 + 细边让它浮在状态词之上仍可辨认。 */
 .session-row-actions {
   position: absolute; top: 5px; right: 6px; z-index: 3;
   display: inline-flex; gap: 2px; padding: 2px;
@@ -774,7 +781,8 @@ body.is-resizing-columns .resizable-columns { transition: none; }
 .session-list__slot:focus-within .session-row-actions {
   visibility: visible; opacity: 1; transform: none; transition-delay: 0s;
 }
-.session-list.is-reordering .session-row-actions { display: none; }
+.session-list.is-reordering .session-row-actions,
+.session-list.is-picking .session-row-actions { display: none; }
 .session-row-actions__button {
   width: 26px; height: 26px; display: grid; place-items: center;
   padding: 0; color: var(--text-soft); background: transparent;
@@ -795,6 +803,8 @@ body.is-resizing-columns .resizable-columns { transition: none; }
   transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
 }
 .session-list__restore:hover { color: var(--accent-deep); border-color: var(--accent-border); background: var(--accent-wash); }
+/* 拖拽重排时它对指针透明：拖到名册末尾的落点判定穿过它落在列表上，不留死区（视觉原样，不跳版）。 */
+.session-list.is-reordering .session-list__restore { pointer-events: none; }
 
 @media (prefers-reduced-motion: reduce) {
   .session-row-actions { transition: none; }
@@ -933,6 +943,74 @@ body.is-resizing-columns .resizable-columns { transition: none; }
   .session-row__model { display: none; }
 }
 
+/* ---------- 多选（建组 / 改组的暂态）----------
+   复选框是一枚盖在头像位上的实底圆盘（Gmail 语言：悬停 / 聚焦 / 选择中浮现，选中行常显），
+   不改变行布局；选中行的底色用与建组抽屉成员条同一档 accent-wash 平涂——与「当前打开」的
+   光刃 + 渐变分属两件事，可以同时出现。橙色仍只表「你在这」：这里的橙只出现在复选框对钩上。 */
+.session-row__pick {
+  /* 比头像大一圈（44 vs 42）：把上下文光环一起盖住，否则圆盘边缘会露出一段弧线。
+     垂直位对齐头像中心：行高 = 8 + 内容行 + 10（gap）+ 22（状态行）+ 8，头像在内容行内居中
+     → 头像中心 = 50% − 16px，圆盘（44px）上缘 = 50% − 38px。行高随文本行数变，这个式子不变。 */
+  position: absolute; z-index: 2; left: 11px; top: calc(50% - 38px);
+  width: 44px; height: 44px;
+  display: grid; place-items: center;
+  background: var(--surface-solid);
+  border: 1px solid var(--color-border-tertiary);
+  border-radius: 50%;
+  opacity: 0; pointer-events: none;
+  transition: opacity 120ms ease;
+  cursor: pointer;
+}
+.session-list__slot:hover .session-row__pick,
+.session-list__slot:focus-within .session-row__pick,
+.session-list.is-picking .session-row__pick,
+.session-list__slot.is-picked .session-row__pick { opacity: 1; pointer-events: auto; }
+.session-row__pick input { width: 15px; height: 15px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.session-list__slot.is-picked { background: var(--accent-wash); }
+/* 窄名册悬停目标小、复选框难发现：常显（与模型名收缩同一档宽度）。 */
+@container session-pane (max-width: 300px) {
+  .session-row__pick { opacity: 1; pointer-events: auto; }
+}
+
+/* 浮动条：120ms 上滑进场；一行动作 + 至多一行说明；确认面替换动作行时复用 .run-sheet（run.css 全局），
+   窄栏里收成单列。 */
+.session-pane__bar {
+  display: grid; gap: 8px;
+  padding: 10px 12px;
+  background: var(--surface-solid);
+  border-top: 1px solid var(--color-border-tertiary);
+  animation: session-bar-in 120ms ease;
+}
+@keyframes session-bar-in { from { opacity: 0; transform: translateY(8px); } }
+.session-pane__bar-row { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.session-pane__bar-count { flex: 0 0 auto; color: var(--text-soft); font-size: var(--fs-11); }
+.session-pane__bar-count > b { color: var(--text); font: 650 var(--fs-12)/1 var(--font-numeric); }
+.session-pane__bar .session-pane__bar-button { min-height: 28px; padding: 0 10px; font-size: var(--fs-12); }
+/* 下拉不占整行（menu-select 基础样式是块级 100%）：与按钮同排，窄栏换行后与「取消」共享一行。 */
+.session-pane__bar .menu-select { width: auto; flex: 1 1 96px; min-width: 96px; max-width: 180px; }
+.session-pane__bar .menu-select__button { min-height: 28px; font-size: var(--fs-12); }
+.session-pane__bar-cancel {
+  flex: 0 0 auto; margin-left: auto; padding: 4px 6px;
+  color: var(--text-soft); background: transparent; border: 0; border-radius: var(--r-sm);
+  font-size: var(--fs-12);
+  transition: color 120ms ease, background 120ms ease;
+}
+.session-pane__bar-cancel:hover { color: var(--text); background: var(--surface-soft); }
+.session-pane__bar-hint { display: flex; align-items: baseline; gap: 8px; margin: 0; font-size: var(--fs-11); line-height: 1.5; }
+.session-pane__bar-hint > span { min-width: 0; flex: 1 1 auto; }
+.session-pane__bar-hint.is-danger { color: var(--color-text-danger); }
+.session-pane__bar-hint.is-warning { color: var(--color-text-warning); }
+.session-pane__bar-hint.is-muted { color: var(--text-soft); }
+.session-pane__bar-dismiss {
+  flex: 0 0 auto; padding: 2px 6px;
+  color: var(--text-soft); background: transparent; border: 0; border-radius: var(--r-sm);
+  font-size: var(--fs-11);
+  transition: color 120ms ease, background 120ms ease;
+}
+.session-pane__bar-dismiss:hover { color: var(--text); background: var(--surface-soft); }
+.session-pane__bar .run-sheet { grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 10px 12px; border-radius: 10px; box-shadow: none; }
+.session-pane__bar .run-sheet__actions { justify-content: flex-end; }
+
 /* 透明卡片：只有小节头随卡片透明并模糊；名册正文保持阅读面下限。 */
 html[data-card-transparency="clear"] .session-pane { background: color-mix(in srgb, var(--surface-solid) 74%, transparent); }
 html[data-card-transparency="clear"] .session-pane > .inspector-section__header { backdrop-filter: blur(16px) saturate(1.05); }
@@ -941,6 +1019,8 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 @media (prefers-reduced-motion: reduce) {
   .session-row.is-active .session-row__state > i { animation: none; }
   .session-row, .session-row::before, .session-row__ring-arc, .session-group__header, .session-group__tab, .session-group__chevron, .session-row.is-offline .agent-avatar img { transition: none; }
+  .session-pane__bar { animation: none; }
+  .session-row__pick { transition: none; }
 }
 /* 会话页头用量度量组（Orbit 静默度量）：排版即界面——小号大写标签压
    齐宽数字，hairline 竖分隔，无底色无描边；冷中性承载内容。 */
@@ -1076,6 +1156,12 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 .workspace-identity > div { display: flex; align-items: center; gap: 10px; }
 .workspace-identity h1 { margin: 0; overflow: hidden; color: var(--text); font-size: var(--fs-17); text-overflow: ellipsis; white-space: nowrap; }
 .workspace-identity p { margin: 6px 0 0; overflow: hidden; color: var(--muted); font: 500 var(--fs-10)/1 var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+/* 入组席位的组名 chip：与状态 pill 同一几何（5px 竖内边距、10px 字号、胶囊），强调色表「归属」；
+   可点时跳到运行页对应卡片，hover 只加深底与描边，不换形。 */
+.workspace-group-chip { flex: none; max-width: 200px; overflow: hidden; padding: 5px 9px; color: var(--accent-deep); background: var(--accent-wash); border: var(--border-width-regular) solid var(--accent-border-soft); border-radius: var(--border-radius-full); font: 600 var(--fs-10)/1 var(--font-sans); text-overflow: ellipsis; white-space: nowrap; transition: background 120ms ease, border-color 120ms ease; }
+button.workspace-group-chip { cursor: pointer; }
+button.workspace-group-chip:hover { background: color-mix(in srgb, var(--anthropic-orange) 14%, var(--color-background-primary)); border-color: var(--accent-border); }
+button.workspace-group-chip:focus-visible { outline: 2px solid var(--accent-border-strong); outline-offset: 2px; }
 .workspace-header__usage { min-width: 0; display: flex; justify-content: flex-end; align-items: center; }
 
 .workspace-warning { display: grid; gap: 4px; margin: 12px 20px 0; padding: 11px 14px; color: var(--red); background: var(--red-soft); border: var(--border-width-regular) solid var(--red-border); border-radius: var(--r-md); }

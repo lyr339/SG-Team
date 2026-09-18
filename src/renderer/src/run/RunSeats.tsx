@@ -7,7 +7,7 @@ import { cursorModelSelectionFromOption, cursorModelSelectionSummary } from '../
 import { formatRelativeTime } from '../format'
 import { CursorModelConfigDialog } from '../lobby/CursorModelConfigDialog'
 import { ToggleSwitch } from '../lobby/ToggleSwitch'
-import { SEAT_STATE_LABEL, type RunSeatState } from './run-view'
+import { SEAT_STATE_LABEL, type PoolSeatState } from './pool-view'
 
 /** 统一配置落地后行内光晕的时长：最后一行的延迟 + 动画本身（见 run.css 的 run-seat-sync）。 */
 const SYNC_PULSE_MS = 1_600
@@ -18,7 +18,7 @@ export interface RunSeatRow {
   /** 团队席位显示角色；独立席位不显示。 */
   roleName?: string
   /** 配置中的新席位没有运行态。 */
-  state?: RunSeatState
+  state?: PoolSeatState
   lastSeenAt?: number
   /** 本次创建的目标（未待命 / 待创建）。 */
   pending: boolean

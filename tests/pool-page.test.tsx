@@ -6,14 +6,14 @@ import type { AgentLaunchRequest } from '../src/domain/agent-launch'
 import type { CursorModelSelection } from '../src/domain/cursor-model'
 import { emptyTeamControlSnapshot, type TeamControlSnapshot } from '../src/domain/team-control'
 import type { CreateIndependentSessionsInput } from '../src/shared/desktop-api'
-import { RunPage, type RunPageProps } from '../src/renderer/src/run/RunPage'
+import { PoolPage, type PoolPageProps } from '../src/renderer/src/run/PoolPage'
 import { desktopSnapshot } from '../src/renderer/src/preview/mock-data'
 import { independentTeam, teamRun } from './run-fixtures'
 
 const donePlan = { id: 'plan:test', state: 'done' as const, items: [], startedAt: Date.now(), finishedAt: Date.now() + 1 }
 const detected = { id: 'wedge-demo', name: 'wedge-demo', path: '/Users/demo/projects/wedge-demo' }
 
-describe('RunPage（一个工程一个会话池；阶段 2 · 2B 起没有团队模式）', () => {
+describe('PoolPage（一个工程一个会话池；阶段 2 · 2B 起没有团队模式）', () => {
   let container: HTMLDivElement
   let root: Root
 
@@ -39,7 +39,7 @@ describe('RunPage（一个工程一个会话池；阶段 2 · 2B 起没有团队
   const status = (): HTMLElement | null => container.querySelector('.run-slot.is-open .run-feedback')
   const click = async (button: HTMLButtonElement): Promise<void> => { await act(async () => button.click()) }
 
-  const render = async (team: TeamControlSnapshot, overrides: Partial<RunPageProps> = {}) => {
+  const render = async (team: TeamControlSnapshot, overrides: Partial<PoolPageProps> = {}) => {
     const handlers = {
       onLaunchAgentSessions: vi.fn(async (_requests: AgentLaunchRequest[]) => donePlan),
       onCreateIndependentSessions: vi.fn(async (_input: CreateIndependentSessionsInput) => donePlan),
@@ -49,7 +49,7 @@ describe('RunPage（一个工程一个会话池；阶段 2 · 2B 起没有团队
       onPersistModelSelection: vi.fn(async (_channelId: string, _selection: CursorModelSelection) => team)
     }
     await act(async () => root.render(
-      <RunPage
+      <PoolPage
         team={team}
         detectedWorkspace={detected}
         cursorModels={desktopSnapshot.cursorModels ?? []}
@@ -64,7 +64,7 @@ describe('RunPage（一个工程一个会话池；阶段 2 · 2B 起没有团队
   describe('头部与席位', () => {
     it('renders the pool with per-seat state labels and a batch summary; there is no mode switch', async () => {
       await render(independentTeam(['waiting', 'working', 'offline', 'unconfirmed']))
-      expect(container.querySelector('.run-header__eyebrow')?.textContent).toBe('独立批次')
+      expect(container.querySelector('.run-header__eyebrow')?.textContent).toBe('会话池')
       expect(container.querySelector('.run-mode-switch')).toBeNull()
       expect(container.querySelector('.run-state-chip')?.textContent).toBe('待命 1 · 执行中 1')
       const badges = [...container.querySelectorAll('.run-seat__badge')].map((node) => node.className.replace('run-seat__badge ', ''))
@@ -74,7 +74,7 @@ describe('RunPage（一个工程一个会话池；阶段 2 · 2B 起没有团队
       // 有席位尚无运行证据：先确认再开放重建。
       expect(buttonNamed('补齐会话（2）').disabled).toBe(true)
       expect(container.textContent).toContain('正在确认离线会话的运行状态')
-      expect(buttonNamed('结束批次').disabled).toBe(false)
+      expect(buttonNamed('结束全部会话').disabled).toBe(false)
     })
 
     it('shows every seat on duty when all are waiting', async () => {
@@ -85,33 +85,33 @@ describe('RunPage（一个工程一个会话池；阶段 2 · 2B 起没有团队
     })
   })
 
-  describe('结束批次（软守卫）', () => {
+  describe('结束全部会话（软守卫）', () => {
     it('同一拍重复结束只发一次 IPC，失败后释放互斥并允许重试', async () => {
       let reject!: (reason: Error) => void
       const onEndActiveRun = vi.fn(() => new Promise<void>((_, fail) => { reject = fail }))
       await render(independentTeam(['offline']), { onEndActiveRun })
-      const end = buttonNamed('结束批次')
+      const end = buttonNamed('结束全部会话')
       await act(async () => { end.click(); end.click() })
       expect(onEndActiveRun).toHaveBeenCalledTimes(1)
       expect(buttonNamed('结束中…').disabled).toBe(true)
       await act(async () => { reject(new Error('临时失败')) })
-      expect(buttonNamed('结束批次').disabled).toBe(false)
-      await click(buttonNamed('结束批次'))
+      expect(buttonNamed('结束全部会话').disabled).toBe(false)
+      await click(buttonNamed('结束全部会话'))
       expect(onEndActiveRun).toHaveBeenCalledTimes(2)
       await act(async () => { reject(new Error('临时失败')) })
     })
 
     it('批量创建在途时阻止结束与新建，不依赖本页 busy 状态', async () => {
       const handlers = await render(independentTeam(['offline']), { agentLaunchPlan: { ...donePlan, state: 'running' } })
-      expect(buttonNamed('结束批次').disabled).toBe(true)
+      expect(buttonNamed('结束全部会话').disabled).toBe(true)
       expect(buttonNamed('结束并新建批次').disabled).toBe(true)
-      await click(buttonNamed('结束批次'))
+      await click(buttonNamed('结束全部会话'))
       expect(handlers.onEndActiveRun).not.toHaveBeenCalled()
     })
 
     it('confirms before ending a batch with live sessions, then reports the fence consequence', async () => {
       const { onEndActiveRun } = await render(independentTeam(['waiting', 'waiting']))
-      await click(buttonNamed('结束批次'))
+      await click(buttonNamed('结束全部会话'))
       expect(onEndActiveRun).not.toHaveBeenCalled()
       expect(sheet()?.textContent).toContain('结束当前独立批次')
       expect(sheet()?.textContent).toContain('2 个会话仍在线或待确认')
@@ -125,7 +125,7 @@ describe('RunPage（一个工程一个会话池；阶段 2 · 2B 起没有团队
     it('ends an all-offline batch immediately and surfaces failures inline', async () => {
       const onEndActiveRun = vi.fn(async () => { throw new Error('运行状态已变化，请刷新后重试') })
       await render(independentTeam(['offline', 'offline']), { onEndActiveRun })
-      await click(buttonNamed('结束批次'))
+      await click(buttonNamed('结束全部会话'))
       expect(sheet()).toBeNull()
       expect(onEndActiveRun).toHaveBeenCalledTimes(1)
       expect(status()?.className).toContain('is-error')
@@ -134,7 +134,7 @@ describe('RunPage（一个工程一个会话池；阶段 2 · 2B 起没有团队
 
     it('disables ending an already ended run', async () => {
       await render(independentTeam(['waiting'], 'completed'))
-      expect(buttonNamed('结束批次').disabled).toBe(true)
+      expect(buttonNamed('结束全部会话').disabled).toBe(true)
       expect(container.querySelector('.run-state-chip')?.textContent).toBe('批次已结束')
       expect(container.textContent).toContain('本批次已结束，可以直接开始新批次')
     })

@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DesktopSnapshot } from '../src/shared/desktop-api'
-import { SessionSidebar } from '../src/renderer/src/SessionSidebar'
+import { dragEvent } from './drag-event'
+import { SessionSidebar, type RailSelectionActions } from '../src/renderer/src/SessionSidebar'
+import type { RailGroupSource } from '../src/renderer/src/session-rail-view'
 import {
   partitionClearedSessions,
   persistClearedSessions,
@@ -12,7 +14,8 @@ import {
 
 /**
  * 名册行悬停操作层（置顶 / 清除）：置顶复用同状态段重排机制并持久化；
- * 清除是微信式「不显示」（只对离线行，数据不动，复活自愈，可一键恢复）。
+ * 清除是微信式「不显示」（只对「独立」段的离线行，数据不动，复活 / 入组自愈，可一键恢复）；
+ * 拖拽或多选进行中整层撤下（批量动作归浮动条）。
  */
 
 const ORDER_KEY = 'shiguang.sessionOrder.v1'
@@ -44,7 +47,7 @@ function snapshotWith(states: SeatShape[]): DesktopSnapshot {
 describe('session-rail-hidden 纯函数', () => {
   beforeEach(() => localStorage.clear())
 
-  it('只有仍离线的清除项隐藏；回到线上的行可见且从名单收敛掉', () => {
+  it('只有仍满足判定的清除项隐藏；不再满足的行可见且从名单收敛掉', () => {
     const sessions = [
       { id: 'dead', online: false },
       { id: 'alive', online: true },
@@ -52,7 +55,7 @@ describe('session-rail-hidden 纯函数', () => {
     ]
     const { visible, hidden, prunedIds } = partitionClearedSessions(sessions, ['dead', 'alive', 'gone'], {
       idOf: (session) => session.id,
-      isOffline: (session) => !session.online
+      isClearable: (session) => !session.online
     })
     expect(visible.map((session) => session.id)).toEqual(['alive', 'other'])
     expect(hidden.map((session) => session.id)).toEqual(['dead'])
@@ -86,10 +89,20 @@ describe('SessionSidebar 悬停操作层', () => {
     localStorage.clear()
   })
 
-  const render = (snapshot: DesktopSnapshot, selectedChannelId?: string): void => {
+  const render = (
+    snapshot: DesktopSnapshot,
+    selectedChannelId?: string,
+    options?: { groups?: RailGroupSource[]; actions?: RailSelectionActions }
+  ): void => {
     act(() => {
       root.render(
-        <SessionSidebar snapshot={snapshot} selectedChannelId={selectedChannelId} onSelectSession={() => {}} />
+        <SessionSidebar
+          snapshot={snapshot}
+          selectedChannelId={selectedChannelId}
+          onSelectSession={() => {}}
+          groups={options?.groups}
+          selectionActions={options?.actions}
+        />
       )
     })
   }
@@ -161,5 +174,50 @@ describe('SessionSidebar 悬停操作层', () => {
     expect(rowNames()).toEqual(['CH-1'])
     expect(container.querySelector('.session-list__restore')).toBeNull()
     expect(readClearedSessions()).toEqual([])
+  })
+
+  it('组内离线成员没有清除钮（去留归组：交接 / 移出），独立离线行照常可清', () => {
+    const offline = { online: false, waiting: false, status: 'stopped', connectionPhase: 'closed' }
+    render(
+      snapshotWith([{ id: 'member', ...offline }, { id: 'loner', ...offline }]),
+      undefined,
+      { groups: [{ id: 'g1', name: '验收', channelIds: ['1'], attention: true }] }
+    )
+    expect(container.querySelector('[aria-label="清除 CH-1"]')).toBeNull()
+    expect(container.querySelector('[aria-label="清除 CH-2"]')).not.toBeNull()
+  })
+
+  it('已清除的独立席位入组即自愈可见，名单同步收敛', () => {
+    persistClearedSessions(['dead'])
+    render(
+      snapshotWith([{ id: 'dead', online: false, waiting: false, status: 'stopped', connectionPhase: 'closed' }]),
+      undefined,
+      { groups: [{ id: 'g1', name: '验收', channelIds: ['1'], attention: true }] }
+    )
+    expect(rowNames()).toEqual(['CH-1'])
+    expect(container.querySelector('.session-list__restore')).toBeNull()
+    expect(readClearedSessions()).toEqual([])
+  })
+
+  it('拖拽或多选进行中，悬停层整层撤下（名册挂 is-reordering / is-picking，CSS 按类隐藏）', () => {
+    const actions: RailSelectionActions = {
+      createGroup: vi.fn(),
+      addToGroup: vi.fn(),
+      removeFromGroups: vi.fn().mockResolvedValue(undefined)
+    }
+    render(snapshotWith([{ id: 'a' }, { id: 'b' }]), undefined, { actions })
+    const nav = container.querySelector('.session-list')!
+    const row = container.querySelector<HTMLButtonElement>('.session-row[data-channel-id="1"]')!
+
+    // 拖起一行：撤层；松手恢复。
+    act(() => { row.dispatchEvent(dragEvent('dragstart')) })
+    expect(nav.classList.contains('is-reordering')).toBe(true)
+    act(() => { row.dispatchEvent(dragEvent('dragend')) })
+    expect(nav.classList.contains('is-reordering')).toBe(false)
+
+    // 勾选进入多选：同样撤层（批量动作归浮动条）。
+    const pick = container.querySelector<HTMLInputElement>('.session-row__pick input')!
+    act(() => pick.click())
+    expect(nav.classList.contains('is-picking')).toBe(true)
   })
 })

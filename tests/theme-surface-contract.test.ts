@@ -129,9 +129,11 @@ describe('theme surface contracts', () => {
   it('keeps custom controls and run-page primary actions on the new signal-orange system', () => {
     expect(controls).toMatch(/input\[type="checkbox"\][^{]*:checked\s*\{[^}]*background-color:\s*var\(--accent\)/)
     expect(controls).toMatch(/select:not\(\[multiple\]\):focus\s*\{[^}]*var\(--accent-border-strong\)/)
-    // 运行页只用共享的 .primary-button（信号橙）；破坏性确认走红色，且不是主按钮样式。
+    // 运行页只用共享的 .primary-button（信号橙）。确认面的按钮不是主按钮样式：可收回的动作（移出成员）
+    // 用主操作色，做了回不来的（解散 / 结束 / 新建批次）由 is-danger 切成红色——红只表破坏性，不作装饰。
     expect(styles).toMatch(/\.primary-button\s*\{[^}]*background:\s*var\(--accent\)/)
-    expect(run).toMatch(/\.run-sheet__confirm\s*\{[^}]*background:\s*var\(--red\)/)
+    expect(run).toMatch(/\.run-sheet__confirm\s*\{[^}]*background:\s*var\(--accent\)/)
+    expect(run).toMatch(/\.run-sheet__confirm\.is-danger\s*\{[^}]*background:\s*var\(--red\)/)
     expect(run).toMatch(/\.run-header__ghost\.is-danger\s*\{[^}]*color:\s*var\(--red\)/)
     expect(run).not.toContain('.lobby-command__primary')
   })

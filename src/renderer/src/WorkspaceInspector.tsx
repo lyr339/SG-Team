@@ -13,7 +13,9 @@ import { currentCursorTodos, PlanPanel } from './inspector/PlanPanel'
 import { ReviewPanel } from './inspector/ReviewPanel'
 import { subscribeReviewFocus } from './inspector/review-focus-bus'
 import { turnMutatedPaths } from './inspector/review-scope'
+import { turnReviewEditsByPath } from './inspector/turn-review-view'
 import { todoTone } from './TodoIndicator'
+import type { TurnFilesView } from './turn-files-view'
 
 export type { CursorTodoItem } from './inspector/PlanPanel'
 
@@ -25,6 +27,11 @@ interface WorkspaceInspectorProps {
   workspaceName?: string
   /** 工作区绝对路径：用于把过程块里的绝对路径归一为仓库相对路径。 */
   workspacePath?: string
+  /**
+   * 本轮文件栏的视图（App 已算好的 `buildTurnFilesView`）：变更面板的「本轮」范围直接
+   * 复用它做文件列表与计数，栏、名册与右栏三处永远一致；这里只补每个文件的逐次编辑差异。
+   */
+  turnFiles?: TurnFilesView
   /** 把引用文本追加到该会话的输入框（「反馈给 Agent」）。 */
   onQuoteToComposer?: (text: string) => void
   /** 右栏已收起但仍挂载：面板保留状态，暂停轮询等后台工作，重新展开时补拉一次。 */
@@ -47,6 +54,7 @@ export function WorkspaceInspector({
   workspaceId,
   workspaceName,
   workspacePath,
+  turnFiles,
   onQuoteToComposer,
   hidden = false,
   onReviewSummary,
@@ -59,6 +67,12 @@ export function WorkspaceInspector({
   const activity = useMemo(() => projectActivity(entries, liveProcess, workspacePath), [entries, liveProcess, workspacePath])
   const artifacts = useMemo(() => projectArtifacts(entries, reviewSummary, workspacePath), [entries, reviewSummary, workspacePath])
   const turnPaths = useMemo(() => turnMutatedPaths(entries, liveProcess, workspacePath), [entries, liveProcess, workspacePath])
+  // 「本轮」的逐次编辑差异：范围（本轮 / 保住的上一轮）跟着文件栏视图走，两处永远说同一批文件。
+  const turnScope = turnFiles?.scope ?? 'turn'
+  const turnEdits = useMemo(
+    () => turnReviewEditsByPath(turnScope, entries, liveProcess, workspacePath),
+    [entries, liveProcess, turnScope, workspacePath]
+  )
   const onSummary = useCallback((summary: WorkspaceReviewSummary | undefined) => {
     setReviewSummary(summary)
     onReviewSummary?.(summary)
@@ -73,7 +87,7 @@ export function WorkspaceInspector({
   const runningTodos = todos.items.some((todo) => todoTone(todo.status) === 'in_progress')
   const activityItems = activity.totals.files + activity.totals.commands + activity.totals.sources + activity.totals.tools
   const tabs: InspectorTabSpec[] = [
-    { id: 'review', label: '变更', icon: <DiffIcon />, badge: reviewSummary?.state === 'ready' ? reviewSummary.files.length : undefined, title: '工作区 Git 变更审查' },
+    { id: 'review', label: '变更', icon: <DiffIcon />, badge: reviewSummary?.state === 'ready' ? reviewSummary.files.length : turnFiles?.files.length || undefined, title: '审查改动：本轮看 Agent 编辑流，未提交 / 分支看 Git' },
     { id: 'plan', label: '计划', icon: <PlanIcon />, badge: todos.items.length || undefined, live: runningTodos, title: 'Cursor 原生任务清单' },
     { id: 'activity', label: '活动', icon: <ActivityIcon />, badge: activityItems || undefined, live: liveActivity, title: '本会话的文件、命令、来源与工具调用' },
     { id: 'artifacts', label: '产物', icon: <ArtifactIcon />, badge: artifacts.images.length + artifacts.files.length || undefined, title: '截图、图片与新增文件' }
@@ -82,7 +96,7 @@ export function WorkspaceInspector({
   return (
     <InspectorShell tabs={tabs} activeTab={activeTab} onTabChange={setActiveTab} onClose={onClose}>
       <InspectorPanel tab="review">
-        <ReviewPanel workspaceKey={workspaceKey} turnPaths={turnPaths} paused={reviewPaused} onQuote={onQuoteToComposer} onSummary={onSummary} />
+        <ReviewPanel workspaceKey={workspaceKey} turnPaths={turnPaths} turnFiles={turnFiles} turnEdits={turnEdits} paused={reviewPaused} onQuote={onQuoteToComposer} onSummary={onSummary} />
       </InspectorPanel>
       <InspectorPanel tab="plan">
         <PlanPanel todos={todos} onOpenTab={setActiveTab} />

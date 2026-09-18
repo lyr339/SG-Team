@@ -29,6 +29,9 @@ interface SessionWorkspaceProps {
   onHandoff?: () => void
   /** 交接按钮说明（不可用时解释原因）。 */
   handoffTitle?: string
+  /** 席位所在协作组（入组席位才有）：头部组名 chip，点击跳到运行页对应卡片。 */
+  group?: { id: string; name: string }
+  onOpenGroup?: (groupId: string) => void
   /** 撤回仍在队列中的用户消息（成功返回 true）。 */
   onWithdrawQueued?: (entryId: string) => Promise<boolean>
   /** 解除「等待新会话」保持位。 */
@@ -154,6 +157,8 @@ export function SessionWorkspace({
   onBack,
   onHandoff,
   handoffTitle,
+  group,
+  onOpenGroup,
   onWithdrawQueued,
   onReleaseQueued,
   draft,
@@ -738,6 +743,20 @@ export function SessionWorkspace({
         <div className="workspace-identity">
           <div>
             <h1>{session.displayName}</h1>
+            {group ? (
+              onOpenGroup ? (
+                <button
+                  type="button"
+                  className="workspace-group-chip"
+                  title={`协作组「${group.name}」：查看运行页的组卡片`}
+                  onClick={() => onOpenGroup(group.id)}
+                >
+                  {group.name}
+                </button>
+              ) : (
+                <span className="workspace-group-chip is-static">{group.name}</span>
+              )
+            ) : null}
             <span className={`status-pill status-pill--${session.status}`}>{statusLabel(session.status)}</span>
           </div>
           <p>{workspaceSubtitle(session)}</p>

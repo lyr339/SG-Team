@@ -350,6 +350,34 @@
 .review-line.is-meta { color: var(--muted); font-style: italic; }
 .review-diff__truncated { min-width: max-content; padding: 8px 12px; color: var(--color-text-warning); background: var(--color-background-warning); font-size: var(--fs-11); }
 
+/* ——「本轮」＝ Agent 编辑流（与文件栏 / 名册同一份视图；Git 只做增强）—— */
+/* 头部合计的 ≈：与文件栏同一语言——数字是逐次累计的估算。 */
+.inspector-review__totals > small { color: var(--muted); font: 600 var(--fs-10)/1 var(--font-numeric); }
+/* 保住上一轮时的注记：信息性提示，不用警示色。 */
+.inspector-review__turnnote {
+  flex: 0 0 auto; margin: 0; padding: 7px 14px;
+  color: var(--muted); background: var(--surface-soft); border-bottom: 1px solid var(--color-border-tertiary);
+  font-size: var(--fs-11); line-height: 1.4;
+}
+/* Git 尚未看到的文件：状态槽放文件类型图标（图标自带识别色），底色中性。 */
+.review-file__head > i.is-type { color: var(--muted); background: var(--surface-soft); }
+.review-file__head > i.is-type .file-type-icon { width: 13px; height: 13px; }
+/* 逐次编辑卡：一次编辑一段，卡头说动作与行数提示，正文是与 Git 同一套的差异行。 */
+.review-edit { min-width: max-content; }
+.review-edit__head {
+  position: sticky; left: 0; min-width: 100%; width: max-content;
+  display: flex; align-items: center; gap: 8px; padding: 4px 10px;
+  color: var(--muted); background: var(--surface-soft); border-block: 1px solid var(--color-border-tertiary);
+  font: 500 var(--fs-10)/1.5 var(--font-sans);
+}
+.review-edit__head > b { color: var(--text-soft); font-weight: 650; font-family: var(--font-numeric); }
+.review-edit__head > code { padding: 0 5px; background: color-mix(in srgb, var(--canvas-solid) 72%, transparent); border-radius: 4px; font: 550 var(--fs-10)/1.5 var(--font-numeric); }
+.review-edit__head > em { font-style: normal; font-weight: 600; }
+.review-edit__head > em.is-running { color: var(--color-text-info); }
+.review-edit__head > em.is-failed { color: var(--color-text-danger); }
+.review-edit.is-failed .review-edit__head { color: var(--color-text-danger); background: var(--color-background-danger); }
+.review-diff__footnote { min-width: max-content; margin: 0; padding: 6px 12px; color: var(--faint); font-size: var(--fs-10); line-height: 1.5; }
+
 /* ---------- Plan（Cursor Todos） ----------
    与时间线任务清单同一套图元（.todo-indicator / .todo-progress / .todo-spinner，styles.css）：
    分段进度条是清单的缩略图；「当前项」只在行内标注一次（spinner + 左缘 2px），不再整行铺语义色；

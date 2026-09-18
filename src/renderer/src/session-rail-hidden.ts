@@ -1,10 +1,11 @@
 /**
  * 名册「清除」偏好（localStorage 持久化，对齐 session-order 的防御级别）。
  *
- * 语义是微信会话列表式的「不显示」，不是删除：只对已离线的行生效，会话数据、
- * 通道历史与席位本身都不动——把席位真正移出会话池牵涉任务回队、租约释放与
- * 通道围栏，归会话池页面（阶段 3/4）管。被清除的席位重新上线即自动回到名册
- *（同一行自愈），席位换代重建（新 session id）也自然重新出现。
+ * 语义是微信会话列表式的「不显示」，不是删除：会话数据、通道历史与席位本身都不动——
+ * 把席位真正移出会话池牵涉任务回队、租约释放与通道围栏，归会话池页面（阶段 3/4）管。
+ * 「哪些行可清除 / 可保持隐藏」由调用方注入同一个判定（侧栏：已离线且未入组）；
+ * 一旦不再满足（重新上线、入组），该行立即自愈回名册，席位换代重建（新 session id）
+ * 也自然重新出现。
  */
 
 const STORAGE_KEY = 'shiguang.sessionRail.cleared.v1'
@@ -36,23 +37,23 @@ export function persistClearedSessions(ids: readonly string[], storage?: Pick<St
 export interface ClearedPartition<T> {
   /** 名册可见的行。 */
   visible: T[]
-  /** 被清除而隐藏的行（仍离线）。 */
+  /** 被清除而隐藏的行（仍满足可清除判定）。 */
   hidden: T[]
   /**
-   * 清除名单的收敛结果：去掉已回到线上（自愈显示）与已离开名册（席位换代/出池）
+   * 清除名单的收敛结果：去掉已不满足判定（自愈显示）与已离开名册（席位换代/出池）
    * 的 id。与传入名单不同才需要回写。
    */
   prunedIds: string[]
 }
 
 /**
- * 划分可见与隐藏：只有「仍在名册且仍离线」的清除项隐藏；回到线上的行立刻可见。
+ * 划分可见与隐藏：只有「仍在名册且仍满足 isClearable」的清除项隐藏；不再满足的行立刻可见。
  * 纯函数，方便单测与侧栏自愈回写共用一套规则。
  */
 export function partitionClearedSessions<T>(
   sessions: readonly T[],
   clearedIds: readonly string[],
-  facts: { idOf: (session: T) => string; isOffline: (session: T) => boolean }
+  facts: { idOf: (session: T) => string; isClearable: (session: T) => boolean }
 ): ClearedPartition<T> {
   const cleared = new Set(clearedIds)
   const visible: T[] = []
@@ -60,7 +61,7 @@ export function partitionClearedSessions<T>(
   const prunedIds: string[] = []
   for (const session of sessions) {
     const id = facts.idOf(session)
-    if (cleared.has(id) && facts.isOffline(session)) {
+    if (cleared.has(id) && facts.isClearable(session)) {
       hidden.push(session)
       prunedIds.push(id)
     } else {

@@ -1,8 +1,9 @@
+import type { ChangeSummary } from '../../domain/agent-session'
 import type { ConversationEntry, ProcessBlock } from '../../domain/conversation-entry'
 import type { WorkspaceReviewFileStatus, WorkspaceReviewSummary } from '../../domain/workspace-review'
 import type { LiveProcessState } from '../../shared/desktop-api'
 import { fileIconKind, type FileIconKind } from './file-type'
-import { fileTouchedBy, normalizeReviewPath, previousTurnMutationBlocks, processBlockPath, turnMutationBlocks } from './inspector/review-scope'
+import { fileTouchedBy, normalizeReviewPath, preTurnMutationsExist, previousTurnMutationBlocks, processBlockPath, turnMutationBlocks } from './inspector/review-scope'
 
 /**
  * 输入区上方「本轮文件栏」的视图模型（Cursor 原生输入框上方的 “N Files” 栏）。
@@ -45,13 +46,18 @@ export interface TurnFilesView {
   deletions: number
   /** Agent 仍在处理本轮消息（取走了消息还没 record_reply）：列表可能继续变化。 */
   working: boolean
-  /** 任一文件的数字来自过程块估算。 */
+  /** 合计是估算（估算行求和，且没有可用的 Cursor 累计兜底）。逐文件是否估算看 `file.source`。 */
   estimated: boolean
+  /**
+   * 合计的来源：sum = 逐文件相加（git 精确值与过程估算的混合）；composer = Cursor 持久化的
+   * Composer 累计净值（与名册行同一个数）。见 `TurnFilesInput.sessionChanges`。
+   */
+  totalsSource: 'sum' | 'composer'
   /** turn = 本轮的文件；previous = 新回合尚无编辑，保住的是上一轮的文件（见文件头注释）。 */
   scope: 'turn' | 'previous'
 }
 
-const EMPTY_VIEW: TurnFilesView = { files: [], additions: 0, deletions: 0, working: false, estimated: false, scope: 'turn' }
+const EMPTY_VIEW: TurnFilesView = { files: [], additions: 0, deletions: 0, working: false, estimated: false, totalsSource: 'sum', scope: 'turn' }
 
 /**
  * 增删行数的文字形态（悬停 / 读屏用；与栏上的显示同一规则）：只说非零的一侧——
@@ -61,6 +67,17 @@ export function describeLineCounts(additions: number, deletions: number, binary 
   if (binary) return '二进制'
   const parts = [additions > 0 ? `+${additions}` : '', deletions > 0 ? `−${deletions}` : ''].filter(Boolean)
   return parts.length ? parts.join(' ') : '无行数变化'
+}
+
+/**
+ * 合计的悬停说明。文件栏与右栏「本轮」头部共用（两处显示同一个数，也说同一句话）。
+ */
+export function turnTotalsTitle(view: TurnFilesView): string {
+  if (view.totalsSource === 'composer') {
+    return '合计取 Cursor 统计的本会话累计净增删（与左侧名册行同一个数）；逐文件是过程估算，同一文件多次编辑会重复计入，相加可能大于合计'
+  }
+  if (view.estimated) return '含按编辑逐次累计的估算值'
+  return `${view.scope === 'previous' ? '上一轮' : '本轮'}文件的增删行数合计（工作树相对 HEAD）`
 }
 
 /** 路径拆成目录 / 主干 / 扩展名（与右栏 `splitPath` 同规则：点开头的隐藏文件与无扩展名整体视为主干）。 */
@@ -105,6 +122,13 @@ export interface TurnFilesInput {
   summary?: WorkspaceReviewSummary
   workspacePath?: string
   working: boolean
+  /**
+   * 名册行同款：Cursor 持久化的 Composer 累计净增删（`totalLinesAdded/Removed`）。
+   * 逐笔 hint 求和会把同一文件的反复编辑重复计入（估算必然偏大，甚至出现「本轮 > 会话累计」的倒挂），
+   * 而当本轮就是会话迄今唯一的改动区间时，两个口径衡量的是同一件事——此时合计直接用 Cursor 的净值，
+   * 名册行与本栏显示同一个数。更早回合有过改动（含旧 Composer 的历史）时区间不同，不能互换，保持估算。
+   */
+  sessionChanges?: ChangeSummary
 }
 
 /** 一组改动块 → 首次出现顺序的路径表 + 每个路径的过程块累计增删。 */
@@ -168,12 +192,23 @@ export function buildTurnFilesView(input: TurnFilesInput): TurnFilesView {
     const estimate = processCounts.get(path) ?? { additions: 0, deletions: 0 }
     return { ...identity, additions: estimate.additions, deletions: estimate.deletions, source: 'process' }
   })
+  const estimated = files.some((file) => file.source === 'process')
+  // 合计与名册同源的条件：逐文件含估算、这是本轮（不是保住的上一轮）、更早回合没有改动块、
+  // Cursor 的累计已经跟上（回合刚开始它可能尚未写盘——非零之前先用估算顶住，避免「有文件合计却是 0」）。
+  const composerTotals = estimated
+    && scope === 'turn'
+    && input.sessionChanges
+    && (input.sessionChanges.additions > 0 || input.sessionChanges.deletions > 0)
+    && !preTurnMutationsExist(input.entries)
+    ? input.sessionChanges
+    : undefined
   return {
     files,
-    additions: files.reduce((total, file) => total + file.additions, 0),
-    deletions: files.reduce((total, file) => total + file.deletions, 0),
+    additions: composerTotals?.additions ?? files.reduce((total, file) => total + file.additions, 0),
+    deletions: composerTotals?.deletions ?? files.reduce((total, file) => total + file.deletions, 0),
     working: input.working,
-    estimated: files.some((file) => file.source === 'process'),
+    estimated: composerTotals ? false : estimated,
+    totalsSource: composerTotals ? 'composer' : 'sum',
     scope
   }
 }
@@ -186,6 +221,7 @@ export function sameTurnFilesView(left: TurnFilesView | undefined, right: TurnFi
   if (!left) return false
   if (left === right) return true
   if (left.working !== right.working || left.estimated !== right.estimated || left.scope !== right.scope) return false
+  if (left.totalsSource !== right.totalsSource) return false
   if (left.additions !== right.additions || left.deletions !== right.deletions) return false
   if (left.files.length !== right.files.length) return false
   for (let index = 0; index < left.files.length; index += 1) {

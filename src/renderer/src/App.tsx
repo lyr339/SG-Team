@@ -11,13 +11,15 @@ import { emptyTeamCollaborationSnapshot } from '../../domain/team-collaboration'
 import { DesktopShell, type AppModule } from './DesktopShell'
 import { SessionOverview } from './SessionOverview'
 import { SessionWorkspace } from './SessionWorkspace'
-import { SessionSidebar } from './SessionSidebar'
+import { SessionSidebar, type RailSelectionActions } from './SessionSidebar'
 import type { RailGroupSource } from './session-rail-view'
 import { WorkspaceInspector } from './WorkspaceInspector'
-import { RunPage } from './run/RunPage'
+import { PoolPage } from './run/PoolPage'
+import { GroupComposer, type GroupComposerMode } from './run/GroupComposer'
+import { nextGroupName, ungroupedSeatsOf } from './run/pool-view'
 import { SettingsPage } from './settings/SettingsPage'
 import type { SettingsPageProps } from './settings/settings-view'
-import { ManualHandoffDialog } from './team/ManualHandoffDialog'
+import { TransferMembershipDialog } from './team/TransferMembershipDialog'
 import { SessionHandoffDialog } from './SessionHandoffDialog'
 import { resolveHandoffEntry } from './handoff-entry'
 import type { MembershipTransferOptions, MembershipTransferOutcome } from '../../domain/team-handoff'
@@ -844,10 +846,66 @@ export function App(): React.JSX.Element {
     () => activeGroups.map((group) => ({ key: group.id, label: group.name, channelIds: group.channelIds })),
     [activeGroups]
   )
+  // ---------- 协作组抽屉（建组 / 加人）：名册多选与运行页共用同一个实例 ----------
+  const [groupComposer, setGroupComposer] = useState<GroupComposerMode>()
+  const [groupComposerBusy, setGroupComposerBusy] = useState(false)
+  const [groupComposerError, setGroupComposerError] = useState('')
+  const ungroupedSeats = useMemo(() => ungroupedSeatsOf(teamControl.members), [teamControl.members])
+  const defaultGroupName = useMemo(() => nextGroupName(activeGroups.map((group) => group.name)), [activeGroups])
+  const openGroupComposer = useCallback((mode: GroupComposerMode): void => {
+    setGroupComposerError('')
+    setGroupComposer(mode)
+  }, [])
+  const submitGroupComposer = useCallback(async (operation: () => Promise<unknown>): Promise<void> => {
+    setGroupComposerBusy(true)
+    setGroupComposerError('')
+    try {
+      await operation()
+      setGroupComposer(undefined)
+    } catch (reason) {
+      setGroupComposerError(reason instanceof Error ? reason.message : String(reason))
+    } finally {
+      setGroupComposerBusy(false)
+    }
+  }, [])
+  // 名册多选浮动条的去处：建组 / 加人进同一个抽屉（预勾通道，角色在抽屉里确认）；移出直接走 IPC——
+  // 确认面在名册里，这里只负责把通道号解析回 slot 与所在 active 组，逐个移出（服务端无批量口）。
+  const selectionActions = useMemo((): RailSelectionActions => ({
+    createGroup: (channelIds) => openGroupComposer({ kind: 'create', preselectedChannelIds: channelIds }),
+    addToGroup: (groupId, channelIds) => {
+      const group = activeGroups.find((candidate) => candidate.id === groupId)
+      if (group) openGroupComposer({ kind: 'add', groupId, groupName: group.name, preselectedChannelIds: channelIds })
+    },
+    removeFromGroups: async (channelIds) => {
+      for (const channelId of channelIds) {
+        const member = teamControl.members.find(
+          (candidate) => (candidate.binding?.channelId ?? candidate.slot.channelId) === channelId
+        )
+        const view = member && teamControl.groups.find(
+          (candidate) => candidate.group.status === 'active'
+            && candidate.members.some((groupMember) => groupMember.slot.id === member.slot.id)
+        )
+        // 确认与执行之间席位可能已出组 / 离池：跳过它，移出剩下的——半途报错反而留一半。
+        if (!member || !view) continue
+        acceptTeamControl(await window.sgDesktop.removeTeamGroupMember({ groupId: view.group.id, slotId: member.slot.id }))
+      }
+    }
+  }), [acceptTeamControl, activeGroups, openGroupComposer, teamControl.groups, teamControl.members])
+  /** 会话头部的组名跳转：运行页对应卡片滚入视野并短暂点亮。 */
+  const [focusGroupId, setFocusGroupId] = useState<string>()
   const selectedSession = visibleSnapshot.sessions.find((session) => session.channelId === selectedChannelId)
   const selectedMember = teamControl.members.find((member) => (
     (member.binding?.channelId ?? member.slot.channelId) === selectedSession?.channelId
   ))
+  // 会话头部的组名 chip：席位所在的 active 组（独立席位没有）。
+  const selectedMemberGroup = useMemo(() => {
+    const slotId = selectedMember?.slot.id
+    if (!slotId) return undefined
+    const view = teamControl.groups.find((candidate) => (
+      candidate.group.status === 'active' && candidate.members.some((member) => member.slot.id === slotId)
+    ))
+    return view ? { id: view.group.id, name: view.group.name } : undefined
+  }, [selectedMember?.slot.id, teamControl.groups])
   // 会话工作区回调的引用稳定化：draft 每次按键都触发 App 重渲染，这些回调若内联新建，
   // 会把 SessionWorkspace 时间线的 memo 边界打穿（所有历史卡被迫参与 reconciliation）。
   const workspaceChannelId = selectedSession?.channelId ?? ''
@@ -886,12 +944,14 @@ export function App(): React.JSX.Element {
       liveProcess: workspaceLiveProcess,
       summary: workspaceReviewSummary,
       workspacePath: activeWorkspace?.path,
-      working: workspaceWorking
+      working: workspaceWorking,
+      // 名册行显示的 Cursor 累计净值：本轮是会话唯一改动区间时，栏的合计与它同源（见 turn-files-view）。
+      sessionChanges: selectedSession?.changes
     })
     const reused = sameTurnFilesView(turnFilesRef.current, next) ? turnFilesRef.current! : next
     turnFilesRef.current = reused
     return reused
-  }, [activeWorkspace?.path, workspaceEntries, workspaceLiveProcess, workspaceReviewSummary, workspaceWorking])
+  }, [activeWorkspace?.path, selectedSession?.changes, workspaceEntries, workspaceLiveProcess, workspaceReviewSummary, workspaceWorking])
   const handleReviewTurnFiles = useCallback((request: ReviewFocusRequest): void => requestReviewFocus(request), [])
   // 「交接」三态：离线入组席位 → 成员身份迁移（可附带上下文）；其余在运行中的席位（独立或入组、
   // 在线或离线）→ 上下文交接；运行已结束 / 非本轮席位 → 禁用并说明原因。
@@ -929,9 +989,11 @@ export function App(): React.JSX.Element {
   const changeModule = useCallback((module: AppModule): void => {
     setActiveModule(module)
     if (module === 'sessions') setSessionListRequested(false)
+    // 组名跳转的点亮是一次性的：离开运行页即失效，下次进入不再重播。
+    if (module !== 'run') setFocusGroupId(undefined)
   }, [])
 
-  const openManualHandoff = useCallback(async (slotId: string): Promise<void> => {
+  const openMembershipTransfer = useCallback(async (slotId: string): Promise<void> => {
     setHandoffBusy(true)
     setHandoffError('')
     try {
@@ -945,7 +1007,7 @@ export function App(): React.JSX.Element {
 
   // 迁移成功后弹窗停在结果页（成员身份与上下文文档各自的结果），由用户点「完成」关闭；
   // 会话区先切到目标席位的通道，关闭后正好落在接手者的会话上。
-  const confirmManualHandoff = useCallback(async (
+  const confirmMembershipTransfer = useCallback(async (
     input: { toSlotId: string; includeContext: boolean }
   ): Promise<MembershipTransferOutcome | undefined> => {
     if (!handoffOptions) return undefined
@@ -1328,6 +1390,7 @@ export function App(): React.JSX.Element {
           selectedChannelId={selectedSession?.channelId}
           onSelectSession={selectSession}
           groups={activeGroups}
+          selectionActions={selectionActions}
           onOpenRun={() => changeModule('run')}
         />
       ) : null}
@@ -1339,6 +1402,7 @@ export function App(): React.JSX.Element {
           workspaceId={activeWorkspace?.id}
           workspaceName={activeProjectName}
           workspacePath={activeWorkspace?.path}
+          turnFiles={workspaceTurnFiles}
           hidden={!visible}
           onQuoteToComposer={handleWorkspaceQuote}
           onReviewSummary={setWorkspaceReviewSummary}
@@ -1363,12 +1427,13 @@ export function App(): React.JSX.Element {
       {activeModule === 'account' ? (
         <SettingsPage {...accountPanel} />
       ) : activeModule === 'run' ? (
-        <RunPage
+        <PoolPage
           team={teamControl}
           detectedWorkspace={cursorWorkspace?.workspace}
           externalNotice={teamNotice}
           agentLaunchPlan={agentLaunchPlan}
           cursorModels={visibleSnapshot.cursorModels ?? []}
+          taskPool={taskPool}
           sessionWarmupRun={sessionWarmupRun}
           sessionWarmupEnabled={sessionWarmupEnabled}
           onToggleSessionWarmup={(enabled) => {
@@ -1383,19 +1448,24 @@ export function App(): React.JSX.Element {
             acceptTeamControl(await window.sgDesktop.endActiveRun())
           }}
           onOpenSessions={() => setActiveModule('sessions')}
+          onOpenSession={(channelId) => {
+            setSelectedChannelId(channelId)
+            changeModule('sessions')
+          }}
           onPersistModelSelection={async (channelId, selection) => {
             const result = await window.sgDesktop.setSlotModelSelection(channelId, selection)
             acceptTeamControl(result)
             return result
           }}
           groupActions={{
-            createGroup: async (input) => acceptTeamControl(await window.sgDesktop.createTeamGroup(input)),
-            addGroupMembers: async (input) => acceptTeamControl(await window.sgDesktop.addTeamGroupMembers(input)),
             removeGroupMember: async (input) => acceptTeamControl(await window.sgDesktop.removeTeamGroupMember(input)),
             setGroupLead: async (input) => acceptTeamControl(await window.sgDesktop.setTeamGroupLead(input)),
             updateGroupGoal: async (input) => acceptTeamControl(await window.sgDesktop.updateTeamGroupGoal(input)),
             dissolveGroup: async (input) => acceptTeamControl(await window.sgDesktop.dissolveTeamGroup(input))
           }}
+          onOpenGroupComposer={openGroupComposer}
+          onTransferMembership={(slotId) => void openMembershipTransfer(slotId)}
+          focusGroupId={focusGroupId}
           onEnableCursorCdp={() => window.sgDesktop.enableCursorCdp()}
           cdpAutoHealEnabled={cdpAutoHealEnabled}
           cdpAutoHealEvent={cdpAutoHealEvent}
@@ -1417,9 +1487,14 @@ export function App(): React.JSX.Element {
           onHandoff={handoffEntry.kind === 'context'
             ? () => setContextHandoffChannel(selectedSession.channelId)
             : handoffEntry.kind === 'roles'
-              ? () => void openManualHandoff(handoffEntry.slotId)
+              ? () => void openMembershipTransfer(handoffEntry.slotId)
               : undefined}
           handoffTitle={handoffEntry.title}
+          group={selectedMemberGroup}
+          onOpenGroup={(groupId) => {
+            setFocusGroupId(groupId)
+            changeModule('run')
+          }}
           onWithdrawQueued={async (entryId) => {
             const withdrawn = (snapshot.conversations[selectedSession.channelId] ?? []).find((entry) => entry.id === entryId)
             const ok = await window.sgDesktop.withdrawQueuedMessage({ channelId: selectedSession.channelId, entryId })
@@ -1460,14 +1535,27 @@ export function App(): React.JSX.Element {
         />
       )}
     </DesktopShell>
+    {groupComposer ? (
+      <GroupComposer
+        key={groupComposer.kind === 'add' ? `add:${groupComposer.groupId}` : 'create'}
+        mode={groupComposer}
+        candidates={ungroupedSeats}
+        defaultName={defaultGroupName}
+        busy={groupComposerBusy}
+        error={groupComposerError}
+        onClose={() => { if (!groupComposerBusy) setGroupComposer(undefined) }}
+        onCreate={(input) => void submitGroupComposer(async () => acceptTeamControl(await window.sgDesktop.createTeamGroup(input)))}
+        onAddMembers={(input) => void submitGroupComposer(async () => acceptTeamControl(await window.sgDesktop.addTeamGroupMembers(input)))}
+      />
+    ) : null}
     {handoffOptions ? (
-      <ManualHandoffDialog
+      <TransferMembershipDialog
         key={handoffOptions.sourceSlotId}
         options={handoffOptions}
         busy={handoffBusy}
         error={handoffError}
         onClose={() => { if (!handoffBusy) setHandoffOptions(undefined) }}
-        onConfirm={confirmManualHandoff}
+        onConfirm={confirmMembershipTransfer}
         onOpenSession={(channelId) => { setSelectedChannelId(channelId); setSessionListRequested(false) }}
       />
     ) : null}

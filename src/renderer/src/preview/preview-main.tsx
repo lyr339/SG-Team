@@ -100,6 +100,7 @@ const previewWarmupRun: import('../../../domain/session-warmup').SessionWarmupRu
 const previewRunStatus = (['running', 'completed'] as TeamRunStatus[])
   .find((status) => status === requestedRunStatus)
 // 右栏「变更」面板走查：?review=clean|not_git|error|many（缺省为两文件就绪态）。
+// not_git 下面板会自动落到「本轮」（Agent 编辑流）；not_git 卡片要手动切回「未提交」才能看到。
 const reviewScene = (['clean', 'not_git', 'error', 'many'] as const).find((scene) => scene === previewParameters.get('review'))
 /** 预览里的「Cursor 当前工程」与它的通道号：`?detectedWorkspace=1` 换成另一个工程（4 个通道）。 */
 const previewWorkspace = detectedWorkspaceMode
@@ -473,10 +474,12 @@ if (previewParameters.get('queued') === '1') {
 // 本轮文件栏走查：?turnfiles=1 —— Agent 正在处理一条消息，已经改了三个文件（Git 已看到）、正在写第四个
 //（Git 还没看到 → 按过程块估算），另有一个与本轮无关的未提交文件不该出现在栏里。可与 ?queued=1 叠加看两条栏。
 // ?turnfiles=previous —— 上一轮的四个编辑已随回复落库，新消息刚被取走、Agent 在想还没动手：栏保住上一轮并标「上一轮」。
-const turnFilesScene = (['1', 'previous'] as const).find((mode) => mode === previewParameters.get('turnfiles'))
+const turnFilesScene = (['1', 'previous', 'sole'] as const).find((mode) => mode === previewParameters.get('turnfiles'))
 if (turnFilesScene) {
   const askedAt = previewNow - 4 * 60_000
   const previousTurn = turnFilesScene === 'previous'
+  // sole：本轮是会话迄今唯一的改动区间——合计与名册行同源（Cursor Composer 累计净值）的走查。
+  const soleTurn = turnFilesScene === 'sole'
   const editBlocks = (status: 'done' | 'running'): ProcessBlock[] => [
     { kind: 'tool', id: 'tf-edit-1', toolName: 'edit_file_v2', toolKind: 'edit', toolCase: 'editToolCall', summary: 'src/domain/team-control.ts', hint: '+18 −20', status: 'done', startedAt: askedAt + 30_000 },
     { kind: 'tool', id: 'tf-edit-2', toolName: 'edit_file_v2', toolKind: 'edit', toolCase: 'editToolCall', summary: 'src/mcp/index.ts', hint: '+22 −37', status: 'done', startedAt: askedAt + 70_000 },
@@ -499,7 +502,7 @@ if (turnFilesScene) {
   // 过程块按「最近一条已投递用户消息」归属回合：基础夹具里最近 5 分钟的历史（e7–e11，含一条
   // 与本轮提问同一分钟投递的用户消息）会抢走块的锚点，让本轮只剩打字占位。这一场景只保留提问
   // 一分钟之前的历史；?queued=1 追加在提问之后的未投递消息照常保留（它们本就不进时间线）。
-  const history = (state.desktop.conversations['2'] ?? []).filter((entry) => (
+  const history = soleTurn ? [] : (state.desktop.conversations['2'] ?? []).filter((entry) => (
     entry.timestamp < askedAt - 60_000 || (entry.role === 'user' && entry.deliveredAt === undefined && entry.timestamp > askedAt)
   ))
   state.desktop.conversations = {
@@ -510,6 +513,16 @@ if (turnFilesScene) {
           ? { ...entry, deliveredAt: entry.timestamp + 1_000 }
           : entry
       )),
+      // 上一轮的收尾编辑：让「更早回合有过改动」成立——一般情形下文件栏合计保持逐笔估算（≈），
+      // 不被 Cursor 累计接管；同源接管的专门走查在 ?turnfiles=sole（那里没有任何更早改动）。
+      ...(soleTurn ? [] : [{
+        id: 'reply:turnfiles-0', channelId: '2', role: 'assistant', source: 'cursor', status: 'complete',
+        timestamp: askedAt - 3 * 60_000,
+        text: '上一轮已把 relay 的注册路径收口，`register-relay.ts` 少了一个入口分支。',
+        processBlocks: [
+          { kind: 'tool', id: 'tf-edit-0', toolName: 'edit_file_v2', toolKind: 'edit', toolCase: 'editToolCall', summary: 'src/main/register-relay.ts', hint: '+6 −2', status: 'done', startedAt: askedAt - 3 * 60_000 }
+        ]
+      } satisfies ConversationEntry]),
       {
         id: 'outbox:turnfiles-1', channelId: '2', role: 'user', source: 'desktop', status: 'complete',
         timestamp: askedAt, deliveredAt: askedAt + 800,
@@ -561,7 +574,18 @@ if (turnFilesScene) {
   }
   state.desktop.liveAgentResponses = undefined
   state.desktop.sessions = state.desktop.sessions.map((session) => session.channelId === '2'
-    ? { ...session, status: 'running', connectionPhase: 'processing', waiting: false, online: true, deliveryMode: 'queued', queueDepth: previewParameters.get('queued') === '1' ? 3 : 0 }
+    ? {
+        ...session,
+        status: 'running',
+        connectionPhase: 'processing',
+        waiting: false,
+        online: true,
+        deliveryMode: 'queued',
+        queueDepth: previewParameters.get('queued') === '1' ? 3 : 0,
+        // sole：Cursor 统计的累计净值（略小于逐笔求和的 +76 −390——同文件反复编辑不重复计入），
+        // 名册行与文件栏合计显示同一个数。
+        ...(soleTurn ? { changes: { additions: 74, deletions: 388, files: 4 } } : {})
+      }
     : session)
 }
 // 计划页长清单走查：?plan=long —— 真实颗粒度的 10 项技术任务：多行长文本、路径 token、
@@ -578,15 +602,15 @@ if (previewParameters.get('plan') === 'long') {
               ...block,
               summary: '任务清单 2/10',
               todos: [
-                { content: '恢复上下文：确认 5a 已完成步骤（围栏逐轮复核、bubbleCount、prepareComposerRelaunch allowIdleOnline）', status: 'completed' },
-                { content: 'domain/seat-rotation.ts：设置类型/默认/归一化 + 纯决策函数 + 通知类型', status: 'in_progress' },
-                { content: 'application/seat-rotation-settings-store.ts（userData/seat-rotation.json）', status: 'pending' },
-                { content: 'application/seat-rotation-service.ts：订阅快照→待命计时→交接→轮换令牌→launch→通知/冷却/失败停用', status: 'pending' },
-                { content: 'AgentSession.seatRotation 投影：DesktopSessionService.noteSeatRotation + 指纹 + run 切换清理', status: 'pending' },
-                { content: 'IPC/preload/desktop-api：seatRotation get/save settings；主进程装配（index.ts）', status: 'pending' },
-                { content: '渲染层：设置页「席位自动轮换」区块 + 名册卡轮换徽标/气泡数提示', status: 'pending' },
+                { content: '恢复上下文：读任务书 DYNAMIC-GROUPS-PHASE3-UI-TODO 与已提交的检查点（PoolPage / GroupCard / ConfirmSheet）', status: 'completed' },
+                { content: 'SessionSidebar：多选状态（picked / pickAnchor）+ ⌘/Ctrl 点击、Shift 范围、行首复选框', status: 'in_progress' },
+                { content: '底部浮动条：建组（N）/ 加入…（MenuSelect）/ 移出组（M）/ 取消，lead 挡移出要说明', status: 'pending' },
+                { content: '移出确认面复用 ConfirmSheet：文案走 removeMembersConsequence，与组卡片同源', status: 'pending' },
+                { content: 'GroupComposer add 模式支持 preselectedChannelIds（名册多选预勾）', status: 'pending' },
+                { content: 'App.selectionActions：createGroup / addToGroup 进抽屉，removeFromGroups 逐个走 IPC', status: 'pending' },
+                { content: 'styles.css：复选框圆盘盖住头像与光环、session-pane 第三行网格、120ms 进场', status: 'pending' },
                 { content: '旧版 usage 面板迁移（并入新会话页后不再需要）', status: 'cancelled' },
-                { content: 'typecheck / vitest 全量 / knip / build / smoke:channel；ARCHITECTURE 追加记录', status: 'pending' },
+                { content: 'typecheck / vitest 全量 / knip / build / smoke:channel；ARCHITECTURE-LOG 追加记录', status: 'pending' },
                 { content: '向用户汇报并 record_reply，回到 check_messages 待命', status: 'completed' }
               ]
             }

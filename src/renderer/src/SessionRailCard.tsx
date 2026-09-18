@@ -1,5 +1,5 @@
 import { memo, useMemo } from 'react'
-import type { DragEvent } from 'react'
+import type { DragEvent, MouseEvent } from 'react'
 import type { AgentSession } from '../../domain/agent-session'
 import type { LiveAgentResponseState, LiveProcessState, LiveStatusLineState } from '../../shared/desktop-api'
 import {
@@ -23,7 +23,10 @@ import {
 interface SessionRailCardProps {
   session: AgentSession
   selected: boolean
-  onOpen: (channelId: string) => void
+  /** 多选中的一行（与「当前打开」的 selected 是两件事：多选是建组 / 改组的暂态）。 */
+  picked?: boolean
+  /** 点击打开；带上事件让侧栏识别 ⌘/Ctrl / Shift（多选与范围选择不打开会话）。 */
+  onOpen: (channelId: string, event: MouseEvent<HTMLButtonElement>) => void
   /** 实时过程流/正文（快照引用稳定，未变化时 memo 直接跳过重渲染）。 */
   liveProcess?: LiveProcessState
   liveResponse?: LiveAgentResponseState
@@ -46,6 +49,7 @@ interface SessionRailCardProps {
 function SessionRailCardView({
   session,
   selected,
+  picked = false,
   onOpen,
   liveProcess,
   liveResponse,
@@ -95,11 +99,12 @@ function SessionRailCardView({
   return (
     <button
       type="button"
-      className={`session-row is-${group}${selected ? ' is-selected' : ''}`}
-      onClick={() => onOpen(session.channelId)}
+      className={`session-row is-${group}${selected ? ' is-selected' : ''}${picked ? ' is-picked' : ''}`}
+      onClick={(event) => onOpen(session.channelId, event)}
       title={tooltip}
       aria-current={selected ? 'true' : undefined}
-      aria-label={`${name} ${channel}，${state}，${activity.verb}${activity.detail ? ` · ${activity.detail}` : ''}${percent === undefined ? '' : `，上下文 ${Math.round(percent)}%`}${session.queueDepth > 0 ? `，排队 ${session.queueDepth}` : ''}`}
+      data-channel-id={session.channelId}
+      aria-label={`${name} ${channel}，${state}，${activity.verb}${activity.detail ? ` · ${activity.detail}` : ''}${percent === undefined ? '' : `，上下文 ${Math.round(percent)}%`}${session.queueDepth > 0 ? `，排队 ${session.queueDepth}` : ''}${picked ? '，已选中' : ''}`}
       tabIndex={tabIndex}
       draggable={draggable}
       onDragStart={onDragStart}

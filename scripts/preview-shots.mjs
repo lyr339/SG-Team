@@ -92,6 +92,50 @@ function editCardProbe(expanded, arrowVisible) {
     return { expanded: ${expanded}, arrowVisible: ${arrowVisible}, width: box.width, height: box.height, scrollLeft: diff.scrollLeft }
   })()`
 }
+/** §7 探针：组卡片网格不得横向溢出，卡片右缘不越过网格右缘。 */
+const GROUPS_GRID_PROBE = `(() => {
+  const grid = document.querySelector('.pool-groups__grid')
+  if (!grid) throw new Error('没有组卡片网格')
+  if (grid.scrollWidth > grid.clientWidth + 1) throw new Error('组卡片网格横向溢出: ' + grid.scrollWidth + ' > ' + grid.clientWidth)
+  const gridRect = grid.getBoundingClientRect()
+  const cards = [...grid.querySelectorAll('.group-card')]
+  for (const card of cards) {
+    if (card.getBoundingClientRect().right > gridRect.right + 1) throw new Error('组卡片越过网格右缘')
+  }
+  return { cards: cards.length, width: Math.round(gridRect.width) }
+})()`
+
+/** §7 探针（口径更新）：建组抽屉是带背板的模态面——校验抽屉在视口内、背板全覆盖（inspector 在背板之下）。 */
+const COMPOSER_PROBE = `(() => {
+  const drawer = document.querySelector('.group-composer')
+  if (!drawer) throw new Error('建组抽屉未打开')
+  const rect = drawer.getBoundingClientRect()
+  if (rect.right > innerWidth + 0.5 || rect.top < -0.5 || rect.bottom > innerHeight + 0.5) throw new Error('抽屉超出视口')
+  const backdrop = document.querySelector('.group-composer-backdrop').getBoundingClientRect()
+  if (backdrop.width < innerWidth - 1 || backdrop.height < innerHeight - 1) throw new Error('背板未覆盖视口')
+  return { width: Math.round(rect.width), height: Math.round(rect.height) }
+})()`
+
+/** 名册多选：程序化勾选一行（复选框平时仅悬停可见，.click() 不受 pointer-events 限制）。 */
+const pickRailRow = (channelId) => `document.querySelector('.session-row[data-channel-id="${channelId}"]')
+  .closest('.session-list__slot').querySelector('.session-row__pick input').click()`
+
+/** §7 探针：浮动条是 session-pane 网格第三行——名册收缩让位，滚到底后最后一行完整可见、与条不重叠。 */
+const RAIL_BAR_PROBE = `new Promise((done, fail) => {
+  const list = document.querySelector('.session-list')
+  const bar = document.querySelector('.session-pane__bar')
+  if (!bar) return fail(new Error('浮动条未出现'))
+  list.scrollTop = list.scrollHeight
+  requestAnimationFrame(() => {
+    const barRect = bar.getBoundingClientRect()
+    const listRect = list.getBoundingClientRect()
+    if (listRect.bottom > barRect.top + 0.5) return fail(new Error('名册与浮动条重叠: list.bottom=' + listRect.bottom + ' bar.top=' + barRect.top))
+    const last = [...list.querySelectorAll('.session-list__slot')].at(-1).getBoundingClientRect()
+    if (last.bottom > listRect.bottom + 0.5) return fail(new Error('最后一行被浮动条遮挡: ' + last.bottom + ' > ' + listRect.bottom))
+    done({ listBottom: Math.round(listRect.bottom), barTop: Math.round(barRect.top), lastRowBottom: Math.round(last.bottom) })
+  })
+})`
+
 const scenes = [
   ...['light', 'dark'].map(colorMode => ({
     name: `session-typing-isolation-${colorMode}`, width: 1180, height: 900, colorScheme: colorMode,
@@ -121,24 +165,6 @@ const scenes = [
         resolve({characters:text.length, rows:rows.length, contentMutations:mutations, stableNodes:true})
       } catch (error) { reject(error) } finally { observer.disconnect() }
     })` }]
-  })),
-  ...['light', 'dark'].map((colorMode) => ({
-    name: `run-prelaunch-switch-${colorMode}`, run: true, width: 1180, height: 1000,
-    query: 'runStatus=ready', colorScheme: colorMode, storage: baseStorage({ colorMode }),
-    actions: [
-      { click: '.run-header .run-mode-switch button[aria-checked="false"]' },
-      { eval: `document.querySelector('.run-slot.is-open .run-sheet__confirm')?.click()` },
-      { wait: 300 },
-      { probe: `(() => {
-        const end = document.querySelector('.run-header__actions .is-danger')
-        if (!end?.disabled) throw new Error('未启动运行仍开放结束入口')
-        const banner = document.querySelector('.run-slot.is-open .run-banner')
-        if (!banner?.textContent.includes('无需先结束运行')) throw new Error('模式配置提示仍错误')
-        const create = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '创建 3 个独立会话')
-        if (!create || create.disabled) throw new Error('独立批次创建被阻塞')
-        return { endDisabled:end.disabled, createEnabled:!create.disabled }
-      })()` }
-    ]
   })),
   ...TABS.flatMap((tab) => [
     { name: `${tab}-light`, width: 1440, height: 900, colorScheme: 'light', storage: baseStorage({ tab }) },
@@ -207,7 +233,45 @@ const scenes = [
   { name: 'artifacts-empty-dark', width: 1440, height: 900, colorScheme: 'dark', channel: '1', storage: { ...baseStorage({ tab: 'artifacts', colorMode: 'dark' }), 'shiguang.lastSessionChannel.v1': '1' } },
   // 变更面板的其它状态（预览参数 ?review=…）。
   { name: 'review-clean', width: 1440, height: 900, colorScheme: 'light', query: 'review=clean', storage: baseStorage() },
-  { name: 'review-not-git', width: 1440, height: 900, colorScheme: 'light', query: 'review=not_git', storage: baseStorage() },
+  // 非 Git 工程：面板自动落到「本轮」，正文是 Agent 编辑流（文件行 + 逐次编辑卡 + ≈ 合计），无任何 Git 动作。
+  {
+    name: 'review-not-git-turn', width: 1440, height: 900, colorScheme: 'light', query: 'review=not_git', storage: baseStorage(),
+    actions: [{ wait: 500 }, {
+      label: '非 Git 工程自动切到本轮编辑流',
+      probe: `(() => {
+        const scope = document.querySelector('.inspector-review__scope > button[aria-pressed="true"]')
+        const files = Array.from(document.querySelectorAll('.review-file'))
+        const totals = document.querySelector('.inspector-review__totals')
+        if ((scope?.textContent ?? '').indexOf('本轮') !== 0) throw new Error('范围没有自动落到本轮: ' + scope?.textContent)
+        if ((document.body.textContent ?? '').includes('当前工程未启用 Git')) throw new Error('本轮视图不该出现 not_git 卡片')
+        if (!files.length) throw new Error('编辑流文件列表为空')
+        if (!document.querySelector('.review-edit')) throw new Error('没有逐次编辑卡')
+        if (document.querySelector('.review-file__actions button.is-danger')) throw new Error('非 Git 工程不该有撤销按钮')
+        if (document.querySelector('.review-file__loading')) throw new Error('本轮视图不该出现 Git 差异骨架屏')
+        return {
+          found: true,
+          scope: scope?.textContent ?? '',
+          totals: totals?.textContent ?? '',
+          files: files.map((el) => [el.getAttribute('data-path'), el.getAttribute('data-source'), el.classList.contains('is-open')]),
+          addedLines: document.querySelectorAll('.review-line.is-addition').length
+        }
+      })()`
+    }]
+  },
+  // 手动切回「未提交」：not_git 卡片仍在，并带「查看本轮 Agent 改动」的回程链接。
+  {
+    name: 'review-not-git', width: 1440, height: 900, colorScheme: 'light', query: 'review=not_git', storage: baseStorage(),
+    actions: [{ wait: 500 }, { click: '.inspector-review__scope > button:first-child' }, { wait: 250 }, {
+      label: 'not_git 卡片与回程链接',
+      probe: `(() => {
+        const body = document.body.textContent ?? ''
+        if (!body.includes('当前工程未启用 Git')) throw new Error('not_git 卡片没有出现')
+        const back = Array.from(document.querySelectorAll('button')).find((el) => el.textContent === '查看本轮 Agent 改动')
+        if (!back) throw new Error('缺「查看本轮 Agent 改动」链接')
+        return { found: true }
+      })()`
+    }]
+  },
   { name: 'review-error-dark', width: 1440, height: 900, colorScheme: 'dark', query: 'review=error', storage: baseStorage({ colorMode: 'dark' }) },
   { name: 'review-many', width: 1440, height: 900, colorScheme: 'light', query: 'review=many', storage: baseStorage() },
   { name: 'review-many-narrow-dark', width: 1180, height: 760, colorScheme: 'dark', query: 'review=many', storage: baseStorage({ width: 300, colorMode: 'dark' }) },
@@ -228,29 +292,34 @@ const scenes = [
   },
   { name: 'inspector-opened', width: 1440, height: 900, colorScheme: 'light', storage: { ...baseStorage(), [INSPECTOR_OPEN_KEY]: '0' }, clip: null, actions: [{ click: '[aria-label="展开右侧工作区"]' }, { wait: 400 }] },
 
-  // ---------- 运行页（#run）：一个工程一个活跃运行，团队 / 独立两种模式 ----------
+  // ---------- 运行页（#run）：一个工程一个会话池（独立会话 + 可建可拆的协作组，阶段 3）----------
   ...[['light', 'light'], ['dark', 'dark']].flatMap(([suffix, colorMode]) => [
-    // 无活跃运行：开始一次运行（模式选择）。
+    // 无活跃运行：开始页 + 独立批次配置（阶段 2 · 2B 起没有模式选择）。
     { name: `run-start-${suffix}`, run: true, query: 'setup=1', colorScheme: colorMode, storage: baseStorage({ colorMode }) },
-    { name: `run-start-independent-${suffix}`, run: true, query: 'setup=1', colorScheme: colorMode, storage: baseStorage({ colorMode }), actions: [{ click: '.run-mode-switch button[aria-checked="false"]' }, { wait: 300 }] },
-    // 团队：启动前（目标已填、MCP 待接入）/ 协作执行中 / 已结束。
-    { name: `run-team-prelaunch-${suffix}`, run: true, query: 'runStatus=ready', colorScheme: colorMode, storage: baseStorage({ colorMode }) },
-    { name: `run-team-active-${suffix}`, run: true, colorScheme: colorMode, storage: baseStorage({ colorMode }) },
-    { name: `run-team-completed-${suffix}`, run: true, query: 'runStatus=completed', colorScheme: colorMode, storage: baseStorage({ colorMode }) },
-    // 独立：全部待命 / 混合形态（待命 + 执行中 + 离线 + 待确认）/ 已结束。
+    // 升级前的一次性团队 run 仍是工作区最新运行：开始页多一句「已归档」说明。
+    { name: `run-start-archived-${suffix}`, run: true, colorScheme: colorMode, storage: baseStorage({ colorMode }) },
+    // 池：全部待命 / 混合形态（待命 + 执行中 + 离线 + 待确认）/ 配置分叉 / 已结束。
     { name: `run-independent-live-${suffix}`, run: true, query: 'independent=live', colorScheme: colorMode, storage: baseStorage({ colorMode }) },
     { name: `run-independent-mixed-${suffix}`, run: true, query: 'independent=mixed', colorScheme: colorMode, storage: baseStorage({ colorMode }) },
+    { name: `run-independent-spread-${suffix}`, run: true, query: 'independent=spread', colorScheme: colorMode, storage: baseStorage({ colorMode }) },
     { name: `run-independent-ended-${suffix}`, run: true, query: 'independent=ended', colorScheme: colorMode, storage: baseStorage({ colorMode }) },
-    // 会话池 · 协作组（阶段 1 最小 UI）：两个 active 组（一个 attention）+ 一个刚解散的组 + 一个独立席位；以及打开建组抽屉。
-    { name: `run-independent-groups-${suffix}`, run: true, query: 'independent=groups', colorScheme: colorMode, storage: baseStorage({ colorMode }) },
-    { name: `run-independent-groups-drawer-${suffix}`, run: true, query: 'independent=groups', colorScheme: colorMode, storage: baseStorage({ colorMode }), actions: [{ click: '.run-groups > .run-section-head .run-link' }, { wait: 300 }] },
+    // 会话池 · 协作组：两个 active 组（「验收」一人已确认离线 → attention 徽标与行内交接 / 移出）
+    // + 一个刚解散的组（历史折叠）+ 独立会话；网格不许横向溢出（§7 探针）。
+    {
+      name: `run-independent-groups-${suffix}`, run: true, query: 'independent=groups', colorScheme: colorMode, storage: baseStorage({ colorMode }),
+      actions: [{ label: '组卡片网格不溢出', probe: GROUPS_GRID_PROBE }]
+    },
+    // 建组抽屉（运行页入口；名册多选走同一个抽屉、预勾通道）：模态背板全覆盖、抽屉在视口内（§7 探针，口径见常量注释）。
+    {
+      name: `run-independent-groups-drawer-${suffix}`, run: true, query: 'independent=groups', colorScheme: colorMode, storage: baseStorage({ colorMode }),
+      actions: [{ click: '.pool-groups .run-section-head .run-link' }, { wait: 300 }, { label: '抽屉与背板几何', probe: COMPOSER_PROBE }]
+    },
     // 会话配置（批次属性）：配置中点「修改」打开的统一弹层 / 换成 Claude Fable 5 并应用后的行内光晕（约 300ms 处）/
-    // 单席弹层页脚勾上「同时应用到其余席位」/ 单席改动后的「单独配置」标与批次行的注脚；运行中各席分叉、没有多数时的分布 + 「统一」。
-    { name: `run-batch-config-dialog-${suffix}`, run: true, query: 'setup=1', colorScheme: colorMode, storage: baseStorage({ colorMode }), clip: null, actions: [{ click: '.run-mode-switch button[aria-checked="false"]' }, { wait: 300 }, { click: '.run-batch-config__action' }, { wait: 350 }] },
+    // 单席弹层页脚勾上「同时应用到其余席位」/ 单席改动后的「单独配置」标；开始页即配置态，不再有模式切换步骤。
+    { name: `run-batch-config-dialog-${suffix}`, run: true, query: 'setup=1', colorScheme: colorMode, storage: baseStorage({ colorMode }), clip: null, actions: [{ click: '.run-batch-config__action' }, { wait: 350 }] },
     {
       name: `run-batch-config-applied-${suffix}`, run: true, query: 'setup=1', colorScheme: colorMode, storage: baseStorage({ colorMode }),
       actions: [
-        { click: '.run-mode-switch button[aria-checked="false"]' }, { wait: 300 },
         { click: '.run-batch-config__action' }, { wait: 300 },
         { click: '.cursor-model-dialog .menu-select__button' }, { wait: 200 },
         { eval: `[...document.querySelectorAll('.menu-select__menu [role="option"] button')].find((button) => button.textContent.includes('Claude Fable 5'))?.click()` }, { wait: 200 },
@@ -260,7 +329,6 @@ const scenes = [
     {
       name: `run-seat-dialog-sync-${suffix}`, run: true, query: 'setup=1', colorScheme: colorMode, storage: baseStorage({ colorMode }), clip: null,
       actions: [
-        { click: '.run-mode-switch button[aria-checked="false"]' }, { wait: 300 },
         { click: 'button[aria-label="配置 CH-2 会话"]' }, { wait: 300 },
         { click: '.cursor-model-dialog footer .toggle-switch' }, { wait: 250 }
       ]
@@ -268,73 +336,84 @@ const scenes = [
     {
       name: `run-seat-override-${suffix}`, run: true, query: 'setup=1', colorScheme: colorMode, storage: baseStorage({ colorMode }),
       actions: [
-        { click: '.run-mode-switch button[aria-checked="false"]' }, { wait: 300 },
         { click: 'button[aria-label="配置 CH-2 会话"]' }, { wait: 300 },
         { click: 'button[aria-label="CH-2 弹层Fast Off"]' }, { wait: 150 },
         { eval: `[...document.querySelectorAll('.cursor-model-dialog footer button')].find((button) => button.textContent === '保存')?.click()` }, { wait: 500 }
       ]
-    },
-    { name: `run-independent-spread-${suffix}`, run: true, query: 'independent=spread', colorScheme: colorMode, storage: baseStorage({ colorMode }) }
+    }
   ]),
-  // 切换模式的确认面（团队 → 独立，仍有在线席位）。
-  { name: 'run-switch-sheet', run: true, colorScheme: 'light', storage: baseStorage(), actions: [{ click: '.run-mode-switch button[aria-checked="false"]' }, { wait: 300 }] },
-  // 确认后进入独立批次配置（头部标注"正在配置"）。
-  { name: 'run-compose-after-switch', run: true, colorScheme: 'light', storage: baseStorage(), actions: [{ click: '.run-mode-switch button[aria-checked="false"]' }, { wait: 300 }, { click: '.run-sheet__confirm' }, { wait: 400 }] },
-  // 结束批次确认面 + 目标编辑器。
+  // 破坏性动作的确认面：结束批次（danger）/ 解散组（danger，文案含任务与消息后果）/ 移出成员（neutral：可再加回来）。
   { name: 'run-end-sheet-dark', run: true, query: 'independent=live', colorScheme: 'dark', storage: baseStorage({ colorMode: 'dark' }), actions: [{ click: '.run-header__ghost.is-danger' }, { wait: 300 }] },
-  { name: 'run-goal-editing', run: true, query: 'runStatus=ready', colorScheme: 'light', storage: baseStorage(), actions: [{ click: '.run-panel--team .run-link' }, { wait: 300 }] },
-  // 宽度阶梯：容器查询断点 1120 / 920 / 680 两侧各取一档，头部与席位行的重排必须在每一档都成立。
+  {
+    name: 'run-group-dissolve-sheet', run: true, query: 'independent=groups', colorScheme: 'light', storage: baseStorage(),
+    actions: [
+      { click: '.pool-groups__grid .group-card .account-actions-menu__trigger' }, { wait: 200 },
+      { eval: `[...document.querySelectorAll('.account-actions-menu button')].find((button) => button.textContent.includes('解散本组'))?.click()` }, { wait: 300 }
+    ]
+  },
+  {
+    name: 'run-group-remove-sheet', run: true, query: 'independent=groups', colorScheme: 'dark', storage: baseStorage({ colorMode: 'dark' }),
+    actions: [{ eval: `[...document.querySelectorAll('.group-card-member__actions .run-link')].find((button) => button.textContent === '移出' && !button.disabled)?.click()` }, { wait: 300 }]
+  },
+  // 组目标编辑器（⋯ → 写目标；Ctrl+Enter 保存、Esc 放弃）——「验收」组目标为空，菜单项是「写目标」。
+  {
+    name: 'run-group-goal-editing', run: true, query: 'independent=groups', colorScheme: 'light', storage: baseStorage(),
+    actions: [
+      { eval: `[...document.querySelectorAll('.group-card')].find((card) => card.getAttribute('aria-label').includes('验收'))?.querySelector('.account-actions-menu__trigger')?.click()` }, { wait: 200 },
+      { eval: `[...document.querySelectorAll('.account-actions-menu button')].find((button) => button.textContent.includes('写目标'))?.click()` }, { wait: 250 }
+    ]
+  },
+  // 离线成员的组身份迁移弹窗（交接给独立席位，可附带上下文）——「验收」组 CH-4 已确认离线。
+  {
+    name: 'run-transfer-dialog', run: true, query: 'independent=groups', colorScheme: 'light', storage: baseStorage(),
+    actions: [{ eval: `[...document.querySelectorAll('.group-card-member__actions .run-link')].find((button) => button.textContent.includes('交接'))?.click()` }, { wait: 400 }]
+  },
+  // 运行中新建批次：先确认（当前批次会结束），确认后进入配置态横幅。
+  {
+    name: 'run-new-batch-compose', run: true, query: 'independent=live', colorScheme: 'light', storage: baseStorage(),
+    actions: [
+      { eval: `[...document.querySelectorAll('.run-panel__actions button')].find((button) => button.textContent.includes('新建批次'))?.click()` }, { wait: 300 },
+      { click: '.run-sheet__confirm' }, { wait: 400 }
+    ]
+  },
+  // 宽度阶梯：容器查询断点 1120 / 920 / 680 两侧各取一档；席位行的重排与组卡片网格（§7 探针）在每一档都成立。
   ...[1180, 1000, 860, 720, 600].flatMap((width) => [
-    { name: `run-team-active-w${width}`, run: true, width, height: 820, colorScheme: 'light', storage: baseStorage(), clip: null },
+    {
+      name: `run-independent-groups-w${width}`, run: true, width, height: 900, query: 'independent=groups',
+      colorScheme: 'light', storage: baseStorage(), clip: null,
+      actions: [{ label: `组卡片网格不溢出（${width}px）`, probe: GROUPS_GRID_PROBE }]
+    },
     { name: `run-independent-mixed-w${width}`, run: true, width, height: 820, query: 'independent=mixed', colorScheme: 'dark', storage: baseStorage({ colorMode: 'dark' }), clip: null }
   ]),
-  { name: 'run-start-independent-w600', run: true, width: 600, height: 900, query: 'setup=1', colorScheme: 'light', storage: baseStorage(), clip: null, actions: [{ click: '.run-mode-switch button[aria-checked="false"]' }, { wait: 300 }] },
+  { name: 'run-start-w600', run: true, width: 600, height: 900, query: 'setup=1', colorScheme: 'light', storage: baseStorage(), clip: null },
   // 窄窗里的「单独配置」标：席位行折成两行后，标与运行态徽标仍在同一行、不挤掉模型摘要。
   {
     name: 'run-seat-override-w600', run: true, width: 600, height: 1400, query: 'setup=1', colorScheme: 'light', storage: baseStorage(), clip: '.run-seats',
     actions: [
-      { click: '.run-mode-switch button[aria-checked="false"]' }, { wait: 300 },
       { click: 'button[aria-label="配置 CH-2 会话"]' }, { wait: 300 },
       { click: 'button[aria-label="CH-2 弹层Fast Off"]' }, { wait: 150 },
       { eval: `[...document.querySelectorAll('.cursor-model-dialog footer button')].find((button) => button.textContent === '保存')?.click()` }, { wait: 500 }
     ]
   },
-  { name: 'run-compose-w720', run: true, width: 720, height: 900, colorScheme: 'light', storage: baseStorage(), clip: null, actions: [{ click: '.run-mode-switch button[aria-checked="false"]' }, { wait: 300 }, { click: '.run-sheet__confirm' }, { wait: 400 }] },
-  // 头部控件位置守恒：切换模式 → 确认 → 进入配置态，分段控件、两个动作按钮和头部高度必须一个像素都不动。
+  // 确认面的展开是高度过渡：中途帧应看到插槽行高在插值，而不是 0 → 满高跳变（结束批次触发）。
   {
-    name: 'run-header-stability', run: true, colorScheme: 'light', storage: baseStorage(), clip: '.run-header',
-    actions: [{
-      label: '头部控件包围盒（切换前 → 配置态）',
-      probe: `new Promise((done) => {
-        const box = (selector) => { const r = document.querySelector(selector).getBoundingClientRect(); return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)].join(',') }
-        const snapshot = () => ({ header: box('.run-header'), switch: box('.run-mode-switch'), open: box('.run-header__ghost'), end: box('.run-header__ghost.is-danger') })
-        const before = snapshot()
-        document.querySelector('.run-mode-switch button[aria-checked="false"]').click()
-        setTimeout(() => {
-          document.querySelector('.run-sheet__confirm').click()
-          setTimeout(() => {
-            const after = snapshot()
-            const stable = Object.keys(before).every((key) => before[key] === after[key])
-            done({ stable, before, after })
-          }, 500)
-        }, 350)
-      })`
-    }, { wait: 100 }]
-  },
-  // 确认面的展开是高度过渡：中途帧应看到插槽行高在插值，而不是 0 → 满高跳变。
-  {
-    name: 'run-sheet-opening', run: true, colorScheme: 'light', storage: baseStorage(), clip: null,
+    name: 'run-sheet-opening', run: true, query: 'independent=live', colorScheme: 'light', storage: baseStorage(), clip: null,
     actions: [{
       label: 'run-slot grid-template-rows 采样（0/60/120/200/320ms）',
-      probe: `new Promise((done) => {
+      probe: `new Promise((done, fail) => {
         const samples = []
-        document.querySelector('.run-mode-switch button[aria-checked="false"]').click()
-        const slot = () => document.querySelector('.run-slot')
-        for (const at of [0, 60, 120, 200, 320]) setTimeout(() => { samples.push(at + 'ms ' + getComputedStyle(slot()).gridTemplateRows); if (at === 320) done(samples) }, at)
+        document.querySelector('.run-header__ghost.is-danger').click()
+        const slot = () => document.querySelector('.run-sheet')?.closest('.run-slot')
+        for (const at of [0, 60, 120, 200, 320]) setTimeout(() => {
+          const element = slot()
+          if (!element) return fail(new Error('确认面未挂载'))
+          samples.push(at + 'ms ' + getComputedStyle(element).gridTemplateRows)
+          if (at === 320) done(samples)
+        }, at)
       })`
     }, { wait: 40 }]
   },
-  { name: 'run-team-active-clear', run: true, colorScheme: 'light', storage: baseStorage({ cardOpacity: 0 }) },
+  { name: 'run-independent-groups-clear', run: true, query: 'independent=groups', colorScheme: 'light', storage: baseStorage({ cardOpacity: 0 }) },
   // 右上角设置入口：账号与 Cursor。
   ...['accounts', 'import', 'automation', 'aozai', 'maintenance', 'cleanup'].flatMap(group =>
     ['light', 'dark'].map(colorScheme => ({
@@ -681,6 +760,37 @@ const scenes = [
   { name: 'sessions-rail-scrolled', rail: true, width: 1180, height: 620, query: 'sessions=many', colorScheme: 'light', storage: railStorage(), actions: [{ eval: `document.querySelector('.session-list').scrollTop = 150` }, { wait: 120 }] },
   { name: 'sessions-rail-empty', rail: true, query: 'sessions=none', colorScheme: 'light', storage: railStorage() },
   { name: 'sessions-rail-reduced-motion', rail: true, query: 'sessions=many', colorScheme: 'light', reducedMotion: true, storage: railStorage() },
+  // 名册多选（阶段 3）：勾选两行独立会话 → 底部浮动条（建组 / 加入… / 取消）；
+  // 浮动条是 session-pane 网格第三行，名册收缩让位——滚到底后最后一行完整可见（§7 探针）。
+  ...['light', 'dark'].map((colorMode) => ({
+    name: `sessions-rail-multiselect-${colorMode}`, rail: true, width: 1180, height: 720, query: 'sessions=many',
+    colorScheme: colorMode, storage: railStorage({ colorMode }),
+    actions: [
+      { eval: pickRailRow('3') }, { eval: pickRailRow('9') }, { wait: 250 },
+      { label: '浮动条不遮挡最后一行', probe: RAIL_BAR_PROBE }
+    ]
+  })),
+  // 混合选择（组内 + 独立）：只提供移出组，提示一行说明独立会话不受影响。
+  {
+    name: 'sessions-rail-multiselect-mixed', rail: true, query: 'sessions=many', colorScheme: 'light', storage: railStorage(),
+    actions: [{ eval: pickRailRow('4') }, { eval: pickRailRow('3') }, { wait: 250 }]
+  },
+  // 名册里的移出确认面：与组卡片同一段文案，在浮动条位置展开。
+  {
+    name: 'sessions-rail-remove-sheet', rail: true, query: 'sessions=many', colorScheme: 'dark', storage: railStorage({ colorMode: 'dark' }),
+    actions: [
+      { eval: pickRailRow('4') }, { wait: 200 },
+      { eval: `[...document.querySelectorAll('.session-pane__bar button')].find((button) => button.textContent.includes('移出组'))?.click()` }, { wait: 250 },
+      { label: '确认面在名册面板内', probe: `(() => {
+        const sheet = document.querySelector('.session-pane__bar .run-sheet')
+        if (!sheet) throw new Error('确认面未出现')
+        const pane = document.querySelector('.session-pane').getBoundingClientRect()
+        const rect = sheet.getBoundingClientRect()
+        if (rect.left < pane.left - 0.5 || rect.right > pane.right + 0.5 || rect.bottom > pane.bottom + 0.5) throw new Error('确认面超出名册面板')
+        return { title: sheet.querySelector('strong').textContent, width: Math.round(rect.width) }
+      })()` }
+    ]
+  },
 
   // ---------- 会话页过程卡：工具头部（意图说明 / 动词 / 提示）与 ask_question 可点选卡片 ----------
   // 含待答问卷的过程回合：Shell 的意图说明为主标题 + 程序名提示、读取行范围、编辑增删行数。
@@ -867,6 +977,34 @@ const scenes = [
       }
     ]
   })),
+  // 合计与名册同源：本轮是会话迄今唯一的改动区间（?turnfiles=sole）时，合计取 Cursor 的累计净值——
+  // 与左侧名册行同一个数、不再标 ≈；逐文件行保持过程估算的淡显。这就是「名册 +863 −137 vs 栏 ≈ +907 −183」
+  // 倒挂的修复走查（逐笔求和把同文件反复编辑重复计入，净值不会）。
+  {
+    name: 'session-turn-files-reconciled', width: 1440, height: 900, colorScheme: 'light', query: 'turnfiles=sole',
+    storage: railStorage(), clip: null,
+    actions: [
+      { wait: 400 },
+      {
+        label: '名册行与文件栏合计同源',
+        probe: `(() => {
+          const totals = document.querySelector('.turn-files__totals')
+          if (!totals) throw new Error('文件栏未渲染')
+          const text = (totals.textContent ?? '').replace(/\\s+/g, '')
+          if (text.includes('≈')) throw new Error('同源合计不该再标估算: ' + text)
+          if (!text.includes('+74') || !text.includes('−388')) throw new Error('合计不是 Cursor 净值: ' + text)
+          if (!totals.title.includes('名册')) throw new Error('来源说明缺失: ' + totals.title)
+          const rail = document.querySelector('.session-row[data-channel-id="2"] .session-row__changes')
+          if (!rail) throw new Error('名册行没有变更数字')
+          const railText = (rail.textContent ?? '').replace(/\\s+/g, '')
+          if (railText !== '+74−388') throw new Error('名册行与合计不同源: ' + railText)
+          const estimatedRows = document.querySelectorAll('.turn-files__item.is-estimated').length
+          if (!estimatedRows) throw new Error('逐文件行应保持估算标记')
+          return { totals: text, rail: railText, estimatedRows }
+        })()`
+      }
+    ]
+  },
   {
     name: 'session-turn-files-collapsed', width: 1440, height: 900, colorScheme: 'light', query: 'turnfiles=1', storage: railStorage(), clip: '.turn-files',
     actions: [{ wait: 300 }, { click: '.turn-files__toggle' }, { wait: 220 }, {
@@ -993,7 +1131,8 @@ const scenes = [
       })()`
     }]
   },
-  // 「上一轮」保持：新消息刚被取走、Agent 还在想：栏保住上一轮的四个文件并标「上一轮」、降色；审查走「未提交」范围。
+  // 「上一轮」保持：新消息刚被取走、Agent 还在想：栏保住上一轮的四个文件并标「上一轮」、降色；
+  // 审查仍走「本轮」范围——右栏的「本轮」视图与栏同一份数据，同样保住上一轮。
   {
     name: 'session-turn-files-previous', width: 1440, height: 900, colorScheme: 'light', query: 'turnfiles=previous',
     storage: railStorage(), clip: '.turn-files',
@@ -1102,6 +1241,8 @@ const scenes = [
           activeTab: active?.textContent ?? '',
           scope: scope?.textContent ?? '',
           fileOpen: file?.classList.contains('is-open') ?? false,
+          // 「本轮」正文来自编辑流：定位的文件展开后是逐次编辑卡（这批块只有 hint，卡内是占位说明）。
+          editCards: file ? file.querySelectorAll('.review-edit').length : 0,
           listedFiles: Array.from(document.querySelectorAll('.review-file')).map((el) => el.getAttribute('data-path'))
         }
       })()`

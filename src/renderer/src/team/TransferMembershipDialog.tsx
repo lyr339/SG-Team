@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { MembershipTransferCandidate, MembershipTransferOptions, MembershipTransferOutcome } from '../../../domain/team-handoff'
 import { AgentAvatar } from '../AgentAvatar'
 
-interface ManualHandoffDialogProps {
+interface TransferMembershipDialogProps {
   options: MembershipTransferOptions
   busy: boolean
   error: string
@@ -16,9 +16,9 @@ interface ManualHandoffDialogProps {
  * 成员身份迁移弹窗（阶段 2 · 2C）：把离线组内席位的组身份（组角色 + lead）移交给池内另一个
  * 独立席位；通道即席位，绑定与令牌不动。「同时交接上下文文档」把原席位的 Cursor 转录与拾光
  * 会话记录路径作为一条普通用户消息排进目标席位队列——上下文由主进程在迁移前解析、迁移成功
- * 后投递，两者结果分别显示。
+ * 后投递，两者结果分别显示。入口有两个：会话页的「交接」按钮（离线入组席位）与组卡片离线成员行的「交接…」。
  */
-export function ManualHandoffDialog({ options, busy, error, onClose, onConfirm, onOpenSession }: ManualHandoffDialogProps): React.JSX.Element {
+export function TransferMembershipDialog({ options, busy, error, onClose, onConfirm, onOpenSession }: TransferMembershipDialogProps): React.JSX.Element {
   const [selected, setSelected] = useState(options.candidates[0]?.slotId ?? '')
   const [includeContext, setIncludeContext] = useState(true)
   const [outcome, setOutcome] = useState<{ candidate: MembershipTransferCandidate; result: MembershipTransferOutcome }>()
