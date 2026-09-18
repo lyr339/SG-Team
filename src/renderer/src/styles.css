@@ -1288,7 +1288,7 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
    输入区上方、托盘之下：本轮 Agent 改动过的文件与增删行数（Cursor 原生 “N Files” 栏的拾光版）。
    与托盘同一尺寸语言（36px 头部、圆角 12、与输入区同宽），但边框是实线——虚线在这里专指
    「还不是对话记录」，而这些文件是已经发生的事实。行：头部 / 列表（被停靠区压缩时列表滚动、头部不动）。 */
-.turn-files { min-width: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); margin: 0 16px 8px; color: var(--text); background: var(--surface); border: var(--border-width-regular) solid var(--line-strong); border-radius: 12px; animation: turn-files-in 160ms ease; }
+.turn-files { --turn-files-row: 30px; min-width: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); margin: 0 16px 8px; color: var(--text); background: var(--surface); border: var(--border-width-regular) solid var(--line-strong); border-radius: 12px; animation: turn-files-in 160ms ease; }
 .turn-files__head { display: flex; align-items: center; gap: 8px; min-height: 36px; padding-right: 6px; }
 .turn-files__toggle { min-width: 0; flex: 1 1 auto; display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 6px 8px 6px 9px; color: var(--text-soft); background: transparent; border: 0; border-radius: 11px 0 0 11px; font: inherit; text-align: left; cursor: pointer; }
 .turn-files__toggle:hover, .turn-files__toggle:focus-visible { background: var(--accent-wash); }
@@ -1314,20 +1314,25 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 .turn-files__review { min-height: 26px; padding: 0 11px; color: var(--text-soft); background: var(--surface); border: var(--border-width-regular) solid var(--line); border-radius: 7px; font: inherit; font-size: var(--fs-11); font-weight: 600; line-height: 1; cursor: pointer; }
 .turn-files__review:hover, .turn-files__review:focus-visible { color: var(--color-text-info); border-color: var(--color-border-info); background: var(--color-background-info); }
 .turn-files__review:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-/* 列表常驻挂载，收起走 grid-rows 过渡（与托盘对称）。 */
-.turn-files__listwrap { min-height: 0; display: grid; grid-template-rows: 1fr; overflow: hidden; transition: grid-template-rows 180ms ease; }
-.turn-files.is-collapsed .turn-files__listwrap { grid-template-rows: 0fr; }
-.turn-files__list { min-height: 0; max-height: 176px; display: grid; margin: 0; padding: 0 6px 6px; overflow-y: auto; list-style: none; transition: padding-block 180ms ease; }
-.turn-files.is-collapsed .turn-files__list { padding-block: 0; }
+/* 列表常驻挂载，收起走 grid-rows 过渡（与托盘对称）。6px 底边距放在滚动容器之外：它不是列表的滚动内容，
+   封顶算式不用带上它，超出 5 行时露出的只会是下一行的顶部细线；收起时随行轨一起归零。 */
+.turn-files__listwrap { min-height: 0; display: grid; grid-template-rows: 1fr; padding-bottom: 6px; overflow: hidden; transition: grid-template-rows 180ms ease, padding-bottom 180ms ease; }
+.turn-files.is-collapsed .turn-files__listwrap { grid-template-rows: 0fr; padding-bottom: 0; }
+/* 列表按整行封顶：5 × (行高 + 顶部细线)，不靠半截行提示「还有更多」——头上的计数和滚动条已经在说。
+   细线按 1px 预算而不是 var(--border-width-regular)：0.5px 的令牌在布局里吸附到 1 个设备像素（DPR 1 下是 1px、
+   DPR 2 下 0.5px），按 0.5 算会让恰好 5 个文件在 DPR 1 下也出滚动条；按 1px 算任何 DPR 都不出，第 6 行起最多
+   露出顶部细线加 ≤ 2px 透明内边距，碰不到图标和文字。 */
+.turn-files__list { min-height: 0; max-height: calc(5 * (var(--turn-files-row) + 1px)); display: grid; margin: 0; padding: 0 6px; overflow-y: auto; list-style: none; }
 .turn-files__item { border-top: var(--border-width-regular) solid var(--line-faint); animation: turn-files-in 160ms ease; }
-.turn-files__row { width: 100%; min-height: 30px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 9px; padding: 4px 6px 4px 4px; color: var(--text); background: transparent; border: 0; border-radius: 7px; font: inherit; text-align: left; cursor: pointer; }
+/* 行内边距左 4：图标中心 = 列表内边距 6 + 行内边距 4 + 半宽 8 = 18，正对头部箭头的中心（头部内边距 9 + 箭头盒半宽 9）。 */
+.turn-files__row { width: 100%; min-height: var(--turn-files-row); display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 9px; padding: 4px 6px 4px 4px; color: var(--text); background: transparent; border: 0; border-radius: 7px; font: inherit; text-align: left; cursor: pointer; }
 .turn-files__row:disabled { cursor: default; }
 .turn-files__row:not(:disabled):hover, .turn-files__row:focus-visible { background: var(--accent-wash); }
 .turn-files__row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-/* 语言徽标：等宽小字、浅底，不染色相——文件类型不是状态。 */
-/* 文件类型图标：16px 单色 SVG，识别色只落在图标上（--filetype-*），TS / JS 方块里的字用反色。 */
+/* 文件类型图标：16px 单色 SVG，识别色只落在图标上（--filetype-*），TS / JS 方块里的字用反色；
+   两个字母 8px 约占 14px 方块的 65%，与人人认得的 TS 标志同一比例。 */
 .file-type-icon { width: 16px; height: 16px; flex: 0 0 auto; display: block; color: var(--filetype-file); }
-.file-type-icon text { font: 700 7px/1 var(--mono); fill: #fff; letter-spacing: -.02em; }
+.file-type-icon text { font: 700 8px/1 var(--mono); fill: #fff; letter-spacing: -.02em; }
 .file-type-icon.is-typescript { color: var(--filetype-typescript); }
 .file-type-icon.is-react { color: var(--filetype-react); }
 .file-type-icon.is-javascript { color: var(--filetype-javascript); }
@@ -1340,7 +1345,6 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 .file-type-icon.is-shell { color: var(--filetype-shell); }
 .file-type-icon.is-config { color: var(--filetype-config); }
 .file-type-icon.is-code { color: var(--filetype-code); }
-.turn-files__row > .file-type-icon { margin-left: 3px; }
 .turn-files__item.is-deleted .file-type-icon { opacity: .55; }
 /* 文件名：主干从尾部截断、扩展名永不截断、目录跟在其后从头部截断（窄栏先牺牲目录）。 */
 .turn-files__name { min-width: 0; display: flex; align-items: baseline; gap: 7px; overflow: hidden; }
@@ -1359,7 +1363,7 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 @media (prefers-reduced-motion: reduce) {
   .turn-files, .turn-files__item { animation: none; }
   .turn-files__spinner { animation: none; border-top-color: color-mix(in srgb, var(--accent) 28%, transparent); border-right-color: var(--accent); }
-  .turn-files__chevron, .turn-files__listwrap, .turn-files__list { transition: none; }
+  .turn-files__chevron, .turn-files__listwrap { transition: none; }
 }
 
 /* ---------- 消息工作台 ---------- */

@@ -1,4 +1,4 @@
-import type { FileIconKind } from './turn-files-view'
+import type { FileIconKind } from './file-type'
 
 /**
  * 文件类型图标（16px 单色 SVG）：本轮文件栏里替代文字徽标指认语言，与 Cursor 原生

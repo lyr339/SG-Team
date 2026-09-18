@@ -1008,11 +1008,13 @@ const scenes = [
     }]
   },
   // 浅色近景：类型图标（TS 方块 / React 原子）、同名对带目录、其余行只有名字、数字只写非零一侧。
+  // 几何：图标中心与头部箭头同一条竖线；列表按整行封顶——6 个文件只完整露出 5 行，第 6 行露不出图标和文字；
+  // TS 方块里的两个字母占 14px 方块 ≥ 60% 且不出方块。
   {
     name: 'session-turn-files-icons-light', width: 1440, height: 900, colorScheme: 'light', query: 'turnfiles=1&deep=1',
     storage: railStorage(), clip: '.turn-files',
     actions: [{ wait: 400 }, {
-      label: '类型图标与目录出场规则',
+      label: '类型图标、目录出场规则与几何',
       probe: `(() => {
         const bar = document.querySelector('.turn-files')
         if (!bar) return { found: false }
@@ -1022,7 +1024,23 @@ const scenes = [
         if (kinds.length !== 6) throw new Error('图标数量不对: ' + kinds.length)
         if (Math.round(icon.width) !== 16 || Math.round(icon.height) !== 16) throw new Error('图标不是 16px: ' + icon.width + 'x' + icon.height)
         if (/[−+]0(?!\\d)/.test(bar.textContent ?? '')) throw new Error('出现了 −0 / +0')
-        return { found: true, kinds, withDir, counts: Array.from(bar.querySelectorAll('.turn-files__counts')).map((el) => el.textContent) }
+        const chevron = bar.querySelector('.turn-files__chevron').getBoundingClientRect()
+        const axisDelta = (icon.left + icon.width / 2) - (chevron.left + chevron.width / 2)
+        if (Math.abs(axisDelta) > 0.5) throw new Error('图标中心偏离头部箭头中心 ' + axisDelta.toFixed(2) + 'px')
+        const list = bar.querySelector('.turn-files__list')
+        const listBottom = list.getBoundingClientRect().bottom
+        const rows = Array.from(bar.querySelectorAll('.turn-files__row'))
+        if (list.scrollHeight <= list.clientHeight) throw new Error('6 个文件的列表没有滚动')
+        if (rows[4].getBoundingClientRect().bottom > listBottom + 0.5) throw new Error('第 5 行没有完整露出')
+        const cut = ['.file-type-icon', '.turn-files__name', '.turn-files__counts']
+          .filter((selector) => rows[5].querySelector(selector).getBoundingClientRect().top < listBottom)
+        if (cut.length) throw new Error('第 6 行被切了半截: ' + cut.join(', '))
+        const letters = bar.querySelector('.file-type-icon.is-typescript text').getBBox()
+        if (letters.width < 8.4 || letters.x < 1.5 || letters.x + letters.width > 14.5) throw new Error('TS 字母尺寸或位置不对: ' + JSON.stringify({ x: letters.x, width: letters.width }))
+        return {
+          found: true, kinds, withDir, counts: Array.from(bar.querySelectorAll('.turn-files__counts')).map((el) => el.textContent),
+          axisDelta: Number(axisDelta.toFixed(2)), listHeight: Math.round(list.clientHeight), lettersWidth: Number(letters.width.toFixed(2))
+        }
       })()`
     }]
   },

@@ -60,10 +60,24 @@ describe('theme surface contracts', () => {
     // reduced-motion：进场动画、转圈与折叠过渡全部关闭。
     expect(styles).toMatch(/prefers-reduced-motion: reduce\)\s*\{[^}]*\.turn-files, \.turn-files__item\s*\{\s*animation:\s*none/)
     expect(styles).toMatch(/@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\.turn-files__spinner\s*\{[^}]*animation:\s*none/)
-    expect(styles).toMatch(/@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\.turn-files__chevron, \.turn-files__listwrap, \.turn-files__list\s*\{\s*transition:\s*none/)
+    expect(styles).toMatch(/@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\.turn-files__chevron, \.turn-files__listwrap\s*\{\s*transition:\s*none/)
     // 「上一轮」保持态：头部标签 + 整栏降色。
     expect(styles).toMatch(/\.turn-files\.is-previous \.turn-files__list\s*\{\s*opacity:/)
     expect(styles).toMatch(/\.turn-files__scope\s*\{[^}]*border-radius:\s*999px/)
+    // 图标中心与头部箭头同一条竖线：列表内边距 6 + 行内边距 4 + 半宽 8 = 头部内边距 9 + 箭头盒半宽 9 = 18，图标不再另加左边距。
+    expect(styles).toMatch(/\.turn-files__toggle\s*\{[^}]*padding:\s*6px 8px 6px 9px/)
+    expect(styles).toMatch(/\.turn-files__chevron\s*\{[^}]*width:\s*18px/)
+    expect(styles).toMatch(/\.turn-files__list\s*\{[^}]*padding:\s*0 6px;/)
+    expect(styles).toMatch(/\.turn-files__row\s*\{[^}]*padding:\s*4px 6px 4px 4px/)
+    expect(styles).not.toMatch(/\.turn-files__row > \.file-type-icon/)
+    // 列表按整行封顶：5 × (行高 + 细线按 1px 预算)，行高与封顶共用一个变量；底边距在滚动容器之外并随折叠归零。
+    expect(styles).toMatch(/\.turn-files\s*\{[^}]*--turn-files-row:\s*30px/)
+    expect(styles).toMatch(/\.turn-files__row\s*\{[^}]*min-height:\s*var\(--turn-files-row\)/)
+    expect(styles).toMatch(/\.turn-files__list\s*\{[^}]*max-height:\s*calc\(5 \* \(var\(--turn-files-row\) \+ 1px\)\)/)
+    expect(styles).toMatch(/\.turn-files__listwrap\s*\{[^}]*padding-bottom:\s*6px[^}]*transition:[^;]*padding-bottom/)
+    expect(styles).toMatch(/\.turn-files\.is-collapsed \.turn-files__listwrap\s*\{[^}]*padding-bottom:\s*0/)
+    // TS / JS 方块里的两个字母 8px：约占 14px 方块的 65%，与经典 TS 标志同一比例。
+    expect(styles).toMatch(/\.file-type-icon text\s*\{[^}]*font:\s*700 8px\/1 var\(--mono\)/)
   })
 
   it('gives the timeline a floor and lets the dock (tray + turn-files) shrink and merge instead', () => {
