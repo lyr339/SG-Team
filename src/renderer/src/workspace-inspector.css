@@ -178,10 +178,12 @@
 .inspector-skeleton.is-mono > i { height: 9px; border-radius: 3px; }
 @keyframes inspector-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
 
-/* 折叠容器：0fr ↔ 1fr 高度过渡，不测量内容；关闭态 inert。 */
+/* 折叠容器：0fr ↔ 1fr 高度过渡，不测量内容；关闭态 inert。
+   内容在高度展开的同时淡入（收起时同步淡出）——高度与不透明度一起动，展开不再“弹开一格灰底”。 */
 .inspector-collapsible { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 200ms cubic-bezier(0.2, 0.8, 0.2, 1); }
 .inspector-collapsible.is-open { grid-template-rows: 1fr; }
-.inspector-collapsible__inner { min-height: 0; overflow: hidden; }
+.inspector-collapsible__inner { min-height: 0; overflow: hidden; opacity: 0; transition: opacity 160ms ease; }
+.inspector-collapsible.is-open > .inspector-collapsible__inner { opacity: 1; }
 
 /* 撤销确认：锚在文件行下方的浮层（父级 .review-file__row 是 sticky，可作为定位基准）。 */
 .inspector-confirm {
@@ -225,18 +227,31 @@
   flex: 0 0 auto; min-height: 46px; display: flex; align-items: center; justify-content: space-between; gap: 10px;
   padding: 8px 10px 6px 12px;
 }
-.inspector-review__scope { display: inline-flex; gap: 2px; padding: 2px; background: var(--surface-soft); border-radius: 8px; }
+/* 范围切换 = 滑块分段控件：等宽三列（inline-grid 的 1fr 取最宽标签），底板 / 描边 / hairline 全在
+   绝对定位的滑块上，按 --scope-index 平移过去（100% 即一列宽，+2px 是列间隙）；按钮只翻文字颜色。
+   滑块是最后一个子节点且非 button：`> button:first-child` 一类的探针选择器不受影响。 */
+.inspector-review__scope {
+  position: relative; display: inline-grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 2px;
+  padding: 2px; background: var(--surface-soft); border-radius: 9px;
+}
 .inspector-review__scope > button {
-  height: 26px; display: inline-flex; align-items: center; gap: 5px; padding: 0 9px;
-  color: var(--muted); background: transparent; border: 1px solid transparent; border-radius: 6px;
+  position: relative; z-index: 1; height: 26px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 0 10px;
+  color: var(--muted); background: transparent; border: 0; border-radius: 7px;
   font-size: var(--fs-11); font-weight: 600; white-space: nowrap;
-  transition: color 120ms ease, background 120ms ease;
+  transition: color 160ms ease;
 }
 .inspector-review__scope > button:hover { color: var(--text); }
-.inspector-review__scope > button.is-active { color: var(--text); background: var(--surface-solid); border-color: var(--color-border-secondary); box-shadow: var(--shadow-hairline); }
+.inspector-review__scope > button.is-active { color: var(--text); }
 .inspector-review__scope > button:focus-visible { outline: 2px solid var(--color-ring-primary); outline-offset: 1px; }
 .inspector-review__scope > button > b { min-width: 15px; height: 15px; display: grid; place-items: center; padding: 0 4px; color: var(--color-text-info); background: var(--color-background-info); border-radius: var(--border-radius-full); font: 650 var(--fs-10)/1 var(--font-numeric); }
-.inspector-review__totals { flex: 0 0 auto; display: flex; align-items: center; gap: 7px; font-family: var(--font-numeric); }
+.inspector-review__scope-thumb {
+  position: absolute; z-index: 0; top: 2px; bottom: 2px; left: 2px; width: calc((100% - 8px) / 3);
+  background: var(--surface-solid); border: 1px solid var(--color-border-secondary); border-radius: 7px;
+  box-shadow: var(--shadow-hairline);
+  transform: translateX(calc(var(--scope-index, 0) * (100% + 2px)));
+  transition: transform 260ms cubic-bezier(0.25, 1.1, 0.3, 1);
+}
+.inspector-review__totals { flex: 0 0 auto; display: flex; align-items: center; gap: 7px; font-family: var(--font-numeric); font-variant-numeric: tabular-nums; }
 .inspector-review__totals > b, .review-file__counts b { color: var(--color-text-success); font-weight: 650; font-style: normal; font-size: var(--fs-11); }
 .inspector-review__totals > em, .review-file__counts em { color: var(--color-text-danger); font-weight: 650; font-style: normal; font-size: var(--fs-11); }
 .inspector-review__totals > button svg { width: 15px; height: 15px; }
@@ -247,7 +262,7 @@
   color: var(--muted); font-size: var(--fs-11);
 }
 .inspector-review__workspace { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--text-soft); }
-.inspector-review__branch { min-width: 0; overflow: hidden; padding: 1px 6px; background: var(--surface-soft); border-radius: 5px; font: 500 var(--fs-10)/1.5 var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.inspector-review__branch { min-width: 0; overflow: hidden; padding: 1px 6px; background: var(--surface-soft); border-radius: 6px; font: 500 var(--fs-10)/1.5 var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
 .inspector-review__live { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; color: var(--color-text-success); font-weight: 600; }
 .inspector-review__live i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: inspector-pulse 1.8s ease-in-out infinite; }
 .inspector-review__live b { font-weight: inherit; }
@@ -255,28 +270,45 @@
 .inspector-review__count > button { width: 24px; height: 24px; }
 .inspector-review__note { flex: 0 0 auto; margin: 0; padding: 7px 14px; color: var(--color-text-warning); background: var(--color-background-warning); font-size: var(--fs-11); line-height: 1.4; }
 
-.review-files { min-width: 0; min-height: 0; flex: 1 1 auto; overflow: auto; scrollbar-gutter: stable; }
-.review-file { position: relative; min-width: 0; border-bottom: 1px solid var(--color-border-tertiary); }
+/* 文件 = 圆角卡片：hairline 边框 + 卡间留白代替通栏分割线；悬停只加深描边 + hairline 阴影
+   （不做位移——卡头是 sticky，transform 会给它另起包含块）。overflow: clip 让 sticky 卡头
+   与差异底色贴着圆角走且不产生滚动容器（sticky 仍相对外层列表滚动）；唯一要出卡的浮层是
+   撤销确认，所以确认打开时临时放开裁切。 */
+/* 列表顶部的留白放在首卡的 margin 上而不是容器 padding 上：滚动容器的 padding-top 会把
+   sticky 卡头的钉住位置压低 8px，滚过的差异行会从那条缝里露出来；margin 属于内容，滚走即无。 */
+.review-files { min-width: 0; min-height: 0; flex: 1 1 auto; overflow: auto; scrollbar-gutter: stable; padding: 0 8px 12px 10px; }
+.review-file {
+  position: relative; min-width: 0; margin-bottom: 8px; overflow: clip;
+  background: color-mix(in srgb, var(--surface-solid) calc(var(--inspector-reading-opacity) * 100%), transparent);
+  border: 1px solid var(--color-border-tertiary); border-radius: 12px;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+.review-file:first-child { margin-top: 8px; }
+.review-file:last-child { margin-bottom: 0; }
+.review-file:hover, .review-file:focus-within { border-color: var(--color-border-secondary); box-shadow: var(--shadow-hairline); }
+/* 定位高亮的通用圆角是 8px：卡片按自己的 12px 走，光环才贴边。 */
+.review-file.is-revealed { border-radius: 12px; }
+.review-file.is-confirming { overflow: visible; }
 .review-file__row {
   position: sticky; top: 0; z-index: 2; min-width: 0; display: flex; align-items: stretch;
   background: color-mix(in srgb, var(--surface-solid) calc(var(--inspector-reading-opacity) * 100%), transparent);
   border-bottom: 1px solid transparent;
-  transition: background 120ms ease;
+  transition: background 140ms ease;
 }
 .review-file__row:hover, .review-file__row:focus-within { background: var(--surface-soft); }
 /* 确认浮层打开时把该行抬到其它 sticky 行之上，浮层不会被下一行盖住。 */
 .review-file.is-confirming > .review-file__row { z-index: 4; }
 .review-file.is-open > .review-file__row { border-bottom-color: var(--color-border-tertiary); }
 .review-file__head {
-  flex: 1 1 auto; min-width: 0; min-height: 36px;
-  display: grid; grid-template-columns: 22px minmax(0, 1fr) auto 16px; align-items: center; gap: 8px;
-  padding: 4px 8px 4px 10px; color: var(--text-soft); background: transparent; border: 0; text-align: left;
+  flex: 1 1 auto; min-width: 0; min-height: 38px;
+  display: grid; grid-template-columns: 20px minmax(0, 1fr) auto 16px; align-items: center; gap: 8px;
+  padding: 5px 8px 5px 9px; color: var(--text-soft); background: transparent; border: 0; text-align: left;
 }
 .review-file__head:focus-visible { outline: 2px solid var(--color-ring-primary); outline-offset: -2px; }
 .review-file__head > i {
-  width: 21px; height: 21px; display: grid; place-items: center;
+  width: 20px; height: 20px; display: grid; place-items: center;
   color: var(--color-text-info); background: var(--color-background-info);
-  border-radius: 5px; font: 700 var(--fs-10)/1 var(--font-numeric); font-style: normal;
+  border-radius: 6px; font: 650 var(--fs-10)/1 var(--font-numeric); font-style: normal;
 }
 .review-file.is-added .review-file__head > i, .review-file.is-untracked .review-file__head > i { color: var(--color-text-success); background: var(--color-background-success); }
 .review-file.is-deleted .review-file__head > i, .review-file.is-conflicted .review-file__head > i { color: var(--color-text-danger); background: var(--color-background-danger); }
@@ -297,18 +329,21 @@
 .review-file__path strong > b { flex: 0 0 auto; font-weight: inherit; }
 .review-file__path em { flex: 0 0 auto; margin-left: 8px; padding: 0 5px; color: var(--muted); background: var(--surface-soft); border-radius: 4px; font: 500 var(--fs-10)/1.6 var(--font-sans); font-style: normal; }
 .review-file__path em.is-turn { color: var(--color-text-info); background: var(--color-background-info); }
-.review-file__counts { display: flex; align-items: center; gap: 5px; font: 600 var(--fs-10)/1 var(--font-numeric); white-space: nowrap; }
+.review-file__counts { display: flex; align-items: center; gap: 5px; font: 600 var(--fs-10)/1 var(--font-numeric); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .review-file__counts small { color: var(--muted); font-size: var(--fs-10); }
-.review-file__head > svg { width: 15px; height: 15px; color: var(--muted); transition: transform 160ms ease; }
-/* 动作簇悬停时覆盖在计数之上（GitHub / Codex 同款），平时不占布局宽度，键盘 Tab 进入即显示。 */
+/* 展开箭头：图标路径恒定，靠 transform 旋转过渡（ChevronIcon 内联 transform，这里给时长与曲线）。 */
+.review-file__head > svg { width: 15px; height: 15px; color: var(--muted); transition: transform 200ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+/* 动作簇悬停时覆盖在计数之上（GitHub / Codex 同款），平时不占布局宽度，键盘 Tab 进入即显示；
+   进场带 6px 的滑入，离场只淡出（往回滑会追着指针跑）。 */
 .review-file__actions {
   position: absolute; top: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 4px;
   padding: 0 6px 0 18px;
   /* 叠两层：上层是悬停底色，下层实底，保证被盖住的计数不透出来。 */
   background: linear-gradient(to right, transparent, var(--surface-soft) 18px), linear-gradient(to right, transparent, var(--surface-solid) 18px);
-  opacity: 0; pointer-events: none; transition: opacity 120ms ease;
+  opacity: 0; transform: translateX(6px); pointer-events: none;
+  transition: opacity 150ms ease, transform 200ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
-.review-file__row:hover .review-file__actions, .review-file__row:focus-within .review-file__actions, .review-file.is-busy .review-file__actions { opacity: 1; pointer-events: auto; }
+.review-file__row:hover .review-file__actions, .review-file__row:focus-within .review-file__actions, .review-file.is-busy .review-file__actions { opacity: 1; transform: none; pointer-events: auto; }
 .review-file__action-group { display: inline-flex; align-items: center; gap: 1px; }
 .review-file__action-group + .review-file__action-group { margin-left: 4px; padding-left: 5px; border-left: 1px solid var(--color-border-secondary); }
 .review-file.is-busy .review-file__head { opacity: 0.6; }
@@ -318,35 +353,45 @@
 
 .review-diff { min-width: 0; overflow-x: auto; background: color-mix(in srgb, var(--canvas-solid) 86%, transparent); }
 .review-hunk { min-width: max-content; content-visibility: auto; contain-intrinsic-size: auto 260px; }
-.review-hunk__skipped, .review-hunk__header {
-  position: sticky; left: 0; min-width: 100%; width: max-content; padding: 4px 10px;
-  color: var(--muted); background: var(--surface-soft); border-block: 1px solid var(--color-border-tertiary);
-  font: 500 var(--fs-10)/1.3 var(--font-mono);
-}
-/* hunk 头只做分隔与定位锚点：淡蓝底 + 左侧一根细色条即可，不与增删行抢注意力。 */
+/* hunk 头只做分隔与定位锚点：中性淡底 + 弱化的 mono 文字，不与增删行抢注意力（旧版的蓝底色带太重）。 */
 .review-hunk__header {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-right: 6px;
-  color: color-mix(in srgb, var(--color-text-info) 82%, var(--muted)); background: color-mix(in srgb, var(--color-background-info) 46%, transparent);
-  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--color-text-info) 55%, transparent); outline: none;
+  position: sticky; left: 0; min-width: 100%; width: max-content;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 3px 6px 3px 10px;
+  color: var(--muted); background: color-mix(in srgb, var(--surface-soft) 62%, transparent);
+  border-block: 1px solid var(--color-border-tertiary);
+  font: 500 var(--fs-10)/1.5 var(--font-mono); outline: none;
+}
+/* 「N 行未修改」＝折叠记号：虚线上下缘 + 幽灵色，一眼读出“这里被跳过”，不再是一条实心灰带。 */
+.review-hunk__skipped {
+  position: sticky; left: 0; min-width: 100%; width: max-content; padding: 3px 10px;
+  color: var(--faint); background: transparent;
+  border-block: 1px dashed var(--color-border-tertiary);
+  font: 500 var(--fs-10)/1.5 var(--font-sans);
 }
 .review-hunk__header code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: inherit; }
 .review-hunk__actions { flex: 0 0 auto; display: inline-flex; gap: 1px; opacity: 0; transition: opacity 120ms ease; }
 .review-hunk:hover .review-hunk__actions, .review-hunk:focus-within .review-hunk__actions { opacity: 1; }
 .review-hunk__actions > button { width: 22px; height: 22px; color: var(--color-text-info); }
 .review-hunk__actions > button svg { width: 13px; height: 13px; }
+/* 差异行：正文保持中性色（现代 diff 的读法——VS Code / Cursor 同款），语义色只落在
+   符号列、行号与字级高亮上；底色减淡到刚好成“带”，长块扫读不刺眼。 */
 .review-line {
   min-width: 100%; width: max-content; min-height: 21px;
   display: grid; grid-template-columns: 38px 38px minmax(240px, 1fr);
   align-items: stretch; color: var(--text-soft); font: 500 var(--fs-10)/1.55 var(--font-mono);
 }
-.review-line > span { padding: 2px 7px; color: var(--faint); border-right: 1px solid var(--color-border-tertiary); text-align: right; user-select: none; }
+.review-line > span { padding: 2px 7px; color: var(--faint); text-align: right; font-variant-numeric: tabular-nums; user-select: none; }
 .review-line > pre { margin: 0; padding: 2px 10px 2px 6px; white-space: pre; }
-.review-line > pre > i { display: inline-block; width: 12px; color: var(--muted); font-style: normal; user-select: none; }
-.review-line.is-addition { color: var(--color-text-success); background: color-mix(in srgb, var(--color-background-success) 72%, transparent); }
-.review-line.is-deletion { color: var(--color-text-danger); background: color-mix(in srgb, var(--color-background-danger) 72%, transparent); }
-.review-line.is-addition > pre > i { color: var(--color-text-success); }
-.review-line.is-deletion > pre > i { color: var(--color-text-danger); }
-.review-line mark { color: inherit; border-radius: 3px; background: color-mix(in srgb, currentColor 22%, transparent); }
+.review-line > pre > i { display: inline-block; width: 14px; color: var(--faint); font-style: normal; user-select: none; }
+.review-line.is-addition { background: color-mix(in srgb, var(--color-background-success) 52%, transparent); }
+.review-line.is-deletion { background: color-mix(in srgb, var(--color-background-danger) 46%, transparent); }
+.review-line.is-addition > span { color: color-mix(in srgb, var(--color-text-success) 55%, var(--faint)); }
+.review-line.is-deletion > span { color: color-mix(in srgb, var(--color-text-danger) 50%, var(--faint)); }
+.review-line.is-addition > pre > i { color: var(--color-text-success); font-weight: 700; }
+.review-line.is-deletion > pre > i { color: var(--color-text-danger); font-weight: 700; }
+.review-line mark { color: inherit; border-radius: 3px; padding: 0 1px; margin: 0 -1px; background: color-mix(in srgb, currentColor 20%, transparent); }
+.review-line.is-addition mark { background: color-mix(in srgb, var(--color-text-success) 24%, transparent); }
+.review-line.is-deletion mark { background: color-mix(in srgb, var(--color-text-danger) 22%, transparent); }
 .review-line.is-meta { color: var(--muted); font-style: italic; }
 .review-diff__truncated { min-width: max-content; padding: 8px 12px; color: var(--color-text-warning); background: var(--color-background-warning); font-size: var(--fs-11); }
 
@@ -362,20 +407,29 @@
 /* Git 尚未看到的文件：状态槽放文件类型图标（图标自带识别色），底色中性。 */
 .review-file__head > i.is-type { color: var(--muted); background: var(--surface-soft); }
 .review-file__head > i.is-type .file-type-icon { width: 13px; height: 13px; }
-/* 逐次编辑卡：一次编辑一段，卡头说动作与行数提示，正文是与 Git 同一套的差异行。 */
+/* 逐次编辑卡：一次编辑一段，卡头说动作与行数提示，正文是与 Git 同一套的差异行。
+   「第 N 次」收进信息色小胶囊当序号锚点，动作词升正文色——扫读时先看到序号再看到动作。 */
 .review-edit { min-width: max-content; }
 .review-edit__head {
   position: sticky; left: 0; min-width: 100%; width: max-content;
-  display: flex; align-items: center; gap: 8px; padding: 4px 10px;
-  color: var(--muted); background: var(--surface-soft); border-block: 1px solid var(--color-border-tertiary);
+  display: flex; align-items: center; gap: 8px; padding: 5px 10px;
+  color: var(--text-soft); background: color-mix(in srgb, var(--surface-soft) 62%, transparent);
+  border-block: 1px solid var(--color-border-tertiary);
   font: 500 var(--fs-10)/1.5 var(--font-sans);
 }
-.review-edit__head > b { color: var(--text-soft); font-weight: 650; font-family: var(--font-numeric); }
-.review-edit__head > code { padding: 0 5px; background: color-mix(in srgb, var(--canvas-solid) 72%, transparent); border-radius: 4px; font: 550 var(--fs-10)/1.5 var(--font-numeric); }
+.review-edit__head > b {
+  display: inline-flex; align-items: center; height: 17px; padding: 0 7px;
+  color: var(--color-text-info); background: var(--color-background-info);
+  border-radius: var(--border-radius-full); font: 650 var(--fs-10)/1 var(--font-numeric);
+}
+.review-edit__head > span { font-weight: 600; }
+.review-edit__head > code { padding: 0 5px; color: var(--muted); background: color-mix(in srgb, var(--canvas-solid) 72%, transparent); border-radius: 4px; font: 550 var(--fs-10)/1.5 var(--font-numeric); }
 .review-edit__head > em { font-style: normal; font-weight: 600; }
-.review-edit__head > em.is-running { color: var(--color-text-info); }
+.review-edit__head > em.is-running { display: inline-flex; align-items: center; gap: 4px; color: var(--color-text-info); }
+.review-edit__head > em.is-running::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: currentColor; animation: inspector-pulse 1.4s ease-in-out infinite; }
 .review-edit__head > em.is-failed { color: var(--color-text-danger); }
 .review-edit.is-failed .review-edit__head { color: var(--color-text-danger); background: var(--color-background-danger); }
+.review-edit.is-failed .review-edit__head > b { color: var(--color-text-danger); background: color-mix(in srgb, var(--color-text-danger) 12%, transparent); }
 .review-diff__footnote { min-width: max-content; margin: 0; padding: 6px 12px; color: var(--faint); font-size: var(--fs-10); line-height: 1.5; }
 
 /* ---------- Plan（Cursor Todos） ----------
@@ -522,8 +576,10 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .wor
   .inspector-plan__list li, .inspector-plan__list li.is-just-started .todo-spinner { animation: none; }
   /* 画勾动画关闭时必须同步复位描边，否则勾会停在不可见的初始态。 */
   .inspector-plan__list li.is-just-completed .todo-indicator path { animation: none; stroke-dasharray: none; stroke-dashoffset: 0; }
-  .inspector-review__live i, .activity-turn__pulse, .activity-row__meta em.is-running i { animation: none; }
+  .inspector-review__live i, .activity-turn__pulse, .activity-row__meta em.is-running i, .review-edit__head > em.is-running::before { animation: none; }
   .inspector-panel, .artifact-card, .inspector-toast, .inspector-confirm, .inspector-skeleton > i { animation: none; }
-  .inspector-tab, .inspector-tab__reveal, .inspector-tab__text, .inspector-collapsible, .review-file__head > svg, .activity-turn__meta svg, .activity-row__meta svg, .artifact-card__actions { transition: none; }
+  .inspector-tab, .inspector-tab__reveal, .inspector-tab__text, .inspector-collapsible, .inspector-collapsible__inner, .review-file__head > svg, .activity-turn__meta svg, .activity-row__meta svg, .artifact-card__actions { transition: none; }
+  .inspector-review__scope-thumb, .review-file, .review-file__actions { transition: none; }
+  .review-file__actions { transform: none; }
   .is-revealed { animation: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-text-info) 45%, transparent); }
 }

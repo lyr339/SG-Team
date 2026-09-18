@@ -50,8 +50,9 @@ export function RevertIcon(props: IconProps): React.JSX.Element {
   return <svg {...base(props)}><path d="M3 6.5h6.5a3 3 0 0 1 0 6H6" /><path d="m5.5 4-2.5 2.5L5.5 9" /></svg>
 }
 
-export function ChevronIcon({ open, ...props }: IconProps & { open: boolean }): React.JSX.Element {
-  return <svg {...base(props)}><path d={open ? 'm4 10 4-4 4 4' : 'm4 6 4 4 4-4'} /></svg>
+/** 展开箭头：路径恒定（向下），open 时整体旋转 180°——换 path 无法过渡，transform 能吃到使用处的 transition。 */
+export function ChevronIcon({ open, style, ...props }: IconProps & { open: boolean }): React.JSX.Element {
+  return <svg {...base({ ...props, style: { transform: open ? 'rotate(180deg)' : 'none', ...style } })}><path d="m4 6 4 4 4-4" /></svg>
 }
 
 export function ExpandAllIcon(props: IconProps): React.JSX.Element {

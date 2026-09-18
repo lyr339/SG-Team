@@ -613,7 +613,13 @@ export function ReviewPanel({ workspaceKey, turnPaths, turnFiles, turnEdits, onQ
   return (
     <section className="inspector-review" aria-label="工作区代码审查">
       <header className="inspector-review__summary">
-        <div className="inspector-review__scope" role="group" aria-label="审查范围">
+        {/* 分段控件：滑块是最后一个（绝对定位的）非按钮子节点——测试与探针都按 `> button` 取按钮，顺序不变。 */}
+        <div
+          className="inspector-review__scope"
+          role="group"
+          aria-label="审查范围"
+          style={{ '--scope-index': SCOPE_ORDER.indexOf(scope) } as React.CSSProperties}
+        >
           {SCOPE_ORDER.map((candidate) => (
             <button
               key={candidate}
@@ -627,6 +633,7 @@ export function ReviewPanel({ workspaceKey, turnPaths, turnFiles, turnEdits, onQ
               {candidate === 'turn' && turnCount ? <b>{turnCount}</b> : null}
             </button>
           ))}
+          <span className="inspector-review__scope-thumb" aria-hidden="true" />
         </div>
         <div
           className="inspector-review__totals"
