@@ -1,57 +1,50 @@
-# 拾光软件优化清单（reviewer / CH-3 审计产出）
+# 拾光软件优化清单
 
-审计基线（2026-08-25 实测）：typecheck ✅、vitest 49 文件 355 用例全绿、build + smoke:channel/mcp ✅。
-产物体积：renderer 764K JS + 117K CSS；main 495K；mcp 970K。
-优先级：P0 立即 / P1 近期 / P2 择机。成本：S ≤0.5 天，M 1–2 天，L ≥3 天。
+> 2026-09-18 重写：只保留仍然开放的项，已完成项（08-25 审计的 P0/P1 全部 ✅、过程样式并块、文件大小格式化出口、
+> ProcessBlocks ARIA、knip 接入、最小 CI、SessionWorkspace / App 组件测试等）见 git 历史与 `docs/ARCHITECTURE.md` 的日期条目。
+>
+> 复核基线（2026-09-18，main `16cf464`）：typecheck ✅、vitest 207 文件 / 2103 用例全绿、knip 干净。
+> 产物体积（`npm run build`）：renderer 1.49 MB JS + 424 KB CSS；main 1.29 MB；mcp 1.12 MB
+> （08-25 分别为 764 KB + 117 KB / 495 KB / 970 KB——三周翻倍，主要来自 app-update、账号自动化、统计页与预览场景）。
+> 优先级：P1 近期 / P2 择机。成本：S ≤ 0.5 天，M 1–2 天，L ≥ 3 天。
 
-状态更新（2026-08-25 08:26）：P0 已清零；P1 性能链路已完成结构共享/增量重建/遥测空闲降频；本轮继续完成过程样式并块、文件大小格式化共享出口、ProcessBlocks ARIA 精化、ProcessBlocks/ComposerWorkbench 组件测试和最小 CI。
+## 1. 性能与体积
 
-## 1. 性能
-
-| # | 项 | 优先级 | 成本 | 依据 |
+| # | 项 | 优先级 | 成本 | 依据 / 备注 |
 |---|----|--------|------|------|
-| 1.1 | ✅ 已完成：根目录误置构建产物已清理并加 .gitignore 防线（`/index-*.js`） | P0 | S | 根目录实测 |
-| 1.2 | ✅ 已完成：空目录已删除 | P0 | S | ls 实测 |
-| 1.3 | ✅ 已完成：快照→渲染链路完成结构共享、SessionRailCard memo、稳定回调；长列表虚拟化暂缓（500 条上限下滚动锚定/分组跨窗风险高于收益） | P1 | M–L | snapshot-sharing / App acceptSnapshot / SessionRailCard |
-| 1.4 | ✅ 已完成：主进程定时器采取克制收敛，最重的 Cursor telemetry 空闲期 2s → 10s 降频，活跃期不变；统一总线暂缓以避免时序风险 | P1 | M | desktop-session-service |
-| 1.5 | ✅ 已完成：relay conversations 引用共享 + session fingerprint 缓存 + enrich 层同步缓存；基准 4 通道 × 200 轮显示 conversations 75% 复用、session 100% 复用 | P1 | S–M | channel-message-relay / desktop-session-service |
-| 1.6 | 依赖瘦身择机：MCP bundle 970K（zod v4 + MCP SDK），renderer 764K；评估树摇与按需引入 | P2 | M | out/ 实测 |
-| 1.7 | 过程流重活外移择机：present/safePlain/diff 计算从 Cursor 页面内挪到 Node 侧（页面只采集最小原始数据）。背景：2026-09-12 根因分析确认 Cursor 1h+ 卡顿源于 hook 每次写入全量扫描回合气泡；同日已完成阴性缓存/快照节流/增量缓存三步（成本已降 1–2 个数量级），外移只省 CPU 不省 O(回合) 读取，收益递减——动手前需重新实测评估 | P2 | M–L | cursor-stream-observer / cursor-cdp-session-creator |
+| 1.1 | 依赖与产物瘦身：MCP bundle 1.12 MB（zod v4 + MCP SDK v2 全量内联，`ssr.noExternal: true`）；renderer 1.49 MB 单 chunk，无按模块分包（设置页七组、统计页、运行页、检视器全在首屏 chunk；预览场景不在生产 bundle 内，`preview.html` 只由 `vite.preview.config.ts` 构建）。评估树摇、按需引入与 `manualChunks` | P2 | M | `out/` 实测 |
+| 1.2 | 过程流重活外移：present / safePlain / diff 计算从 Cursor 页面内挪到 Node 侧。09-12 已完成节流 + 事实缓存三步（成本降 1–2 个数量级），外移只省 CPU 不省 O(回合) 读取，收益递减——动手前重新实测 | P2 | M–L | `cursor-stream-observer.ts` |
+| 1.3 | `legacyPatch()` 扫描为找标记读整个 20 MB workbench bundle（尾部读取即可） | P2 | S | `cursor-storage-scanner.ts`（ARCHITECTURE 09-12「Not done, recorded」） |
+| 1.4 | 桌面遥测每个变化 tick 都从 `state.vscdb` `json_extract` 整段 `composerData:*` blob（09-13 已把重算从 272–545 ms 降到 13 ms；blob 读取本身仍是 O(composer 体积)） | P2 | M | ARCHITECTURE 09-12 (b) |
 
 ## 2. 交互与视觉一致性
 
-| # | 项 | 优先级 | 成本 | 依据 |
+| # | 项 | 优先级 | 成本 | 依据 / 备注 |
 |---|----|--------|------|------|
-| 2.1 | styles.css 142 处硬编码 hex（对照 419 处 var(--*)），集中在过程/状态徽章区。按 DESIGN-SYSTEM.md 收敛进设计令牌 | P1 | M | grep 实测计数 |
-| 2.2 | ✅ 已完成：过程样式并为唯一 ProcessBlocks 样式块，状态徽章与节点色回收既有令牌，避免两段级联互相覆盖 | P1 | S | styles.css |
-| 2.3 | 错误态策略普查：sendError / attachmentError 常驻不消退，建议自动消退或手动关闭统一 | P2 | S | ComposerWorkbench / SessionWorkspace |
+| 2.1 | 硬编码色值收敛：`styles.css` 274 处 hex（对照 1913 处 `var(--*)`），全部 CSS 355 处。其中相当一部分是 `:root` 里 `light-dark(#…, #…)` 的令牌定义（合法），真正该收敛的是令牌块之外、散落在过程 / 状态徽章 / 文件类型色里的字面量——统计前先把令牌块排除 | P1 | M | 2026-09-18 正则计数 |
+| 2.2 | 错误态策略普查：`sendError` / `attachmentError` 常驻不消退（`role="alert"`），与更新面板「人话一句 + 弱化原文」的做法不一致；统一为自动消退或可关闭 | P2 | S | `ComposerWorkbench.tsx` / `SessionWorkspace.tsx` |
+| 2.3 | 右栏审查行仍打印带零的 `+N −M`；转写文件条已改为只显示非零一侧（`describeLineCounts`）——两处应共用同一规则 | P2 | S | ARCHITECTURE 09-17「Not changed, recorded」 |
+| 2.4 | 预览 mock 的 todo 场景内容仍写着已移除的「席位自动轮换」实施步骤（`preview-main.tsx` `?plan=long`）；只是示例文本，但会误导读截图的人 | P2 | S | `preview-main.tsx` 582–586 |
 
 ## 3. 可访问性
 
-| # | 项 | 优先级 | 成本 | 依据 |
+| # | 项 | 优先级 | 成本 | 依据 / 备注 |
 |---|----|--------|------|------|
-| 3.1 | fs-10（10px）字号使用 110 处，辅助文字普遍偏小；配合 faint/muted 低对比色在浅色主题下对比度风险。关键状态文本建议 ≥11px 基线 + 对比度抽测 | P1 | M | grep 实测计数 |
-| 3.2 | ✅ 部分完成：会话名册 ↑/↓/Home/End 行间漫游 + roving tabindex（2026-09-07 侧栏重设计随附）；Escape 返回会话列表仍待办 | P2 | S–M | 走查实测 |
-| 3.3 | ✅ 已完成：ProcessBlocks 仅在可展开时输出 aria-expanded；不可展开 disabled head 不再伪装 disclosure | P2 | S | ProcessBlocks.tsx + process-blocks.test.tsx |
+| 3.1 | `fs-10`（10 px）使用 253 处（08-25 为 110），辅助文字普遍偏小；配合 faint / muted 低对比色在浅色下有对比度风险。关键状态文本 ≥ 11 px 基线 + 对比度抽测 | P1 | M | 2026-09-18 正则计数 |
+| 3.2 | 会话工作区 Escape 返回名册尚未实现（名册行漫游 ↑/↓/Home/End 已有；Escape 目前只用于弹窗 / 菜单 / 确认块） | P2 | S | grep `Escape` |
 
 ## 4. 代码健康度
 
-| # | 项 | 优先级 | 成本 | 依据 |
+| # | 项 | 优先级 | 成本 | 依据 / 备注 |
 |---|----|--------|------|------|
-| 4.1 | ✅ 已完成：文件大小格式化抽到 shared 唯一出口，renderer 继续 re-export，domain 投递清单直接复用 | P1 | S | shared/format-file-size.ts |
-| 4.2 | ✅ 已完成：knip 接入（`npm run lint:dead`，CI 同跑）；清除退役插件时代的工作区探测器、桥接扩展卸载器、插件队列迁移与旧图标；tsx 测试纳入 typecheck | P2 | S | knip.json / ci.yml |
-| 4.3 | 类型严格性保持：strict + noUncheckedIndexedAccess 已开，src 零 `: any` / `as any` ✅（现状良好，仅守护） | — | — | grep 实测 |
+| 4.1 | `docs/ARCHITECTURE.md` 251 KB：前 ~110 行是稳定架构，其后是 60 余条按日期追加的决策日志。考虑拆成 `ARCHITECTURE.md`（稳定部分）+ `docs/decisions/` 或 `ARCHITECTURE-LOG.md`（日志），并规定新条目只进日志。多席位并行时都往同一文件尾部追加，是合并冲突的常客 | P2 | S | 本轮审查 |
+| 4.2 | 阶段 4 之前的已知死路径：`check_messages.reply`（与 `record_reply` 同效）、`record_reply.groupId / taskId / files`、`channel_presence.pendingGroupChat / pendingGroupId`（恒 false / null）、`team_run start / ping / pong / liveness`、`renew` no-op。全部归阶段 4（`.handoff/DYNAMIC-GROUPS-PHASE4-MCP-TODO.md` 4B / 4D），因为改工具面会让所有在跑的长轮询断一次，要选窗口一次做完 | — | — | 不在此处动 |
+| 4.3 | 启动时不校验 Cursor 版本（全部逆向锚点针对 3.6.31）；应读取 Cursor 版本并在不匹配时给出提示 | P1 | S | ARCHITECTURE 09-13「candidate follow-up」 |
+| 4.4 | 类型严格性保持：strict + `noUncheckedIndexedAccess` 已开，src 零 `: any` / `as any` ✅（守护即可） | — | — | 2026-09-18 复核 |
 
 ## 5. 测试与发布质量
 
-| # | 项 | 优先级 | 成本 | 依据 |
+| # | 项 | 优先级 | 成本 | 依据 / 备注 |
 |---|----|--------|------|------|
-| 5.1 | ✅ 已完成：attachment-rules 纯函数抽取 + vitest 边界用例（白名单/大小/文案/合计配额） | P0 | S | tests/attachment-rules.test.ts |
-| 5.2 | ✅ 部分完成：新增 ProcessBlocks 三态/ARIA 测试与 ComposerWorkbench 快捷提示词/附件/错误态 SSR 测试；SessionWorkspace/App 组件级测试仍可择机补 | P1 | M | tests/process-blocks.test.tsx / tests/composer-workbench.test.tsx |
-| 5.3 | ✅ 已完成：新增 GitHub Actions 最小 CI，跑 `npm ci`、typecheck、test、build、smoke:channel | P1 | S–M | .github/workflows/ci.yml |
-| 5.4 | 发布门禁：verify:mac（打包产物冒烟）纳入定期发布流程；冒烟场景已覆盖通信/团队工具/附件清单 ✅ | P2 | S | package.json |
-
-## 已收编的已知残留
-
-- styles.css 过程样式重叠 → 2.2 ✅
-- attachmentSizeLabel / formatFileSize 多处实现 → 4.1 ✅
+| 5.1 | `release.yml` 只跑 typecheck + 打包，不跑 `smoke:mcp:packaged`（打包产物的三进程围栏冒烟只在本地 `verify:mac` / `verify:win` 里）；把它纳入发布 job | P2 | S | `.github/workflows/release.yml` |
+| 5.2 | 本仓库大量 Windows 路径写的是「平台注入单测覆盖、未在 Windows 真机验证」（CDP 重启、taskkill、cmd 引号、保留端口、热切泵、NSIS 安装）；有 Windows 机器时按 ARCHITECTURE 各条目的「Still to be confirmed」清单过一遍 | P1 | M | ARCHITECTURE 09-12 / 09-13 |

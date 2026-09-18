@@ -59,7 +59,7 @@ An independent batch is a **session pool**, and since phase 2 · 2B-1 it is the 
 
 ## Install from the desktop app
 
-The run page's **接入团队 MCP** step (also run automatically when a run's member topology changes) registers the run's seats with the server:
+Creating a session pool from the 运行 page (`TeamControlService.createSessionPool`, the only run-creating entry point since phase 2 · 2B-1) registers the pool's seats with the server in the same repository transaction that writes the run:
 
 - registers a fresh agent generation in SQLite and revokes the previous generation;
 - does not write the workspace `.cursor/mcp.json` at all — the only MCP entry is the global one below;
@@ -104,7 +104,7 @@ record_reply({ channel_id: '2', session?: '<seat token>', content, title?, group
 
 - `tick` is the anti-loop poll cursor: every non-error `check_messages` result (delivery suffix and keepalive body alike) names the exact next call with a fresh, monotonically increasing `tick` (the persisted per-channel turn counter). The agent echoes the latest value on every poll so no two consecutive calls share identical arguments — host IDE "repeated/looping tool call" safeguards key on identical calls and would otherwise misfire on the long-poll pattern and talk the agent into stopping (2026-09-12 incident). The server never validates `tick`; it is fail-open and safe to omit (first call, legacy sessions).
 
-- `session` is the per-seat token (`^[a-zA-Z0-9_-]{8,128}$`) that the launch hint / role briefing hands to the Cursor session. It is issued when the seat is installed, rotated when the seat is rebuilt, and moved with the donor on manual handoff (standby auto-takeover retired with the one-shot team run, phase 2 · 2B). The Agent never invents it; if the launch instruction did not include one, the call is made without it.
+- `session` is the per-seat token (`^[a-zA-Z0-9_-]{8,128}$`) that the launch hint / role briefing hands to the Cursor session. It is issued when the seat is installed and rotated only when the seat is rebuilt (`prepareComposerRelaunch`); nothing else touches it — a membership transfer (phase 2 · 2C) moves the seat's *group identity* to another seat and leaves both seats' tokens, bindings and Composers alone (standby auto-takeover and the binding-moving manual handoff are gone since 2B-2 / 2C). The Agent never invents it; if the launch instruction did not include one, the call is made without it.
 - Without `session` the call is `legacy` and follows the previous contract unchanged (sessions created before the upgrade).
 - With `session` the server checks the channel's owner in the active run before any presence write. Mismatch, an unbound channel, a completed run or no active run returns a **retired** result:
   - `check_messages` → plain text starting with `[system] 会话围栏：…`, telling the Agent this is a server-side stop equivalent to the user asking it to stop: no further `check_messages` / `record_reply`, no visible reply, no retry.
