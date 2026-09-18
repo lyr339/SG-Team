@@ -5,8 +5,10 @@ import type { TeamTask } from '../src/domain/task-pool'
 import {
   buildPoolView,
   consequenceOf,
+  nextGroupName,
   removeMembersConsequence,
-  seatStateOf
+  seatStateOf,
+  ungroupedSeatsOf
 } from '../src/renderer/src/run/pool-view'
 import { teamControlSnapshot } from '../src/renderer/src/preview/mock-data'
 import { pooledTeam } from './run-fixtures'
@@ -134,10 +136,10 @@ describe('pool view · one consequence template for every destructive action', (
     expect(consequenceOf(offline, { kind: 'new-batch' }).body).toContain('所有会话已离线')
   })
 
-  it('describes a new batch in terms of the current pool', () => {
+  it('describes a new batch in terms of the current pool, as irreversible as ending it (the live sessions get fenced)', () => {
     const independent = buildPoolView(independentTeam(['waiting']))
     const newBatch = consequenceOf(independent, { kind: 'new-batch', targetWorkspaceName: '新工程 B' })
-    expect(newBatch).toMatchObject({ title: '在「新工程 B」新建批次', confirmLabel: '确认新建', needsConfirm: true, tone: 'neutral' })
+    expect(newBatch).toMatchObject({ title: '在「新工程 B」新建批次', confirmLabel: '确认新建', needsConfirm: true, tone: 'danger' })
     expect(newBatch.body).toContain('当前批次会结束')
     expect(consequenceOf(independent, { kind: 'new-batch' }).title).toBe('新建独立批次')
   })
@@ -200,6 +202,17 @@ describe('pool view · 会话池的协作组', () => {
     )))).toBe(true)
     // 已解散的组不占用席位，也不出现在席位的组标签里。
     expect(view.seats.find((seat) => seat.channelId === '5')?.groupName).toBeUndefined()
+    // 建组 / 加人抽屉（App 级）与运行页共用同一个候选来源。
+    expect(ungroupedSeatsOf(snapshot.members)).toEqual(view.ungroupedSeats)
+  })
+
+  it('defaults a new group to the first free「组 N」instead of counting the active groups', () => {
+    expect(nextGroupName([])).toBe('组 1')
+    expect(nextGroupName(['接口重构', '验收'])).toBe('组 1')
+    // 「组 1」还在、「组 2」已解散：默认名跳过占用的，不再造一个重名的「组 1」。
+    expect(nextGroupName(['组 1', '验收'])).toBe('组 2')
+    expect(nextGroupName(['组 1', '组 2', '组 4'])).toBe('组 3')
+    expect(nextGroupName(['组  1 '])).toBe('组 2')
   })
 
   it('counts the group task board (open / review / done) from the task pool snapshot, scoped by run and group', () => {

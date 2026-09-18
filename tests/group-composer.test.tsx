@@ -169,4 +169,36 @@ describe('GroupComposer（建组 / 加人抽屉）', () => {
     await render({ kind: 'add', groupId: 'g', groupName: '验收' }, { candidates: [] })
     expect(drawer().querySelector('.group-composer__empty')?.textContent).toContain('没有未入组的会话')
   })
+
+  it('takes the focus on open, keeps Tab inside the drawer, and hands the focus back to the opener on close', async () => {
+    // 触发按钮：抽屉打开前它持有焦点，关闭后焦点必须回到它（键盘用户不必从页首重新 Tab）。
+    const opener = document.createElement('button')
+    opener.textContent = '建组'
+    document.body.appendChild(opener)
+    opener.focus()
+    expect(document.activeElement).toBe(opener)
+
+    await render({ kind: 'create' })
+    const nameInput = drawer().querySelector<HTMLInputElement>('input[type="text"]')!
+    expect(document.activeElement).toBe(nameInput)
+
+    // 最后一个可聚焦控件上按 Tab → 回到第一个；第一个上按 Shift+Tab → 到最后一个。
+    const stops = [...drawer().querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled)')]
+    const last = stops[stops.length - 1]!
+    last.focus()
+    await act(async () => { last.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })) })
+    expect(document.activeElement).toBe(stops[0])
+    await act(async () => { stops[0]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true })) })
+    expect(document.activeElement).toBe(last)
+
+    await act(async () => root.unmount())
+    expect(document.activeElement).toBe(opener)
+    opener.remove()
+    // afterEach 还会 unmount 一次：换一个新的 root，避免对已卸载的 root 重复卸载。
+    root = createRoot(container)
+
+    // 加人模式没有组名输入：焦点落在抽屉本身，Tab 一下就是第一个成员。
+    await render({ kind: 'add', groupId: 'g', groupName: '验收' })
+    expect(document.activeElement).toBe(drawer())
+  })
 })

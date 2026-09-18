@@ -16,7 +16,7 @@ import type { RailGroupSource } from './session-rail-view'
 import { WorkspaceInspector } from './WorkspaceInspector'
 import { PoolPage } from './run/PoolPage'
 import { GroupComposer, type GroupComposerMode } from './run/GroupComposer'
-import { seatStateOf, type UngroupedSeat } from './run/pool-view'
+import { nextGroupName, ungroupedSeatsOf } from './run/pool-view'
 import { SettingsPage } from './settings/SettingsPage'
 import type { SettingsPageProps } from './settings/settings-view'
 import { TransferMembershipDialog } from './team/TransferMembershipDialog'
@@ -850,15 +850,8 @@ export function App(): React.JSX.Element {
   const [groupComposer, setGroupComposer] = useState<GroupComposerMode>()
   const [groupComposerBusy, setGroupComposerBusy] = useState(false)
   const [groupComposerError, setGroupComposerError] = useState('')
-  const ungroupedSeats = useMemo((): UngroupedSeat[] => teamControl.members
-    .filter((member) => member.slot.solo === true)
-    .map((member) => ({
-      slotId: member.slot.id,
-      channelId: member.binding?.channelId ?? member.slot.channelId ?? '?',
-      name: member.slot.name,
-      state: seatStateOf(member),
-      avatarId: member.slot.avatarId
-    })), [teamControl.members])
+  const ungroupedSeats = useMemo(() => ungroupedSeatsOf(teamControl.members), [teamControl.members])
+  const defaultGroupName = useMemo(() => nextGroupName(activeGroups.map((group) => group.name)), [activeGroups])
   const openGroupComposer = useCallback((mode: GroupComposerMode): void => {
     setGroupComposerError('')
     setGroupComposer(mode)
@@ -1520,7 +1513,7 @@ export function App(): React.JSX.Element {
         key={groupComposer.kind === 'add' ? `add:${groupComposer.groupId}` : 'create'}
         mode={groupComposer}
         candidates={ungroupedSeats}
-        defaultName={`组 ${activeGroups.length + 1}`}
+        defaultName={defaultGroupName}
         busy={groupComposerBusy}
         error={groupComposerError}
         onClose={() => { if (!groupComposerBusy) setGroupComposer(undefined) }}

@@ -62,9 +62,15 @@ export function GroupComposer({
       .map((seat) => [seat.slotId, { selected: true, roleTemplateKey: DEFAULT_ROLE_TEMPLATE }])
   ))
   const nameRef = useRef<HTMLInputElement>(null)
+  const dialogRef = useRef<HTMLFormElement>(null)
 
+  // 打开时把焦点收进抽屉（建组落在组名，加人落在抽屉本身，Tab 一下就是第一个成员），
+  // 关闭后还给触发它的那个按钮——否则键盘用户得从页首重新 Tab 回来。
   useEffect(() => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
     if (creating) nameRef.current?.focus({ preventScroll: true })
+    else dialogRef.current?.focus({ preventScroll: true })
+    return () => { if (opener?.isConnected) opener.focus({ preventScroll: true }) }
   }, [creating])
 
   useEffect(() => {
@@ -77,6 +83,21 @@ export function GroupComposer({
     document.addEventListener('keydown', handler, true)
     return () => document.removeEventListener('keydown', handler, true)
   }, [busy, onClose])
+
+  /** Tab 在抽屉内循环（aria-modal 只是宣告，不拦焦点）。角色下拉的列表挂在 body 上：焦点在列表里时不拦。 */
+  const keepTabInside = (event: React.KeyboardEvent): void => {
+    const root = dialogRef.current
+    if (event.key !== 'Tab' || !root || !root.contains(event.target as Node)) return
+    const stops = [...root.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), [tabindex="0"]')]
+    const first = stops[0]
+    const last = stops[stops.length - 1]
+    if (!first || !last) return
+    const active = document.activeElement
+    const leaving = event.shiftKey ? active === first || active === root : active === last
+    if (!leaving) return
+    event.preventDefault()
+    ;(event.shiftKey ? last : first).focus()
+  }
 
   const selected = candidates.filter((seat) => drafts[seat.slotId]?.selected)
   const canSubmit = selected.length > 0 && (!creating || name.trim().length > 0)
@@ -119,10 +140,13 @@ export function GroupComposer({
       }}
     >
       <form
+        ref={dialogRef}
         className="group-composer"
         role="dialog"
         aria-modal="true"
         aria-labelledby="group-composer-title"
+        tabIndex={-1}
+        onKeyDown={keepTabInside}
         onSubmit={(event) => {
           event.preventDefault()
           submit()

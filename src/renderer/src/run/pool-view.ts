@@ -113,6 +113,35 @@ function channelIdOf(member: TeamMemberView): string {
   return member.binding?.channelId ?? member.slot.channelId ?? '?'
 }
 
+/**
+ * 池内尚未入组的席位：建组 / 加人抽屉的候选面。会话池里 `slot.solo === true ⇔ groupId === undefined`
+ *（入组翻为 false，出组恢复），按 solo 取还顺带排除了 legacy 团队 run 的角色席位。
+ * 运行页视图与 App 级抽屉共用这一个来源，候选面不会因为两处各写一遍而分叉。
+ */
+export function ungroupedSeatsOf(members: readonly TeamMemberView[]): UngroupedSeat[] {
+  return members
+    .filter((member) => member.slot.solo === true)
+    .map((member) => ({
+      slotId: member.slot.id,
+      channelId: channelIdOf(member),
+      name: member.slot.name,
+      state: seatStateOf(member),
+      avatarId: member.slot.avatarId
+    }))
+}
+
+/**
+ * 新组的默认名：「组 N」里第一个还没被 active 组占用的 N。服务端不要求组名唯一，
+ * 但解散过一个组之后再建，默认名要是「组 2」而不是又一个「组 1」——默认值不该制造重名。
+ */
+export function nextGroupName(takenNames: readonly string[]): string {
+  const taken = new Set(takenNames.map((name) => name.replace(/\s+/g, ' ').trim()))
+  for (let index = 1; ; index += 1) {
+    const candidate = `组 ${index}`
+    if (!taken.has(candidate)) return candidate
+  }
+}
+
 /** 任务板快照的最小面：组卡片只需要每组的任务计数。 */
 export type PoolTaskFacts = Pick<TaskPoolSnapshot, 'tasks' | 'taskOrder'>
 
@@ -242,15 +271,7 @@ export function buildPoolView(
     state,
     cursorWorkspaceChanged: Boolean(detected && workspace && detected.id !== workspace.id),
     groups,
-    ungroupedSeats: members
-      .filter((member) => member.slot.solo === true)
-      .map((member) => ({
-        slotId: member.slot.id,
-        channelId: channelIdOf(member),
-        name: member.slot.name,
-        state: seatStateOf(member),
-        avatarId: member.slot.avatarId
-      }))
+    ungroupedSeats: ungroupedSeatsOf(members)
   }
 }
 
@@ -264,7 +285,10 @@ export interface ConfirmConsequence {
   body: string
   confirmLabel: string
   needsConfirm: boolean
-  /** 破坏性程度：danger 的确认按钮走红色（解散 / 结束），其余中性。 */
+  /**
+   * 按能否收回分级：danger = 做了就回不来（解散取消任务；结束 / 新建批次让会话被围栏终止），
+   * 确认按钮走红色；neutral = 可再改回去（移出成员：再加回来即可，任务回队列没有丢），走主操作色。
+   */
   tone: 'danger' | 'neutral'
 }
 
@@ -327,12 +351,13 @@ export function consequenceOf(view: PoolView, action: PoolAction): ConfirmConseq
     }
     case 'new-batch': {
       const live = view.liveSeatCount
+      // 只在仍有 live 席位时确认——而那正是当前批次的会话会被围栏终止的情形，与「结束」同级。
       return {
         title: action.targetWorkspaceName ? `在「${action.targetWorkspaceName}」新建批次` : '新建独立批次',
         body: `${liveClause(live)}当前批次会结束${live > 0 ? `，${FENCE_NOTE}` : '。'}`,
         confirmLabel: '确认新建',
         needsConfirm: live > 0,
-        tone: 'neutral'
+        tone: 'danger'
       }
     }
   }

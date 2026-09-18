@@ -152,14 +152,18 @@ export function PoolPage({
     return () => clearTimeout(timer)
   }, [notice])
 
-  // 会话头部的组名跳转：卡片滚入视野并短暂点亮（reduced-motion 下直接跳位）。
+  // 会话头部的组名跳转：卡片滚入视野并短暂点亮（reduced-motion 下直接跳位）。卡片元素经 ref 登记，不查 DOM。
   const [flashGroupId, setFlashGroupId] = useState<string>()
+  const groupCards = useRef(new Map<string, HTMLElement>())
+  const registerGroupCard = (groupId: string) => (element: HTMLElement | null): void => {
+    if (element) groupCards.current.set(groupId, element)
+    else groupCards.current.delete(groupId)
+  }
   useEffect(() => {
     if (!focusGroupId) return
     setFlashGroupId(focusGroupId)
-    const card = document.querySelector(`[data-group-id="${CSS.escape(focusGroupId)}"]`)
     const reduced = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    card?.scrollIntoView({ block: 'center', behavior: reduced ? 'auto' : 'smooth' })
+    groupCards.current.get(focusGroupId)?.scrollIntoView({ block: 'center', behavior: reduced ? 'auto' : 'smooth' })
     const timer = setTimeout(() => setFlashGroupId(undefined), 2_400)
     return () => clearTimeout(timer)
   }, [focusGroupId])
@@ -481,31 +485,36 @@ export function PoolPage({
   const ended = view.phase === 'completed'
   const activeGroups = view.groups.filter((group) => group.status === 'active')
   const dissolvedGroups = view.groups.filter((group) => group.status === 'dissolved')
-  const groupOf = (group: PoolGroup, member: PoolGroupMember): void => {
-    guard({ kind: 'remove-members', members: [{ channelId: member.channelId, groupName: group.name }] }, () => {
-      void run('group-op', () => groupActions!.removeGroupMember({ groupId: group.id, slotId: member.slotId }))
-    })
+  /** 一张组卡片的全部写操作；只有拿到 groupActions 时才构造，卡片区随之才渲染。 */
+  const groupCard = (actions: PoolGroupActions) => (group: PoolGroup): React.JSX.Element => {
+    const removeMember = (member: PoolGroupMember): void => {
+      guard({ kind: 'remove-members', members: [{ channelId: member.channelId, groupName: group.name }] }, () => {
+        void run('group-op', () => actions.removeGroupMember({ groupId: group.id, slotId: member.slotId }))
+      })
+    }
+    const dissolve = (): void => {
+      guard({ kind: 'dissolve-group', group }, () => {
+        void run('group-op', () => actions.dissolveGroup({ groupId: group.id }))
+      })
+    }
+    return (
+      <GroupCard
+        key={group.id}
+        ref={registerGroupCard(group.id)}
+        group={group}
+        busy={isBusy}
+        ended={ended}
+        focused={flashGroupId === group.id}
+        onAddMembers={() => onOpenGroupComposer?.({ kind: 'add', groupId: group.id, groupName: group.name })}
+        onRemoveMember={removeMember}
+        onTransferMembership={onTransferMembership ? (member) => onTransferMembership(member.slotId) : undefined}
+        onSetLead={(slotId) => void run('group-op', () => actions.setGroupLead({ groupId: group.id, slotId }))}
+        onUpdateGoal={async (goal) => (await run('group-op', () => actions.updateGroupGoal({ groupId: group.id, goal }))) !== undefined}
+        onDissolve={dissolve}
+        onOpenSession={onOpenSession}
+      />
+    )
   }
-  const groupCard = (group: PoolGroup): React.JSX.Element => (
-    <GroupCard
-      key={group.id}
-      group={group}
-      busy={isBusy}
-      ended={ended}
-      focused={flashGroupId === group.id}
-      onAddMembers={() => onOpenGroupComposer?.({ kind: 'add', groupId: group.id, groupName: group.name })}
-      onRemoveMember={(member) => groupOf(group, member)}
-      onTransferMembership={onTransferMembership ? (member) => onTransferMembership(member.slotId) : undefined}
-      onSetLead={(slotId) => void run('group-op', () => groupActions!.setGroupLead({ groupId: group.id, slotId }))}
-      onUpdateGoal={async (goal) => (await run('group-op', () => groupActions!.updateGroupGoal({ groupId: group.id, goal }))) !== undefined}
-      onDissolve={() => {
-        guard({ kind: 'dissolve-group', group }, () => {
-          void run('group-op', () => groupActions!.dissolveGroup({ groupId: group.id }))
-        })
-      }}
-      onOpenSession={onOpenSession}
-    />
-  )
   const groupsSection = groupActions && view.pool && !composingIndependent ? (
     <section className="pool-groups" aria-label="协作组">
       <header className="run-section-head">
@@ -529,14 +538,14 @@ export function PoolPage({
       </header>
       {activeGroups.length ? (
         <div className="pool-groups__grid">
-          {activeGroups.map(groupCard)}
+          {activeGroups.map(groupCard(groupActions))}
         </div>
       ) : null}
       {dissolvedGroups.length ? (
         <details className="pool-groups__history">
           <summary>历史（{dissolvedGroups.length} 个已解散的组，保留 24 小时）</summary>
           <div className="pool-groups__grid">
-            {dissolvedGroups.map(groupCard)}
+            {dissolvedGroups.map(groupCard(groupActions))}
           </div>
         </details>
       ) : null}

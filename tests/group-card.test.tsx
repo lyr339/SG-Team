@@ -150,11 +150,16 @@ describe('PoolPage · 协作组卡片网格', () => {
     expect(removeButtons.map((button) => [button.textContent, button.disabled])).toEqual([['移出', true], ['移出', false]])
     expect(removeButtons[0]!.title).toContain('先指定新 lead')
 
-    // 移出 CH-2：先确认，取消不调用；确认后调用。
+    // 移出 CH-2：先确认，取消不调用；确认后调用。确认面打开即把焦点放在「取消」上（Enter 不会误确认），
+    // 关掉后焦点回到触发它的「移出」按钮。可收回的移出走主操作色，不是红色。
+    removeButtons[1]!.focus()
     await click(removeButtons[1]!)
     expect(sheet()?.textContent).toContain('把 CH-2 移出「接口重构」')
+    expect(document.activeElement).toBe(buttonIn(sheet()!, '取消'))
+    expect(sheet()!.querySelector('.run-sheet__confirm')?.classList.contains('is-neutral')).toBe(true)
     await click(buttonIn(sheet()!, '取消'))
     expect(actions.removeGroupMember).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(removeButtons[1])
     await click(removeButtons[1]!)
     await click(buttonIn(sheet()!, '确认移出'))
     expect(actions.removeGroupMember).toHaveBeenCalledWith({ groupId: pool().groupIds[0], slotId: 'slot:solo-2' })
@@ -194,14 +199,26 @@ describe('PoolPage · 协作组卡片网格', () => {
 
     // 改目标在「⋯」菜单里：内联编辑器 + 保存。
     await click(buttonIn(await openMenu(card('验收')), '写目标'))
-    const textarea = card('验收').querySelector<HTMLTextAreaElement>('.group-card__goal-editor textarea')!
-    await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(textarea), 'value')?.set
-      setter?.call(textarea, '先跑通验收脚本')
-      textarea.dispatchEvent(new Event('input', { bubbles: true }))
-    })
+    const typeInto = async (element: HTMLTextAreaElement, value: string): Promise<void> => {
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element), 'value')?.set
+        setter?.call(element, value)
+        element.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+    }
+    await typeInto(card('验收').querySelector<HTMLTextAreaElement>('.group-card__goal-editor textarea')!, '先跑通验收脚本')
     await click(buttonIn(card('验收'), '保存目标'))
     expect(actions.updateGroupGoal).toHaveBeenCalledWith({ groupId: pool().groupIds[1], goal: '先跑通验收脚本' })
+    expect(card('验收').querySelector('.group-card__goal-editor')).toBeNull()
+
+    // 多行输入的键位：Enter 只换行，⌘/Ctrl+Enter 保存。（快照是夹具，目标没真的写进去，菜单项仍是「写目标」。）
+    await click(buttonIn(await openMenu(card('验收')), '写目标'))
+    const editor = card('验收').querySelector<HTMLTextAreaElement>('.group-card__goal-editor textarea')!
+    await typeInto(editor, '第二版目标')
+    await act(async () => { editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })) })
+    expect(actions.updateGroupGoal).toHaveBeenCalledTimes(1)
+    await act(async () => { editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true, cancelable: true })) })
+    expect(actions.updateGroupGoal).toHaveBeenLastCalledWith({ groupId: pool().groupIds[1], goal: '第二版目标' })
     expect(card('验收').querySelector('.group-card__goal-editor')).toBeNull()
   })
 

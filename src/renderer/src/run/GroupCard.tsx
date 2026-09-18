@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type Ref } from 'react'
 import { formatRelativeClock } from '../format'
+// 应用里唯一的「⋯」动作菜单——名字来自它的出生地（账号卡片），行为是通用的：触发器 + 弹层 + 进行中文案。
 import { AccountActionsMenu } from '../settings/AccountActionsMenu'
 import { MenuSelect } from '../lobby/MenuSelect'
 import { SEAT_STATE_LABEL, type PoolGroup, type PoolGroupMember } from './pool-view'
@@ -7,6 +8,8 @@ import { SEAT_STATE_LABEL, type PoolGroup, type PoolGroupMember } from './pool-v
 const NO_LEAD = ''
 
 export interface GroupCardProps {
+  /** 卡片根元素：页面用它把会话头部跳转来的组滚入视野。 */
+  ref?: Ref<HTMLElement>
   group: PoolGroup
   busy: boolean
   /** 池已结束：不再加人 / 换 lead / 改目标，仍可移出与解散以收拾残局。 */
@@ -30,6 +33,7 @@ export interface GroupCardProps {
  * 已解散的组只读展示 24 小时。离线成员行直接给出「交接 / 移出」两个决定，不再藏在展开里。
  */
 export function GroupCard({
+  ref,
   group,
   busy,
   ended,
@@ -53,9 +57,16 @@ export function GroupCard({
 
   const counters = group.counters
   const hasTasks = counters.open + counters.review + counters.done > 0
+  const saveGoal = (): void => {
+    if (editingGoal === undefined || disabled) return
+    void onUpdateGoal(editingGoal.trim()).then((ok) => {
+      if (ok) setEditingGoal(undefined)
+    })
+  }
 
   return (
     <article
+      ref={ref}
       className={`group-card${dissolved ? ' is-dissolved' : ''}${group.attention ? ' is-attention' : ''}${focused ? ' is-focused' : ''}`}
       data-group-id={group.id}
       aria-label={`协作组「${group.name}」`}
@@ -97,9 +108,7 @@ export function GroupCard({
           className="group-card__goal-editor"
           onSubmit={(event) => {
             event.preventDefault()
-            void onUpdateGoal(editingGoal.trim()).then((ok) => {
-              if (ok) setEditingGoal(undefined)
-            })
+            saveGoal()
           }}
         >
           <textarea
@@ -111,9 +120,13 @@ export function GroupCard({
             autoFocus
             onChange={(event) => setEditingGoal(event.target.value)}
             onKeyDown={(event) => {
+              // 多行输入：Enter 换行，⌘/Ctrl+Enter 保存，Esc 放弃——与会话输入框同一套键位。
               if (event.key === 'Escape') {
                 event.stopPropagation()
                 setEditingGoal(undefined)
+              } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                event.preventDefault()
+                saveGoal()
               }
             }}
           />
