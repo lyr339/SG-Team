@@ -14,7 +14,7 @@
 > 模型供应商 Logo（`ModelProviderLogo.tsx` + `assets/model-logos/`）、主题 surface 等，
 > 与本任务正交——**接手前先 `git status` 确认归属并保护，不要覆盖**）
 >
-> **与 `.handoff/HANDOFF.md` 的关系**：HANDOFF.md 是「会话过程流 P0 全链路修复」的权威交接书，
+> **与 `.handoff/archive/HANDOFF.md` 的关系**：HANDOFF.md 是「会话过程流 P0 全链路修复」的权威交接书，
 > 优先级高于本任务。两任务触碰的文件不相交（P0 在会话过程链，本任务在账号设置页），
 > 但都经过 `src/renderer/src/App.tsx`——若 P0 正在改 App.tsx，本任务等其合入后再动工。
 

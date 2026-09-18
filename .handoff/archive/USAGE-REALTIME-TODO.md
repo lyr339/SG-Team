@@ -16,7 +16,7 @@
 >
 > 调查基线：`0c296e6 Harden virtual turn persistence and process lifecycle`（另有 33 文件未提交改动，属 P0 过程流修复，见下）
 >
-> **与 `.handoff/HANDOFF.md` 的关系**：HANDOFF.md 是「会话过程流 P0 全链路修复」的权威交接书，优先级高于本任务。
+> **与 `.handoff/archive/HANDOFF.md` 的关系**：HANDOFF.md 是「会话过程流 P0 全链路修复」的权威交接书，优先级高于本任务。
 > 本任务与过程流正交，但 `src/application/desktop-session-service.ts` 是两个任务共同触碰的文件——
 > **本任务应在 P0 修复合入后再动工**，避免在同一文件上制造合并冲突。
 

@@ -27,7 +27,7 @@
 > 工作区：仓库根目录（macOS / Windows 均可）  
 > 调查基线：`37253bf Auto-grow and drag-resize the composer, add image attachment viewer, show Thinking → Thought`  
 > 性质：**只读调查后的交接任务书；本文编写过程没有改业务代码。**  
-> 本文取代 `.handoff/USAGE-REALTIME-TODO.md` 中“沿用织梦采样算法作为最终主通道”的结论；旧文仅保留为历史实施记录。
+> 本文取代 `.handoff/archive/USAGE-REALTIME-TODO.md` 中“沿用织梦采样算法作为最终主通道”的结论；旧文仅保留为历史实施记录。
 
 ---
 

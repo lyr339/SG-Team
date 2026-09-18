@@ -47,7 +47,7 @@
 4. **每一次成员关系变化 = 一次 SQLite 事务 + 一条 silent membership 通知 + 一条 `team_group_events` 审计行。** 三者缺一即视为未实现。
 5. 所有新增 SQL 列 **additive + 默认值 + 幂等迁移**（沿用 `session_token` 列的 duplicate-column 容错模式）：桌面主进程与 Cursor 托管的 MCP 进程各自打开同一库并各自迁移。
 6. 不新增第二套「谁在组里」的真相源：成员关系只在 `agent_slots.group_id`；任务 / 消息 / 记忆的 `group_id` 是写入时的快照，不回填。
-7. 事件序列测试，不只断言最终值（沿用 `.handoff/HANDOFF.md` §8 纪律）。
+7. 事件序列测试，不只断言最终值（沿用 `.handoff/archive/HANDOFF.md` §8 纪律）。
 8. 实机验收只用一个空闲独立会话，方法沿用阶段 0（第 2.3 节）。
 
 ### 0.4 明确排除（后置为独立任务）

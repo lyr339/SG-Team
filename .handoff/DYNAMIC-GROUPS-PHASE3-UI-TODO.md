@@ -40,7 +40,7 @@ team/ManualHandoffDialog.tsx：离线职责迁移弹窗
 ### 0.3 实施纪律
 
 1. 先改投影（`run-view.ts` → `pool-view.ts`、`session-rail-view.ts` 的组分区），再改组件；渲染层只消费视图模型。
-2. `App.tsx` 里 `accountPanel` 的 props 面与设置页一字不改（沿用 `SETTINGS-PAGE-HANDOFF-TODO.md` 的纪律）。
+2. `App.tsx` 里 `accountPanel` 的 props 面与设置页一字不改（沿用 `archive/SETTINGS-PAGE-HANDOFF-TODO.md` 的纪律）。
 3. 不新增 IPC：全部使用阶段 1 的 `teamControlCreateGroup / AddGroupMembers / RemoveGroupMember / SetGroupLead / UpdateGroupGoal / DissolveGroup / AddSeats / RemoveSeat` 与阶段 2 的 `transferMembership / PlanGroupTasks`。
 4. 设计系统：`docs/DESIGN-SYSTEM.md`（浅色为主、SG green 只表品牌 / 待命 / 健康、蓝=执行、琥珀=需关注、红=错误与破坏性、边框优先、圆角 9–17、状态色不作装饰）；名册语言沿用 `docs/UI-STRUCTURE.md` §1a（hairline 分隔、7px 状态点、上下文环、状态行 pill）。
 5. 每个交互有 SSR + 交互测试；每个新场景有浅 / 深 / 窄截图与几何探针（`scripts/preview-shots.mjs`）。

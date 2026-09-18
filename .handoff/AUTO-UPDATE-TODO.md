@@ -72,7 +72,7 @@
    渲染层仍是纯快照消费者：所有状态由主进程推送，渲染层只发意图。
 2. **更新状态不进 `DesktopSnapshot`**：新增独立推送通道 `app-update:event` + 拉取 `app-update:get-state`，不碰 `register-session-ipc.ts` / `snapshot-push.ts` 的版本剔重机制。
 3. **每个非平凡决策写进 `docs/ARCHITECTURE.md`**（症状 → 根因 → 修法 → 未做 → 验证），并更新其「Distribution boundary」一节。
-4. **事件序列级测试**（沿用 `.handoff/HANDOFF.md` §8）：状态机每条边、辅助脚本每个失败分支都要有用例；生成的 shell 脚本要在临时目录里**真的跑一遍**（stub 掉 `open` / `codesign` / `xattr`）。
+4. **事件序列级测试**（沿用 `.handoff/archive/HANDOFF.md` §8）：状态机每条边、辅助脚本每个失败分支都要有用例；生成的 shell 脚本要在临时目录里**真的跑一遍**（stub 掉 `open` / `codesign` / `xattr`）。
 5. **对共享文件只做最小触碰**（§9.2）：`main/index.ts` 一处 import + 一处装配 + 一处 dispose；`desktop-api.ts` 一组 IPC 键 + 一组方法；`preload/index.ts` 一组转发。今天 groups / process-image 合回 main 时正是靠这一点让 `checkout -m` 三方合并全部自动通过。
 6. **绝不在席位在线时静默替换**：门禁（§5.4）默认拦住，用户显式确认后才继续，并把后果写在确认框里。
 7. 全部网络失败静默（只写 `[app-update]` stderr 日志），绝不弹错误框——国内访问 GitHub 失败是常态不是异常。
