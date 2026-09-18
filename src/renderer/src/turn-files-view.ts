@@ -69,6 +69,17 @@ export function describeLineCounts(additions: number, deletions: number, binary 
   return parts.length ? parts.join(' ') : '无行数变化'
 }
 
+/**
+ * 合计的悬停说明。文件栏与右栏「本轮」头部共用（两处显示同一个数，也说同一句话）。
+ */
+export function turnTotalsTitle(view: TurnFilesView): string {
+  if (view.totalsSource === 'composer') {
+    return '合计取 Cursor 统计的本会话累计净增删（与左侧名册行同一个数）；逐文件是过程估算，同一文件多次编辑会重复计入，相加可能大于合计'
+  }
+  if (view.estimated) return '含按编辑逐次累计的估算值'
+  return `${view.scope === 'previous' ? '上一轮' : '本轮'}文件的增删行数合计（工作树相对 HEAD）`
+}
+
 /** 路径拆成目录 / 主干 / 扩展名（与右栏 `splitPath` 同规则：点开头的隐藏文件与无扩展名整体视为主干）。 */
 export function splitTurnFilePath(path: string): { dir: string; stem: string; ext: string } {
   const index = path.lastIndexOf('/')

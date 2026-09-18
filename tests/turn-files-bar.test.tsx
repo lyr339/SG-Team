@@ -182,7 +182,7 @@ describe('TurnFilesBar（本轮文件栏）', () => {
     await act(async () => root.unmount())
   })
 
-  it('in the 上一轮 hold the head is labelled, the bar is dimmed and 审查 / rows ask for the uncommitted scope', async () => {
+  it('in the 上一轮 hold the head is labelled, the bar is dimmed and 审查 / rows still ask for the turn scope (the panel holds the same view)', async () => {
     const onReview = vi.fn()
     const previous: TurnFilesView = { ...view, scope: 'previous' }
     const html = renderToStaticMarkup(<TurnFilesBar view={previous} onReview={onReview} />)
@@ -190,14 +190,14 @@ describe('TurnFilesBar（本轮文件栏）', () => {
     expect(html).toContain('data-scope="previous"')
     expect(html).toContain('aria-label="上一轮改动的文件"')
     expect(html).toMatch(/turn-files__scope[^>]*>上一轮</)
-    expect(html).toContain('范围：未提交')
+    expect(html).toContain('逐次审查上一轮的编辑')
 
     const root = createRoot(container)
     await act(async () => root.render(<TurnFilesBar view={previous} onReview={onReview} />))
     await act(async () => container.querySelector<HTMLButtonElement>('.turn-files__review')!.click())
-    expect(onReview).toHaveBeenLastCalledWith({ scope: 'uncommitted' })
+    expect(onReview).toHaveBeenLastCalledWith({ scope: 'turn' })
     await act(async () => container.querySelector<HTMLButtonElement>('[data-path="src/mcp/index.ts"] .turn-files__row')!.click())
-    expect(onReview).toHaveBeenLastCalledWith({ path: 'src/mcp/index.ts', scope: 'uncommitted' })
+    expect(onReview).toHaveBeenLastCalledWith({ path: 'src/mcp/index.ts', scope: 'turn' })
     await act(async () => root.unmount())
   })
 

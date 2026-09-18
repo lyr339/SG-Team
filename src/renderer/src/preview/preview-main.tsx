@@ -100,6 +100,7 @@ const previewWarmupRun: import('../../../domain/session-warmup').SessionWarmupRu
 const previewRunStatus = (['running', 'completed'] as TeamRunStatus[])
   .find((status) => status === requestedRunStatus)
 // 右栏「变更」面板走查：?review=clean|not_git|error|many（缺省为两文件就绪态）。
+// not_git 下面板会自动落到「本轮」（Agent 编辑流）；not_git 卡片要手动切回「未提交」才能看到。
 const reviewScene = (['clean', 'not_git', 'error', 'many'] as const).find((scene) => scene === previewParameters.get('review'))
 /** 预览里的「Cursor 当前工程」与它的通道号：`?detectedWorkspace=1` 换成另一个工程（4 个通道）。 */
 const previewWorkspace = detectedWorkspaceMode

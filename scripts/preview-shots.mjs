@@ -233,7 +233,45 @@ const scenes = [
   { name: 'artifacts-empty-dark', width: 1440, height: 900, colorScheme: 'dark', channel: '1', storage: { ...baseStorage({ tab: 'artifacts', colorMode: 'dark' }), 'shiguang.lastSessionChannel.v1': '1' } },
   // 变更面板的其它状态（预览参数 ?review=…）。
   { name: 'review-clean', width: 1440, height: 900, colorScheme: 'light', query: 'review=clean', storage: baseStorage() },
-  { name: 'review-not-git', width: 1440, height: 900, colorScheme: 'light', query: 'review=not_git', storage: baseStorage() },
+  // 非 Git 工程：面板自动落到「本轮」，正文是 Agent 编辑流（文件行 + 逐次编辑卡 + ≈ 合计），无任何 Git 动作。
+  {
+    name: 'review-not-git-turn', width: 1440, height: 900, colorScheme: 'light', query: 'review=not_git', storage: baseStorage(),
+    actions: [{ wait: 500 }, {
+      label: '非 Git 工程自动切到本轮编辑流',
+      probe: `(() => {
+        const scope = document.querySelector('.inspector-review__scope > button[aria-pressed="true"]')
+        const files = Array.from(document.querySelectorAll('.review-file'))
+        const totals = document.querySelector('.inspector-review__totals')
+        if ((scope?.textContent ?? '').indexOf('本轮') !== 0) throw new Error('范围没有自动落到本轮: ' + scope?.textContent)
+        if ((document.body.textContent ?? '').includes('当前工程未启用 Git')) throw new Error('本轮视图不该出现 not_git 卡片')
+        if (!files.length) throw new Error('编辑流文件列表为空')
+        if (!document.querySelector('.review-edit')) throw new Error('没有逐次编辑卡')
+        if (document.querySelector('.review-file__actions button.is-danger')) throw new Error('非 Git 工程不该有撤销按钮')
+        if (document.querySelector('.review-file__loading')) throw new Error('本轮视图不该出现 Git 差异骨架屏')
+        return {
+          found: true,
+          scope: scope?.textContent ?? '',
+          totals: totals?.textContent ?? '',
+          files: files.map((el) => [el.getAttribute('data-path'), el.getAttribute('data-source'), el.classList.contains('is-open')]),
+          addedLines: document.querySelectorAll('.review-line.is-addition').length
+        }
+      })()`
+    }]
+  },
+  // 手动切回「未提交」：not_git 卡片仍在，并带「查看本轮 Agent 改动」的回程链接。
+  {
+    name: 'review-not-git', width: 1440, height: 900, colorScheme: 'light', query: 'review=not_git', storage: baseStorage(),
+    actions: [{ wait: 500 }, { click: '.inspector-review__scope > button:first-child' }, { wait: 250 }, {
+      label: 'not_git 卡片与回程链接',
+      probe: `(() => {
+        const body = document.body.textContent ?? ''
+        if (!body.includes('当前工程未启用 Git')) throw new Error('not_git 卡片没有出现')
+        const back = Array.from(document.querySelectorAll('button')).find((el) => el.textContent === '查看本轮 Agent 改动')
+        if (!back) throw new Error('缺「查看本轮 Agent 改动」链接')
+        return { found: true }
+      })()`
+    }]
+  },
   { name: 'review-error-dark', width: 1440, height: 900, colorScheme: 'dark', query: 'review=error', storage: baseStorage({ colorMode: 'dark' }) },
   { name: 'review-many', width: 1440, height: 900, colorScheme: 'light', query: 'review=many', storage: baseStorage() },
   { name: 'review-many-narrow-dark', width: 1180, height: 760, colorScheme: 'dark', query: 'review=many', storage: baseStorage({ width: 300, colorMode: 'dark' }) },
@@ -1052,7 +1090,8 @@ const scenes = [
       })()`
     }]
   },
-  // 「上一轮」保持：新消息刚被取走、Agent 还在想：栏保住上一轮的四个文件并标「上一轮」、降色；审查走「未提交」范围。
+  // 「上一轮」保持：新消息刚被取走、Agent 还在想：栏保住上一轮的四个文件并标「上一轮」、降色；
+  // 审查仍走「本轮」范围——右栏的「本轮」视图与栏同一份数据，同样保住上一轮。
   {
     name: 'session-turn-files-previous', width: 1440, height: 900, colorScheme: 'light', query: 'turnfiles=previous',
     storage: railStorage(), clip: '.turn-files',
@@ -1161,6 +1200,8 @@ const scenes = [
           activeTab: active?.textContent ?? '',
           scope: scope?.textContent ?? '',
           fileOpen: file?.classList.contains('is-open') ?? false,
+          // 「本轮」正文来自编辑流：定位的文件展开后是逐次编辑卡（这批块只有 hint，卡内是占位说明）。
+          editCards: file ? file.querySelectorAll('.review-edit').length : 0,
           listedFiles: Array.from(document.querySelectorAll('.review-file')).map((el) => el.getAttribute('data-path'))
         }
       })()`

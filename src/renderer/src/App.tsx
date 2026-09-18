@@ -1402,6 +1402,7 @@ export function App(): React.JSX.Element {
           workspaceId={activeWorkspace?.id}
           workspaceName={activeProjectName}
           workspacePath={activeWorkspace?.path}
+          turnFiles={workspaceTurnFiles}
           hidden={!visible}
           onQuoteToComposer={handleWorkspaceQuote}
           onReviewSummary={setWorkspaceReviewSummary}

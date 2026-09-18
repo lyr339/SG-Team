@@ -3,8 +3,10 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { WorkspaceReviewFileDiff, WorkspaceReviewSummary } from '../src/domain/workspace-review'
-import { buildFileQuote, buildHunkQuote, ReviewPanel, splitPath } from '../src/renderer/src/inspector/ReviewPanel'
+import { buildFileQuote, buildHunkQuote, buildTurnFileQuote, ReviewPanel, splitPath } from '../src/renderer/src/inspector/ReviewPanel'
 import { requestReviewFocus } from '../src/renderer/src/inspector/review-focus-bus'
+import type { TurnReviewEdit } from '../src/renderer/src/inspector/turn-review-view'
+import type { TurnFilesView } from '../src/renderer/src/turn-files-view'
 
 const hunk: WorkspaceReviewFileDiff['hunks'][number] = {
   header: '@@ -10,3 +10,3 @@ function login()',
@@ -251,6 +253,178 @@ describe('ReviewPanel', () => {
     expect(container.querySelector<HTMLButtonElement>('.inspector-review__scope > button[aria-pressed="true"]')!.textContent).toContain('未提交')
     expect(container.querySelector('.review-file[data-path="src/login.tsx"]')!.className).toContain('is-revealed')
     await act(async () => root.unmount())
+  })
+
+  describe('本轮 · Agent 编辑流', () => {
+    const turnView = (over?: Partial<TurnFilesView>): TurnFilesView => ({
+      files: [
+        { path: 'src/relay.ts', dir: 'src/', stem: 'relay', ext: '.ts', icon: 'typescript', ambiguous: false, additions: 24, deletions: 6, source: 'process' },
+        { path: 'src/app.tsx', dir: 'src/', stem: 'app', ext: '.tsx', icon: 'react', ambiguous: false, additions: 3, deletions: 0, source: 'process' }
+      ],
+      additions: 27, deletions: 6, working: true, estimated: true, totalsSource: 'sum', scope: 'turn',
+      ...over
+    })
+
+    const turnEdits = new Map<string, TurnReviewEdit[]>([
+      ['src/relay.ts', [
+        {
+          blockId: 'e1', action: 'edit', hint: '+20 −6', running: false, failed: false,
+          hunks: [{
+            header: '@@ -8,3 +8,3 @@ relay()', skippedBefore: 0,
+            lines: [
+              { kind: 'context', text: 'const q = queue()', oldLine: 8, newLine: 8 },
+              { kind: 'deletion', text: 'q.push(job)', oldLine: 9 },
+              { kind: 'addition', text: 'q.unshift(job)', newLine: 9 }
+            ]
+          }]
+        },
+        {
+          blockId: 'e2', action: 'edit', hint: '+4 −0', running: false, failed: false,
+          hunks: [{ header: '', skippedBefore: 0, lines: [{ kind: 'addition', text: 'export const RETRIES = 3', newLine: 30 }] }],
+          truncatedLineCount: 5
+        }
+      ]],
+      ['src/app.tsx', [
+        { blockId: 'e3', action: 'write', hint: '+3 −0', hunks: [], running: true, failed: false }
+      ]]
+    ])
+
+    function installNotGitApi(): ApiMock {
+      const api = installApi()
+      api.getWorkspaceReview.mockImplementation(async (input?: { scope?: 'uncommitted' | 'branch' }) => ({
+        state: 'not_git' as const, scope: input?.scope ?? 'uncommitted', workspaceName: 'cs', revision: 'nogit-1', updatedAt: 1,
+        additions: 0, deletions: 0, files: [], liveUpdates: false, detail: '该文件夹不在任何 Git 仓库内；初始化仓库后即可在这里审查变更。'
+      }))
+      return api
+    }
+
+    it('in a non-git workspace the panel auto-switches to 本轮 and renders the edit stream without any git reads', async () => {
+      const api = installNotGitApi()
+      const onQuote = vi.fn()
+      const root = createRoot(container)
+      await act(async () => root.render(
+        <ReviewPanel workspaceKey="ws" turnPaths={['src/relay.ts', 'src/app.tsx']} turnFiles={turnView()} turnEdits={turnEdits} onQuote={onQuote} />
+      ))
+      // not_git 一到就自动落到「本轮」；死卡片不出现。
+      expect(localStorage.getItem('sg-team.inspector:review-scope')).toBe('turn')
+      expect(container.querySelector<HTMLButtonElement>('.inspector-review__scope > button[aria-pressed="true"]')!.textContent).toContain('本轮')
+      expect(container.textContent).not.toContain('当前工程未启用 Git')
+      // 合计与文件栏同源：估算标 ≈。
+      const totals = container.querySelector('.inspector-review__totals')!
+      expect(totals.textContent).toContain('≈')
+      expect(totals.textContent).toContain('+27')
+      expect(totals.textContent).toContain('−6')
+      expect(container.textContent).toContain('2 个文件')
+      // 首个文件默认展开，差异行来自编辑流；Git 的单文件差异接口一次都没被叫。
+      const relay = container.querySelector('.review-file[data-path="src/relay.ts"]')!
+      expect(relay.className).toContain('is-open')
+      expect(relay.textContent).toContain('q.unshift(job)')
+      expect(relay.textContent).toContain('第 1 次')
+      expect(relay.textContent).toContain('第 2 次')
+      expect(relay.textContent).toContain('多次编辑按发生顺序逐次展示')
+      expect(relay.textContent).toContain('差异过长，传输截断了 5 行')
+      expect(api.getWorkspaceReviewFile).not.toHaveBeenCalled()
+      // Git 动作不可用（工作区没有 Git）；查看 / 引用照常。
+      expect(container.querySelector('[aria-label="暂存 src/relay.ts"]')).toBeNull()
+      expect(container.querySelector('[aria-label="撤销 src/relay.ts"]')).toBeNull()
+      await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="反馈 src/relay.ts 给 Agent"]')!.click())
+      expect(onQuote).toHaveBeenCalledWith('> 关于 `src/relay.ts`（本轮 2 次编辑 · +24 −6）：\n\n')
+      // 正在写入的文件：展开后是占位而不是空白。
+      const appHead = container.querySelector<HTMLButtonElement>('.review-file[data-path="src/app.tsx"] .review-file__head')!
+      await act(async () => appHead.click())
+      expect(container.querySelector('.review-file[data-path="src/app.tsx"]')!.textContent).toContain('正在写入，差异稍后出现…')
+
+      // 手动切回「未提交」还能看到 not_git 卡片，且带「查看本轮 Agent 改动」的回程链接。
+      const scopeButtons = Array.from(container.querySelectorAll<HTMLButtonElement>('.inspector-review__scope > button'))
+      await act(async () => scopeButtons[0]!.click())
+      expect(container.textContent).toContain('当前工程未启用 Git')
+      const back = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === '查看本轮 Agent 改动')!
+      await act(async () => back.click())
+      expect(container.querySelector<HTMLButtonElement>('.inspector-review__scope > button[aria-pressed="true"]')!.textContent).toContain('本轮')
+      await act(async () => root.unmount())
+    })
+
+    it('with git ready the rows gain status letters and git actions; totals drop the ≈ when counts are exact', async () => {
+      const api = installApi()
+      localStorage.setItem('sg-team.inspector:review-scope', 'turn')
+      const view = turnView({
+        files: [{ path: 'src/login.tsx', dir: 'src/', stem: 'login', ext: '.tsx', icon: 'react', ambiguous: false, additions: 4, deletions: 1, status: 'modified', source: 'git' }],
+        additions: 4, deletions: 1, estimated: false, working: false
+      })
+      const edits = new Map<string, TurnReviewEdit[]>([
+        ['src/login.tsx', [{ blockId: 'g1', action: 'edit', hint: '+4 −1', running: false, failed: false, hunks: [{ header: '@@ -10,3 +10,3 @@', skippedBefore: 0, lines: [{ kind: 'addition', text: 'const color = theme.dark', newLine: 11 }] }] }]]
+      ])
+      const root = createRoot(container)
+      await act(async () => root.render(
+        <ReviewPanel workspaceKey="ws" turnPaths={['src/login.tsx']} turnFiles={view} turnEdits={edits} />
+      ))
+      const row = container.querySelector('.review-file[data-path="src/login.tsx"]')!
+      expect(row.className).toContain('is-modified')
+      expect(row.querySelector('.review-file__head > i')!.textContent).toBe('M')
+      expect(row.querySelector('.review-file__counts')!.textContent).not.toContain('≈')
+      expect(container.querySelector('.inspector-review__totals')!.getAttribute('title')).toContain('工作树相对 HEAD')
+      // Git 认识这个文件：暂存可用，撤销走确认（作用于工作树，与「未提交」同一后端）。
+      expect(container.querySelector('[aria-label="暂存 src/login.tsx"]')).not.toBeNull()
+      await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="撤销 src/login.tsx"]')!.click())
+      expect(container.querySelector('[role="alertdialog"]')?.textContent).toContain('恢复到 HEAD 版本')
+      await act(async () => Array.from(container.querySelectorAll('button')).find((button) => button.textContent === '确认撤销')!.click())
+      expect(api.applyWorkspaceReviewAction).toHaveBeenCalledWith({ path: 'src/login.tsx', action: 'revert' })
+      // 差异行仍来自编辑流，不触发 Git 单文件差异读取。
+      expect(row.textContent).toContain('const color = theme.dark')
+      expect(api.getWorkspaceReviewFile).not.toHaveBeenCalled()
+      await act(async () => root.unmount())
+    })
+
+    it('holds the previous turn with a note, and composer-sourced totals name Cursor as the source', async () => {
+      installApi()
+      localStorage.setItem('sg-team.inspector:review-scope', 'turn')
+      const root = createRoot(container)
+      await act(async () => root.render(
+        <ReviewPanel workspaceKey="ws" turnPaths={[]} turnFiles={turnView({ scope: 'previous' })} turnEdits={turnEdits} />
+      ))
+      expect(container.textContent).toContain('新一轮尚无编辑：以下是上一轮的改动')
+      expect(container.querySelector('.review-files')!.getAttribute('data-turn-scope')).toBe('previous')
+
+      await act(async () => root.render(
+        <ReviewPanel workspaceKey="ws" turnPaths={[]} turnFiles={turnView({ totalsSource: 'composer', estimated: false, additions: 21, deletions: 4 })} turnEdits={turnEdits} />
+      ))
+      const totals = container.querySelector('.inspector-review__totals')!
+      expect(totals.textContent).not.toContain('≈')
+      expect(totals.textContent).toContain('+21')
+      expect(totals.getAttribute('title')).toContain('Cursor 统计的本会话累计净增删')
+      await act(async () => root.unmount())
+    })
+
+    it('a focus request reveals the named file instantly from the edit stream, without waiting for git', async () => {
+      const api = installNotGitApi()
+      const root = createRoot(container)
+      await act(async () => root.render(
+        <ReviewPanel workspaceKey="ws" turnPaths={[]} turnFiles={turnView()} turnEdits={turnEdits} />
+      ))
+      await act(async () => requestReviewFocus({ path: 'src/app.tsx', scope: 'turn' }))
+      const target = container.querySelector('.review-file[data-path="src/app.tsx"]')!
+      expect(target.className).toContain('is-open')
+      expect(target.className).toContain('is-revealed')
+      expect(api.getWorkspaceReviewFile).not.toHaveBeenCalled()
+      await act(async () => root.unmount())
+    })
+
+    it('an empty turn shows its own empty state and offers the git jump only when git is ready', async () => {
+      installNotGitApi()
+      localStorage.setItem('sg-team.inspector:review-scope', 'turn')
+      const empty: TurnFilesView = { files: [], additions: 0, deletions: 0, working: false, estimated: false, totalsSource: 'sum', scope: 'turn' }
+      const root = createRoot(container)
+      await act(async () => root.render(<ReviewPanel workspaceKey="ws" turnPaths={[]} turnFiles={empty} turnEdits={new Map()} />))
+      expect(container.textContent).toContain('本轮尚未修改文件')
+      // 非 Git 工程：不给「查看全部未提交变更」的死链接。
+      expect(Array.from(container.querySelectorAll('button')).find((button) => button.textContent === '查看全部未提交变更')).toBeUndefined()
+      await act(async () => root.unmount())
+    })
+
+    it('buildTurnFileQuote names the edit count and counts', () => {
+      expect(buildTurnFileQuote({ path: 'src/a.ts', dir: 'src/', stem: 'a', ext: '.ts', icon: 'typescript', ambiguous: false, additions: 3, deletions: 0, source: 'process' }, 2))
+        .toBe('> 关于 `src/a.ts`（本轮 2 次编辑 · +3）：\n\n')
+    })
   })
 
   it('splits paths so the extension survives truncation', () => {

@@ -10,7 +10,7 @@ import type { ReviewScopeId } from './review-scope'
 export interface ReviewFocusRequest {
   /** 归一后的仓库相对路径；缺省只切范围，不定位具体文件。 */
   path?: string
-  /** 右栏要切到的范围；缺省「本轮」。文件栏显示「上一轮」时用「未提交」——右栏的「本轮」那时是空的。 */
+  /** 右栏要切到的范围；缺省「本轮」。栏保住上一轮时右栏的「本轮」同样保住，无需换范围。 */
   scope?: ReviewScopeId
 }
 

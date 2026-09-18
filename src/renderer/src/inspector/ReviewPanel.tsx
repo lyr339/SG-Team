@@ -9,6 +9,8 @@ import type {
   WorkspaceReviewSummary
 } from '../../../domain/workspace-review'
 import { fileActionAvailability, hunkActionAvailability } from '../../../domain/workspace-review'
+import { FileTypeIcon } from '../FileTypeIcon'
+import { describeLineCounts, turnTotalsTitle, type TurnFileView, type TurnFilesView } from '../turn-files-view'
 import { RefreshIcon } from '../UiIcons'
 import { Collapsible } from './Collapsible'
 import { inspectorDesktopApi } from './desktop-api'
@@ -17,14 +19,22 @@ import { ChevronIcon, CollapseAllIcon, CopyIcon, DiffIcon, ExpandAllIcon, Folder
 import { InspectorSkeleton, InspectorState, InspectorToast, useTransientFeedback } from './InspectorState'
 import { cssEscape } from './reveal-bus'
 import { subscribeReviewFocus } from './review-focus-bus'
-import { fileTouchedBy, filterSummaryToPaths, REVIEW_SCOPE_LABELS, type ReviewScopeId } from './review-scope'
+import { fileTouchedBy, filterSummaryToPaths, REVIEW_SCOPE_LABELS, reviewPathsMatch, type ReviewScopeId } from './review-scope'
+import type { TurnReviewEdit } from './turn-review-view'
 import { useWorkspaceFileActions } from './use-workspace-file-actions'
 
 export interface ReviewPanelProps {
   /** 工作区身份变化时重置全部状态。 */
   workspaceKey: string
-  /** 本轮（最近一条已投递用户消息之后）改动过的路径；「本轮」范围据此过滤。 */
+  /** 本轮（最近一条已投递用户消息之后）改动过的路径；其他范围的「本轮」徽标据此标注。 */
   turnPaths: readonly string[]
+  /**
+   * 「本轮」范围的文件列表与计数：与输入区上方的本轮文件栏同一份视图（`buildTurnFilesView`），
+   * 三处（名册 / 栏 / 右栏）永远一致。缺省时「本轮」退回旧行为（按 turnPaths 过滤 Git 摘要）。
+   */
+  turnFiles?: TurnFilesView
+  /** 每个文件在本轮（或被保住的上一轮）的逐次编辑差异（Cursor 编辑流）。 */
+  turnEdits?: ReadonlyMap<string, TurnReviewEdit[]>
   /** 把一段引用写进输入框（反馈给 Agent）。缺省不显示该动作。 */
   onQuote?: (text: string) => void
   /** 摘要更新回调（供产物面板复用同一份数据，不重复拉取）。 */
@@ -59,8 +69,14 @@ const STATUS_TITLES: Record<WorkspaceReviewFileStatus, string> = {
 const SCOPE_ORDER: ReviewScopeId[] = ['uncommitted', 'turn', 'branch']
 const SCOPE_TITLES: Record<ReviewScopeId, string> = {
   uncommitted: '工作树相对 HEAD 的全部未提交变更',
-  turn: '最近一条用户消息之后 Agent 改动过的文件',
+  turn: '本轮 Agent 的逐次编辑（来自 Cursor 编辑流，不依赖 Git）',
   branch: '当前分支相对基线分支的全部变更（含已提交）'
+}
+
+const EDIT_ACTION_LABELS: Record<TurnReviewEdit['action'], string> = {
+  edit: '编辑',
+  write: '写入',
+  delete: '删除'
 }
 const SCOPE_STORAGE_KEY = 'sg-team.inspector:review-scope'
 const DEFAULT_POLL = { live: 15_000, fallback: 2_000 }
@@ -115,6 +131,11 @@ export function buildHunkQuote(path: string, hunk: WorkspaceDiffHunk): string {
 export function buildFileQuote(file: WorkspaceReviewFileSummary): string {
   const counts = file.binary ? '二进制' : `+${file.additions ?? 0} −${file.deletions ?? 0}`
   return `> 关于 \`${file.path}\`（${STATUS_TITLES[file.status]} · ${counts}）：\n\n`
+}
+
+/** 「本轮」行的引用：没有 Git 状态可说，说的是这一轮的编辑次数与行数。 */
+export function buildTurnFileQuote(file: TurnFileView, editCount: number): string {
+  return `> 关于 \`${file.path}\`（本轮 ${editCount} 次编辑 · ${describeLineCounts(file.additions, file.deletions, file.binary)}）：\n\n`
 }
 
 function InlineText({ text, segments }: { text: string; segments?: InlineSegment[] }): React.JSX.Element {
@@ -179,6 +200,49 @@ function FileDiffView({ path, diff, actions, onQuote, onAction }: {
   )
 }
 
+/** 编辑流的 hunk 不对应 Git 的补丁头：按块暂存 / 撤销在「本轮」视图不可用，引用照常。 */
+const NO_HUNK_ACTIONS = { stage: false, unstage: false, revert: false }
+const noHunkAction = (): void => {}
+
+/**
+ * 一个文件在本轮的逐次编辑（Cursor 编辑流）。每次编辑一张卡：动作、hook 行数提示、
+ * 逐行差异（与 Git 差异同一套行渲染）。多次编辑不合并——行号是各次编辑当时的行号，
+ * 合并需要基线文件内容，编辑流里没有；逐次呈现本身就是事实。
+ */
+function TurnEditsView({ path, edits, onQuote }: {
+  path: string
+  edits: readonly TurnReviewEdit[]
+  onQuote?: (text: string) => void
+}): React.JSX.Element {
+  if (!edits.length) {
+    return <p className="review-file__empty">这一轮没有留下该文件的编辑记录</p>
+  }
+  return (
+    <div className="review-diff">
+      {edits.map((edit, index) => (
+        <section key={edit.blockId} className={`review-edit${edit.running ? ' is-running' : ''}${edit.failed ? ' is-failed' : ''}`}>
+          <div className="review-edit__head">
+            <b>第 {index + 1} 次</b>
+            <span>{EDIT_ACTION_LABELS[edit.action]}</span>
+            {edit.hint ? <code>{edit.hint}</code> : null}
+            {edit.running ? <em className="is-running">进行中…</em> : null}
+            {edit.failed ? <em className="is-failed">失败</em> : null}
+          </div>
+          {edit.hunks.length ? (
+            edit.hunks.map((hunk, hunkIndex) => (
+              <HunkView key={`${edit.blockId}:${hunkIndex}`} path={path} hunk={hunk} index={hunkIndex} actions={NO_HUNK_ACTIONS} onQuote={onQuote} onAction={noHunkAction} />
+            ))
+          ) : (
+            <p className="review-file__empty">{edit.running ? '正在写入，差异稍后出现…' : '这次操作没有逐行差异记录'}</p>
+          )}
+          {edit.truncatedLineCount ? <div className="review-diff__truncated">差异过长，传输截断了 {edit.truncatedLineCount} 行</div> : null}
+        </section>
+      ))}
+      {edits.length > 1 ? <p className="review-diff__footnote">多次编辑按发生顺序逐次展示；行号是各次编辑当时的行号，不做跨次合并。</p> : null}
+    </div>
+  )
+}
+
 interface PendingConfirm {
   path: string
   hunkHeader?: string
@@ -212,8 +276,10 @@ function flashElement(element: HTMLElement): void {
   window.setTimeout(() => element.classList.remove('is-revealed'), 1_400)
 }
 
-export function ReviewPanel({ workspaceKey, turnPaths, onQuote, onSummary, paused = false, pollIntervalMs = DEFAULT_POLL }: ReviewPanelProps): React.JSX.Element {
+export function ReviewPanel({ workspaceKey, turnPaths, turnFiles, turnEdits, onQuote, onSummary, paused = false, pollIntervalMs = DEFAULT_POLL }: ReviewPanelProps): React.JSX.Element {
   const [scope, setScope] = useState<ReviewScopeId>(readStoredScope)
+  /** 「本轮」走 Agent 编辑流（有 turnFiles 才启用；预览 / 旧调用方退回 Git 过滤）。 */
+  const turnActive = scope === 'turn' && turnFiles !== undefined
   const [summary, setSummary] = useState<WorkspaceReviewSummary>()
   const [error, setError] = useState('')
   const [refreshing, setRefreshing] = useState(false)
@@ -243,6 +309,16 @@ export function ReviewPanel({ workspaceKey, turnPaths, onQuote, onSummary, pause
   useEffect(() => {
     try { localStorage.setItem(SCOPE_STORAGE_KEY, scope) } catch { /* 当前窗口仍保持选择。 */ }
   }, [scope])
+
+  // 非 Git 工程：得知 not_git 的那一刻把范围落到「本轮」——Git 两档在这种工程里没有内容，
+  // 编辑流才有话说。每个工作区只自动切一次，之后用户的手动选择（包括切回去看提示卡）不再被覆盖。
+  const autoTurnedRef = useRef('')
+  useEffect(() => {
+    if (autoTurnedRef.current === workspaceKey) return
+    if (summary?.state !== 'not_git' || turnFiles === undefined) return
+    autoTurnedRef.current = workspaceKey
+    setScope('turn')
+  }, [summary?.state, turnFiles, workspaceKey])
 
   const loadSummary = useCallback(async (showBusy = false): Promise<void> => {
     if (summaryInFlight.current) return
@@ -337,28 +413,32 @@ export function ReviewPanel({ workspaceKey, turnPaths, onQuote, onSummary, pause
   }, [liveUpdates, loadSummary, paused, pollIntervalMs.fallback, pollIntervalMs.live])
 
   const visible = useMemo(() => (
-    summary && scope === 'turn' ? filterSummaryToPaths(summary, turnPaths) : summary
-  ), [scope, summary, turnPaths])
+    summary && scope === 'turn' && !turnActive ? filterSummaryToPaths(summary, turnPaths) : summary
+  ), [scope, summary, turnActive, turnPaths])
 
   useEffect(() => {
     onSummary?.(summary)
   }, [onSummary, summary])
 
-  // 中栏文件栏的「审查」/ 点某一行：范围切到请求的范围（缺省「本轮」；栏显示「上一轮」时是「未提交」），
-  // 带路径时记下待定位的文件。
+  // 中栏文件栏的「审查」/ 点某一行：范围切到请求的范围（缺省「本轮」——栏与「本轮」视图
+  // 同一份数据，栏保住上一轮时这里同样保住），带路径时记下待定位的文件。
   useEffect(() => subscribeReviewFocus((request) => {
     setScope(request.scope ?? 'turn')
     setFocusPath(request.path ?? '')
   }), [])
 
   // revision 变化 → 已展开文件的差异就地重拉（旧差异保留到新差异到达），
-  // 不再出现在摘要里的文件才丢缓存；首次加载默认展开第一个文件。
+  // 不再出现在摘要里的文件才丢缓存；首次加载默认展开第一个文件（「本轮」在 Agent 编辑流上时
+  // 不做这次整份重设——它有自己的列表，Git 摘要迟到不该重排用户已展开的内容）。
   useEffect(() => {
     if (!visible?.revision || visible.state !== 'ready') return
     const revisionChanged = revisionRef.current !== visible.revision
-    const firstForWorkspace = initializedWorkspace.current !== workspaceKey
+    const firstForWorkspace = initializedWorkspace.current !== workspaceKey && !turnActive
     if (!revisionChanged && !firstForWorkspace) return
     revisionRef.current = visible.revision
+    // 「本轮」在编辑流上：列表与差异都不来自 Git，摘要刷新不该预拉 Git 差异，
+    // 更不该按 Git 的文件清单清洗展开集合与缓存。
+    if (turnActive) return
     let open = expanded
     if (firstForWorkspace) {
       initializedWorkspace.current = workspaceKey
@@ -374,24 +454,45 @@ export function ReviewPanel({ workspaceKey, turnPaths, onQuote, onSummary, pause
     for (const file of visible.files) {
       if (open.has(file.path)) void loadDiff(file.path, visible.revision, { keepStale: true })
     }
-  }, [expanded, loadDiff, visible, workspaceKey])
+  }, [expanded, loadDiff, turnActive, visible, workspaceKey])
 
-  // 待定位的文件出现在可见摘要里：展开、读差异、滚到它并短暂高亮；文件不在摘要里
-  //（Git 尚未看到改动、非 git 工程）就保持「本轮」范围，不做别的。
-  // 放在上面的首载效果之后：首载会整份重设展开集合，这里用函数式更新叠加在它之上。
+  // 「本轮」首次有列表：默认展开第一个文件（与 Git 口径的首载一致）。只做一次，
+  // 用户收起全部后不再强行展开；带定位请求进来时目标文件由定位效果叠加展开。
+  const turnInitializedRef = useRef('')
   useEffect(() => {
-    if (!focusPath || visible?.state !== 'ready') return
-    const file = visible.files.find((candidate) => fileTouchedBy(candidate, [focusPath]))
-    if (!file) return
+    if (!turnActive || !turnFiles?.files.length) return
+    if (turnInitializedRef.current === workspaceKey) return
+    turnInitializedRef.current = workspaceKey
+    setExpanded((current) => current.size ? current : new Set([turnFiles.files[0]!.path]))
+  }, [turnActive, turnFiles, workspaceKey])
+
+  /** 定位一个已在列表里的文件：展开、滚到它并短暂高亮。 */
+  const revealFile = useCallback((path: string): void => {
     setFocusPath('')
-    setExpanded((current) => current.has(file.path) ? current : new Set([...current, file.path]))
-    if (diffs[file.path] === undefined) void loadDiff(file.path, visible.revision)
-    setRevealedPath(file.path)
+    setExpanded((current) => current.has(path) ? current : new Set([...current, path]))
+    setRevealedPath(path)
     if (revealTimer.current) window.clearTimeout(revealTimer.current)
     revealTimer.current = window.setTimeout(() => setRevealedPath(''), 1_400)
-    const target = listRef.current?.querySelector<HTMLElement>(`.review-file[data-path="${cssEscape(file.path)}"]`)
+    const target = listRef.current?.querySelector<HTMLElement>(`.review-file[data-path="${cssEscape(path)}"]`)
     if (target && typeof target.scrollIntoView === 'function') target.scrollIntoView({ block: 'start' })
-  }, [diffs, focusPath, loadDiff, visible])
+  }, [])
+
+  // 待定位的文件出现在列表里：展开、（Git 口径时）读差异、滚到它并短暂高亮。
+  // 「本轮」在 Agent 编辑流上时列表即时可得，不等 Git 摘要。
+  // 放在上面的首载效果之后：首载会整份重设展开集合，这里用函数式更新叠加在它之上。
+  useEffect(() => {
+    if (!focusPath) return
+    if (turnActive && turnFiles) {
+      const file = turnFiles.files.find((candidate) => reviewPathsMatch(candidate.path, focusPath))
+      if (file) revealFile(file.path)
+      return
+    }
+    if (visible?.state !== 'ready') return
+    const file = visible.files.find((candidate) => fileTouchedBy(candidate, [focusPath]))
+    if (!file) return
+    if (diffs[file.path] === undefined) void loadDiff(file.path, visible.revision)
+    revealFile(file.path)
+  }, [diffs, focusPath, loadDiff, revealFile, turnActive, turnFiles, visible])
 
   const ensureDiff = (path: string): void => {
     if (visible && diffs[path] === undefined) void loadDiff(path, visible.revision)
@@ -407,16 +508,33 @@ export function ReviewPanel({ workspaceKey, turnPaths, onQuote, onSummary, pause
     setExpanded(next)
   }
 
+  /** 「本轮」行的展开收起：差异在内存里（编辑流），不触发任何 Git 读取。 */
+  const toggleTurnFile = (path: string): void => {
+    setExpanded((current) => {
+      const next = new Set(current)
+      if (next.has(path)) next.delete(path)
+      else next.add(path)
+      return next
+    })
+  }
+
   const files = visible?.state === 'ready' ? visible.files : []
-  const allExpanded = files.length > 0 && files.every((file) => expanded.has(file.path))
+  const turnList = turnActive && turnFiles ? turnFiles.files : []
+  const listPaths = turnActive ? turnList.map((file) => file.path) : files.map((file) => file.path)
+  const allExpanded = listPaths.length > 0 && listPaths.every((path) => expanded.has(path))
   const toggleAll = (): void => {
     if (allExpanded) {
       setExpanded(new Set())
       return
     }
-    for (const file of files) ensureDiff(file.path)
-    setExpanded(new Set(files.map((file) => file.path)))
+    if (!turnActive) for (const file of files) ensureDiff(file.path)
+    setExpanded(new Set(listPaths))
   }
+
+  /** 「本轮」行的 Git 侧影（就绪时）：状态字母、暂存 / 撤销的可用性都从这里来；Git 看不见的文件没有这些。 */
+  const gitFileFor = (path: string): WorkspaceReviewFileSummary | undefined => (
+    summary?.state === 'ready' ? summary.files.find((file) => fileTouchedBy(file, [path])) : undefined
+  )
 
   const runAction = async (path: string, action: WorkspaceReviewAction, hunkHeader?: string): Promise<void> => {
     setBusyPath(path)
@@ -489,6 +607,8 @@ export function ReviewPanel({ workspaceKey, turnPaths, onQuote, onSummary, pause
     ? branch.base && !branch.onBase ? `${branch.current} → ${branch.base}` : branch.current
     : ''
   const highlightTurn = scope !== 'turn' && turnPaths.length > 0
+  /** 「本轮」按钮上的计数：编辑流视图给出后以它为准（含保住的上一轮），否则退回路径集合。 */
+  const turnCount = turnFiles ? turnFiles.files.length : turnPaths.length
 
   return (
     <section className="inspector-review" aria-label="工作区代码审查">
@@ -504,13 +624,23 @@ export function ReviewPanel({ workspaceKey, turnPaths, onQuote, onSummary, pause
               onClick={() => setScope(candidate)}
             >
               {REVIEW_SCOPE_LABELS[candidate]}
-              {candidate === 'turn' && turnPaths.length ? <b>{turnPaths.length}</b> : null}
+              {candidate === 'turn' && turnCount ? <b>{turnCount}</b> : null}
             </button>
           ))}
         </div>
-        <div className="inspector-review__totals" aria-label={visible?.state === 'ready' ? `新增 ${visible.additions} 行，删除 ${visible.deletions} 行` : undefined}>
-          {/* 只有真有变更时才显示合计；干净 / 出错态的 +0 −0 是噪音。 */}
-          {visible?.state === 'ready' ? <><b>+{visible.additions}</b><em>−{visible.deletions}</em></> : null}
+        <div
+          className="inspector-review__totals"
+          title={turnActive && turnList.length && turnFiles ? turnTotalsTitle(turnFiles) : undefined}
+          aria-label={turnActive
+            ? (turnList.length && turnFiles ? `新增 ${turnFiles.additions} 行，删除 ${turnFiles.deletions} 行${turnFiles.estimated ? '（估算）' : ''}` : undefined)
+            : visible?.state === 'ready' ? `新增 ${visible.additions} 行，删除 ${visible.deletions} 行` : undefined}
+        >
+          {/* 只有真有变更时才显示合计；干净 / 出错态的 +0 −0 是噪音。「本轮」的合计与文件栏 / 名册同源。 */}
+          {turnActive
+            ? (turnList.length && turnFiles
+              ? <>{turnFiles.estimated ? <small aria-hidden="true">≈</small> : null}<b>+{turnFiles.additions}</b><em>−{turnFiles.deletions}</em></>
+              : null)
+            : visible?.state === 'ready' ? <><b>+{visible.additions}</b><em>−{visible.deletions}</em></> : null}
           <button type="button" className={`inspector-icon-button${refreshing ? ' is-spinning' : ''}`} aria-label="刷新工作区变更" title={liveUpdates ? '正在实时监听工作区；点击立即刷新' : '刷新'} onClick={() => void loadSummary(true)}>
             <RefreshIcon />
           </button>
@@ -520,10 +650,10 @@ export function ReviewPanel({ workspaceKey, turnPaths, onQuote, onSummary, pause
         <span className="inspector-review__workspace" title={summary?.workspaceName}>{summary?.workspaceName || '等待识别工程'}</span>
         {branchLabel ? <code className="inspector-review__branch" title={branch?.base ? `基线分支：${branch.base}` : '当前分支'}>{branchLabel}</code> : null}
         {liveUpdates ? <span className="inspector-review__live" title="主进程正在监听文件系统变化，改动会即时出现"><i /><b>实时</b></span> : null}
-        {visible?.state === 'ready' ? (
+        {(turnActive ? turnList.length > 0 : visible?.state === 'ready') ? (
           <span className="inspector-review__count">
-            {visible.files.length} 个文件
-            {files.length > 1 ? (
+            {listPaths.length} 个文件
+            {listPaths.length > 1 ? (
               <button type="button" className="inspector-icon-button" aria-label={allExpanded ? '收起全部文件' : '展开全部文件'} title={`${allExpanded ? '收起全部' : '展开全部'} · ${KEYBOARD_HINT}`} onClick={toggleAll}>
                 {allExpanded ? <CollapseAllIcon /> : <ExpandAllIcon />}
               </button>
@@ -532,9 +662,10 @@ export function ReviewPanel({ workspaceKey, turnPaths, onQuote, onSummary, pause
         ) : null}
       </div>
 
-      {error ? <InspectorState tone="error" title="读取工作区变更失败" hint={error} compact /> : null}
-      {!summary && !error ? <InspectorSkeleton rows={4} /> : null}
-      {visible?.state === 'clean' ? (
+      {/* Git 侧的错误 / 骨架 / 干净 / 不可用只在 Git 口径下出现：「本轮」的内容来自编辑流，Git 的状态与它无关。 */}
+      {error && !turnActive ? <InspectorState tone="error" title="读取工作区变更失败" hint={error} compact /> : null}
+      {!summary && !error && !turnActive ? <InspectorSkeleton rows={4} /> : null}
+      {!turnActive && visible?.state === 'clean' ? (
         <InspectorState
           icon={<DiffIcon />}
           title={scope === 'turn' ? '本轮尚未修改文件' : scope === 'branch' ? '分支相对基线没有变更' : '工作区干净'}
@@ -548,18 +679,111 @@ export function ReviewPanel({ workspaceKey, turnPaths, onQuote, onSummary, pause
             : undefined}
         />
       ) : null}
-      {summary?.state === 'not_git' || summary?.state === 'unavailable' || summary?.state === 'error' ? (
+      {!turnActive && (summary?.state === 'not_git' || summary?.state === 'unavailable' || summary?.state === 'error') ? (
         <InspectorState
           icon={<DiffIcon />}
           tone={summary.state === 'error' ? 'error' : 'neutral'}
           title={summary.state === 'not_git' ? '当前工程未启用 Git' : summary.state === 'error' ? '读取变更出错' : '变更暂未就绪'}
           hint={summary.detail}
-          action={summary.state === 'error' ? <button type="button" className="inspector-link" onClick={() => void loadSummary(true)}>重试</button> : undefined}
+          action={summary.state === 'error'
+            ? <button type="button" className="inspector-link" onClick={() => void loadSummary(true)}>重试</button>
+            : turnFiles !== undefined
+              ? <button type="button" className="inspector-link" onClick={() => setScope('turn')}>查看本轮 Agent 改动</button>
+              : undefined}
         />
       ) : null}
-      {summary?.detail && summary.state === 'ready' ? <p className="inspector-review__note">{summary.detail}</p> : null}
+      {!turnActive && summary?.detail && summary.state === 'ready' ? <p className="inspector-review__note">{summary.detail}</p> : null}
 
-      {visible?.state === 'ready' ? (
+      {/* ——「本轮」：Agent 编辑流（不依赖 Git；列表、计数与文件栏 / 名册同一份视图）—— */}
+      {turnActive && !turnList.length ? (
+        <InspectorState
+          icon={<DiffIcon />}
+          title="本轮尚未修改文件"
+          hint="Agent 这一轮执行的 edit / write 会即时出现在这里，不依赖 Git"
+          action={summary?.state === 'ready'
+            ? <button type="button" className="inspector-link" onClick={() => setScope('uncommitted')}>查看全部未提交变更</button>
+            : undefined}
+        />
+      ) : null}
+      {turnActive && turnList.length && turnFiles?.scope === 'previous' ? (
+        <p className="inspector-review__turnnote">新一轮尚无编辑：以下是上一轮的改动，本轮第一次编辑后替换。</p>
+      ) : null}
+      {turnActive && turnList.length ? (
+        <div className="review-files" ref={listRef} onKeyDown={onListKeyDown} title={KEYBOARD_HINT} data-turn-scope={turnFiles?.scope}>
+          {turnList.map((file) => {
+            const open = expanded.has(file.path)
+            const edits = turnEdits?.get(file.path) ?? []
+            const git = gitFileFor(file.path)
+            const availability = git ? fileActionAvailability(git) : { stage: false, unstage: false, revert: false }
+            const busy = git ? busyPath === git.path : false
+            const confirming = git ? confirm?.path === git.path : false
+            const estimated = file.source === 'process'
+            const counts = describeLineCounts(file.additions, file.deletions, file.binary)
+            const headTitle = [
+              file.path,
+              file.status ? STATUS_TITLES[file.status] : '',
+              `本轮 ${edits.length} 次编辑`,
+              estimated ? `${counts}（按编辑逐次累计的估算）` : `${counts}（工作树相对 HEAD）`
+            ].filter(Boolean).join(' · ')
+            return (
+              <article className={`review-file${file.status ? ` is-${file.status}` : ''}${estimated ? ' is-estimated' : ''}${open ? ' is-open' : ''}${busy ? ' is-busy' : ''}${confirming ? ' is-confirming' : ''}${revealedPath === file.path ? ' is-revealed' : ''}`} key={file.path} data-path={file.path} data-source={file.source}>
+                <div className="review-file__row">
+                  <button className="review-file__head" type="button" onClick={() => toggleTurnFile(file.path)} aria-expanded={open} title={headTitle}>
+                    {file.status
+                      ? <i title={STATUS_TITLES[file.status]}>{STATUS_LABELS[file.status]}</i>
+                      : <i className="is-type"><FileTypeIcon kind={file.icon} /></i>}
+                    <span className="review-file__path">
+                      {file.dir ? <small><bdi>{file.dir}</bdi></small> : null}
+                      <strong><span>{file.stem}</span>{file.ext ? <b>{file.ext}</b> : null}</strong>
+                    </span>
+                    <span className="review-file__counts">
+                      {file.binary
+                        ? <small>BIN</small>
+                        : <>{estimated ? <small aria-hidden="true">≈</small> : null}<b>+{file.additions}</b><em>−{file.deletions}</em></>}
+                    </span>
+                    <ChevronIcon open={open} />
+                  </button>
+                  <span className="review-file__actions" role="group" aria-label={`${file.path} 的操作`}>
+                    <span className="review-file__action-group">
+                      <button type="button" title="在 Cursor 中打开" aria-label={`在编辑器中打开 ${file.path}`} onClick={() => void fileActions.openFile(file.path)}><OpenExternalIcon /></button>
+                      <button type="button" title="复制路径" aria-label={`复制路径 ${file.path}`} onClick={() => void fileActions.copyPath(file.path)}><CopyIcon /></button>
+                      {file.status !== 'deleted' ? <button type="button" title="在文件管理器中显示" aria-label={`在文件管理器中显示 ${file.path}`} onClick={() => void fileActions.revealFile(file.path)}><FolderIcon /></button> : null}
+                      {onQuote ? <button type="button" title="引用这个文件到输入框，向 Agent 提问或要求修改" aria-label={`反馈 ${file.path} 给 Agent`} onClick={() => onQuote(buildTurnFileQuote(file, edits.length))}><QuoteIcon /></button> : null}
+                    </span>
+                    {git && (availability.stage || availability.unstage) ? (
+                      <span className="review-file__action-group">
+                        {availability.stage ? <button type="button" disabled={busy} title="暂存整个文件" aria-label={`暂存 ${file.path}`} onClick={() => requestAction(git, 'stage')}><StageIcon /></button> : null}
+                        {availability.unstage ? <button type="button" disabled={busy} title="取消暂存整个文件" aria-label={`取消暂存 ${file.path}`} onClick={() => requestAction(git, 'unstage')}><UnstageIcon /></button> : null}
+                      </span>
+                    ) : null}
+                    {git && availability.revert ? (
+                      <span className="review-file__action-group">
+                        <button type="button" className="is-danger" disabled={busy} title="撤销整个文件的未提交改动（Git）" aria-label={`撤销 ${file.path}`} onClick={() => requestAction(git, 'revert')}><RevertIcon /></button>
+                      </span>
+                    ) : null}
+                  </span>
+                  {confirming && confirm ? (
+                    <RevertConfirm
+                      confirm={confirm}
+                      onCancel={() => setConfirm(undefined)}
+                      onConfirm={() => {
+                        const pending = confirm
+                        setConfirm(undefined)
+                        void runAction(pending.path, 'revert', pending.hunkHeader)
+                      }}
+                    />
+                  ) : null}
+                </div>
+                <Collapsible open={open}>
+                  <TurnEditsView path={file.path} edits={edits} onQuote={onQuote} />
+                </Collapsible>
+              </article>
+            )
+          })}
+        </div>
+      ) : null}
+
+      {!turnActive && visible?.state === 'ready' ? (
         <div className="review-files" ref={listRef} onKeyDown={onListKeyDown} title={KEYBOARD_HINT}>
           {visible.files.map((file) => {
             const open = expanded.has(file.path)

@@ -1,13 +1,14 @@
 import { memo, useEffect, useId, useState } from 'react'
 import { FileTypeIcon } from './FileTypeIcon'
 import type { ReviewFocusRequest } from './inspector/review-focus-bus'
-import { describeLineCounts, type TurnFileView, type TurnFilesView } from './turn-files-view'
+import { describeLineCounts, turnTotalsTitle, type TurnFileView, type TurnFilesView } from './turn-files-view'
 
 interface TurnFilesBarProps {
   view: TurnFilesView
   /**
-   * 打开右栏审查页；带 path 时同时定位该文件。范围由栏自己决定：本轮 → 「本轮」，
-   * 上一轮保持态 → 「未提交」（右栏的「本轮」那时是空的）。缺省时行不可点、没有「审查」入口。
+   * 打开右栏审查页；带 path 时同时定位该文件。范围始终是「本轮」：右栏的「本轮」视图与本栏
+   * 同一份 `TurnFilesView`——栏保住上一轮时右栏同样保住，点过去看到的就是这批文件的逐次编辑。
+   * 缺省时行不可点、没有「审查」入口。
    */
   onReview?: (request: ReviewFocusRequest) => void
   /**
@@ -98,7 +99,6 @@ export const TurnFilesBar = memo(function TurnFilesBar({ view, onReview, yieldTo
     })
   }
   const previous = view.scope === 'previous'
-  const reviewScope = previous ? 'uncommitted' : 'turn'
   const spinning = view.working && !yieldToTray
   return (
     <section
@@ -121,11 +121,7 @@ export const TurnFilesBar = memo(function TurnFilesBar({ view, onReview, yieldTo
           <strong className="turn-files__title"><b>{view.files.length}</b> 个文件</strong>
           <span
             className="turn-files__totals"
-            title={view.totalsSource === 'composer'
-              ? '合计取 Cursor 统计的本会话累计净增删（与左侧名册行同一个数）；逐文件是过程估算，同一文件多次编辑会重复计入，相加可能大于合计'
-              : view.estimated
-                ? '含按编辑逐次累计的估算值'
-                : `${previous ? '上一轮' : '本轮'}文件的增删行数合计（工作树相对 HEAD）`}
+            title={turnTotalsTitle(view)}
             aria-label={`合计 ${describeLineCounts(view.additions, view.deletions)}${view.estimated ? '（估算）' : ''}`}
           >
             {view.estimated ? <small aria-hidden="true">≈</small> : null}
@@ -138,8 +134,8 @@ export const TurnFilesBar = memo(function TurnFilesBar({ view, onReview, yieldTo
             <button
               type="button"
               className="turn-files__review"
-              title={previous ? '在右栏审查这些改动（范围：未提交）' : '在右栏审查本轮改动（范围：本轮）'}
-              onClick={() => onReview({ scope: reviewScope })}
+              title={previous ? '在右栏逐次审查上一轮的编辑' : '在右栏逐次审查本轮编辑'}
+              onClick={() => onReview({ scope: 'turn' })}
             >
               审查
             </button>
@@ -154,9 +150,9 @@ export const TurnFilesBar = memo(function TurnFilesBar({ view, onReview, yieldTo
               <button
                 type="button"
                 className="turn-files__row"
-                title={onReview ? `${fileTitle(file)}\n点击在右栏查看差异` : fileTitle(file)}
+                title={onReview ? `${fileTitle(file)}\n点击在右栏查看逐次编辑差异` : fileTitle(file)}
                 disabled={!onReview}
-                onClick={onReview ? () => onReview({ path: file.path, scope: reviewScope }) : undefined}
+                onClick={onReview ? () => onReview({ path: file.path, scope: 'turn' }) : undefined}
               >
                 <FileTypeIcon kind={file.icon} />
                 <span className="turn-files__name">
