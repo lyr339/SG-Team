@@ -5,24 +5,42 @@ import type { CdpAutoHealEvent } from '../../../domain/cursor-cdp'
 import type { CursorModelOption, CursorModelSelection } from '../../../domain/cursor-model'
 import type { DetectedCursorWorkspace } from '../../../domain/cursor-workspace'
 import type { TeamControlSnapshot } from '../../../domain/team-control'
-import type { CreateIndependentSessionsInput, IndependentWorkspaceSelection } from '../../../shared/desktop-api'
+import type {
+  CreateIndependentSessionsInput,
+  IndependentWorkspaceSelection,
+  TeamGroupGoalInput,
+  TeamGroupLeadInput,
+  TeamGroupMemberRef
+} from '../../../shared/desktop-api'
 import { BrandMark } from '../BrandMark'
 import { cursorModelSelectionFromOption, cursorModelSelectionSummary, normalizeCursorModelSelection, sameCursorModelSelection } from '../cursor-model-selection'
 import { describeSelectionSpread, majoritySelection, type RunBatchConfigProps } from './RunBatchConfig'
-import { ReplaceRunSheet } from './ReplaceRunSheet'
-import { RunHeader } from './RunHeader'
-import type { RunGroupActions } from './RunGroupsPanel'
+import { ConfirmSheet } from './ConfirmSheet'
+import { GroupCard } from './GroupCard'
+import type { GroupComposerMode } from './GroupComposer'
+import { PoolHeader } from './PoolHeader'
 import { RunIndependentPanel, clampSessionCount } from './RunIndependentPanel'
 import { RunSeats, type RunSeatRow } from './RunSeats'
 import { RunSlot } from './RunSlot'
 import {
-  buildRunView,
-  replaceRunConsequence,
-  type ReplaceRunAction,
-  type ReplaceRunConsequence
-} from './run-view'
+  buildPoolView,
+  consequenceOf,
+  type ConfirmConsequence,
+  type PoolAction,
+  type PoolGroup,
+  type PoolGroupMember,
+  type PoolTaskFacts
+} from './pool-view'
 
-export interface RunPageProps {
+/** 协作组的写操作（建组 / 加人走 App 级 GroupComposer 抽屉，不在此列）。 */
+export interface PoolGroupActions {
+  removeGroupMember: (input: TeamGroupMemberRef) => Promise<unknown>
+  setGroupLead: (input: TeamGroupLeadInput) => Promise<unknown>
+  updateGroupGoal: (input: TeamGroupGoalInput) => Promise<unknown>
+  dissolveGroup: (input: { groupId: string }) => Promise<unknown>
+}
+
+export interface PoolPageProps {
   team: TeamControlSnapshot
   detectedWorkspace?: DetectedCursorWorkspace
   cursorModels: CursorModelOption[]
@@ -30,6 +48,8 @@ export interface RunPageProps {
   externalNotice?: string
   cdpAutoHealEnabled: boolean
   cdpAutoHealEvent?: CdpAutoHealEvent
+  /** 任务板快照：组卡片的任务计数（不提供时计数区不显示）。 */
+  taskPool?: PoolTaskFacts
   onLaunchAgentSessions: (requests: AgentLaunchRequest[]) => Promise<AgentLaunchPlan>
   /** 会话预热探针状态与开关（批量发起前自动执行；也可单独手动触发）。 */
   sessionWarmupRun?: SessionWarmupRun
@@ -40,16 +60,23 @@ export interface RunPageProps {
   onChooseIndependentWorkspace: () => Promise<IndependentWorkspaceSelection | undefined>
   onEndActiveRun: () => Promise<void>
   onOpenSessions: () => void
+  onOpenSession?: (channelId: string) => void
   onPersistModelSelection?: (channelId: string, selection: CursorModelSelection) => Promise<TeamControlSnapshot>
   onEnableCursorCdp?: () => Promise<{ ok: boolean; message: string; suggestAutoHeal?: boolean }>
   onToggleCdpAutoHeal?: (enabled: boolean) => Promise<void>
   onCancelCdpAutoHealCountdown?: () => Promise<void>
-  /** 会话池 · 协作组操作；不提供时运行页不显示协作组区。 */
-  groupActions?: RunGroupActions
+  /** 会话池 · 协作组操作；不提供时运行页不显示协作组区（预览 / 旧调用方）。 */
+  groupActions?: PoolGroupActions
+  /** 打开建组 / 加人抽屉（App 级 GroupComposer，与名册多选共用一个实例）。 */
+  onOpenGroupComposer?: (mode: GroupComposerMode) => void
+  /** 离线组内席位的成员身份迁移（App 级 TransferMembershipDialog）。 */
+  onTransferMembership?: (slotId: string) => void
+  /** 从会话头部的组名跳转而来：对应卡片滚入视野并短暂点亮。 */
+  focusGroupId?: string
 }
 
 interface PendingSheet {
-  consequence: ReplaceRunConsequence
+  consequence: ConfirmConsequence
   perform: () => void
 }
 
@@ -61,11 +88,11 @@ interface ComposeState {
 const DEFAULT_INDEPENDENT_COUNT = 3
 
 /**
- * 「运行」页：一个工程一个会话池（独立批次），协作在池内以组的形式建拆。
- * 头部（工程 / 状态 / 结束）→ 批次概况与协作组 → 共用席位区；
- * 所有破坏性动作走同一个 ReplaceRunSheet。没有运行时直接进入批次配置。
+ * 「运行」页：一个工程一个会话池，协作在池内以组的形式建拆。
+ * 头部（工程 / 状态 / 结束）→ 批次概况与席位区 → 协作组卡片网格（+ 折叠的解散历史）；
+ * 所有破坏性动作走同一个 ConfirmSheet。没有运行时直接进入批次配置。
  */
-export function RunPage({
+export function PoolPage({
   team,
   detectedWorkspace,
   cursorModels,
@@ -73,6 +100,7 @@ export function RunPage({
   externalNotice,
   cdpAutoHealEnabled,
   cdpAutoHealEvent,
+  taskPool,
   onLaunchAgentSessions,
   sessionWarmupRun,
   sessionWarmupEnabled = true,
@@ -82,13 +110,17 @@ export function RunPage({
   onChooseIndependentWorkspace,
   onEndActiveRun,
   onOpenSessions,
+  onOpenSession,
   onPersistModelSelection,
   onEnableCursorCdp,
   onToggleCdpAutoHeal,
   onCancelCdpAutoHealCountdown,
-  groupActions
-}: RunPageProps): React.JSX.Element {
-  const view = useMemo(() => buildRunView(team, detectedWorkspace), [team, detectedWorkspace])
+  groupActions,
+  onOpenGroupComposer,
+  onTransferMembership,
+  focusGroupId
+}: PoolPageProps): React.JSX.Element {
+  const view = useMemo(() => buildPoolView(team, detectedWorkspace, taskPool), [team, detectedWorkspace, taskPool])
   const [busy, setBusy] = useState('')
   const actionInFlight = useRef(false)
   const [notice, setNotice] = useState('')
@@ -102,7 +134,7 @@ export function RunPage({
   const [syncedAt, setSyncedAt] = useState<number>()
   const [chosenWorkspace, setChosenWorkspace] = useState<{ selection: IndependentWorkspaceSelection; detectedId?: string }>()
 
-  const runId = view.run?.id
+  const runId = view.pool?.id
   useEffect(() => {
     // 运行身份变化（创建 / 替换）：丢弃针对旧运行的配置、确认与草稿。
     setCompose(null)
@@ -119,6 +151,18 @@ export function RunPage({
     const timer = setTimeout(() => setNotice(''), 6_000)
     return () => clearTimeout(timer)
   }, [notice])
+
+  // 会话头部的组名跳转：卡片滚入视野并短暂点亮（reduced-motion 下直接跳位）。
+  const [flashGroupId, setFlashGroupId] = useState<string>()
+  useEffect(() => {
+    if (!focusGroupId) return
+    setFlashGroupId(focusGroupId)
+    const card = document.querySelector(`[data-group-id="${CSS.escape(focusGroupId)}"]`)
+    const reduced = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    card?.scrollIntoView({ block: 'center', behavior: reduced ? 'auto' : 'smooth' })
+    const timer = setTimeout(() => setFlashGroupId(undefined), 2_400)
+    return () => clearTimeout(timer)
+  }, [focusGroupId])
 
   const run = async <Result,>(name: string, action: () => Promise<Result>): Promise<Result | undefined> => {
     // React 的 disabled 要到下一次提交才生效；同一拍重复点击也只执行一次。
@@ -138,10 +182,10 @@ export function RunPage({
     }
   }
 
-  /** 破坏性动作统一入口：仍有 live 席位才展开确认面，否则直接执行。 */
-  const guard = (action: ReplaceRunAction, perform: () => void): void => {
+  /** 破坏性动作统一入口：有后果才展开确认面，否则直接执行。 */
+  const guard = (action: PoolAction, perform: () => void): void => {
     if (actionInFlight.current || agentLaunchPlan?.state === 'running') return
-    const consequence = replaceRunConsequence(view, action)
+    const consequence = consequenceOf(view, action)
     if (!consequence.needsConfirm) {
       perform()
       return
@@ -261,7 +305,7 @@ export function RunPage({
         if (plan.state === 'done') onOpenSessions()
       })
     }
-    const replacingLiveRun = Boolean(view.run) && view.phase !== 'completed' && !compose?.confirmed
+    const replacingLiveRun = Boolean(view.pool) && view.phase !== 'completed' && !compose?.confirmed
     if (!replacingLiveRun) {
       perform()
       return
@@ -279,7 +323,7 @@ export function RunPage({
   // ---------- 结束 / 新建 ----------
   /**
    * 进入新批次配置：数量接着上一个批次来，配合沿用来的会话配置，「和上一批一样再来一批」不用重设。
-   * 归档的旧团队 run 不作为 run 暴露（`view.seats` 为空），它的角色席位数不会被沿用。
+   * 归档的旧团队 run 不作为池暴露（`view.seats` 为空），它的角色席位数不会被沿用。
    */
   const beginCompose = (): void => {
     if (view.seats.length) setCount(clampSessionCount(view.seats.length))
@@ -287,7 +331,7 @@ export function RunPage({
   }
   const endRun = (): void => {
     if (view.phase !== 'active') return
-    guard({ kind: 'end' }, () => {
+    guard({ kind: 'end-pool' }, () => {
       void run('end-run', async () => {
         await onEndActiveRun()
         setCompose(null)
@@ -392,7 +436,7 @@ export function RunPage({
   const createLabel = composingIndependent
     ? `创建 ${count} 个独立会话`
     : `补齐会话（${view.pendingSeats.length}）`
-  const relevantPlan = agentLaunchPlan && (composingIndependent || !view.run || agentLaunchPlan.startedAt >= view.run.createdAt)
+  const relevantPlan = agentLaunchPlan && (composingIndependent || !view.pool || agentLaunchPlan.startedAt >= view.pool.createdAt)
     ? agentLaunchPlan
     : undefined
   const isBusy = Boolean(busy) || agentLaunchPlan?.state === 'running'
@@ -431,6 +475,72 @@ export function RunPage({
       onToggleAutoHeal={toggleAutoHeal}
       onCancelCountdown={onCancelCdpAutoHealCountdown ? () => void onCancelCdpAutoHealCountdown() : undefined}
     />
+  ) : null
+
+  // ---------- 协作组 ----------
+  const ended = view.phase === 'completed'
+  const activeGroups = view.groups.filter((group) => group.status === 'active')
+  const dissolvedGroups = view.groups.filter((group) => group.status === 'dissolved')
+  const groupOf = (group: PoolGroup, member: PoolGroupMember): void => {
+    guard({ kind: 'remove-members', members: [{ channelId: member.channelId, groupName: group.name }] }, () => {
+      void run('group-op', () => groupActions!.removeGroupMember({ groupId: group.id, slotId: member.slotId }))
+    })
+  }
+  const groupCard = (group: PoolGroup): React.JSX.Element => (
+    <GroupCard
+      key={group.id}
+      group={group}
+      busy={isBusy}
+      ended={ended}
+      focused={flashGroupId === group.id}
+      onAddMembers={() => onOpenGroupComposer?.({ kind: 'add', groupId: group.id, groupName: group.name })}
+      onRemoveMember={(member) => groupOf(group, member)}
+      onTransferMembership={onTransferMembership ? (member) => onTransferMembership(member.slotId) : undefined}
+      onSetLead={(slotId) => void run('group-op', () => groupActions!.setGroupLead({ groupId: group.id, slotId }))}
+      onUpdateGoal={async (goal) => (await run('group-op', () => groupActions!.updateGroupGoal({ groupId: group.id, goal }))) !== undefined}
+      onDissolve={() => {
+        guard({ kind: 'dissolve-group', group }, () => {
+          void run('group-op', () => groupActions!.dissolveGroup({ groupId: group.id }))
+        })
+      }}
+      onOpenSession={onOpenSession}
+    />
+  )
+  const groupsSection = groupActions && view.pool && !composingIndependent ? (
+    <section className="pool-groups" aria-label="协作组">
+      <header className="run-section-head">
+        <strong>协作组</strong>
+        <span>
+          {activeGroups.length
+            ? `${activeGroups.length} 个组 · ${view.ungroupedSeats.length} 个独立会话`
+            : '池内会话默认独立；在左侧名册多选几行即可建组协作'}
+        </span>
+        {!ended ? (
+          <button
+            type="button"
+            className="run-link"
+            disabled={isBusy || !view.ungroupedSeats.length || !onOpenGroupComposer}
+            title={view.ungroupedSeats.length ? undefined : '没有未入组的会话'}
+            onClick={() => onOpenGroupComposer?.({ kind: 'create' })}
+          >
+            建组
+          </button>
+        ) : null}
+      </header>
+      {activeGroups.length ? (
+        <div className="pool-groups__grid">
+          {activeGroups.map(groupCard)}
+        </div>
+      ) : null}
+      {dissolvedGroups.length ? (
+        <details className="pool-groups__history">
+          <summary>历史（{dissolvedGroups.length} 个已解散的组，保留 24 小时）</summary>
+          <div className="pool-groups__grid">
+            {dissolvedGroups.map(groupCard)}
+          </div>
+        </details>
+      ) : null}
+    </section>
   ) : null
 
   if (view.phase === 'none') {
@@ -474,7 +584,7 @@ export function RunPage({
   return (
     <div className="run-page">
       <div className="run-page__inner">
-      <RunHeader
+      <PoolHeader
         view={view}
         busy={isBusy}
         busyAction={busy}
@@ -499,7 +609,7 @@ export function RunPage({
 
       <RunSlot>
         {sheet ? (
-          <ReplaceRunSheet
+          <ConfirmSheet
             consequence={sheet.consequence}
             busy={isBusy}
             onCancel={() => setSheet(null)}
@@ -532,12 +642,13 @@ export function RunPage({
             onCountChange={setCount}
             onChooseWorkspace={chooseIndependentWorkspace}
             onNewBatch={newBatch}
-            groupActions={groupActions}
             modelConfig={batchModelConfig}
           />
         )}
         {seats}
       </div>
+
+      {groupsSection}
       </div>
     </div>
   )

@@ -1026,6 +1026,12 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 .workspace-identity > div { display: flex; align-items: center; gap: 10px; }
 .workspace-identity h1 { margin: 0; overflow: hidden; color: var(--text); font-size: var(--fs-17); text-overflow: ellipsis; white-space: nowrap; }
 .workspace-identity p { margin: 6px 0 0; overflow: hidden; color: var(--muted); font: 500 var(--fs-10)/1 var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+/* 入组席位的组名 chip：与状态 pill 同一几何（5px 竖内边距、10px 字号、胶囊），强调色表「归属」；
+   可点时跳到运行页对应卡片，hover 只加深底与描边，不换形。 */
+.workspace-group-chip { flex: none; max-width: 200px; overflow: hidden; padding: 5px 9px; color: var(--accent-deep); background: var(--accent-wash); border: var(--border-width-regular) solid var(--accent-border-soft); border-radius: var(--border-radius-full); font: 600 var(--fs-10)/1 var(--font-sans); text-overflow: ellipsis; white-space: nowrap; transition: background 120ms ease, border-color 120ms ease; }
+button.workspace-group-chip { cursor: pointer; }
+button.workspace-group-chip:hover { background: color-mix(in srgb, var(--anthropic-orange) 14%, var(--color-background-primary)); border-color: var(--accent-border); }
+button.workspace-group-chip:focus-visible { outline: 2px solid var(--accent-border-strong); outline-offset: 2px; }
 .workspace-header__usage { min-width: 0; display: flex; justify-content: flex-end; align-items: center; }
 
 .workspace-warning { display: grid; gap: 4px; margin: 12px 20px 0; padding: 11px 14px; color: var(--red); background: var(--red-soft); border: var(--border-width-regular) solid var(--red-border); border-radius: var(--r-md); }

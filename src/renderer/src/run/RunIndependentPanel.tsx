@@ -1,8 +1,7 @@
 import { useState } from 'react'
 import { formatFullClock, formatRelativeClock } from '../format'
 import { RunBatchConfig, type RunBatchConfigProps } from './RunBatchConfig'
-import { RunGroupsPanel, type RunGroupActions } from './RunGroupsPanel'
-import type { RunView } from './run-view'
+import type { PoolView } from './pool-view'
 
 export const INDEPENDENT_MIN_SESSIONS = 1
 export const INDEPENDENT_MAX_SESSIONS = 16
@@ -11,7 +10,7 @@ export const clampSessionCount = (value: number): number =>
   Math.min(INDEPENDENT_MAX_SESSIONS, Math.max(INDEPENDENT_MIN_SESSIONS, value))
 
 interface RunIndependentPanelProps {
-  view: RunView
+  view: PoolView
   /** 正在配置新批次（无运行 / 新建批次）。 */
   composing: boolean
   /** 新批次的目标工程。 */
@@ -21,15 +20,13 @@ interface RunIndependentPanelProps {
   onCountChange: (count: number) => void
   onChooseWorkspace: () => void
   onNewBatch: () => void
-  /** 会话池的协作组操作；不提供时不显示协作组区（预览 / 旧调用方）。 */
-  groupActions?: RunGroupActions
   /** 批次的「会话配置」行（统一的模型与参数）；不提供时不显示（旧调用方）。 */
   modelConfig?: RunBatchConfigProps
 }
 
 /**
- * 会话池区。配置中：目标工程 + 会话数量 + 会话配置；运行中：批次概况 + 会话配置 + 协作组 + 新建批次。
- * 创建按钮在席位区底部。
+ * 会话池区。配置中：目标工程 + 会话数量 + 会话配置；运行中：批次概况 + 会话配置 + 新建批次。
+ * 协作组在页面下方的卡片网格（`PoolPage`）；创建按钮在席位区底部。
  */
 export function RunIndependentPanel({
   view,
@@ -40,7 +37,6 @@ export function RunIndependentPanel({
   onCountChange,
   onChooseWorkspace,
   onNewBatch,
-  groupActions,
   modelConfig
 }: RunIndependentPanelProps): React.JSX.Element {
   const waiting = view.seats.filter((seat) => seat.state === 'waiting').length
@@ -76,7 +72,7 @@ export function RunIndependentPanel({
           <button type="button" className="run-link" disabled={busy} onClick={onChooseWorkspace}>选择工程</button>
         </div>
 
-        {view.cursorWorkspaceChanged && view.run && !ended ? (
+        {view.cursorWorkspaceChanged && view.pool && !ended ? (
           <p className="run-callout is-warning">
             Cursor 已切换工程：新批次将创建到「{targetWorkspace?.name}」，当前批次所在的「{view.workspace?.name}」会结束。
           </p>
@@ -116,9 +112,9 @@ export function RunIndependentPanel({
     <section className="run-panel run-panel--independent" aria-label="独立批次">
       <header className="run-section-head">
         <strong>批次</strong>
-        {view.run ? (
-          <span title={formatFullClock(ended ? view.run.updatedAt : view.run.createdAt)}>
-            {ended ? '结束于' : '创建于'} {formatRelativeClock(ended ? view.run.updatedAt : view.run.createdAt)}
+        {view.pool ? (
+          <span title={formatFullClock(ended ? view.pool.updatedAt : view.pool.createdAt)}>
+            {ended ? '结束于' : '创建于'} {formatRelativeClock(ended ? view.pool.updatedAt : view.pool.createdAt)}
           </span>
         ) : null}
       </header>
@@ -143,8 +139,6 @@ export function RunIndependentPanel({
           Cursor 当前打开的不是本批次的工程「{view.workspace?.name}」；补齐会话仍指向本批次工程，新工程请新建批次。
         </p>
       ) : null}
-
-      <RunGroupsPanel view={view} busy={busy} ended={ended} actions={groupActions} />
 
       <footer className="run-panel__actions">
         <button type="button" className="secondary-button" disabled={busy} onClick={onNewBatch}>

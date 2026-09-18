@@ -1,6 +1,6 @@
 /* ============================================================
-   拾光 · 运行页
-   一个工程一个活跃运行：头部（工程 / 模式 / 状态 / 结束）→ 模式专属区 → 共用席位区。
+   拾光 · 运行页（会话池）
+   一个工程一个会话池：头部（工程 / 状态 / 结束）→ 批次面板 + 席位区 → 协作组卡片网格。
    与大厅同一套 Claude 式语言：三层字号、两级字重、hairline 边框、克制阴影、一个强调色。
    ============================================================ */
 
@@ -56,13 +56,14 @@
 .run-panel,
 .run-seats,
 .run-header,
-.run-start {
+.run-start,
+.pool-groups {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 16px;
   box-shadow: var(--shadow-hairline);
 }
-html[data-card-transparency="clear"] :is(.run-panel, .run-seats, .run-header, .run-start) {
+html[data-card-transparency="clear"] :is(.run-panel, .run-seats, .run-header, .run-start, .pool-groups) {
   background: color-mix(in srgb, var(--surface-solid) 30%, transparent);
   border-color: var(--line-strong);
   backdrop-filter: blur(14px) saturate(115%);
@@ -392,33 +393,77 @@ html[data-card-transparency="clear"] :is(.run-panel, .run-seats, .run-header, .r
 .run-batch-config__value.is-swapped > strong { animation: run-seat-sync-text 1100ms ease both; }
 @keyframes run-batch-config-swap { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
 
-/* ---------- 会话池 · 协作组（阶段 1 最小 UI） ---------- */
-.run-groups { display: grid; gap: 10px; padding-top: 4px; border-top: 1px dashed var(--line); }
-.run-groups > .run-section-head { padding-top: 8px; }
-/* 标题与「建组」不折行；说明文字吸收全部宽度变化。 */
-.run-groups > .run-section-head strong, .run-groups > .run-section-head .run-link { flex: none; white-space: nowrap; }
-.run-groups > .run-section-head span { flex: 1 1 auto; }
-.run-groups .run-callout { margin: 0; }
-.run-link.is-danger { color: var(--red); }
-.run-link.is-danger:hover:not(:disabled) { background: var(--red-soft); }
+/* ---------- 会话池 · 协作组 ----------
+   页宽的组卡片网格（`PoolPage` 正文两栏之下）：名称 / 目标 / 成员 / lead / 任务计数。
+   状态色只落在 7px 状态点、pill 与卡片描边上；attention 用琥珀描边，解散用虚线 + 降不透明度。 */
+.pool-groups { display: grid; gap: 14px; align-content: start; padding: 18px 20px 16px; }
+/* 标题与「建组」不折行；摘要文字吸收全部宽度变化。 */
+.pool-groups > .run-section-head { align-items: center; }
+.pool-groups > .run-section-head strong, .pool-groups > .run-section-head .run-link { flex: none; white-space: nowrap; }
+.pool-groups > .run-section-head span { flex: 1 1 auto; }
+.pool-groups__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 12px; }
+/* 历史（已解散的组）：一行可展开的摘要，chevron 表达开合，不用按钮外观。 */
+.pool-groups__history > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 4px 2px;
+  color: var(--muted);
+  border-radius: 7px;
+  font-size: var(--fs-12);
+  font-weight: 600;
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+}
+.pool-groups__history > summary::-webkit-details-marker { display: none; }
+.pool-groups__history > summary::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  margin: 0 4px 0 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 200ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.pool-groups__history[open] > summary::before { transform: rotate(45deg); }
+.pool-groups__history > summary:hover { color: var(--text); background: var(--surface-soft); }
+.pool-groups__history > .pool-groups__grid { margin-top: 10px; }
 
-.run-group-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
-.run-group {
+/* 状态点（7px）：与名册行内状态点同一套语义色——绿待命 / 蓝执行 / 琥珀等待与待确认 / 红离线。 */
+.seat-dot { flex: none; width: 7px; height: 7px; background: var(--faint); border-radius: 50%; }
+.seat-dot.is-waiting { background: var(--color-text-success); }
+.seat-dot.is-working { background: var(--blue); animation: run-pulse 1.6s ease-in-out infinite; }
+.seat-dot.is-awaiting { background: var(--amber); animation: run-pulse 1.6s ease-in-out infinite; }
+.seat-dot.is-unconfirmed { background: var(--amber); }
+.seat-dot.is-offline { background: var(--red); }
+
+.group-card {
   display: grid;
-  gap: 8px;
-  padding: 12px 14px;
+  gap: 10px;
+  align-content: start;
+  padding: 14px 16px;
   background: var(--surface-solid);
   border: 1px solid var(--line);
   border-radius: 12px;
   animation: run-fade-in 240ms ease both;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
 }
-html[data-card-transparency="clear"] .run-group { background: color-mix(in srgb, var(--surface-solid) 40%, transparent); }
-.run-group.is-attention { border-color: var(--amber-border-soft); }
-.run-group.is-dissolved { opacity: 0.72; border-style: dashed; }
-.run-group__head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.run-group__title { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
-.run-group__title strong { overflow: hidden; font-size: var(--fs-13); font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
-.run-group__tag {
+html[data-card-transparency="clear"] .group-card { background: color-mix(in srgb, var(--surface-solid) 40%, transparent); }
+.group-card.is-attention { border-color: var(--amber-border-soft); }
+.group-card.is-dissolved { opacity: 0.72; border-style: dashed; }
+/* 从会话头部的组名跳转而来：强调色光环亮起再退去，2.4s 内完成，与 `PoolPage` 的 flash 计时同拍。
+   只动 box-shadow，不碰描边——attention 卡片的琥珀描边在点亮期间仍在。 */
+.group-card.is-focused { animation: run-fade-in 240ms ease both, group-card-focus 2400ms ease both; }
+@keyframes group-card-focus {
+  0%, 50% { box-shadow: 0 0 0 1px var(--accent), 0 0 0 5px var(--accent-wash); }
+  100% { box-shadow: 0 0 0 1px transparent, 0 0 0 5px transparent; }
+}
+.group-card__head { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 28px; }
+.group-card__title { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.group-card__title strong { overflow: hidden; font-size: var(--fs-13); font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.group-card__tag {
   flex: none;
   padding: 1px 8px;
   color: var(--muted);
@@ -430,26 +475,28 @@ html[data-card-transparency="clear"] .run-group { background: color-mix(in srgb,
   font-weight: 600;
   white-space: nowrap;
 }
-.run-group__tag.is-warning { color: var(--amber); background: var(--amber-soft); border-color: var(--amber-border-soft); }
-.run-group__tag.is-muted { color: var(--faint); }
-.run-group__actions { display: flex; flex: none; gap: 2px; }
-.run-group__goal {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
+.group-card__tag.is-warning { color: var(--amber); background: var(--amber-soft); border-color: var(--amber-border-soft); }
+.group-card__tag.is-muted { color: var(--faint); }
+.group-card__head-actions { display: flex; flex: none; align-items: center; gap: 2px; }
+.group-card__head-actions .account-actions-menu__trigger { margin-right: 0; }
+/* 目标最多三行，完整内容在 title 里；空目标用浅色提示怎么补。 */
+.group-card__goal {
+  display: -webkit-box;
   margin: 0;
+  overflow: hidden;
   color: var(--text-soft);
   font-size: var(--fs-12);
   line-height: 1.55;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
 }
-.run-group__goal.is-empty { color: var(--faint); }
-.run-group__goal .run-link { flex: none; padding: 0 6px; }
-.run-group__goal-editor { display: grid; gap: 8px; }
-.run-group__goal-editor textarea,
-.run-group-drawer__field textarea,
-.run-group-drawer__field input {
+.group-card__goal.is-empty { color: var(--faint); }
+.group-card__goal-editor { display: grid; gap: 8px; }
+.group-card__goal-editor textarea,
+.group-composer__field textarea,
+.group-composer__field input {
   width: 100%;
   padding: 8px 10px;
   color: var(--text);
@@ -460,21 +507,38 @@ html[data-card-transparency="clear"] .run-group { background: color-mix(in srgb,
   font-size: var(--fs-12);
   line-height: 1.5;
   resize: vertical;
+  transition: border-color 140ms ease;
 }
-.run-group__goal-editor footer,
-.run-group-drawer__actions { display: flex; justify-content: end; gap: 8px; }
-.run-group__members { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
-.run-group-member { display: flex; align-items: center; gap: 8px; min-height: 26px; }
-.run-group-member__dot { flex: none; width: 7px; height: 7px; background: var(--faint); border-radius: 50%; }
-.run-group-member__dot.is-waiting { background: var(--color-text-success); }
-.run-group-member__dot.is-working, .run-group-member__dot.is-awaiting { background: var(--blue); animation: run-pulse 1.6s ease-in-out infinite; }
-.run-group-member__dot.is-awaiting { background: var(--amber); }
-.run-group-member__dot.is-unconfirmed { background: var(--amber); }
-.run-group-member__dot.is-offline { background: var(--red); }
-.run-group-member__who { display: flex; flex: 1 1 auto; align-items: baseline; gap: 6px; min-width: 0; }
-.run-group-member__who strong { font: 650 var(--fs-12)/1.3 var(--mono); }
-.run-group-member__who small { overflow: hidden; color: var(--muted); font-size: var(--fs-11); text-overflow: ellipsis; white-space: nowrap; }
-.run-group-member__lead {
+.group-card__goal-editor textarea:focus-visible,
+.group-composer__field textarea:focus-visible,
+.group-composer__field input:focus-visible { border-color: var(--accent-border); outline: none; }
+.group-card__goal-editor footer { display: flex; justify-content: end; gap: 8px; }
+.group-card__goal-editor footer button { min-height: 30px; padding: 0 12px; font-size: var(--fs-12); }
+
+.group-card__members { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.group-card-member { display: flex; align-items: center; gap: 8px; min-height: 28px; }
+/* 成员名可点（打开会话）：按钮化但保持文字外观，hover 时只淡淡垫底。 */
+.group-card-member__who {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  margin: 0 -6px;
+  padding: 3px 6px;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  font: inherit;
+  text-align: left;
+}
+button.group-card-member__who { cursor: pointer; transition: background 120ms ease; }
+button.group-card-member__who:hover { background: var(--surface-soft); }
+.group-card-member__who strong { flex: none; font: 650 var(--fs-12)/1.3 var(--mono); }
+.group-card-member__who small { overflow: hidden; color: var(--muted); font-size: var(--fs-11); text-overflow: ellipsis; white-space: nowrap; }
+.group-card-member.is-offline .group-card-member__who strong { color: var(--muted); }
+.group-card-member__lead {
   flex: none;
   padding: 0 6px;
   color: var(--accent-deep);
@@ -487,54 +551,133 @@ html[data-card-transparency="clear"] .run-group { background: color-mix(in srgb,
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
-.run-group__empty { margin: 0; color: var(--faint); font-size: var(--fs-12); }
-.run-group__lead { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: var(--fs-11); font-weight: 600; }
-.run-group__lead select,
-.run-group-drawer__member select {
-  min-height: 28px;
-  padding: 0 8px;
+/* 行内动作 hover / 聚焦时出现；离线成员的「交接 / 移出」是待办决定，常显。 */
+.group-card-member__actions { display: flex; flex: none; gap: 2px; opacity: 0; transition: opacity 120ms ease; }
+.group-card-member:hover .group-card-member__actions,
+.group-card-member:focus-within .group-card-member__actions,
+.group-card-member.is-offline .group-card-member__actions { opacity: 1; }
+.group-card-member__actions .run-link { padding: 2px 7px; font-size: var(--fs-11); }
+.group-card__empty { margin: 0; color: var(--faint); font-size: var(--fs-12); }
+
+.group-card__foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 10px; border-top: 1px solid var(--line-faint); }
+.group-card__lead { display: flex; flex: 1 1 auto; align-items: center; gap: 8px; min-width: 0; max-width: 260px; color: var(--muted); font-size: var(--fs-11); font-weight: 600; }
+.group-card__lead > span { flex: none; }
+.group-card__lead .menu-select__button { min-height: 28px; font-size: var(--fs-11); }
+.group-card__counters { display: flex; flex: none; gap: 6px; margin-left: auto; }
+.group-card__counters em {
+  padding: 1px 7px;
+  color: var(--muted);
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: var(--fs-11);
+  font-style: normal;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.group-card__counters em.is-open { color: var(--blue); background: var(--blue-soft); border-color: var(--blue-border-soft); }
+.group-card__counters em.is-review { color: var(--amber); background: var(--amber-soft); border-color: var(--amber-border-soft); }
+.group-card__counters em.is-done { color: var(--color-text-success); background: var(--color-background-success); border-color: color-mix(in srgb, var(--color-border-success) 55%, transparent); }
+
+/* ---------- 建组 / 加人抽屉 ----------
+   右侧滑入（220ms），与 inspector 同一动效预算；遮罩点击与 Esc 关闭，忙时锁定。
+   z-index 与交接弹窗同层（80）：两者不会同时出现，都要压过会话区与右栏。 */
+.group-composer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  justify-content: flex-end;
+  background: rgba(27, 39, 34, 0.22);
+  backdrop-filter: blur(3px);
+  animation: group-composer-fade 220ms ease both;
+}
+.group-composer {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(460px, 100%);
+  height: 100%;
+  margin: 0;
+  padding: 0;
   color: var(--text);
   background: var(--surface-solid);
-  border: 1px solid var(--line-strong);
-  border-radius: 8px;
-  font: inherit;
-  font-size: var(--fs-12);
+  border-left: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-3);
+  animation: group-composer-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
-.run-group__lead select { flex: 1 1 auto; min-width: 0; }
-
-.run-group-drawer {
+@keyframes group-composer-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes group-composer-in { from { opacity: 0; transform: translateX(28px); } to { opacity: 1; transform: none; } }
+.group-composer__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 18px 20px 14px; border-bottom: 1px solid var(--line); }
+.group-composer__head > div { display: grid; gap: 4px; min-width: 0; }
+.group-composer__head strong { overflow: hidden; font-size: var(--fs-15); font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.group-composer__head span { color: var(--muted); font-size: var(--fs-11); line-height: 1.5; }
+.group-composer__close {
   display: grid;
-  gap: 10px;
-  padding: 12px 14px 14px;
-  background: var(--surface-solid);
-  border: 1px solid var(--accent-border-soft);
-  border-left: 3px solid var(--accent);
-  border-radius: 12px;
-  animation: run-fade-in 200ms ease both;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin: -4px -6px 0 0;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  transition: background 120ms ease, color 120ms ease;
 }
-html[data-card-transparency="clear"] .run-group-drawer { background: color-mix(in srgb, var(--surface-solid) 55%, transparent); }
-.run-group-drawer > .run-section-head strong { flex: none; white-space: nowrap; }
-.run-group-drawer__field { display: grid; gap: 4px; }
-.run-group-drawer__field > span { color: var(--muted); font-size: var(--fs-11); font-weight: 600; }
-.run-group-drawer__members { display: grid; gap: 6px; margin: 0; padding: 0; border: 0; min-width: 0; }
-.run-group-drawer__members legend { padding: 0; margin-bottom: 2px; color: var(--muted); font-size: var(--fs-11); font-weight: 600; }
-.run-group-drawer__member {
+.group-composer__close svg { width: 14px; height: 14px; }
+.group-composer__close:hover:not(:disabled) { color: var(--text); background: var(--surface-soft); }
+.group-composer__body { display: grid; gap: 16px; align-content: start; padding: 16px 20px 20px; overflow-y: auto; scrollbar-gutter: stable; }
+.group-composer__field { display: grid; gap: 5px; }
+.group-composer__field > span,
+.group-composer__members legend { color: var(--muted); font-size: var(--fs-11); font-weight: 600; }
+.group-composer__members { display: grid; gap: 6px; margin: 0; padding: 0; border: 0; min-width: 0; }
+.group-composer__members legend { padding: 0; margin-bottom: 2px; }
+.group-composer__member {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 6px 10px;
-  padding: 6px 8px;
+  gap: 8px;
+  padding: 6px 8px 6px 10px;
   border: 1px solid var(--line);
-  border-radius: 9px;
+  border-radius: 10px;
+  transition: border-color 120ms ease, background 120ms ease;
 }
-.run-group-drawer__member.is-selected { border-color: var(--accent-border-soft); background: var(--accent-wash); }
-.run-group-drawer__member > label { display: flex; flex: 1 1 150px; align-items: center; gap: 8px; min-width: 0; cursor: pointer; }
-.run-group-drawer__member > label strong { flex: none; font: 650 var(--fs-12)/1.3 var(--mono); white-space: nowrap; }
-.run-group-drawer__member > label small { overflow: hidden; color: var(--muted); font-size: var(--fs-11); text-overflow: ellipsis; white-space: nowrap; }
-.run-group-drawer__member > select { flex: 0 1 auto; max-width: 100%; }
-.run-group-drawer__lead-pick { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: var(--fs-11); font-weight: 600; cursor: pointer; }
-.run-group-drawer__lead-pick.is-none { padding: 2px 8px; color: var(--muted); font-weight: 500; }
-.run-group-drawer__lead-pick input:disabled + span { opacity: 0.45; }
+.group-composer__member.is-selected { border-color: var(--accent-border-soft); background: var(--accent-wash); }
+.group-composer__member-pick { display: flex; flex: 1 1 auto; align-items: center; gap: 9px; min-width: 0; cursor: pointer; }
+.group-composer__member-pick input { flex: none; width: 14px; height: 14px; margin: 0; accent-color: var(--accent); }
+.group-composer__member-who { display: grid; min-width: 0; }
+.group-composer__member-who strong { overflow: hidden; font-size: var(--fs-12); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.group-composer__member-who small { color: var(--muted); font-size: var(--fs-11); }
+.group-composer__member > .menu-select { flex: none; width: 132px; }
+.group-composer__member .menu-select__button { min-height: 28px; font-size: var(--fs-11); }
+/* lead 单选：pill 即控件，原生 radio 视觉隐藏但保留键盘可达；选中态用强调色描边 + 淡底。 */
+.group-composer__lead-pick {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  color: var(--muted);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: var(--fs-11);
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+.group-composer__lead-pick input { position: absolute; width: 1px; height: 1px; margin: 0; opacity: 0; pointer-events: none; }
+.group-composer__lead-pick:hover:not(:has(input:disabled)) { color: var(--text); background: var(--surface-soft); }
+.group-composer__lead-pick.is-checked { color: var(--accent-deep); background: var(--accent-wash); border-color: var(--accent-border-soft); }
+.group-composer__lead-pick:has(input:disabled) { opacity: 0.4; cursor: default; }
+.group-composer__lead-pick:has(input:focus-visible) { outline: 2px solid var(--accent-border-strong); outline-offset: 1px; }
+.group-composer__lead-pick.is-none { justify-self: start; margin-top: 2px; font-weight: 500; white-space: normal; }
+.group-composer__empty { margin: 0; color: var(--faint); font-size: var(--fs-12); line-height: 1.5; }
+.group-composer__policy { display: grid; gap: 6px; padding: 10px 12px; border: 1px dashed var(--line); border-radius: 10px; }
+.group-composer__policy small { color: var(--muted); font-size: var(--fs-11); line-height: 1.5; }
+.group-composer__error { margin: 0; padding: 8px 10px; color: var(--red); background: var(--red-soft); border: 1px solid var(--red-border-soft); border-radius: 8px; font-size: var(--fs-12); line-height: 1.5; }
+.group-composer__actions { display: flex; justify-content: end; gap: 8px; padding: 14px 20px 18px; border-top: 1px solid var(--line); }
+.group-composer__actions button { min-height: 34px; padding: 0 14px; font-size: var(--fs-12); }
 
 /* ---------- 席位区 ---------- */
 .run-seats__list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
@@ -774,17 +917,19 @@ html[data-card-transparency="clear"] .run-seat { background: color-mix(in srgb, 
 .run-sheet__body p { margin: 0; color: var(--text-soft); font-size: var(--fs-12); line-height: 1.55; }
 .run-sheet__actions { display: flex; gap: 8px; }
 .run-sheet__actions .secondary-button { min-height: 34px; }
+/* 确认按钮按后果分级：不可逆（解散 / 结束）走红色；可收回的（移出成员 / 新建批次）走主操作色。 */
 .run-sheet__confirm {
   min-height: 34px;
   padding: 0 14px;
   color: #fff;
-  background: var(--red);
+  background: var(--accent);
   border: 0;
   border-radius: var(--r-md);
   font-size: var(--fs-12);
   font-weight: 650;
   transition: filter 140ms ease;
 }
+.run-sheet__confirm.is-danger { background: var(--red); }
 .run-sheet__confirm:hover:not(:disabled) { filter: brightness(1.08); }
 .run-sheet__confirm:disabled { opacity: 0.55; }
 
@@ -828,11 +973,14 @@ html[data-card-transparency="clear"] .run-seat { background: color-mix(in srgb, 
 @keyframes run-fade-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @keyframes run-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 @media (prefers-reduced-motion: reduce) {
-  .run-body > *, .run-feedback, .run-sheet, .run-seat, .run-stepper output, .run-group, .run-group-drawer, .run-seat__override { animation: none; }
+  .run-body > *, .run-feedback, .run-sheet, .run-seat, .run-stepper output, .group-card, .group-composer-backdrop, .group-composer, .run-seat__override { animation: none; }
+  /* 组名跳转的点亮改为静态光环一闪即收（仍由 PoolPage 的计时移除）。 */
+  .group-card.is-focused { box-shadow: 0 0 0 1px var(--accent), 0 0 0 5px var(--accent-wash); }
   .run-seat.is-synced .run-seat__main, .run-seat.is-synced .run-seat__model strong { animation: none; }
   .run-batch-config__value.is-swapped, .run-batch-config__value.is-swapped > strong { animation: none; }
   .run-slot, .run-slot__inner > * { transition: none; }
-  .run-state-chip i, .run-seat__badge i, .run-group-member__dot { animation: none; }
+  .pool-groups__history > summary::before, .group-card, .group-card-member__actions, .group-composer__member, .group-composer__lead-pick { transition: none; }
+  .run-state-chip i, .run-seat__badge i, .seat-dot { animation: none; }
   .run-page :is(.primary-button, .secondary-button, .run-header__ghost, .run-sheet__confirm, .run-stepper button):active:not(:disabled) { transform: none; }
 }
 
@@ -864,7 +1012,12 @@ html[data-card-transparency="clear"] .run-seat { background: color-mix(in srgb, 
   .run-field { grid-template-columns: minmax(0, 1fr) auto; }
   .run-field__label { grid-column: 1 / -1; }
   .run-batch { flex-wrap: wrap; gap: 14px 22px; }
-  .run-group__head { flex-wrap: wrap; }
+  .pool-groups { padding: 16px 16px 14px; }
+  .group-card__head { flex-wrap: wrap; }
+  .group-card__foot { flex-wrap: wrap; }
+  .group-card__lead { max-width: none; }
+  /* 窄页面里行内动作常显：没有 hover 也找得到。 */
+  .group-card-member__actions { opacity: 1; }
   .run-sheet { grid-template-columns: minmax(0, 1fr); }
   .run-sheet__actions { justify-content: end; }
   .run-start { padding: 28px 18px 22px; }

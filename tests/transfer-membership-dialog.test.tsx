@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MembershipTransferOptions, MembershipTransferOutcome, MembershipTransferResult } from '../src/domain/team-handoff'
-import { ManualHandoffDialog } from '../src/renderer/src/team/ManualHandoffDialog'
+import { TransferMembershipDialog } from '../src/renderer/src/team/TransferMembershipDialog'
 
 const leadTransfer: MembershipTransferOptions = {
   runId: 'run-a',
@@ -61,10 +61,10 @@ function transferResult(overrides: Partial<MembershipTransferResult> = {}): Memb
   }
 }
 
-describe('ManualHandoffDialog', () => {
+describe('TransferMembershipDialog', () => {
   it('announces that the lead identity travels with the membership for an effective lead source', () => {
     const html = renderToStaticMarkup(
-      <ManualHandoffDialog options={leadTransfer} busy={false} error="" onClose={() => {}} onConfirm={async () => undefined} />
+      <TransferMembershipDialog options={leadTransfer} busy={false} error="" onClose={() => {}} onConfirm={async () => undefined} />
     )
     expect(html).toContain('迁移成员身份：主控协调 · 协作组「接口重构」')
     expect(html).toContain('CH-1 是本组有效 lead，lead 身份随迁')
@@ -72,7 +72,7 @@ describe('ManualHandoffDialog', () => {
 
   it('offers offline seats too and the context handoff checked by default', () => {
     const html = renderToStaticMarkup(
-      <ManualHandoffDialog options={memberTransfer} busy={false} error="" onClose={() => {}} onConfirm={async () => undefined} />
+      <TransferMembershipDialog options={memberTransfer} busy={false} error="" onClose={() => {}} onConfirm={async () => undefined} />
     )
     expect(html).toContain('同时交接上下文文档')
     expect(html).toMatch(/<input type="checkbox" checked=""/)
@@ -83,7 +83,7 @@ describe('ManualHandoffDialog', () => {
   })
 })
 
-describe('ManualHandoffDialog · 确认后的结果页', () => {
+describe('TransferMembershipDialog · 确认后的结果页', () => {
   let container: HTMLDivElement
   let root: Root
 
@@ -102,7 +102,7 @@ describe('ManualHandoffDialog · 确认后的结果页', () => {
   async function confirmWith(outcome: MembershipTransferOutcome): Promise<ReturnType<typeof vi.fn>> {
     const onConfirm = vi.fn(async () => outcome)
     await act(async () => {
-      root.render(<ManualHandoffDialog options={memberTransfer} busy={false} error="" onClose={() => {}} onConfirm={onConfirm} onOpenSession={() => {}} />)
+      root.render(<TransferMembershipDialog options={memberTransfer} busy={false} error="" onClose={() => {}} onConfirm={onConfirm} onOpenSession={() => {}} />)
     })
     const confirm = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === '确认迁移')!
     await act(async () => { confirm.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true })) })

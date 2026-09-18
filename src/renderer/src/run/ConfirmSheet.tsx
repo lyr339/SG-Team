@@ -1,18 +1,19 @@
 import { useEffect, useRef } from 'react'
-import type { ReplaceRunConsequence } from './run-view'
+import type { ConfirmConsequence } from './pool-view'
 
-interface ReplaceRunSheetProps {
-  consequence: ReplaceRunConsequence
+interface ConfirmSheetProps {
+  consequence: ConfirmConsequence
   busy: boolean
   onCancel: () => void
   onConfirm: () => void
 }
 
 /**
- * 破坏性动作的唯一确认面：结束 / 切换模式 / 新建批次 / 新一轮共用。
- * 随内容流展示（不是遮罩弹窗），标题说动作、正文说后果、按钮说结果。
+ * 破坏性动作的唯一确认面：结束 / 新建批次 / 移出成员 / 解散组共用。
+ * 随内容流展示（不是遮罩弹窗），标题说动作、正文说后果、按钮说结果；
+ * 解散与结束这类不可逆动作的确认按钮走红色。
  */
-export function ReplaceRunSheet({ consequence, busy, onCancel, onConfirm }: ReplaceRunSheetProps): React.JSX.Element {
+export function ConfirmSheet({ consequence, busy, onCancel, onConfirm }: ConfirmSheetProps): React.JSX.Element {
   const cancelRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
@@ -35,7 +36,7 @@ export function ReplaceRunSheet({ consequence, busy, onCancel, onConfirm }: Repl
       </div>
       <div className="run-sheet__actions">
         <button ref={cancelRef} className="secondary-button" disabled={busy} onClick={onCancel}>取消</button>
-        <button className="run-sheet__confirm" disabled={busy} onClick={onConfirm}>
+        <button className={`run-sheet__confirm is-${consequence.tone}`} disabled={busy} onClick={onConfirm}>
           {busy ? '处理中…' : consequence.confirmLabel}
         </button>
       </div>
