@@ -393,7 +393,7 @@ export const desktopSnapshot: DesktopSnapshot = {
           status: 'running', input: { command: 'grep -n "function\\|const.*=" /Applications/拾光.app/Contents/Resources/app.asar/out/main/index.js', description: '运行 relay 相关回归测试' },
           // 运行中的部分输出（Cursor 定时 flush 进气泡）：预览窗贴底显示最新几行。
           output: [
-            ' RUN  v4.1.11 /Users/lyr/Downloads/qingtian/qingtian-team',
+            ' RUN  v4.1.11 /Users/lyr/SG',
             '',
             ' ✓ tests/channel-message-relay.test.ts (24 tests) 312ms',
             ' ✓ tests/channel-message-service.test.ts (18 tests) 141ms',

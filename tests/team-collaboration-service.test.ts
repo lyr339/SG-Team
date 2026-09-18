@@ -67,6 +67,6 @@ describe('TeamCollaborationService', () => {
       recipientSlotId: 'slot:builder',
       kind: 'directive',
       content: 'after the run ended'
-    })).toThrowError(/已经结束/)
+    })).toThrowError(/会话池已结束/)
   })
 })

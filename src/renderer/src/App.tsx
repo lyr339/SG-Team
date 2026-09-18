@@ -184,25 +184,12 @@ export function App(): React.JSX.Element {
   const [cdpAutoHealEnabled, setCdpAutoHealEnabled] = useState(false)
   const [cdpAutoHealEvent, setCdpAutoHealEvent] = useState<CdpAutoHealEvent>()
   const [appearance, setAppearance] = useState<AppearancePreferences>(() => readAppearancePreferences())
-  const mcpReconcileRunRef = useRef<string | undefined>(undefined)
   const activeRunRef = useRef<{ id?: string; status?: TeamRunStatus }>({})
   const activeWorkspace = teamControl.workspaces.find((workspace) => workspace.id === teamControl.activeWorkspaceId)
   const activeProjectName = activeWorkspace?.name ?? cursorWorkspace?.workspace?.name
   const memberChannelIds = teamControl.members
     .map((member) => member.binding?.channelId ?? member.slot.channelId)
     .filter((channelId): channelId is string => Boolean(channelId))
-  const memberChannelKey = memberChannelIds
-    .sort()
-    .join(',')
-  const reconcileKeyOf = (snapshot: ReturnType<typeof emptyTeamControlSnapshot>): string | undefined => {
-    if (!snapshot.activeRun) return undefined
-    const channels = snapshot.members
-      .map((member) => member.binding?.channelId ?? member.slot.channelId)
-      .filter((channelId): channelId is string => Boolean(channelId))
-      .sort()
-      .join(',')
-    return `${snapshot.activeRun.id}:${channels}`
-  }
 
   useEffect(() => {
     applyAppearancePreferences(appearance)
@@ -554,7 +541,7 @@ export function App(): React.JSX.Element {
   ): Promise<AgentLaunchPlan> => {
     const created = await window.sgDesktop.createIndependentSessions(input)
     acceptTeamControl(created)
-    mcpReconcileRunRef.current = reconcileKeyOf(created)
+    // 建池后立即登记 Agent 注册表（唯一的接入时机：池 run 一经写入即 running，没有 draft / ready 阶段）。
     await window.sgDesktop.installTaskMcp()
     const [latest, desktop] = await Promise.all([
       window.sgDesktop.getTeamControlSnapshot(),
@@ -579,7 +566,7 @@ export function App(): React.JSX.Element {
     try {
       const plan = await performAgentLaunch(guard.pending)
       setRuntimeGuard(undefined)
-      if (plan.state === 'done') setTeamNotice('会话已全部就绪，可以启动团队。')
+      if (plan.state === 'done') setTeamNotice('会话已全部就绪。')
     } catch (reason) {
       setRuntimeGuardError(userFacingErrorMessage(reason))
     } finally {
@@ -764,28 +751,6 @@ export function App(): React.JSX.Element {
       document.removeEventListener('visibilitychange', onVisibilityChange)
     }
   }, [])
-
-  useEffect(() => {
-    const run = teamControl.activeRun
-    if (!run || !['draft', 'ready'].includes(run.status)) return
-    if (memberChannelIds.length === 0) return
-    const topologyKey = `${run.id}:${memberChannelKey}`
-    if (mcpReconcileRunRef.current === topologyKey) return
-    mcpReconcileRunRef.current = topologyKey
-    void window.sgDesktop.installTaskMcp()
-      .then(async () => {
-        setTeamNotice('本轮通道已自动接入 SG Team。')
-        acceptTeamControl(await window.sgDesktop.getTeamControlSnapshot())
-      })
-      .catch((reason: unknown) => {
-        setTeamNotice(`自动接入 MCP 失败：${reason instanceof Error ? reason.message : String(reason)}`)
-      })
-  }, [
-    acceptTeamControl,
-    teamControl.activeRun?.id,
-    teamControl.activeRun?.status,
-    memberChannelKey
-  ])
 
   useEffect(() => {
     if (!teamControlLoaded) return
@@ -1491,7 +1456,6 @@ export function App(): React.JSX.Element {
       ) : (
         <SessionOverview
           snapshot={visibleSnapshot}
-          onOpenConfiguration={() => setActiveModule('run')}
           onCreateIndependentSessions={() => setActiveModule('run')}
         />
       )}

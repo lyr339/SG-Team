@@ -264,13 +264,13 @@ export class TaskPoolService {
 
   private requireActiveRunId(): string {
     const runId = this.runProvider.getActiveRunId()?.trim()
-    if (!runId) throw new Error('请先在“团队”中选择 Cursor 工作区并创建 TeamRun')
+    if (!runId) throw new Error('请先在「运行」页创建会话池')
     return runId
   }
 
   private requireMutableRunId(): string {
     const runId = this.requireActiveRunId()
-    if (this.runProvider.getActiveRunStatus?.() === 'completed') throw new Error('本轮团队已经结束，请开始新一轮')
+    if (this.runProvider.getActiveRunStatus?.() === 'completed') throw new Error('会话池已结束，请先创建新的批次')
     return runId
   }
 

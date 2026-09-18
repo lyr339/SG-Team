@@ -7,7 +7,7 @@ import { cursorComposerBindingMarker } from '../domain/cursor-telemetry'
 import { CURSOR_CDP_UNAVAILABLE_HINT } from '../infrastructure/cursor/cursor-cdp-session-creator'
 
 export interface AgentLaunchPromptPort {
-  /** 从晴天插件取指定通道的标准开场提示词（含插件侧状态准备）。 */
+  /** 取指定通道的标准开场提示词（solo `check_messages` 启动提示，见 team-agent-launch-prompts.ts）。 */
   fetchStartPrompt(channelId: string, timeoutMs?: number): Promise<string>
 }
 
@@ -67,7 +67,7 @@ const DEFAULT_STAGGER_MS = 0
  * 一键批量创建 Cursor Agent 会话的编排器。
  *
  * 创建路径：CDP 直连 Cursor 渲染进程；按席位 modelSelection 创建带独立
- * partialState.modelConfig 的 Composer，再由晴天网关联接 submitByComposerId 提交——
+ * partialState.modelConfig 的 Composer，再经拾光自带网关（cursor-composer-service-locator）的 submitByComposerId 提交——
  * 纯程序化、无 DOM、无焦点竞争，因此全部通道真并发（默认无 stagger）。
  * 每个通道独立走三级证据判定，总耗时取决于最慢的一个而非求和：
  *   1. trigger：CDP 创建 + 提交完成，返回真实 composerId（硬回执）

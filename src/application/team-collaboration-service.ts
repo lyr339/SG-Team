@@ -23,7 +23,7 @@ export interface SendOperatorTeamMessageInput {
 type Listener = (snapshot: TeamCollaborationSnapshot) => void
 
 function assertCollaborationWritable(status: TeamRun['status']): void {
-  if (status === 'completed') throw new Error('本轮团队已经结束，请开始新一轮')
+  if (status === 'completed') throw new Error('会话池已结束，请先创建新的批次')
 }
 
 export class TeamCollaborationService {

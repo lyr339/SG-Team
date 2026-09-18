@@ -143,6 +143,6 @@ describe('TaskPoolService', () => {
       getActiveRunId: () => 'workspace-run',
       getActiveRunStatus: () => 'completed'
     })
-    expect(() => service.createTask({ title: '不应创建' })).toThrowError(/本轮团队已经结束/)
+    expect(() => service.createTask({ title: '不应创建' })).toThrowError(/会话池已结束/)
   })
 })

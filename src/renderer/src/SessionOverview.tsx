@@ -3,13 +3,11 @@ import { SunIcon } from './UiIcons'
 
 interface SessionOverviewProps {
   snapshot: DesktopSnapshot
-  onOpenConfiguration: () => void
   onCreateIndependentSessions: () => void
 }
 
 export function SessionOverview({
   snapshot,
-  onOpenConfiguration,
   onCreateIndependentSessions
 }: SessionOverviewProps): React.JSX.Element {
   return (
@@ -32,10 +30,9 @@ export function SessionOverview({
           ) : (
             <>
               <h2>还没有发现 Cursor 会话</h2>
-              <p>在「运行」页开始一次运行——组建团队，或批量创建独立会话；就绪后会自动出现在这里。</p>
+              <p>在「运行」页批量创建会话；席位就绪后会自动出现在这里，需要协作时再在名册里把它们编成组。</p>
               <div className="fresh-empty__actions">
                 <button onClick={onCreateIndependentSessions}>批量创建独立会话</button>
-                <button onClick={onOpenConfiguration}>组建协作团队</button>
               </div>
             </>
           )}

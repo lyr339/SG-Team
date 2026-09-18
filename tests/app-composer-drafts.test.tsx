@@ -214,18 +214,14 @@ describe('App 输入框草稿与附件按通道隔离', () => {
     expect(composerTextarea().getAttribute('aria-label')).toContain('CH-2')
   })
 
-  it('首次没有会话时留在会话首页，并可直接进入运行页组建团队', async () => {
+  it('首次没有会话时留在会话首页：只有「批量创建独立会话」一个入口（团队 run 已退役，协作组在名册里建），直达独立批次配置', async () => {
     installDesktopMock({ ...snapshot, sessions: [], conversations: {} })
     await renderApp('')
     expect(container.textContent).toContain('还没有发现 Cursor 会话')
-    await act(async () => clickButtonWithText('组建协作团队'))
-    expect(container.querySelector('.run-page')).toBeTruthy()
-  })
-
-  it('空会话首页可直达独立批次配置', async () => {
-    installDesktopMock({ ...snapshot, sessions: [], conversations: {} })
-    await renderApp('')
+    expect(container.textContent).not.toContain('组建协作团队')
+    expect(container.querySelectorAll('.fresh-empty__actions button')).toHaveLength(1)
     await act(async () => clickButtonWithText('批量创建独立会话'))
+    expect(container.querySelector('.run-page')).toBeTruthy()
     expect(container.querySelector('section[aria-label="独立批次配置"]')).toBeTruthy()
   })
 

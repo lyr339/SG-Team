@@ -433,7 +433,7 @@ if (previewParameters.get('continuation') === '1') {
           title: '运行分组相关测试', summary: 'npx vitest run tests/process-step-groups.test.ts tests/process-blocks.test.tsx', hint: 'npx',
           status: 'running', startedAt: previewNow - 12_000,
           input: { command: 'npx vitest run tests/process-step-groups.test.ts tests/process-blocks.test.tsx', description: '运行分组相关测试' },
-          output: [' RUN  v4.1.11 /Users/lyr/Downloads/qingtian/qingtian-team', '', ' ✓ tests/process-step-groups.test.ts (17 tests) 41ms', ' · tests/process-blocks.test.tsx running…'].join('\n')
+          output: [' RUN  v4.1.11 /Users/lyr/SG', '', ' ✓ tests/process-step-groups.test.ts (17 tests) 41ms', ' · tests/process-blocks.test.tsx running…'].join('\n')
         }
       ]
     }

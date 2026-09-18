@@ -97,8 +97,8 @@ export const CURSOR_STORAGE_CATALOG: readonly CursorStorageItemSpec[] = [
   {
     id: 'legacy-patch',
     label: '遗留网关补丁',
-    summary: '写在 Cursor 主 bundle 尾部的晴天时代运行时（拾光当前仍依赖其 bridge）',
-    loss: '拾光自带网关落地前不能移除；这里只盘点',
+    summary: '写在 Cursor 主 bundle 尾部的晴天时代运行时（拾光已改用自带网关，不再依赖它）',
+    loss: '只盘点不清理：观察器接入时会在页面内让它停摆；彻底摘除是一次性维护动作（scripts/unpatch-cursor.ts，需关闭 Cursor）',
     risk: 'none',
     needsCursorClosed: true,
     diagnostic: true

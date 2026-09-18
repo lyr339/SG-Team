@@ -907,9 +907,9 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
         if (archived) {
           throw new TaskPoolError(
             'run_completed',
-            `本轮 TeamRun 已结束，CH-${normalizedChannelId} 的团队身份已随轮次归档（非授权故障，重试无效）。`
+            `会话池已结束，CH-${normalizedChannelId} 的团队身份已随之归档（非授权故障，重试无效）。`
               + '请停止调用 team_* 工具；如需同步最终结论请用 record_reply，之后用 check_messages 静默待命，'
-              + '新一轮 TeamRun 启动后团队身份会自动恢复。'
+              + '会话围栏会在下一次轮询给出后续指示。'
           )
         }
       }

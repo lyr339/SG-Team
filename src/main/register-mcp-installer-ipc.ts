@@ -8,8 +8,8 @@ import { resolveTaskMcpServerPath } from './task-mcp-runtime'
 import type { SqliteChannelMessageRepository } from '../infrastructure/channel-messages/sqlite-channel-message-repository'
 
 /**
- * 团队 MCP 接入 IPC：通道服务器条目由启动时的全局 ~/.cursor/mcp.json 注册器承载，
- * 这里只负责按当前 TeamRun 登记 Agent 注册表并接管内嵌通道。
+ * MCP 接入 IPC：通道服务器条目由启动时的全局 ~/.cursor/mcp.json 注册器承载，
+ * 这里只负责按当前会话池登记 Agent 注册表并接管内嵌通道（渲染层在 createIndependentSessions 后立即调用）。
  */
 export function registerMcpInstallerIpc(
   teamService: TeamControlService,
@@ -24,16 +24,16 @@ export function registerMcpInstallerIpc(
     const team = teamService.getSnapshot()
     const run = team.activeRun
     const workspace = team.workspaces.find((item) => item.id === team.activeWorkspaceId)
-    if (!run || !workspace) throw new Error('请先在“团队”中选择 Cursor 工作区')
-    if (!team.members.length) throw new Error('当前 TeamRun 没有 AgentSlot')
-    if (team.members.some((member) => !member.slot.channelId)) throw new Error('存在尚未绑定通道的 AgentSlot')
+    if (!run || !workspace) throw new Error('当前没有活动的会话池，请先在「运行」页创建')
+    if (!team.members.length) throw new Error('当前会话池没有席位')
+    if (team.members.some((member) => !member.slot.channelId)) throw new Error('存在尚未绑定通道的席位')
 
     const installChannels = team.members.map((member) => ({
       channelId: member.slot.channelId!,
       slotId: member.slot.id,
       capabilities: member.role.capabilities
     }))
-    if (!installChannels.length) throw new Error('当前团队没有可安装的通道')
+    if (!installChannels.length) throw new Error('当前会话池没有可安装的通道')
 
     const result = new CursorMcpInstaller().install({
       workspacePath: workspace.path,

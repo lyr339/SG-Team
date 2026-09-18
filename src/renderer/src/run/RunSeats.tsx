@@ -259,7 +259,7 @@ export function RunSeats({
           ) : null}
           {createBlockedReason ? <small>{createBlockedReason}</small> : null}
           {ended ? (
-            <small>席位随新一轮或新批次重新创建</small>
+            <small>席位随新批次重新创建</small>
           ) : pendingCount === 0 && !launching ? (
             <small className="run-seats__settled">所有席位已在岗，无需创建会话</small>
           ) : (
