@@ -94,7 +94,7 @@ import { installLocalImageProtocol, registerLocalImageScheme } from './local-ima
 import { CursorQuestionResponder } from '../infrastructure/cursor/cursor-question-responder'
 import { CursorQuestionService } from '../application/cursor-question-service'
 import { registerCursorQuestionIpc } from './register-cursor-question-ipc'
-import { legacyUserDataDirectory, resolveUserDataDirectory } from './user-data-directory'
+import { resolveUserDataDirectory } from './user-data-directory'
 import { AppUpdateService } from '../application/app-update-service'
 import { AppUpdateSettingsStore } from '../application/app-update-settings-store'
 import { createElectronUpdaterPort } from '../infrastructure/app-update/electron-updater-port'
@@ -321,12 +321,6 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   teamCollaborationRepository = new SqliteTeamCollaborationRepository(databasePath)
   teamMemoryRepository = new SqliteTeamMemoryRepository(databasePath)
   channelMessageRepository = new SqliteChannelMessageRepository(databasePath)
-  // 数据目录改名后，历史消息附件里的绝对路径跟着改写（幂等，无匹配即无操作）。
-  const remappedAttachments = channelMessageRepository.remapAttachmentRoots(
-    legacyUserDataDirectory(app.getPath('appData'), app.isPackaged),
-    app.getPath('userData')
-  )
-  if (remappedAttachments) process.stderr.write(`[sg-team] 已迁移 ${remappedAttachments} 条消息的附件路径\n`)
   channelMessageRelay = new ChannelMessageRelay(channelMessageRepository)
   channelMessageRelay.start()
   localSessionBridge = new LocalSessionBridge(channelMessageRelay)
