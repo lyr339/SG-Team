@@ -83,4 +83,6 @@ in `docs/design/sg-monogram/` (`node docs/design/sg-monogram/generate.cjs`), and
 `.ico`, the menu-bar `trayTemplate*.png` and the in-app `brand-shiguang.png` (needs
 Chrome or Edge, same lookup as the shot script).
 
-Architecture and protocol decisions live in `docs/`.
+Architecture and protocol decisions live in `docs/`: `ARCHITECTURE.md` states the rules that hold now,
+`ARCHITECTURE-LOG.md` is the dated, append-only record of how they got there, `TASK-MCP.md` is the
+Agent tool contract; task books for work in flight are indexed in `.handoff/README.md`.

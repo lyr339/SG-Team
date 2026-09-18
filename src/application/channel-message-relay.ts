@@ -282,7 +282,7 @@ export class ChannelMessageRelay {
    * - 图片缩略图走 `sg-image://` 本地路径协议（按需读盘），**不再**把 base64 预览
    *   URL 写进 attachments_json / 会话 entry：一张截图的 data: URL 有 1–2MB，曾随每条
    *   出站行常驻内存、每 250ms 被出站同步反复 JSON.parse、并随每次快照推送整体克隆到
-   *   渲染进程——是拾光长会话越用越卡的第二根因（见 ARCHITECTURE「1h+ 卡顿根因」）。
+   *   渲染进程——是拾光长会话越用越卡的第二根因（见 docs/ARCHITECTURE-LOG.md「1h+ 卡顿根因」）。
    */
   private prepareAttachments(messageId: string, input?: MessageAttachment[]): MessageAttachment[] | undefined {
     if (!input?.length) return undefined

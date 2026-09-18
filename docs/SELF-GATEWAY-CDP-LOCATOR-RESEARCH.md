@@ -5,7 +5,7 @@
 > `window.__qtComposerService` / `window.__qtComposerBridge`（5025 行 / 243KB）。该补丁是
 > Cursor 运行 1h+ 卡顿主因之一（`_qtTrace` 对整对象图带 replacer 的 `JSON.stringify`，
 > 每次 34–97ms 的 stringify 税），且清洁安装的 Windows Cursor 没有它 → 一键建会话直接
-> `bridge_not_ready`。ARCHITECTURE 的 Windows readiness 条目记录了三条出路，其中之一是
+> `bridge_not_ready`。ARCHITECTURE-LOG 的 Windows readiness 条目记录了三条出路，其中之一是
 > 「build the minimal CDP-injected bridge」。本档案验证这条路线（记为路线 B）的可行性。
 >
 > **结论：路线 B 可行（实测）。纯 CDP、零文件修改、零副作用即可拿到功能完备的

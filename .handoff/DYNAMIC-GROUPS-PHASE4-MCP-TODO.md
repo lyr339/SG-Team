@@ -171,7 +171,7 @@ team_check_in（可并入首次 check_messages；保留为显式刷新入口）
 
 ## 8. 落点
 
-`src/mcp/team-tools.ts`（schema、枚举、instructions）、`src/mcp/channel-communication-tools.ts`（删 `reply` 与死参数、返回体结构）、`src/mcp/unified-channel-server.ts` / `index.ts`（enable/disable 轮询）、`src/application/channel-message-service.ts`（内联团队消息 + 原子 read）、`src/application/team-message-dispatcher.ts`（唤醒信号）、`src/infrastructure/channel-messages/sqlite-channel-message-repository.ts`（`wake_requested_at`）、`src/infrastructure/team-collaboration/sqlite-team-collaboration-repository.ts`（`listUnreadForSlot` + `markReadBatch`）、`src/domain/channel-delivery-policy.ts`（删内部通知后缀、加团队消息后缀）、`src/domain/team-control.ts`（简报删句）、`scripts/verify-built-mcp.ts`、`scripts/verify-channel-mcp.ts`、`scripts/measure-mcp-surface.mjs`（新）、`docs/TASK-MCP.md`、`docs/ARCHITECTURE.md`。
+`src/mcp/team-tools.ts`（schema、枚举、instructions）、`src/mcp/channel-communication-tools.ts`（删 `reply` 与死参数、返回体结构）、`src/mcp/unified-channel-server.ts` / `index.ts`（enable/disable 轮询）、`src/application/channel-message-service.ts`（内联团队消息 + 原子 read）、`src/application/team-message-dispatcher.ts`（唤醒信号）、`src/infrastructure/channel-messages/sqlite-channel-message-repository.ts`（`wake_requested_at`）、`src/infrastructure/team-collaboration/sqlite-team-collaboration-repository.ts`（`listUnreadForSlot` + `markReadBatch`）、`src/domain/channel-delivery-policy.ts`（删内部通知后缀、加团队消息后缀）、`src/domain/team-control.ts`（简报删句）、`scripts/verify-built-mcp.ts`、`scripts/verify-channel-mcp.ts`、`scripts/measure-mcp-surface.mjs`（新）、`docs/TASK-MCP.md`、`docs/ARCHITECTURE.md`（工具面规则）与 `docs/ARCHITECTURE-LOG.md`（日期条目）。
 
 ***
 
