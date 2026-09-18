@@ -3,6 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DesktopSnapshot } from '../src/shared/desktop-api'
+import { dragEvent } from './drag-event'
 import { SessionSidebar, type RailSelectionActions } from '../src/renderer/src/SessionSidebar'
 import type { RailGroupSource } from '../src/renderer/src/session-rail-view'
 
@@ -295,5 +296,88 @@ describe('SessionSidebar 名册多选与浮动条', () => {
     await clickRow('3', { ctrlKey: true })
     expect(onSelect).toHaveBeenCalledWith('3')
     expect(bar()).toBeNull()
+  })
+
+  // ---------- 拖放改组：行拖到组头 / 「独立」头 ----------
+
+  function headerOf(sectionId: string): HTMLButtonElement {
+    return container.querySelector<HTMLButtonElement>(`[data-section="${sectionId}"] .session-group__header`)!
+  }
+  async function dragRowToHeader(channelId: string, sectionId: string, drop = true): Promise<void> {
+    await act(async () => { rowOf(channelId).dispatchEvent(dragEvent('dragstart')) })
+    await act(async () => { headerOf(sectionId).dispatchEvent(dragEvent('dragover')) })
+    if (drop) await act(async () => { headerOf(sectionId).dispatchEvent(dragEvent('drop')) })
+  }
+
+  it('独立行拖到组头：目标高亮，落下进抽屉预勾该行（与「加入…」同一条路）', async () => {
+    const actions = actionsOf()
+    await render({ actions })
+    await dragRowToHeader('4', 'g1', false)
+    expect(headerOf('g1').className).toContain('is-drop-target')
+    await act(async () => { headerOf('g1').dispatchEvent(dragEvent('drop')) })
+    expect(actions.addToGroup).toHaveBeenCalledWith('g1', ['4'])
+    expect(headerOf('g1').className).not.toContain('is-drop-target')
+  })
+
+  it('组内行（非 lead）拖到「独立」头：走同一张移出确认面', async () => {
+    const actions = actionsOf()
+    await render({ actions })
+    await dragRowToHeader('2', 'independent')
+    const sheet = container.querySelector('.session-pane__bar .run-sheet')!
+    expect(sheet.textContent).toContain('把 CH-2 移出「验收」')
+    await act(async () => {
+      sheet.querySelector<HTMLButtonElement>('.run-sheet__confirm')!.click()
+    })
+    expect(actions.removeFromGroups).toHaveBeenCalledWith(['2'])
+    expect(bar()).toBeNull()
+  })
+
+  it('lead（有队友）拖出组：目标红调预警，落下被拒并说明先换 lead', async () => {
+    const actions = actionsOf()
+    await render({ actions })
+    await dragRowToHeader('1', 'independent', false)
+    expect(headerOf('independent').className).toContain('is-drop-rejected')
+    await act(async () => { headerOf('independent').dispatchEvent(dragEvent('drop')) })
+    expect(actions.removeFromGroups).not.toHaveBeenCalled()
+    expect(container.querySelector('.run-sheet')).toBeNull()
+    const hint = container.querySelector('.session-pane__bar-hint')!
+    expect(hint.className).toContain('is-warning')
+    expect(hint.textContent).toContain('CH-1 是「验收」的 lead')
+    // 「知道了」收起提示。
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('.session-pane__bar-dismiss')!.click()
+    })
+    expect(bar()).toBeNull()
+  })
+
+  it('组间直拖被拒：先移出原组再加入', async () => {
+    const actions = actionsOf()
+    await render({
+      ids: ['a', 'b', 'c', 'd'],
+      groups: [
+        { id: 'g1', name: '验收', channelIds: ['1', '2'], leadChannelId: '1', attention: false },
+        { id: 'g2', name: '文档', channelIds: ['3'], attention: false }
+      ],
+      actions
+    })
+    await dragRowToHeader('2', 'g2')
+    expect(actions.addToGroup).not.toHaveBeenCalled()
+    const hint = container.querySelector('.session-pane__bar-hint')!
+    expect(hint.textContent).toContain('已在「验收」')
+    expect(hint.textContent).toContain('文档')
+  })
+
+  it('拖回原分区的组头不是放置目标；没有 selectionActions 时组头也不接拖放', async () => {
+    const actions = actionsOf()
+    await render({ actions })
+    await dragRowToHeader('2', 'g1')
+    expect(actions.addToGroup).not.toHaveBeenCalled()
+    expect(actions.removeFromGroups).not.toHaveBeenCalled()
+    expect(bar()).toBeNull()
+
+    await render({})
+    await act(async () => { rowOf('4').dispatchEvent(dragEvent('dragstart')) })
+    await act(async () => { headerOf('g1').dispatchEvent(dragEvent('dragover')) })
+    expect(headerOf('g1').className).not.toContain('is-drop-target')
   })
 })

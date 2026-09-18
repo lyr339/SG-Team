@@ -178,14 +178,16 @@ export function SessionSidebar({
 }: SessionSidebarProps): React.JSX.Element {
   const [order, setOrder] = useState<string[] | undefined>(() => readSessionOrder())
   const [collapsedGroups, setCollapsedGroups] = useState<ReadonlySet<string>>(() => readCollapsedSections())
-  const [dragOrigin, setDragOrigin] = useState<{ sessionId: string; groupId: string } | null>(null)
+  const [dragOrigin, setDragOrigin] = useState<{ sessionId: string; channelId: string; groupId: string } | null>(null)
   const [insertionIndex, setInsertionIndex] = useState<number | null>(null)
+  // 跨分区拖放的放置目标（组头 / 「独立」头）：id + 此刻的判定，拒绝也高亮（红调），落下时才说原因。
+  const [dropTarget, setDropTarget] = useState<{ id: string; allowed: boolean } | null>(null)
   // 多选：通道号集合 + Shift 范围的锚点；移出组的确认面与在途状态；浮动条里的一行提示（拒绝 / 失败）。
   const [picked, setPicked] = useState<ReadonlySet<string>>(() => new Set())
   const [pickAnchor, setPickAnchor] = useState<string>()
   const [removal, setRemoval] = useState<RemoveMemberFact[] | null>(null)
   const [removing, setRemoving] = useState(false)
-  const [hint, setHint] = useState('')
+  const [notice, setNotice] = useState<{ tone: 'danger' | 'warning'; text: string } | null>(null)
   const listRef = useRef<HTMLElement>(null)
   const cancelAnchorRef = useRef<(() => void) | undefined>(undefined)
   const now = useNow(60_000)
@@ -207,12 +209,19 @@ export function SessionSidebar({
     ? groups.find((section) => section.sessions.some((session) => session.id === dragOrigin.sessionId))?.id
     : undefined
   // 被拖行所在的同状态段：指示线与落点都夹在这一段里（见 rankBandOf）。
-  const dragBand = dragOrigin && draggedCurrentGroupId
-    ? rankBandOf(groups.find((section) => section.id === draggedCurrentGroupId)!, dragOrigin.sessionId)
+  const dragOriginSection = draggedCurrentGroupId
+    ? groups.find((section) => section.id === draggedCurrentGroupId)
+    : undefined
+  const dragBand = dragOrigin && dragOriginSection
+    ? rankBandOf(dragOriginSection, dragOrigin.sessionId)
     : undefined
   const clampToBand = (boundary: number): number => dragBand
     ? Math.max(dragBand.start, Math.min(dragBand.end, boundary))
     : boundary
+  // 拖出组的服务端规则与移出一致：有效 lead 且组内还有别人 → 先换 lead。
+  const dragIsBlockedLead = Boolean(dragOriginSection?.kind === 'group'
+    && dragOriginSection.leadChannelId === dragOrigin?.channelId
+    && dragOriginSection.sessions.length > 1)
   // 选中行进入 Tab 序列；没有选中行（或它在折叠组里）时把第一行交给 Tab。
   const selectedVisible = groups.some((group) => !collapsedGroups.has(group.id)
     && group.sessions.some((session) => session.channelId === selectedChannelId))
@@ -221,6 +230,7 @@ export function SessionSidebar({
   const resetDrag = (): void => {
     setDragOrigin(null)
     setInsertionIndex(null)
+    setDropTarget(null)
   }
 
   // 席位增删或被拖行自身换段（改组 / 迁出）才中止；其他会话的实时状态变化不打断手势。
@@ -256,7 +266,7 @@ export function SessionSidebar({
     setPicked(new Set())
     setPickAnchor(undefined)
     setRemoval(null)
-    setHint('')
+    setNotice(null)
   }
   const togglePick = (channelId: string): void => {
     setPicked((current) => {
@@ -266,7 +276,7 @@ export function SessionSidebar({
       return next
     })
     setPickAnchor(channelId)
-    setHint('')
+    setNotice(null)
   }
   /** Shift：从锚点选到此行——只在同一分区内（跨区的范围会把独立与组内席位混在一起，动作面对不上）。 */
   const rangePick = (channelId: string): void => {
@@ -279,7 +289,7 @@ export function SessionSidebar({
     const from = Math.min(anchorIndex, targetIndex)
     const to = Math.max(anchorIndex, targetIndex)
     setPicked((current) => new Set([...current, ...ids.slice(from, to + 1)]))
-    setHint('')
+    setNotice(null)
   }
   const pickFromCheckbox = (channelId: string, event: ChangeEvent<HTMLInputElement>): void => {
     // 复选框的 change 由 click 驱动：原生事件带着 shiftKey，Shift+勾选 = 选范围。
@@ -298,8 +308,8 @@ export function SessionSidebar({
       togglePick(channelId)
       return
     }
-    // 普通点击退出多选：选集是建组 / 改组的暂态，不该在打开会话之后还挂着。
-    if (picked.size) clearPicks()
+    // 普通点击退出多选：选集与提示是建组 / 改组的暂态，不该在打开会话之后还挂着。
+    if (picked.size || notice) clearPicks()
     onSelectSession(channelId)
   }
   // 行卡片是 memo 的：给它一个引用稳定的回调，最新的判定从 ref 里取。
@@ -307,16 +317,16 @@ export function SessionSidebar({
   openRowRef.current = openRow
   const openRowStable = useRef((channelId: string, event: MouseEvent<HTMLButtonElement>) => openRowRef.current(channelId, event)).current
 
-  // Esc 清选（确认面开着时由它自己接 Esc；抽屉开着时它在捕获阶段截住了 Esc，这里收不到）。
+  // Esc 清选与提示（确认面开着时由它自己接 Esc；抽屉开着时它在捕获阶段截住了 Esc，这里收不到）。
   useEffect(() => {
-    if (!picked.size || removal) return
+    if ((!picked.size && !notice) || removal) return
     const handler = (event: globalThis.KeyboardEvent): void => {
       if (event.key === 'Escape') clearPicks()
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
     // clearPicks 只碰 setState，可以不进依赖。
-  }, [picked.size, removal])
+  }, [picked.size, notice, removal])
 
   const pickedGrouped = pickedRows.filter((session) => sectionOfChannel.get(session.channelId)?.kind === 'group')
   const pickedIndependent = pickedRows.filter((session) => sectionOfChannel.get(session.channelId)?.kind === 'independent')
@@ -327,7 +337,7 @@ export function SessionSidebar({
   })
   const startRemoval = (): void => {
     if (!pickedGrouped.length || blockedLeads.length) return
-    setHint('')
+    setNotice(null)
     setRemoval(pickedGrouped.map((session) => ({
       channelId: session.channelId,
       groupName: sectionOfChannel.get(session.channelId)?.label ?? ''
@@ -341,7 +351,7 @@ export function SessionSidebar({
       clearPicks()
     } catch (reason) {
       setRemoval(null)
-      setHint(reason instanceof Error ? reason.message : String(reason))
+      setNotice({ tone: 'danger', text: reason instanceof Error ? reason.message : String(reason) })
     } finally {
       setRemoving(false)
     }
@@ -372,17 +382,35 @@ export function SessionSidebar({
     clearPicks()
     selectionActions.addToGroup(groupId, ids)
   }
-  // 浮动条下的一行说明，只挑最要紧的一件说：失败原因 > lead 挡住移出 > 混合选择只影响组内。
-  const barHint = hint
-    ? { tone: 'danger' as const, text: hint }
-    : blockedLeads.length
+  // 浮动条下的一行说明，只挑最要紧的一件说：失败 / 拖放被拒的原因 > lead 挡住移出 > 混合选择只影响组内。
+  const barHint = notice
+    ?? (blockedLeads.length
       ? {
           tone: 'warning' as const,
           text: `${blockedLeads.map((session) => `CH-${session.channelId}`).join('、')} 是所在组的 lead：先换 lead 再移出，或取消选择它`
         }
       : pickedGrouped.length && pickedIndependent.length
         ? { tone: 'muted' as const, text: `选中含组内会话时只能移出组；${pickedIndependent.length} 个独立会话不受影响` }
-        : undefined
+        : undefined)
+
+  /**
+   * 跨分区拖放（改组）的判定；undefined = 这个组头不是放置目标（没在拖 / 拖回原分区 / 名册不可多选）。
+   * 独立行 → 组头：进抽屉预勾该行（组内角色要在抽屉里选，不静默塞默认值）；组内行 → 「独立」头：
+   * 走与浮动条同一张移出确认面；lead（有队友）拖出与组间直拖都拒绝——落下时把原因写进浮动条提示。
+   */
+  const headerDropVerdictFor = (target: (typeof groups)[number]): { allowed: boolean; reason?: string } | undefined => {
+    if (!multiSelect || !dragOrigin || !dragOriginSection || dragOriginSection.id === target.id) return undefined
+    if (dragIsBlockedLead) {
+      return { allowed: false, reason: `CH-${dragOrigin.channelId} 是「${dragOriginSection.label}」的 lead：先换 lead，再拖出组` }
+    }
+    if (dragOriginSection.kind === 'group' && target.kind === 'group') {
+      return {
+        allowed: false,
+        reason: `CH-${dragOrigin.channelId} 已在「${dragOriginSection.label}」：先拖到「独立」移出，再加入「${target.label}」`
+      }
+    }
+    return { allowed: true }
+  }
 
   const toggleGroup = (groupId: string, section: HTMLElement | null): void => {
     const collapsing = !collapsedGroups.has(groupId)
@@ -482,10 +510,44 @@ export function SessionSidebar({
             >
               <button
                 type="button"
-                className="session-group__header"
+                className={`session-group__header${dropTarget?.id === group.id ? (dropTarget.allowed ? ' is-drop-target' : ' is-drop-rejected') : ''}`}
                 onClick={(event) => toggleGroup(group.id, event.currentTarget.closest<HTMLElement>('.session-group'))}
                 aria-expanded={!collapsed}
                 title={`${title}${collapsed ? '（已折叠，点击展开）' : ''}`}
+                onDragOver={(event) => {
+                  const verdict = headerDropVerdictFor(group)
+                  if (!verdict) return
+                  event.preventDefault()
+                  event.dataTransfer.dropEffect = 'move'
+                  setDropTarget((current) => (
+                    current?.id === group.id && current.allowed === verdict.allowed
+                      ? current
+                      : { id: group.id, allowed: verdict.allowed }
+                  ))
+                }}
+                onDragLeave={() => {
+                  setDropTarget((current) => (current?.id === group.id ? null : current))
+                }}
+                onDrop={(event) => {
+                  const verdict = headerDropVerdictFor(group)
+                  if (!verdict) return
+                  event.preventDefault()
+                  const channelId = dragOrigin?.channelId
+                  const fromLabel = dragOriginSection?.label
+                  resetDrag()
+                  if (!channelId) return
+                  if (!verdict.allowed) {
+                    setNotice({ tone: 'warning', text: verdict.reason ?? '' })
+                    return
+                  }
+                  if (group.kind === 'group') {
+                    // 独立行入组：进抽屉预勾（一次确认里选角色），与浮动条「加入…」同一条路。
+                    selectionActions?.addToGroup(group.id, [channelId])
+                    return
+                  }
+                  // 组内行拖到「独立」：移出原组，走同一张确认面（文案同源）。
+                  setRemoval([{ channelId, groupName: fromLabel ?? '' }])
+                }}
               >
                 <span className="session-group__tab">
                   <span>{group.label}</span>
@@ -559,11 +621,13 @@ export function SessionSidebar({
                           statusLine={snapshot.liveStatusLine?.[session.channelId]}
                           now={now}
                           tabIndex={selected || (!selectedVisible && session.id === firstVisibleId) ? 0 : -1}
-                          draggable={Boolean(band && band.end - band.start > 1)}
+                          // 同状态段内可重排，或（可多选时）可拖到组头 / 「独立」头改组——改组时独占一段的行也得能拖。
+                          draggable={multiSelect || Boolean(band && band.end - band.start > 1)}
                           onDragStart={(event) => {
                             event.dataTransfer.effectAllowed = 'move'
                             event.dataTransfer.setData('application/x-shiguang-session', 'reorder')
-                            setDragOrigin({ sessionId: session.id, groupId: group.id })
+                            setNotice(null)
+                            setDragOrigin({ sessionId: session.id, channelId: session.channelId, groupId: group.id })
                           }}
                           onDragEnd={resetDrag}
                         />
@@ -588,9 +652,10 @@ export function SessionSidebar({
           />
         )}
       </nav>
-      {multiSelect && pickedRows.length ? (
+      {multiSelect && (pickedRows.length || removal || notice) ? (
         // 底部浮动条：session-pane 网格的第三行，名册收缩让位，从不遮挡最后一行。
-        // 移出组的确认面在条内展开（替换动作行），文案与组卡片同源（removeMembersConsequence）。
+        // 移出组的确认面在条内展开（替换动作行），文案与组卡片同源（removeMembersConsequence）；
+        // 拖放被拒时它只承载一行原因（无动作行）。
         <div className="session-pane__bar">
           {removal ? (
             <ConfirmSheet
@@ -600,41 +665,50 @@ export function SessionSidebar({
               onConfirm={() => void confirmRemoval()}
             />
           ) : (
-            <div className="session-pane__bar-row" role="toolbar" aria-label="已选会话的操作">
-              <span className="session-pane__bar-count">已选 <b>{pickedRows.length}</b></span>
-              {pickedGrouped.length ? (
-                <button
-                  ref={removeButtonRef}
-                  type="button"
-                  className="secondary-button session-pane__bar-button"
-                  disabled={Boolean(blockedLeads.length)}
-                  onClick={startRemoval}
-                >
-                  移出组（{pickedGrouped.length}）
-                </button>
-              ) : (
-                <>
-                  <button type="button" className="primary-button session-pane__bar-button" onClick={createFromPicks}>
-                    建组（{pickedIndependent.length}）
-                  </button>
-                  {(groupSources?.length ?? 0) > 0 ? (
-                    <MenuSelect
-                      value=""
-                      placeholder="加入…"
-                      ariaLabel="把已选会话加入现有组"
-                      menuMinWidth={168}
-                      options={(groupSources ?? []).map((group) => ({ value: group.id, label: group.name }))}
-                      onChange={addPicksTo}
-                    />
+            <>
+              {pickedRows.length ? (
+                <div className="session-pane__bar-row" role="toolbar" aria-label="已选会话的操作">
+                  <span className="session-pane__bar-count">已选 <b>{pickedRows.length}</b></span>
+                  {pickedGrouped.length ? (
+                    <button
+                      ref={removeButtonRef}
+                      type="button"
+                      className="secondary-button session-pane__bar-button"
+                      disabled={Boolean(blockedLeads.length)}
+                      onClick={startRemoval}
+                    >
+                      移出组（{pickedGrouped.length}）
+                    </button>
+                  ) : (
+                    <>
+                      <button type="button" className="primary-button session-pane__bar-button" onClick={createFromPicks}>
+                        建组（{pickedIndependent.length}）
+                      </button>
+                      {(groupSources?.length ?? 0) > 0 ? (
+                        <MenuSelect
+                          value=""
+                          placeholder="加入…"
+                          ariaLabel="把已选会话加入现有组"
+                          menuMinWidth={168}
+                          options={(groupSources ?? []).map((group) => ({ value: group.id, label: group.name }))}
+                          onChange={addPicksTo}
+                        />
+                      ) : null}
+                    </>
+                  )}
+                  <button type="button" className="session-pane__bar-cancel" onClick={clearPicks}>取消</button>
+                </div>
+              ) : null}
+              {barHint ? (
+                <p className={`session-pane__bar-hint is-${barHint.tone}`} role="status">
+                  <span>{barHint.text}</span>
+                  {!pickedRows.length ? (
+                    <button type="button" className="session-pane__bar-dismiss" onClick={clearPicks}>知道了</button>
                   ) : null}
-                </>
-              )}
-              <button type="button" className="session-pane__bar-cancel" onClick={clearPicks}>取消</button>
-            </div>
+                </p>
+              ) : null}
+            </>
           )}
-          {!removal && barHint ? (
-            <p className={`session-pane__bar-hint is-${barHint.tone}`} role="status">{barHint.text}</p>
-          ) : null}
         </div>
       ) : null}
     </aside>

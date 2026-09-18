@@ -720,6 +720,10 @@ body.is-resizing-columns .resizable-columns { transition: none; }
 }
 .session-group__header:hover { color: var(--text); }
 .session-group__header:focus-visible { outline: 2px solid var(--color-ring-primary); outline-offset: -2px; border-radius: 6px; }
+/* 跨分区拖放的目标高亮：1px 品牌描边 + 淡底，不用阴影；此刻的判定已知会被拒（lead / 组间直拖）时红调预警，
+   落下时浮动条里写明原因。 */
+.session-group__header.is-drop-target { outline: 1px solid var(--accent); outline-offset: -1px; border-radius: 6px; background: var(--accent-wash); }
+.session-group__header.is-drop-rejected { outline: 1px solid var(--red-border-soft); outline-offset: -1px; border-radius: 6px; background: var(--red-soft); }
 .session-group__tab {
   position: relative; flex: 0 0 auto; height: 22px; display: inline-flex; align-items: center; gap: 6px;
   padding: 0 15px 0 11px;
@@ -932,10 +936,18 @@ body.is-resizing-columns .resizable-columns { transition: none; }
   transition: color 120ms ease, background 120ms ease;
 }
 .session-pane__bar-cancel:hover { color: var(--text); background: var(--surface-soft); }
-.session-pane__bar-hint { margin: 0; font-size: var(--fs-11); line-height: 1.5; }
+.session-pane__bar-hint { display: flex; align-items: baseline; gap: 8px; margin: 0; font-size: var(--fs-11); line-height: 1.5; }
+.session-pane__bar-hint > span { min-width: 0; flex: 1 1 auto; }
 .session-pane__bar-hint.is-danger { color: var(--color-text-danger); }
 .session-pane__bar-hint.is-warning { color: var(--color-text-warning); }
 .session-pane__bar-hint.is-muted { color: var(--text-soft); }
+.session-pane__bar-dismiss {
+  flex: 0 0 auto; padding: 2px 6px;
+  color: var(--text-soft); background: transparent; border: 0; border-radius: var(--r-sm);
+  font-size: var(--fs-11);
+  transition: color 120ms ease, background 120ms ease;
+}
+.session-pane__bar-dismiss:hover { color: var(--text); background: var(--surface-soft); }
 .session-pane__bar .run-sheet { grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 10px 12px; border-radius: 10px; box-shadow: none; }
 .session-pane__bar .run-sheet__actions { justify-content: flex-end; }
 

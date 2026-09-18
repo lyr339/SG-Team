@@ -3,6 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DesktopSnapshot } from '../src/shared/desktop-api'
+import { dragEvent } from './drag-event'
 import { SessionSidebar } from '../src/renderer/src/SessionSidebar'
 import type { RailGroupSource } from '../src/renderer/src/session-rail-view'
 import {
@@ -76,25 +77,6 @@ describe('session-order 纯函数', () => {
     expect(moveSessionWithinGroup(['a', 'x', 'b', 'y'], ['a', 'b'], 'b', 0)).toEqual(['b', 'x', 'a', 'y'])
   })
 })
-
-/** jsdom 不实现原生 DnD：合成 dataTransfer 存根的 drag 事件。 */
-function dragEvent(type: string, clientY = 0, clientX = 100): Event {
-  const event = new Event(type, { bubbles: true, cancelable: true })
-  const store = new Map<string, string>()
-  Object.defineProperties(event, {
-    clientX: { value: clientX },
-    clientY: { value: clientY }
-  })
-  Object.defineProperty(event, 'dataTransfer', {
-    value: {
-      effectAllowed: 'move',
-      dropEffect: 'move',
-      setData: (format: string, value: string) => store.set(format, value),
-      getData: (format: string) => store.get(format) ?? ''
-    }
-  })
-  return event
-}
 
 function rect(top: number, bottom: number, left = 0, right = 300): DOMRect {
   return {
