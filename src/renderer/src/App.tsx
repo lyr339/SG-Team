@@ -11,7 +11,7 @@ import { emptyTeamCollaborationSnapshot } from '../../domain/team-collaboration'
 import { DesktopShell, type AppModule } from './DesktopShell'
 import { SessionOverview } from './SessionOverview'
 import { SessionWorkspace } from './SessionWorkspace'
-import { SessionSidebar } from './SessionSidebar'
+import { SessionSidebar, type RailSelectionActions } from './SessionSidebar'
 import type { RailGroupSource } from './session-rail-view'
 import { WorkspaceInspector } from './WorkspaceInspector'
 import { PoolPage } from './run/PoolPage'
@@ -868,6 +868,29 @@ export function App(): React.JSX.Element {
       setGroupComposerBusy(false)
     }
   }, [])
+  // 名册多选浮动条的去处：建组 / 加人进同一个抽屉（预勾通道，角色在抽屉里确认）；移出直接走 IPC——
+  // 确认面在名册里，这里只负责把通道号解析回 slot 与所在 active 组，逐个移出（服务端无批量口）。
+  const selectionActions = useMemo((): RailSelectionActions => ({
+    createGroup: (channelIds) => openGroupComposer({ kind: 'create', preselectedChannelIds: channelIds }),
+    addToGroup: (groupId, channelIds) => {
+      const group = activeGroups.find((candidate) => candidate.id === groupId)
+      if (group) openGroupComposer({ kind: 'add', groupId, groupName: group.name, preselectedChannelIds: channelIds })
+    },
+    removeFromGroups: async (channelIds) => {
+      for (const channelId of channelIds) {
+        const member = teamControl.members.find(
+          (candidate) => (candidate.binding?.channelId ?? candidate.slot.channelId) === channelId
+        )
+        const view = member && teamControl.groups.find(
+          (candidate) => candidate.group.status === 'active'
+            && candidate.members.some((groupMember) => groupMember.slot.id === member.slot.id)
+        )
+        // 确认与执行之间席位可能已出组 / 离池：跳过它，移出剩下的——半途报错反而留一半。
+        if (!member || !view) continue
+        acceptTeamControl(await window.sgDesktop.removeTeamGroupMember({ groupId: view.group.id, slotId: member.slot.id }))
+      }
+    }
+  }), [acceptTeamControl, activeGroups, openGroupComposer, teamControl.groups, teamControl.members])
   /** 会话头部的组名跳转：运行页对应卡片滚入视野并短暂点亮。 */
   const [focusGroupId, setFocusGroupId] = useState<string>()
   const selectedSession = visibleSnapshot.sessions.find((session) => session.channelId === selectedChannelId)
@@ -1365,6 +1388,7 @@ export function App(): React.JSX.Element {
           selectedChannelId={selectedSession?.channelId}
           onSelectSession={selectSession}
           groups={activeGroups}
+          selectionActions={selectionActions}
           onOpenRun={() => changeModule('run')}
         />
       ) : null}

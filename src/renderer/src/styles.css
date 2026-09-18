@@ -666,7 +666,8 @@ body.is-resizing-columns .resizable-columns { transition: none; }
   /* 名册是阅读面：与右栏正文同一条不透明度下限，透明卡片模式下行文字仍可读。 */
   --rail-reading-opacity: max(0.92, var(--card-opacity));
   min-width: 0; min-height: 0;
-  display: grid; grid-template-rows: auto minmax(0, 1fr);
+  /* 第三行是多选浮动条：没有选中时不渲染，轨道收为 0；有选中时名册收缩让位，从不遮挡最后一行。 */
+  display: grid; grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: hidden;
   color: var(--text);
   background: var(--surface);
@@ -883,6 +884,61 @@ body.is-resizing-columns .resizable-columns { transition: none; }
   .session-row__model { display: none; }
 }
 
+/* ---------- 多选（建组 / 改组的暂态）----------
+   复选框是一枚盖在头像位上的实底圆盘（Gmail 语言：悬停 / 聚焦 / 选择中浮现，选中行常显），
+   不改变行布局；选中行的底色用与建组抽屉成员条同一档 accent-wash 平涂——与「当前打开」的
+   光刃 + 渐变分属两件事，可以同时出现。橙色仍只表「你在这」：这里的橙只出现在复选框对钩上。 */
+.session-row__pick {
+  position: absolute; z-index: 2; left: 12px; top: 8px;
+  width: 42px; height: 42px;
+  display: grid; place-items: center;
+  background: var(--surface-solid);
+  border: 1px solid var(--color-border-tertiary);
+  border-radius: 50%;
+  opacity: 0; pointer-events: none;
+  transition: opacity 120ms ease;
+  cursor: pointer;
+}
+.session-list__slot:hover .session-row__pick,
+.session-list__slot:focus-within .session-row__pick,
+.session-list.is-picking .session-row__pick,
+.session-list__slot.is-picked .session-row__pick { opacity: 1; pointer-events: auto; }
+.session-row__pick input { width: 15px; height: 15px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.session-list__slot.is-picked { background: var(--accent-wash); }
+/* 窄名册悬停目标小、复选框难发现：常显（与模型名收缩同一档宽度）。 */
+@container session-pane (max-width: 300px) {
+  .session-row__pick { opacity: 1; pointer-events: auto; }
+}
+
+/* 浮动条：120ms 上滑进场；一行动作 + 至多一行说明；确认面替换动作行时复用 .run-sheet（run.css 全局），
+   窄栏里收成单列。 */
+.session-pane__bar {
+  display: grid; gap: 8px;
+  padding: 10px 12px;
+  background: var(--surface-solid);
+  border-top: 1px solid var(--color-border-tertiary);
+  animation: session-bar-in 120ms ease;
+}
+@keyframes session-bar-in { from { opacity: 0; transform: translateY(8px); } }
+.session-pane__bar-row { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.session-pane__bar-count { flex: 0 0 auto; color: var(--text-soft); font-size: var(--fs-11); }
+.session-pane__bar-count > b { color: var(--text); font: 650 var(--fs-12)/1 var(--font-numeric); }
+.session-pane__bar .session-pane__bar-button { min-height: 28px; padding: 0 10px; font-size: var(--fs-12); }
+.session-pane__bar .menu-select__button { min-height: 28px; font-size: var(--fs-12); }
+.session-pane__bar-cancel {
+  flex: 0 0 auto; margin-left: auto; padding: 4px 6px;
+  color: var(--text-soft); background: transparent; border: 0; border-radius: var(--r-sm);
+  font-size: var(--fs-12);
+  transition: color 120ms ease, background 120ms ease;
+}
+.session-pane__bar-cancel:hover { color: var(--text); background: var(--surface-soft); }
+.session-pane__bar-hint { margin: 0; font-size: var(--fs-11); line-height: 1.5; }
+.session-pane__bar-hint.is-danger { color: var(--color-text-danger); }
+.session-pane__bar-hint.is-warning { color: var(--color-text-warning); }
+.session-pane__bar-hint.is-muted { color: var(--text-soft); }
+.session-pane__bar .run-sheet { grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 10px 12px; border-radius: 10px; box-shadow: none; }
+.session-pane__bar .run-sheet__actions { justify-content: flex-end; }
+
 /* 透明卡片：只有小节头随卡片透明并模糊；名册正文保持阅读面下限。 */
 html[data-card-transparency="clear"] .session-pane { background: color-mix(in srgb, var(--surface-solid) 74%, transparent); }
 html[data-card-transparency="clear"] .session-pane > .inspector-section__header { backdrop-filter: blur(16px) saturate(1.05); }
@@ -891,6 +947,8 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 @media (prefers-reduced-motion: reduce) {
   .session-row.is-active .session-row__state > i { animation: none; }
   .session-row, .session-row::before, .session-row__ring-arc, .session-group__header, .session-group__tab, .session-group__chevron, .session-row.is-offline .agent-avatar img { transition: none; }
+  .session-pane__bar { animation: none; }
+  .session-row__pick { transition: none; }
 }
 /* 会话页头用量度量组（Orbit 静默度量）：排版即界面——小号大写标签压
    齐宽数字，hairline 竖分隔，无底色无描边；冷中性承载内容。 */

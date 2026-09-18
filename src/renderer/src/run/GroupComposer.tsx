@@ -6,10 +6,10 @@ import { MenuSelect } from '../lobby/MenuSelect'
 import { ToggleSwitch } from '../lobby/ToggleSwitch'
 import { SEAT_STATE_LABEL, type UngroupedSeat } from './pool-view'
 
-/** 建组：可带名册多选预勾的通道；加人：目标组。 */
+/** 建组 / 加人都可带名册多选预勾的通道（组内角色在抽屉里确认）；加人另带目标组。 */
 export type GroupComposerMode =
   | { kind: 'create'; preselectedChannelIds?: readonly string[] }
-  | { kind: 'add'; groupId: string; groupName: string }
+  | { kind: 'add'; groupId: string; groupName: string; preselectedChannelIds?: readonly string[] }
 
 interface GroupComposerProps {
   mode: GroupComposerMode
@@ -51,16 +51,18 @@ export function GroupComposer({
   onAddMembers
 }: GroupComposerProps): React.JSX.Element {
   const creating = mode.kind === 'create'
-  const preselected = creating ? new Set(mode.preselectedChannelIds ?? []) : undefined
   const [name, setName] = useState(creating ? defaultName : '')
   const [goal, setGoal] = useState('')
   const [leadSlotId, setLeadSlotId] = useState(NO_LEAD)
   const [membersMayPlan, setMembersMayPlan] = useState(true)
-  const [drafts, setDrafts] = useState<Record<string, MemberDraft>>(() => Object.fromEntries(
-    candidates
-      .filter((seat) => preselected?.has(seat.channelId))
-      .map((seat) => [seat.slotId, { selected: true, roleTemplateKey: DEFAULT_ROLE_TEMPLATE }])
-  ))
+  const [drafts, setDrafts] = useState<Record<string, MemberDraft>>(() => {
+    const preselected = new Set(mode.preselectedChannelIds ?? [])
+    return Object.fromEntries(
+      candidates
+        .filter((seat) => preselected.has(seat.channelId))
+        .map((seat) => [seat.slotId, { selected: true, roleTemplateKey: DEFAULT_ROLE_TEMPLATE }])
+    )
+  })
   const nameRef = useRef<HTMLInputElement>(null)
   const dialogRef = useRef<HTMLFormElement>(null)
 

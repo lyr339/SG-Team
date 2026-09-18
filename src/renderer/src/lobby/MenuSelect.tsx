@@ -60,7 +60,10 @@ export function MenuSelect({ value, options, placeholder = '请选择…', disab
       if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) setOpen(false)
     }
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setOpen(false)
+      if (event.key !== 'Escape') return
+      // Esc 只收掉最上层的面：菜单开着时不该同时清掉名册多选、关掉身后的抽屉或确认面。
+      event.stopPropagation()
+      setOpen(false)
     }
     document.addEventListener('pointerdown', onPointerDown)
     document.addEventListener('keydown', onKeyDown)
