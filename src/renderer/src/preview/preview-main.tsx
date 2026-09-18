@@ -578,15 +578,15 @@ if (previewParameters.get('plan') === 'long') {
               ...block,
               summary: '任务清单 2/10',
               todos: [
-                { content: '恢复上下文：确认 5a 已完成步骤（围栏逐轮复核、bubbleCount、prepareComposerRelaunch allowIdleOnline）', status: 'completed' },
-                { content: 'domain/seat-rotation.ts：设置类型/默认/归一化 + 纯决策函数 + 通知类型', status: 'in_progress' },
-                { content: 'application/seat-rotation-settings-store.ts（userData/seat-rotation.json）', status: 'pending' },
-                { content: 'application/seat-rotation-service.ts：订阅快照→待命计时→交接→轮换令牌→launch→通知/冷却/失败停用', status: 'pending' },
-                { content: 'AgentSession.seatRotation 投影：DesktopSessionService.noteSeatRotation + 指纹 + run 切换清理', status: 'pending' },
-                { content: 'IPC/preload/desktop-api：seatRotation get/save settings；主进程装配（index.ts）', status: 'pending' },
-                { content: '渲染层：设置页「席位自动轮换」区块 + 名册卡轮换徽标/气泡数提示', status: 'pending' },
+                { content: '恢复上下文：读任务书 DYNAMIC-GROUPS-PHASE3-UI-TODO 与已提交的检查点（PoolPage / GroupCard / ConfirmSheet）', status: 'completed' },
+                { content: 'SessionSidebar：多选状态（picked / pickAnchor）+ ⌘/Ctrl 点击、Shift 范围、行首复选框', status: 'in_progress' },
+                { content: '底部浮动条：建组（N）/ 加入…（MenuSelect）/ 移出组（M）/ 取消，lead 挡移出要说明', status: 'pending' },
+                { content: '移出确认面复用 ConfirmSheet：文案走 removeMembersConsequence，与组卡片同源', status: 'pending' },
+                { content: 'GroupComposer add 模式支持 preselectedChannelIds（名册多选预勾）', status: 'pending' },
+                { content: 'App.selectionActions：createGroup / addToGroup 进抽屉，removeFromGroups 逐个走 IPC', status: 'pending' },
+                { content: 'styles.css：复选框圆盘盖住头像与光环、session-pane 第三行网格、120ms 进场', status: 'pending' },
                 { content: '旧版 usage 面板迁移（并入新会话页后不再需要）', status: 'cancelled' },
-                { content: 'typecheck / vitest 全量 / knip / build / smoke:channel；ARCHITECTURE 追加记录', status: 'pending' },
+                { content: 'typecheck / vitest 全量 / knip / build / smoke:channel；ARCHITECTURE-LOG 追加记录', status: 'pending' },
                 { content: '向用户汇报并 record_reply，回到 check_messages 待命', status: 'completed' }
               ]
             }
