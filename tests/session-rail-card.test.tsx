@@ -114,6 +114,23 @@ describe('SessionRailCard（名册行）', () => {
     expect(html).not.toContain('session-row__seen')
   })
 
+  it('增删徽记只显示非零一侧，两侧都为零时整个徽记不出现', () => {
+    const zero = renderToStaticMarkup(
+      <SessionRailCard session={{ ...session, changes: { additions: 0, deletions: 0, files: 0 } }} selected={false} onOpen={() => {}} />
+    )
+    expect(zero).not.toContain('session-row__changes')
+    expect(zero).not.toContain('+0')
+    expect(zero).not.toContain('−0')
+
+    const additionsOnly = renderToStaticMarkup(
+      <SessionRailCard session={{ ...session, changes: { additions: 5, deletions: 0, files: 1 } }} selected={false} onOpen={() => {}} />
+    )
+    expect(additionsOnly).toContain('+5')
+    expect(additionsOnly).not.toContain('−0')
+    expect(additionsOnly).toContain('新增 5 行')
+    expect(additionsOnly).not.toContain('删除 0 行')
+  })
+
   it('uses the recorded disconnect time as the end time, not the current clock', () => {
     const html = renderToStaticMarkup(<SessionRailCard session={{ ...session, startedAt: NOW - 60_000,
       disconnectedAt: NOW, lastSeenAt: NOW }} selected={false} onOpen={() => {}} now={NOW} />)
