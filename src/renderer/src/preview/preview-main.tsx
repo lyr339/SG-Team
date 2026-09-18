@@ -473,10 +473,12 @@ if (previewParameters.get('queued') === '1') {
 // 本轮文件栏走查：?turnfiles=1 —— Agent 正在处理一条消息，已经改了三个文件（Git 已看到）、正在写第四个
 //（Git 还没看到 → 按过程块估算），另有一个与本轮无关的未提交文件不该出现在栏里。可与 ?queued=1 叠加看两条栏。
 // ?turnfiles=previous —— 上一轮的四个编辑已随回复落库，新消息刚被取走、Agent 在想还没动手：栏保住上一轮并标「上一轮」。
-const turnFilesScene = (['1', 'previous'] as const).find((mode) => mode === previewParameters.get('turnfiles'))
+const turnFilesScene = (['1', 'previous', 'sole'] as const).find((mode) => mode === previewParameters.get('turnfiles'))
 if (turnFilesScene) {
   const askedAt = previewNow - 4 * 60_000
   const previousTurn = turnFilesScene === 'previous'
+  // sole：本轮是会话迄今唯一的改动区间——合计与名册行同源（Cursor Composer 累计净值）的走查。
+  const soleTurn = turnFilesScene === 'sole'
   const editBlocks = (status: 'done' | 'running'): ProcessBlock[] => [
     { kind: 'tool', id: 'tf-edit-1', toolName: 'edit_file_v2', toolKind: 'edit', toolCase: 'editToolCall', summary: 'src/domain/team-control.ts', hint: '+18 −20', status: 'done', startedAt: askedAt + 30_000 },
     { kind: 'tool', id: 'tf-edit-2', toolName: 'edit_file_v2', toolKind: 'edit', toolCase: 'editToolCall', summary: 'src/mcp/index.ts', hint: '+22 −37', status: 'done', startedAt: askedAt + 70_000 },
@@ -499,7 +501,7 @@ if (turnFilesScene) {
   // 过程块按「最近一条已投递用户消息」归属回合：基础夹具里最近 5 分钟的历史（e7–e11，含一条
   // 与本轮提问同一分钟投递的用户消息）会抢走块的锚点，让本轮只剩打字占位。这一场景只保留提问
   // 一分钟之前的历史；?queued=1 追加在提问之后的未投递消息照常保留（它们本就不进时间线）。
-  const history = (state.desktop.conversations['2'] ?? []).filter((entry) => (
+  const history = soleTurn ? [] : (state.desktop.conversations['2'] ?? []).filter((entry) => (
     entry.timestamp < askedAt - 60_000 || (entry.role === 'user' && entry.deliveredAt === undefined && entry.timestamp > askedAt)
   ))
   state.desktop.conversations = {
@@ -510,6 +512,16 @@ if (turnFilesScene) {
           ? { ...entry, deliveredAt: entry.timestamp + 1_000 }
           : entry
       )),
+      // 上一轮的收尾编辑：让「更早回合有过改动」成立——一般情形下文件栏合计保持逐笔估算（≈），
+      // 不被 Cursor 累计接管；同源接管的专门走查在 ?turnfiles=sole（那里没有任何更早改动）。
+      ...(soleTurn ? [] : [{
+        id: 'reply:turnfiles-0', channelId: '2', role: 'assistant', source: 'cursor', status: 'complete',
+        timestamp: askedAt - 3 * 60_000,
+        text: '上一轮已把 relay 的注册路径收口，`register-relay.ts` 少了一个入口分支。',
+        processBlocks: [
+          { kind: 'tool', id: 'tf-edit-0', toolName: 'edit_file_v2', toolKind: 'edit', toolCase: 'editToolCall', summary: 'src/main/register-relay.ts', hint: '+6 −2', status: 'done', startedAt: askedAt - 3 * 60_000 }
+        ]
+      } satisfies ConversationEntry]),
       {
         id: 'outbox:turnfiles-1', channelId: '2', role: 'user', source: 'desktop', status: 'complete',
         timestamp: askedAt, deliveredAt: askedAt + 800,
@@ -561,7 +573,18 @@ if (turnFilesScene) {
   }
   state.desktop.liveAgentResponses = undefined
   state.desktop.sessions = state.desktop.sessions.map((session) => session.channelId === '2'
-    ? { ...session, status: 'running', connectionPhase: 'processing', waiting: false, online: true, deliveryMode: 'queued', queueDepth: previewParameters.get('queued') === '1' ? 3 : 0 }
+    ? {
+        ...session,
+        status: 'running',
+        connectionPhase: 'processing',
+        waiting: false,
+        online: true,
+        deliveryMode: 'queued',
+        queueDepth: previewParameters.get('queued') === '1' ? 3 : 0,
+        // sole：Cursor 统计的累计净值（略小于逐笔求和的 +76 −390——同文件反复编辑不重复计入），
+        // 名册行与文件栏合计显示同一个数。
+        ...(soleTurn ? { changes: { additions: 74, deletions: 388, files: 4 } } : {})
+      }
     : session)
 }
 // 计划页长清单走查：?plan=long —— 真实颗粒度的 10 项技术任务：多行长文本、路径 token、

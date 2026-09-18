@@ -939,6 +939,34 @@ const scenes = [
       }
     ]
   })),
+  // 合计与名册同源：本轮是会话迄今唯一的改动区间（?turnfiles=sole）时，合计取 Cursor 的累计净值——
+  // 与左侧名册行同一个数、不再标 ≈；逐文件行保持过程估算的淡显。这就是「名册 +863 −137 vs 栏 ≈ +907 −183」
+  // 倒挂的修复走查（逐笔求和把同文件反复编辑重复计入，净值不会）。
+  {
+    name: 'session-turn-files-reconciled', width: 1440, height: 900, colorScheme: 'light', query: 'turnfiles=sole',
+    storage: railStorage(), clip: null,
+    actions: [
+      { wait: 400 },
+      {
+        label: '名册行与文件栏合计同源',
+        probe: `(() => {
+          const totals = document.querySelector('.turn-files__totals')
+          if (!totals) throw new Error('文件栏未渲染')
+          const text = (totals.textContent ?? '').replace(/\\s+/g, '')
+          if (text.includes('≈')) throw new Error('同源合计不该再标估算: ' + text)
+          if (!text.includes('+74') || !text.includes('−388')) throw new Error('合计不是 Cursor 净值: ' + text)
+          if (!totals.title.includes('名册')) throw new Error('来源说明缺失: ' + totals.title)
+          const rail = document.querySelector('.session-row[data-channel-id="2"] .session-row__changes')
+          if (!rail) throw new Error('名册行没有变更数字')
+          const railText = (rail.textContent ?? '').replace(/\\s+/g, '')
+          if (railText !== '+74−388') throw new Error('名册行与合计不同源: ' + railText)
+          const estimatedRows = document.querySelectorAll('.turn-files__item.is-estimated').length
+          if (!estimatedRows) throw new Error('逐文件行应保持估算标记')
+          return { totals: text, rail: railText, estimatedRows }
+        })()`
+      }
+    ]
+  },
   {
     name: 'session-turn-files-collapsed', width: 1440, height: 900, colorScheme: 'light', query: 'turnfiles=1', storage: railStorage(), clip: '.turn-files',
     actions: [{ wait: 300 }, { click: '.turn-files__toggle' }, { wait: 220 }, {

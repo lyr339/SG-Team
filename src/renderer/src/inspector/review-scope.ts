@@ -104,6 +104,21 @@ export function previousTurnMutationBlocks(entries: readonly ConversationEntry[]
   return blocks.filter(isFileMutationBlock)
 }
 
+/**
+ * 本轮边界之前是否存在文件改动块（任意更早回合，含旧 Composer 遗留的历史记录）：
+ * 本轮文件栏据此判断「本轮是否就是会话迄今唯一的改动区间」——是则合计可与名册行同源
+ *（Cursor 的 Composer 累计净值），否则两个口径覆盖的区间不同，不能互换。
+ */
+export function preTurnMutationsExist(entries: readonly ConversationEntry[]): boolean {
+  const start = latestDeliveredUserIndex(entries)
+  if (start <= 0) return false
+  for (const entry of entries.slice(0, start)) {
+    if (entry.role !== 'assistant') continue
+    if (conversationEntryProcessBlocks(entry).some(isFileMutationBlock)) return true
+  }
+  return false
+}
+
 /** 本轮改动过的文件路径（已归一，去重，保持首次出现顺序）。 */
 export function turnMutatedPaths(
   entries: readonly ConversationEntry[],

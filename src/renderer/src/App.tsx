@@ -944,12 +944,14 @@ export function App(): React.JSX.Element {
       liveProcess: workspaceLiveProcess,
       summary: workspaceReviewSummary,
       workspacePath: activeWorkspace?.path,
-      working: workspaceWorking
+      working: workspaceWorking,
+      // 名册行显示的 Cursor 累计净值：本轮是会话唯一改动区间时，栏的合计与它同源（见 turn-files-view）。
+      sessionChanges: selectedSession?.changes
     })
     const reused = sameTurnFilesView(turnFilesRef.current, next) ? turnFilesRef.current! : next
     turnFilesRef.current = reused
     return reused
-  }, [activeWorkspace?.path, workspaceEntries, workspaceLiveProcess, workspaceReviewSummary, workspaceWorking])
+  }, [activeWorkspace?.path, selectedSession?.changes, workspaceEntries, workspaceLiveProcess, workspaceReviewSummary, workspaceWorking])
   const handleReviewTurnFiles = useCallback((request: ReviewFocusRequest): void => requestReviewFocus(request), [])
   // 「交接」三态：离线入组席位 → 成员身份迁移（可附带上下文）；其余在运行中的席位（独立或入组、
   // 在线或离线）→ 上下文交接；运行已结束 / 非本轮席位 → 禁用并说明原因。

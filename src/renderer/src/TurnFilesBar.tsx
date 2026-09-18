@@ -121,7 +121,11 @@ export const TurnFilesBar = memo(function TurnFilesBar({ view, onReview, yieldTo
           <strong className="turn-files__title"><b>{view.files.length}</b> 个文件</strong>
           <span
             className="turn-files__totals"
-            title={view.estimated ? '含按编辑逐次累计的估算值' : `${previous ? '上一轮' : '本轮'}文件的增删行数合计（工作树相对 HEAD）`}
+            title={view.totalsSource === 'composer'
+              ? '合计取 Cursor 统计的本会话累计净增删（与左侧名册行同一个数）；逐文件是过程估算，同一文件多次编辑会重复计入，相加可能大于合计'
+              : view.estimated
+                ? '含按编辑逐次累计的估算值'
+                : `${previous ? '上一轮' : '本轮'}文件的增删行数合计（工作树相对 HEAD）`}
             aria-label={`合计 ${describeLineCounts(view.additions, view.deletions)}${view.estimated ? '（估算）' : ''}`}
           >
             {view.estimated ? <small aria-hidden="true">≈</small> : null}

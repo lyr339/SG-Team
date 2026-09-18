@@ -1,4 +1,4 @@
-// @vitest-environment jsdom
+﻿// @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -17,6 +17,7 @@ const view: TurnFilesView = {
   deletions: 87,
   working: true,
   estimated: true,
+  totalsSource: 'sum',
   scope: 'turn'
 }
 
@@ -36,7 +37,7 @@ describe('TurnFilesBar（本轮文件栏）', () => {
   })
 
   it('renders nothing when the turn has not touched any file', () => {
-    expect(renderToStaticMarkup(<TurnFilesBar view={{ files: [], additions: 0, deletions: 0, working: true, estimated: false, scope: 'turn' }} onReview={() => {}} />)).toBe('')
+    expect(renderToStaticMarkup(<TurnFilesBar view={{ files: [], additions: 0, deletions: 0, working: true, estimated: false, totalsSource: 'sum', scope: 'turn' }} onReview={() => {}} />)).toBe('')
   })
 
   it('lists one row per file with type icon, name, status mark and +/− counts; head carries count, totals, spinner and 审查', () => {
@@ -86,14 +87,14 @@ describe('TurnFilesBar（本轮文件栏）', () => {
     expect(html).toContain('aria-label="+18 −20"')
     expect(html).toContain('aria-label="合计 +49 −87（估算）"')
     const unchanged: TurnFilesView = {
-      files: [{ ...view.files[0]!, additions: 0, deletions: 0 }], additions: 0, deletions: 0, working: false, estimated: false, scope: 'turn'
+      files: [{ ...view.files[0]!, additions: 0, deletions: 0 }], additions: 0, deletions: 0, working: false, estimated: false, totalsSource: 'sum', scope: 'turn'
     }
     const dash = renderToStaticMarkup(<TurnFilesBar view={unchanged} onReview={() => {}} />)
     expect(dash).toMatch(/turn-files__counts" aria-label="无行数变化"><small>—<\/small><\/span>/)
     expect(dash).toMatch(/turn-files__totals[^>]*aria-label="合计 无行数变化"><small>—<\/small><\/span>/)
     const binary: TurnFilesView = {
       files: [{ ...view.files[0]!, path: 'build/icon.png', stem: 'icon', ext: '.png', icon: 'image', binary: true, additions: 0, deletions: 0 }],
-      additions: 0, deletions: 0, working: false, estimated: false, scope: 'turn'
+      additions: 0, deletions: 0, working: false, estimated: false, totalsSource: 'sum', scope: 'turn'
     }
     expect(renderToStaticMarkup(<TurnFilesBar view={binary} onReview={() => {}} />)).toMatch(/turn-files__counts" aria-label="二进制"><small>BIN<\/small>/)
   })

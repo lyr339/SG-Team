@@ -213,5 +213,90 @@ describe('turn-files-view · 投影', () => {
     const fewer = buildTurnFilesView({ entries, liveProcess: undefined, summary: summaryReady, working: true })
     expect(sameTurnFilesView(base, fewer)).toBe(false)
     expect(sameTurnFilesView(fewer, { ...fewer, scope: 'previous' })).toBe(false)
+    expect(sameTurnFilesView(fewer, { ...fewer, totalsSource: 'composer' })).toBe(false)
+  })
+})
+
+describe('turn-files-view · 合计与名册同源（Cursor Composer 累计净值）', () => {
+  // 本轮是会话迄今唯一的改动区间：一条已投递用户消息，全部编辑都在直播块里（还没落库）。
+  const soleTurn: ConversationEntry[] = [
+    entry({ id: 'u', role: 'user', source: 'desktop', timestamp: 1, deliveredAt: 2, text: '接手' })
+  ]
+  const soleLive: LiveProcessState = {
+    turn: 'live', startedAt: 3, updatedAt: 4, generating: true,
+    blocks: [
+      edit('a', 'src/renderer/src/SessionSidebar.tsx', '+300 −40'),
+      edit('b', 'src/renderer/src/SessionSidebar.tsx', '+200 −60'),
+      edit('c', 'src/renderer/src/styles.css', '+407 −83')
+    ]
+  }
+  const cursorTotals = { additions: 863, deletions: 137, files: 13 }
+
+  it('逐笔估算会把同文件反复编辑重复计入；本轮 = 唯一改动区间时合计改用 Cursor 净值，与名册行同一个数', () => {
+    const estimatedOnly = buildTurnFilesView({ entries: soleTurn, liveProcess: soleLive, working: true })
+    expect(estimatedOnly.additions).toBe(907)
+    expect(estimatedOnly.deletions).toBe(183)
+    expect(estimatedOnly.estimated).toBe(true)
+    expect(estimatedOnly.totalsSource).toBe('sum')
+
+    const reconciled = buildTurnFilesView({ entries: soleTurn, liveProcess: soleLive, working: true, sessionChanges: cursorTotals })
+    expect(reconciled.additions).toBe(863)
+    expect(reconciled.deletions).toBe(137)
+    expect(reconciled.estimated).toBe(false)
+    expect(reconciled.totalsSource).toBe('composer')
+    // 逐文件行保持过程估算（明细自己标 process，行内继续淡显）。
+    expect(reconciled.files.map((file) => [file.path, file.additions, file.deletions, file.source])).toEqual([
+      ['src/renderer/src/SessionSidebar.tsx', 500, 100, 'process'],
+      ['src/renderer/src/styles.css', 407, 83, 'process']
+    ])
+  })
+
+  it('更早回合有过改动（含旧 Composer 的历史）：区间不同，不能互换，保持逐笔估算', () => {
+    const withHistory: ConversationEntry[] = [
+      entry({ id: 'u0', role: 'user', source: 'desktop', timestamp: 1, deliveredAt: 2, text: '上一轮' }),
+      entry({ id: 'r0', role: 'assistant', timestamp: 3, replyToEntryId: 'u0', processBlocks: [edit('old', 'src/old-turn.ts', '+5 −5')] }),
+      entry({ id: 'u1', role: 'user', source: 'desktop', timestamp: 4, deliveredAt: 5, text: '本轮' })
+    ]
+    const view = buildTurnFilesView({ entries: withHistory, liveProcess: soleLive, working: true, sessionChanges: cursorTotals })
+    expect(view.scope).toBe('turn')
+    expect(view.totalsSource).toBe('sum')
+    expect(view.estimated).toBe(true)
+    expect(view.additions).toBe(907)
+  })
+
+  it('Cursor 累计还没写盘（全零）时不接管——避免有文件而合计为 0', () => {
+    const view = buildTurnFilesView({
+      entries: soleTurn, liveProcess: soleLive, working: true,
+      sessionChanges: { additions: 0, deletions: 0 }
+    })
+    expect(view.additions).toBe(907)
+    expect(view.totalsSource).toBe('sum')
+    expect(view.estimated).toBe(true)
+  })
+
+  it('全部走 Git 精确口径时不接管（合计 = 文件级 diff 相加，与审查页一致）', () => {
+    const gitOnly: ConversationEntry[] = [
+      entry({ id: 'u', role: 'user', source: 'desktop', timestamp: 1, deliveredAt: 2, text: 'x' }),
+      entry({ id: 'r', role: 'assistant', timestamp: 3, replyToEntryId: 'u', processBlocks: [
+        edit('a', 'src/domain/team-control.ts', '+10 −2')
+      ] })
+    ]
+    const view = buildTurnFilesView({ entries: gitOnly, summary: summaryReady, working: false, sessionChanges: cursorTotals })
+    expect(view.totalsSource).toBe('sum')
+    expect(view.additions).toBe(18)
+    expect(view.deletions).toBe(20)
+    expect(view.estimated).toBe(false)
+  })
+
+  it('保住上一轮（scope=previous）时不接管：Cursor 累计描述的不是被保住的那一轮', () => {
+    const next: ConversationEntry[] = [
+      entry({ id: 'u0', role: 'user', source: 'desktop', timestamp: 1, deliveredAt: 2, text: '上一轮' }),
+      entry({ id: 'r0', role: 'assistant', timestamp: 3, replyToEntryId: 'u0', processBlocks: [edit('old', 'src/old-turn.ts', '+5 −5')] }),
+      entry({ id: 'u1', role: 'user', source: 'desktop', timestamp: 4, deliveredAt: 5, text: '下一轮' })
+    ]
+    const held = buildTurnFilesView({ entries: next, working: true, sessionChanges: cursorTotals })
+    expect(held.scope).toBe('previous')
+    expect(held.files.map((file) => file.path)).toEqual(['src/old-turn.ts'])
+    expect(held.totalsSource).toBe('sum')
   })
 })
