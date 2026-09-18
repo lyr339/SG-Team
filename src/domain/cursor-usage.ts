@@ -19,6 +19,13 @@
  *
  * 费用估算：按公开 API 牌价（USD / 百万 token）折算，与 Cursor 实际
  * 计费口径（请求计费/混合额度）不同——是「等价 API 成本」参考值。
+ *
+ * 采样通道（回合未结束时唯一活水）为增量估算（2026-09-18 起）：上下文读数每变化
+ * 一次 ≈ 一次模型请求，请求输入 = 全量上下文；基线（上次读数，跨回合承接
+ * contextLastUsed）在缓存 TTL 内计缓存读，Δ 增量为新进 token（写入桶厂商计缓存写），
+ * 输出按参考比例随对话增长走——缓存命中率因此随对话节奏波动，接近真实曲线。
+ * 「总量 × 固定比例」的参考拆分仅剩两处：会话首个采样（无基线可用）与旧账迁移。
+ * 见 reduceUsage 采样分支与 incrementalSampleUsage。
  */
 
 /** 单回合 usage 事件（binding payload {c,i,o,r,w,t} 解析后的形态）。 */
@@ -55,8 +62,9 @@ export interface CursorSessionUsage {
   pricedModel: string
   lastTurnAt: number
   /**
-   * 请求级采样基线：上次观测到的 contextTokensUsed。持久化于快照——跨进程重启
-   * 基线延续，重启后首样本不会把存量上下文误记一次。undefined = 尚未建立基线。
+   * 请求级采样基线：本会话最近一次观测到的 contextTokensUsed（跨回合）。新回合的首个
+   * 采样以它为增量基线——上一回合的上下文是本次请求的缓存前缀，不再按全量重新拆分。
+   * 随快照持久化，跨进程重启基线延续。undefined = 本会话尚无采样。
    */
   contextLastUsed?: number
   quality?: 'exact' | 'mixed' | 'estimated' | 'legacy'
@@ -231,7 +239,7 @@ export interface UsageTurn {
   price: ModelTokenPrice
   exact: boolean
   lastUsed?: number
-  /** 用户参考图的拆分方案；随回合保存，模型切换不追溯修改旧账。 */
+  /** 参考比例档（首样本全量拆分 + 增量输出比例）；随回合保存，模型切换不追溯修改旧账。 */
   estimateProfile?: string
   stopped?: boolean
   at: number
@@ -252,7 +260,9 @@ export type UsageObservation =
   | { kind: 'sample'; value: CursorUsageSample }
   | { kind: 'checkpoint'; value: CursorUsageEvent & { generationId: string } }
 
-// 用户提供的累计用量截图（2026-09-05）：仅作近似拆分的比例，不是模型牌价或实测本会话用量。
+// 用户提供的累计用量截图（2026-09-05）：仅作近似比例，不是模型牌价或实测本会话用量。
+// 增量模型（2026-09-18）下只剩两种用途：① 会话首个采样（无基线）按其拆分全量；
+// ② 输出估算比例 = output ÷ (input + write)，即对话每新进 1 token 估算产出多少输出。
 const USAGE_PROFILES = {
   // 用户 Claude Code 累计截图：四项是显示层舍入值，以四项合计归一，不用顶部精确总数反推缺口。
   claudeCode: { input: 1_343_000, output: 42_535_000, write: 345_000_000, read: 12_706_000_000 },
@@ -291,6 +301,58 @@ function referenceUsage(inputTokens: number, profile: keyof typeof USAGE_PROFILE
     estimatedCostUsd: estimateTurnCostUsd({ ...counts, occurredAt: 0 }, price) }
 }
 
+/**
+ * 采样增量模型的基线存活窗口：提供商前缀缓存 TTL（Anthropic / OpenAI 均为 5 分钟滑动
+ * 窗口，命中即续期；每个记账样本 ≈ 一次请求 = 一次续期）。两次记账样本间隔超过该窗口
+ * 时基线前缀视为已过期，整段上下文按新进 token 重新计价——对话停顿后命中率真实回落。
+ * 已知边界：从读数无法区分「对话真停顿」与「采样中断」（拾光重启期间 Cursor 仍在跑），
+ * 后者会被误判过期、按一次全量重写高估一笔；误差有界（单笔、随下个样本自愈），且方向
+ * 与漏采期间少记的读数相抵。
+ */
+export const CACHE_BASELINE_TTL_MS = 5 * 60_000
+
+/**
+ * 读数回落低于基线九成视为上下文压缩：压缩产物是全新前缀（旧缓存作废），整段按新进
+ * token 重写计价。九成以内的轻微回落按「前缀仍在缓存」处理——Cursor 对上下文的重估
+ * 存在小幅抖动，若一律按压缩重写，长会话上一次抖动就会凭空多记一整段 1.25× 写入。
+ */
+const COMPRESSION_DROP_RATIO = 0.9
+
+/** 输出估算比例：参考图的 输出 ÷ 新进 token（普通输入 + 缓存写）。 */
+function profileOutputShare(profile: keyof typeof USAGE_PROFILES): number {
+  const weights = USAGE_PROFILES[profile]
+  return weights.output / (weights.input + weights.write)
+}
+
+/**
+ * 单个采样请求的增量拆分：上下文读数每变化一次 ≈ 一次模型请求，请求输入 = 全量上下文。
+ * - 基线在 TTL 内且读数增长：基线部分命中缓存读，Δ 增量是新进 token（写入桶厂商计
+ *   缓存写，其余厂商按普通输入计价——由调用方经 hasCacheWriteBucket 归桶）；
+ * - 基线过期（对话停顿超过缓存 TTL）：整段重新进缓存，只有超出旧基线的部分算对话增长；
+ * - 读数回落：见 COMPRESSION_DROP_RATIO。
+ * 输出按「对话增长 × 参考比例」估算——重写 / 重放的旧上下文不产生新输出。
+ * 良性性质：写入与输出总量是 Δ 的望远镜和，对采样频率不敏感（漏采只并入下一个 Δ）；
+ * 读与输入在漏采时按观测到的请求数低估，不再像固定比例那样整体虚高。
+ */
+function incrementalSampleUsage(
+  used: number,
+  baseline: number,
+  warm: boolean,
+  profile: keyof typeof USAGE_PROFILES,
+  price: ModelTokenPrice
+): { cacheReadTokens: number; cacheWriteTokens: number; outputTokens: number } {
+  const cacheReadTokens = !warm ? 0
+    : used >= baseline ? baseline
+    : used >= baseline * COMPRESSION_DROP_RATIO ? used
+    : 0
+  const rewritten = used - cacheReadTokens
+  return {
+    cacheReadTokens,
+    cacheWriteTokens: hasCacheWriteBucket(price) ? rewritten : 0,
+    outputTokens: Math.round(Math.max(0, used - baseline) * profileOutputShare(profile))
+  }
+}
+
 /** 无写入桶厂商的估算回合却带写入份额 = 本规则之前落盘的旧账（含 Kimi 特判未覆盖的其他厂商）；精确回合以 Cursor 结算为准，不动。 */
 function hasFabricatedCacheWrite(turn: UsageTurn): boolean {
   return !turn.exact && turn.cacheWriteTokens !== 0 && !hasCacheWriteBucket(turn.price)
@@ -309,7 +371,10 @@ export function upgradeUsageEstimate(usage: CursorSessionUsage): CursorSessionUs
   }))
   // 旧账里无写入桶厂商的估算写入份额也在这里归一（projectUsage 内完成），首次加载后即幂等。
   if (Object.values(turns).some(hasFabricatedCacheWrite)) changed = true
-  return changed ? projectUsage(usage.composerId, { ...usage.ledger, turns }, usage.slotId) : usage
+  if (!changed) return usage
+  const projected = projectUsage(usage.composerId, { ...usage.ledger, turns }, usage.slotId)
+  // 采样基线不属于账本投影，迁移后原样保留（丢了会让下一个采样退回全量拆分）。
+  return usage.contextLastUsed === undefined ? projected : { ...projected, contextLastUsed: usage.contextLastUsed }
 }
 
 /** 账本 → UI 字段投影；slotId 只是随行标签（归属由 tracker 按绑定决定），投影不改写。 */
@@ -366,12 +431,41 @@ export function reduceUsage(current: CursorSessionUsage | undefined, observation
     const base = previous ?? { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, estimatedCostUsd: 0, price, exact: false, at: 0 }
     const changed = sample.used !== base.lastUsed
     if (!changed && !sample.stopped) return current
-    const profile = base.estimateProfile && Object.hasOwn(USAGE_PROFILES, base.estimateProfile)
-      ? base.estimateProfile as keyof typeof USAGE_PROFILES : usageProfile(event.modelId ?? price.label)
-    next = { ...base, ...referenceUsage(base.inputTokens + (changed ? sample.used : 0), profile, price),
-      lastUsed: sample.used, at: sample.occurredAt, ...(sample.stopped ? { stopped: true } : {}) }
+    if (!changed) {
+      // 终止帧且读数未动：只封口本回合，不再记账（不得重拆已增量累计的桶）。
+      next = { ...base, at: sample.occurredAt, stopped: true }
+    } else {
+      const profile = base.estimateProfile && Object.hasOwn(USAGE_PROFILES, base.estimateProfile)
+        ? base.estimateProfile as keyof typeof USAGE_PROFILES : usageProfile(event.modelId ?? price.label)
+      // 回合内基线 = 上一读数；新回合首样本承接会话级 contextLastUsed（上一回合的上下文
+      // 是本次请求的缓存前缀）。基线的活性时间取上一记账样本时刻（跨回合用 lastTurnAt 近似）。
+      const baseline = base.lastUsed ?? current?.contextLastUsed
+      if (baseline === undefined) {
+        // 会话首个采样没有任何基线，无从计增量：按参考比例拆分本次全量。新会话的首请求
+        // 物理上应全为缓存写（误差分毫级）；接管既有长会话时，比例拆分远比按全写计准确。
+        next = { ...base, ...referenceUsage(base.inputTokens + sample.used, profile, price),
+          lastUsed: sample.used, at: sample.occurredAt, ...(sample.stopped ? { stopped: true } : {}) }
+      } else {
+        const baselineAt = previous ? previous.at : current?.lastTurnAt ?? 0
+        const warm = baselineAt > 0 && sample.occurredAt - baselineAt <= CACHE_BASELINE_TTL_MS
+        const delta = incrementalSampleUsage(sample.used, baseline, warm, profile, price)
+        const counts = {
+          inputTokens: base.inputTokens + sample.used,
+          outputTokens: base.outputTokens + delta.outputTokens,
+          cacheReadTokens: base.cacheReadTokens + delta.cacheReadTokens,
+          cacheWriteTokens: base.cacheWriteTokens + delta.cacheWriteTokens
+        }
+        // 单价线性：按回合累计四桶重算 = 逐请求成本之和（构造上恒有 read + write ≤ input）。
+        next = { ...base, ...counts, estimateProfile: profile,
+          estimatedCostUsd: estimateTurnCostUsd({ ...counts, occurredAt: 0 }, price),
+          lastUsed: sample.used, at: sample.occurredAt, ...(sample.stopped ? { stopped: true } : {}) }
+      }
+    }
   }
-  return projectUsage(event.composerId, { ...ledger, turns: { ...ledger.turns, [event.generationId]: next } }, current?.slotId)
+  const projected = projectUsage(event.composerId, { ...ledger, turns: { ...ledger.turns, [event.generationId]: next } }, current?.slotId)
+  // 会话级采样基线跨回合、跨结算延续：采样推进它，精确结算原样保留。
+  const contextLastUsed = observation.kind === 'sample' ? observation.value.used : current?.contextLastUsed
+  return contextLastUsed === undefined ? projected : { ...projected, contextLastUsed }
 }
 
 /** 输入已包含缓存读写，总量不重复加缓存。 */

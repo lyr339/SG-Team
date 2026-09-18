@@ -12,9 +12,11 @@ import {
   totalUsageTokens,
   upgradeUsageEstimate,
   usageHasCacheWriteBucket,
+  CACHE_BASELINE_TTL_MS,
   USAGE_HISTORY_RETENTION_MS,
   type CursorSessionUsage,
-  type CursorUsageEvent
+  type CursorUsageEvent,
+  type UsageObservation
 } from '../src/domain/cursor-usage'
 
 function event(overrides: Partial<CursorUsageEvent> = {}): CursorUsageEvent {
@@ -230,6 +232,112 @@ describe('缓存写入桶按厂商口径拆分（2026-09-15 官方核对：只�
     expect(usageHasCacheWriteBucket({ ...legacy, pricedModel: 'Gemini 3.8 Flash' })).toBe(false)
     expect(usageHasCacheWriteBucket({ ...legacy, pricedModel: 'Claude Fable 5.1' })).toBe(true)
     expect(usageHasCacheWriteBucket({ ...legacy, pricedModel: '默认（Sonnet 档）' })).toBe(true)
+  })
+})
+
+describe('采样增量模型（基线计缓存读、Δ 计新进、TTL 与压缩感知；命中率随对话节奏波动）', () => {
+  const fable = priceForModel('claude-fable-5-1')
+  // 输出估算比例 = 参考图 输出 ÷ 新进 token（普通输入 + 缓存写），见 USAGE_PROFILES。
+  const share = (profile: 'claudeCode' | 'default') => profile === 'claudeCode'
+    ? 42_535_000 / (1_343_000 + 345_000_000)
+    : 296_100 / (146_400 + 2_140_000)
+  const sampleObs = (used: number, occurredAt: number, generationId = 'g1', modelId = 'claude-fable-5-1', stopped = false): UsageObservation =>
+    ({ kind: 'sample', value: { composerId: 'c', generationId, modelId, used, occurredAt, ...(stopped ? { stopped: true } : {}) } })
+
+  it('会话首个采样按参考比例拆分建基线；后续样本增量记账：基线计缓存读、Δ 计缓存写、输出随对话增长', () => {
+    const ref = estimateUsageFromReference(100_000, 'claude-fable-5-1', fable)
+    const first = reduceUsage(undefined, sampleObs(100_000, 1_000))!
+    expect(first.ledger!.turns.g1).toMatchObject(ref)
+    expect(first.contextLastUsed).toBe(100_000)
+    const second = reduceUsage(first, sampleObs(120_000, 2_000))!
+    const turn = second.ledger!.turns.g1!
+    expect(turn.inputTokens).toBe(220_000)
+    expect(turn.cacheReadTokens).toBe(ref.cacheReadTokens + 100_000)
+    expect(turn.cacheWriteTokens).toBe(ref.cacheWriteTokens + 20_000)
+    expect(turn.outputTokens).toBe(ref.outputTokens + Math.round(20_000 * share('claudeCode')))
+    // 费用 = 累计四桶按回合固定单价重算（单价线性 ⇒ 恒等于逐请求成本之和）。
+    expect(second.estimatedCostUsd).toBeCloseTo(estimateTurnCostUsd({ ...turn, occurredAt: 0 }, fable), 10)
+    expect(second.contextLastUsed).toBe(120_000)
+  })
+
+  it('新 generation 首样本承接跨回合基线（contextLastUsed），精确结算不打断基线', () => {
+    const g1 = reduceUsage(undefined, sampleObs(100_000, 1_000))!
+    const settled = reduceUsage(g1, { kind: 'checkpoint', value: {
+      composerId: 'c', generationId: 'g1', modelId: 'claude-fable-5-1',
+      inputTokens: 90_000, outputTokens: 800, cacheReadTokens: 80_000, cacheWriteTokens: 9_000, occurredAt: 2_000
+    } })!
+    expect(settled.quality).toBe('exact')
+    expect(settled.contextLastUsed).toBe(100_000)
+    const g2 = reduceUsage(settled, sampleObs(110_000, 3_000, 'g2'))!
+    expect(g2.ledger!.turns.g2).toMatchObject({
+      inputTokens: 110_000, cacheReadTokens: 100_000, cacheWriteTokens: 10_000,
+      outputTokens: Math.round(10_000 * share('claudeCode'))
+    })
+    expect(g2.contextLastUsed).toBe(110_000)
+  })
+
+  it('对话停顿超过缓存 TTL：基线过期、整段按缓存写重进，只有增长部分估输出（命中率真实回落）', () => {
+    const g1 = reduceUsage(undefined, sampleObs(100_000, 1_000))!
+    const cold = reduceUsage(g1, sampleObs(108_000, 1_000 + CACHE_BASELINE_TTL_MS + 1, 'g2'))!
+    expect(cold.ledger!.turns.g2).toMatchObject({
+      inputTokens: 108_000, cacheReadTokens: 0, cacheWriteTokens: 108_000,
+      outputTokens: Math.round(8_000 * share('claudeCode'))
+    })
+    // 重进缓存后回合内继续增长：基线重新温热，恢复正常命中。
+    const resumed = reduceUsage(cold, sampleObs(109_000, 1_000 + CACHE_BASELINE_TTL_MS + 2_000, 'g2'))!
+    expect(resumed.ledger!.turns.g2!.cacheReadTokens).toBe(108_000)
+  })
+
+  it('读数大幅回落 = 上下文压缩：全新前缀整段重写、不产生输出；轻微回落按前缀仍在缓存', () => {
+    const ref = estimateUsageFromReference(100_000, 'claude-fable-5-1', fable)
+    const g1 = reduceUsage(undefined, sampleObs(100_000, 1_000))!
+    const compressed = reduceUsage(g1, sampleObs(40_000, 2_000))! // 回落到 40% ⇒ 压缩
+    const afterCompress = compressed.ledger!.turns.g1!
+    expect(afterCompress.inputTokens).toBe(140_000)
+    expect(afterCompress.cacheReadTokens).toBe(ref.cacheReadTokens)
+    expect(afterCompress.cacheWriteTokens).toBe(ref.cacheWriteTokens + 40_000)
+    expect(afterCompress.outputTokens).toBe(ref.outputTokens)
+    const jitter = reduceUsage(compressed, sampleObs(39_000, 3_000))! // 回落 2.5% ⇒ 抖动，仍在缓存
+    const afterJitter = jitter.ledger!.turns.g1!
+    expect(afterJitter.cacheReadTokens).toBe(ref.cacheReadTokens + 39_000)
+    expect(afterJitter.cacheWriteTokens).toBe(afterCompress.cacheWriteTokens)
+    expect(afterJitter.outputTokens).toBe(afterCompress.outputTokens)
+  })
+
+  it('无写入桶厂商：Δ 按普通输入全价、基线计缓存读，Cache Write 恒 0；单请求费用可核', () => {
+    const gpt5 = priceForModel('gpt-5')
+    const ref = estimateUsageFromReference(100_000, 'gpt-5', gpt5)
+    const g1 = reduceUsage(undefined, sampleObs(100_000, 1_000, 'g1', 'gpt-5'))!
+    const second = reduceUsage(g1, sampleObs(120_000, 2_000, 'g1', 'gpt-5'))!
+    const turn = second.ledger!.turns.g1!
+    expect(turn.cacheWriteTokens).toBe(0)
+    expect(turn.cacheReadTokens).toBe(ref.cacheReadTokens + 100_000)
+    const output = Math.round(20_000 * share('default'))
+    expect(turn.outputTokens).toBe(ref.outputTokens + output)
+    expect(second.estimatedCostUsd - g1.estimatedCostUsd).toBeCloseTo(
+      100_000 / 1e6 * gpt5.cacheReadPerM + 20_000 / 1e6 * gpt5.inputPerM + output / 1e6 * gpt5.outputPerM, 10)
+  })
+
+  it('同值终止帧只封口不再记账，不重拆已增量累计的桶', () => {
+    const g1 = reduceUsage(undefined, sampleObs(100_000, 1_000))!
+    const grown = reduceUsage(g1, sampleObs(120_000, 2_000))!
+    const stopped = reduceUsage(grown, sampleObs(120_000, 3_000, 'g1', 'claude-fable-5-1', true))!
+    const before = grown.ledger!.turns.g1!
+    expect(stopped.ledger!.turns.g1).toMatchObject({
+      inputTokens: before.inputTokens, outputTokens: before.outputTokens,
+      cacheReadTokens: before.cacheReadTokens, cacheWriteTokens: before.cacheWriteTokens,
+      stopped: true, at: 3_000
+    })
+  })
+
+  it('upgradeUsageEstimate 迁移旧账时保留采样基线', () => {
+    const g1 = reduceUsage(undefined, sampleObs(100_000, 1_000))!
+    const legacyTurn = { ...g1.ledger!.turns.g1! }
+    delete legacyTurn.estimateProfile // 模拟 estimateProfile 之前的旧落盘账
+    const legacy: CursorSessionUsage = { ...g1, ledger: { turns: { g1: legacyTurn } } }
+    const upgraded = upgradeUsageEstimate(legacy)
+    expect(upgraded).not.toBe(legacy)
+    expect(upgraded.contextLastUsed).toBe(100_000)
   })
 })
 

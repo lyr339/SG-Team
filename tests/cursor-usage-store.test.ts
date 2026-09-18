@@ -109,9 +109,13 @@ describe('CursorUsageStore', () => {
     stderr.mockRestore()
   })
 
-  it('请求级采样基线随快照往返（跨重启延续），旧版本快照缺字段不受影响', () => {
+  it('请求级采样基线随快照往返（跨重启延续），账本行同样保留，旧版本快照缺字段不受影响', () => {
     const path = join(mkdtempSync(join(tmpdir(), 'shiguang-usage-')), 'usage.json')
     const store = new CursorUsageStore(path)
+    const ledgered = projectUsage('ledgered-sampled', { turns: { g1: {
+      inputTokens: 45_000, outputTokens: 500, cacheReadTokens: 40_000, cacheWriteTokens: 5_000,
+      estimatedCostUsd: 0.11, price: priceForModel('claude-fable-5-1'), exact: false, lastUsed: 45_000, at: 7_000
+    } } })
     store.save({
       'sampled': {
         composerId: 'sampled', turns: 3, inputTokens: 90_000, outputTokens: 0,
@@ -123,10 +127,14 @@ describe('CursorUsageStore', () => {
         composerId: 'event-based', turns: 1, inputTokens: 1_000, outputTokens: 200,
         cacheReadTokens: 0, cacheWriteTokens: 0,
         estimatedCostUsd: 0.006, pricedModel: 'GPT', lastTurnAt: 8_000
-      }
+      },
+      'ledgered-sampled': { ...ledgered, contextLastUsed: 45_000 }
     })
     const loaded = store.load()
     expect(loaded['sampled']?.contextLastUsed).toBe(31_000)
     expect(loaded['event-based']?.contextLastUsed).toBeUndefined()
+    // V3 账本行：投影重建后基线仍随行恢复，回合内 lastUsed 也原样保留。
+    expect(loaded['ledgered-sampled']?.contextLastUsed).toBe(45_000)
+    expect(loaded['ledgered-sampled']?.ledger?.turns.g1?.lastUsed).toBe(45_000)
   })
 })

@@ -23,13 +23,15 @@ describe('V3 native-turn accounting', () => {
     tracker.dispose()
   })
 
-  it('不同 generation 数值相同也独立累计；乱序结算旧回合不覆盖新回合', () => {
+  it('不同 generation 数值相同也独立累计；新回合首样本承接跨回合基线；乱序结算旧回合不覆盖新回合', () => {
     const tracker = new CursorUsageTracker()
     tracker.recordRequestSample(sample(1000, 'g1', 1))
     tracker.recordRequestSample(sample(1000, 'g2', 2))
     tracker.record(exact('g1'))
-    const estimatedOutput = estimateUsageFromReference(1000, 'gpt-5', priceForModel('gpt-5')).outputTokens
-    expect(tracker.getSnapshot().c).toMatchObject({ inputTokens: 13168, outputTokens: 42 + estimatedOutput, turns: 2, quality: 'mixed' })
+    // g2 首样本承接 g1 的基线 1000：读数无增长 → 全量计缓存读、无输出估算（不再按全量重新拆分）。
+    expect(tracker.getSnapshot().c).toMatchObject({ inputTokens: 13168, outputTokens: 42, turns: 2, quality: 'mixed' })
+    expect(tracker.getSnapshot().c?.ledger?.turns.g2).toMatchObject({ inputTokens: 1000, cacheReadTokens: 1000, cacheWriteTokens: 0, outputTokens: 0 })
+    expect(tracker.getSnapshot().c?.contextLastUsed).toBe(1000)
     tracker.record(exact('g2'))
     expect(tracker.getSnapshot().c).toMatchObject({ inputTokens: 24336, outputTokens: 84, turns: 2, quality: 'exact' })
     tracker.dispose()

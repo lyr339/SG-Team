@@ -26,7 +26,7 @@ function sessionUsage(value: unknown, composerId: string): CursorSessionUsage | 
   const cacheWriteTokens = finiteNonNegative(row.cacheWriteTokens)
   const estimatedCostUsd = finiteNonNegative(row.estimatedCostUsd)
   const lastTurnAt = finiteNonNegative(row.lastTurnAt)
-  // 请求级采样基线：缺失（事件通道会话/旧版本快照）= undefined，存在则随快照恢复
+  // 请求级采样基线（跨回合增量基线）：缺失（事件通道会话/旧快照）= undefined，存在则随快照恢复
   const contextLastUsed = finiteNonNegative(row.contextLastUsed)
   if (
     turns === undefined || inputTokens === undefined || outputTokens === undefined
@@ -55,7 +55,9 @@ function sessionUsage(value: unknown, composerId: string): CursorSessionUsage | 
         || (turn.lastUsed !== undefined && (!Number.isSafeInteger(turn.lastUsed) || turn.lastUsed < 0))) return undefined
       Object.defineProperty(ledger.turns, id, { value: structuredClone(turn), enumerable: true, writable: true, configurable: true })
     }
-    return projectUsage(composerId, ledger, slotId)
+    const projected = projectUsage(composerId, ledger, slotId)
+    // 账本投影不含采样基线，单独随行恢复——重启后新样本才能继续按增量记账。
+    return contextLastUsed === undefined ? projected : { ...projected, contextLastUsed: Math.floor(contextLastUsed) }
   }
   return {
     quality: 'legacy',
