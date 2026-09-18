@@ -26,7 +26,29 @@ describe('Windows Cursor executable resolution', () => {
   const bundleIn = (root: string) => `${root}\\resources\\app\\out\\vs\\workbench\\workbench.desktop.main.js`
 
   it.skipIf(process.platform !== 'win32')('resolves an actual process in a custom Unicode folder through Windows PowerShell', async (context) => {
-    const exec = (file: string, args: string[]) => promisify(execFile)(file, args, { timeout: 5000, windowsHide: true })
+    // exec 超时 20s 而非 5s：09-18 main 两连红（7001bee / e25321a）都是本用例在 windows-latest 上收到 undefined，
+    // 相关代码零改动、同一 run 里 knip 从 10s 慢到 25s / 72s——整台 VM 慢，PowerShell 启动 + Get-Process 超过 5s
+    // 被 runningCursorWindowsExecutable 按「探测失败」吞成 undefined，回退到不存在的候选目录后断言只剩 undefined，
+    // CI retry 落在同一台 VM 再挂一次。20s 与 vitest.config testTimeout 放宽的慢盘前科同理。
+    // calls 记录每次真实 PowerShell 调用的脚本、耗时、首行输出或失败原因，断言失败时随消息进 annotation，下次不用再猜。
+    const calls: string[] = []
+    const firstLine = (text: string) => text.split(/\r?\n/).map(line => line.trim()).find(Boolean)
+    const exec = async (file: string, args: string[]) => {
+      const label = `${file} ${args.at(-1)?.split(';').at(-1)?.trim().split(' ')[0] ?? ''}`
+      const started = Date.now()
+      try {
+        const result = await promisify(execFile)(file, args, { timeout: 20_000, windowsHide: true })
+        const stderr = firstLine(result.stderr)
+        calls.push(`${label} ok in ${Date.now() - started}ms → ${firstLine(result.stdout) ?? '<empty>'}${stderr ? ` (stderr: ${stderr})` : ''}`)
+        return result
+      } catch (error) {
+        const cause = error as Error & { code?: unknown; killed?: boolean }
+        // 未找到进程时 -Command 的 $? 为 false → powershell.exe 以 1 退出（而非空输出），与超时被 kill 区分开。
+        const reason = cause.killed ? 'killed (exec timeout)' : typeof cause.code === 'number' ? `exit ${cause.code}` : String(cause.code ?? cause.message)
+        calls.push(`${label} failed in ${Date.now() - started}ms: ${reason}`)
+        throw error
+      }
+    }
     if (await runningCursorWindowsExecutable(exec)) context.skip()
     const root = mkdtempSync(join(tmpdir(), 'sg 路径验证 '))
     const executable = join(root, 'Cursor.exe')
@@ -39,14 +61,16 @@ describe('Windows Cursor executable resolution', () => {
         child.once('exit', () => reject(new Error('fixture exited before ready')))
       })
       // 无 bundle 时仍指向运行中的自定义安装，不误选机器上的其他副本。
-      expect(await resolveWindowsCursorWorkbench(exec)).toBe(bundleIn(root))
+      expect(await resolveWindowsCursorWorkbench(exec), `PowerShell calls: ${calls.join(' | ')}`).toBe(bundleIn(root))
     } finally {
       if (child.pid && child.exitCode === null) {
         await new Promise<void>(resolve => { child.once('exit', () => resolve()); child.kill() })
       }
       rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
-  }, 30000)
+    // 最坏路径三次 20s 的 PowerShell（skip 探测 + running 探测 + 注册表查询）= 60s，再加拷贝 node.exe 与拉起；
+    // 沿用 30s 会先于断言掐掉，只剩一个没有诊断的 timeout。
+  }, 90_000)
 
   it('targets the running D-drive install even if a C-drive copy exists or the running bundle is missing', async () => {
     let calls = 0
