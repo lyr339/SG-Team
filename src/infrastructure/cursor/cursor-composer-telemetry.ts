@@ -27,7 +27,6 @@ import type {
   CursorModelVariant
 } from '../../domain/cursor-model'
 import type { RuntimeBinding } from '../../domain/team-control'
-import { CHANNEL_KEEPALIVE_TIMEOUT_MS } from '../../domain/channel-message'
 import {
   BINDING_MARKER_PATTERN,
   cursorComposerBindingMarker,
@@ -58,12 +57,6 @@ const RECENT_TRANSCRIPT_GRACE_MS = 30_000
 // （构建/测试可达数分钟）执行期间暂停增长属正常——宽限期内不构成死亡证据
 const WORK_ACTIVITY_GRACE_MS = 5 * 60_000
 const MAX_PROJECT_DIRS = 512
-// 僵尸轮询硬上限：传输层声称 keepalive/waiting，但通道转录沉默超过该时长——按原设计视为矛盾，
-// 判定为认证失效的僵尸会话。上限跟随 keepalive 窗口（窗口 + 模型间隙），窗口拉长时不至于更早误判。
-// 注意（2026-09-13 实测，Cursor 3.6）：转录并不在每个 check_messages 周期落盘，而是在回合结束时
-// 才写全——6 个健康待命席位的转录在 70 分钟里都停在开场那 1KB。因此这条判定对持续会话几乎总会
-// 命中；它只影响 channelActivities 的注记文案，verifyAgentRuntime 在 MCP 心跳新鲜时不据此判离线。
-const CHANNEL_POLL_SILENCE_MS = CHANNEL_KEEPALIVE_TIMEOUT_MS + 60_000
 const CHANNEL_SCAN_MAX_FILES = 48
 /** 通道活性属于 presence 证据，不需要跟 250ms 流式正文同频；1s 足以判断监听状态。 */
 const DEFAULT_CHANNEL_ACTIVITY_POLL_MS = 1_000
@@ -1128,10 +1121,11 @@ function listTranscriptFiles(projectsRoot: string): { path: string; modifiedAt: 
 }
 
 /**
- * 通道级产出活性判定。正面停止证据才允许判 stopped：
- * - record_reply 收尾 = Agent 明确退出「回复 → 再监听」循环（与 composerActivity 同规则）；
- * - 转录沉默超僵尸上限 = 与传输层轮询保活声称直接矛盾（真实轮询每次都会写转录）。
- * 其余（无动作、沉默未达上限）一律 unknown——证据缺失不构成死亡证据。
+ * 通道级产出活性判定。只有正面停止证据才允许判 stopped：record_reply 收尾 = Agent 明确退出
+ * 「回复 → 再监听」循环（与 composerActivity 同规则）。其余（无动作、转录沉默）一律 unknown——
+ * 证据缺失不构成死亡证据。曾有一条「转录沉默超过 keepalive 窗口即判僵尸」的规则：Cursor 3.6 的
+ * 持久会话只在回合结束时落盘转录（2026-09-13 实测：6 个健康待命席位 70 分钟里转录都停在开场
+ * 1KB），该规则对每个长命席位都会命中、只产生一行注记，2026-09-18 删除。
  */
 function channelActivityFromSignals(
   channelId: string,
@@ -1150,15 +1144,7 @@ function channelActivityFromSignals(
   if (action.kind === 'record_reply') {
     return { channelId, state: 'stopped', detail: '通道会话已同步最后回复并停止监听（转录不再增长）', observedAt }
   }
-  if (age >= CHANNEL_POLL_SILENCE_MS) {
-    return {
-      channelId,
-      state: 'stopped',
-      detail: '通道转录长时间无产出，与传输层轮询保活矛盾（疑似认证失效的僵尸会话）',
-      observedAt
-    }
-  }
-  return { channelId, state: 'unknown', detail: '通道会话产出暂停，未达僵尸判定上限', observedAt }
+  return { channelId, state: 'unknown', detail: '通道会话转录暂停增长（持久会话只在回合结束时落盘，沉默不构成停止证据）', observedAt }
 }
 
 function uniqueCandidates(

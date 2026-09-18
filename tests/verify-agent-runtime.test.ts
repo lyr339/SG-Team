@@ -316,7 +316,7 @@ describe('证据缺失不再一票否决传输层活性（实机回归：Agent �
   })
 })
 
-describe('unbound channel zombie detection via channel-level transcript evidence', () => {
+describe('unbound channel projection against channel-level transcript evidence', () => {
   function teamWithoutComposer(status: TeamControlState['runs'][number]['status']): TeamControlState {
     const base = team(status)
     return {
@@ -355,7 +355,7 @@ describe('unbound channel zombie detection via channel-level transcript evidence
       bridgeSnapshot(),
       teamWithoutComposer('running'),
       telemetryWithChannelActivities({
-        '1': { channelId: '1', state: 'stopped', detail: '通道转录长时间无产出，与传输层轮询保活矛盾（疑似认证失效的僵尸会话）' }
+        '1': { channelId: '1', state: 'stopped', detail: '通道会话已同步最后回复并停止监听（转录不再增长）' }
       })
     )
     expect(snapshot.sessions[0]).toMatchObject({ status: 'waiting', online: true, connected: true })
@@ -375,7 +375,7 @@ describe('unbound channel zombie detection via channel-level transcript evidence
       offline,
       teamWithoutComposer('running'),
       telemetryWithChannelActivities({
-        '1': { channelId: '1', state: 'stopped', detail: '通道转录长时间无产出，与传输层轮询保活矛盾（疑似认证失效的僵尸会话）' }
+        '1': { channelId: '1', state: 'stopped', detail: '通道会话已同步最后回复并停止监听（转录不再增长）' }
       })
     )
     expect(snapshot.sessions[0]).toMatchObject({ status: 'offline', online: false })
@@ -396,7 +396,7 @@ describe('unbound channel zombie detection via channel-level transcript evidence
   it('keeps the previous degraded-online behavior when channel evidence is missing or inconclusive', () => {
     for (const channelActivities of [
       undefined,
-      { '1': { channelId: '1', state: 'unknown', detail: '通道会话产出暂停，未达僵尸判定上限' } }
+      { '1': { channelId: '1', state: 'unknown', detail: '通道会话转录暂停增长（持久会话只在回合结束时落盘，沉默不构成停止证据）' } }
     ] as CursorTelemetrySnapshot['channelActivities'][]) {
       const running = verifyAgentRuntime(
         bridgeSnapshot(),
