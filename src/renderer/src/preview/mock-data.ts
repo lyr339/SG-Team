@@ -342,6 +342,8 @@ export const desktopSnapshot: DesktopSnapshot = {
     attempt: 0,
     lastError: ''
   },
+  // 过程流链路健康：占位走「正在规划下一步」开场，而不是链路诊断降级。
+  nativeProcessStream: { state: 'connected', detail: 'hook v35 已附着', updatedAt: NOW },
   sessions,
   conversations,
   liveProcess: {

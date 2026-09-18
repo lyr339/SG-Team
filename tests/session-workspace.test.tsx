@@ -193,6 +193,18 @@ describe('SessionWorkspace', () => {
     expect(html).not.toContain('实时过程中 ·')
   })
 
+  it('过程流链路健康时开场占位是「正在规划下一步」流光，而不是系统腔提示', () => {
+    const html = renderWorkspace({
+      session: { status: 'running', waiting: false, connectionPhase: 'processing' },
+      entries: [entry({ id: 'u1', role: 'user', source: 'desktop', text: '继续处理' })],
+      nativeProcessStream: { state: 'connected', detail: 'hook 已附着', updatedAt: 1 }
+    })
+    expect(html).toContain('live-process-planning')
+    expect(html).toContain('正在规划下一步')
+    expect(html).not.toContain('typing-indicator')
+    expect(html).not.toContain('过程流就绪后将在此实时展示')
+  })
+
   it('后台运行但没有用户可见待回复消息时不显示处理中占位', () => {
     const html = renderWorkspace({
       session: { status: 'running', waiting: false, connectionPhase: 'processing' },

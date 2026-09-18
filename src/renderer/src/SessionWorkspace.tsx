@@ -526,14 +526,19 @@ export function SessionWorkspace({
               </div>
             ) : null}
             {idle ? (
-              <>
-                <span className="typing-indicator"><i /><i /><i /></span>
-                <span className={`live-process-idle__hint ${nativeProcessStream?.state !== 'connected' ? 'is-warning' : ''}`}>
-                  {nativeProcessStream?.state === 'connected'
-                    ? '过程流就绪后将在此实时展示'
-                    : `原生过程流${nativeProcessStream?.state === 'reconnecting' ? '正在重连' : '当前不可用'}：${nativeProcessStream?.detail ?? '等待 Cursor 调试连接'}`}
-                </span>
-              </>
+              // 回合开场（已投递、首个过程块未到）：链路健康时说 Agent 在做什么
+              //（Cursor 开场 Planning next moves 的同款表达，文字流光），不再报系统腔的
+              // 「过程流就绪后将在此实时展示」；只有链路真出问题才降级为诊断提示。
+              nativeProcessStream?.state === 'connected' ? (
+                <span className="live-process-planning" role="status">正在规划下一步</span>
+              ) : (
+                <>
+                  <span className="typing-indicator"><i /><i /><i /></span>
+                  <span className="live-process-idle__hint is-warning">
+                    {`原生过程流${nativeProcessStream?.state === 'reconnecting' ? '正在重连' : '当前不可用'}：${nativeProcessStream?.detail ?? '等待 Cursor 调试连接'}`}
+                  </span>
+                </>
+              )
             ) : null}
             {hasProcess ? (
               <ProcessTurnCard

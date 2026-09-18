@@ -1933,6 +1933,7 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
    task-title-shine）——基底为各自文字色的 60% 透明，高光带 2s 线性循环扫过；
    替代原先的脉冲点（用户反馈闪烁烦扰，2026-09-13）。基色沿用既有规则（Thinking 紫 / tool-hue）。 */
 @keyframes process-shine { 0% { background-position: 200% 0; } to { background-position: -200% 0; } }
+.live-process-planning,
 .cursor-native-thought.is-running .cursor-native-thought__head strong,
 .cursor-native-tool.is-running .cursor-native-tool__label > strong,
 .cursor-native-tool.is-running .cursor-native-tool__label > em,
@@ -1956,9 +1957,11 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 .chat-row--continuation { margin-top: -2px; }
 .chat-continuation-caption { display: block; margin: 0 2px 6px; color: var(--text-soft); font-size: var(--fs-11); font-weight: 600; }
 .chat-continuation-caption.is-live { color: var(--accent); }
-/* Agent 已受理、过程流尚未上报时的占位气泡 */
+/* Agent 已受理、首个过程块未到的开场气泡：健康链路一行流光「正在规划下一步」
+  （思考中同款 shine，颜色与 Thought 的三级文字一致）；链路异常才降级为点 + 诊断提示。 */
 .live-process-idle { display: flex; align-items: center; gap: 8px; color: var(--faint); }
 .live-process-idle .typing-indicator { margin-left: 0; }
+.live-process-planning { color: var(--color-text-tertiary); font-size: var(--fs-12); font-weight: 600; letter-spacing: -.01em; }
 .live-process-idle__hint { font-size: var(--fs-10); }
 .live-process-idle__hint.is-warning { color: var(--color-text-warning); }
 .cursor-native-process__truncated, .process-turn__truncated { margin: 0; padding: 7px 9px; color: var(--color-text-warning); background: var(--color-background-warning); border: var(--border-width-regular) solid var(--color-border-warning); border-radius: 8px; font-size: var(--fs-10); }
@@ -2337,6 +2340,7 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 
 @media (prefers-reduced-motion: reduce) {
   /* 进行中标题的流光回到静态实色；todo 的 spinner、新条目淡入与进度段流光箭头同样属于可减 motion */
+  .live-process-planning,
   .cursor-native-thought.is-running .cursor-native-thought__head strong,
   .cursor-native-tool.is-running .cursor-native-tool__label > strong,
   .cursor-native-tool.is-running .cursor-native-tool__label > em,
