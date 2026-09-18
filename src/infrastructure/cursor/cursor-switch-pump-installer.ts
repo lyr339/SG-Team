@@ -6,7 +6,7 @@ import { promisify } from 'node:util'
 import type { CursorSwitchPumpOutcome, CursorSwitchPumpStatus } from '../../domain/cursor-switch-pump'
 import { writeStoreFileSync } from '../fs/store-file'
 import { cursorWorkbenchBundleCandidates, locateCursorWorkbenchBundle } from './cursor-install-paths'
-import { resolveWindowsCursorWorkbench } from './cursor-windows-launch'
+import { WINDOWS_POWERSHELL_PROBE_TIMEOUT_MS, resolveWindowsCursorWorkbench } from './cursor-windows-launch'
 
 const execFileAsync = promisify(execFile)
 
@@ -417,7 +417,7 @@ export class CursorSwitchPumpInstaller {
       located = await this.options.locateBundle()
     } else if ((this.options.platform ?? process.platform) === 'win32') {
       located = await resolveWindowsCursorWorkbench((file, args) =>
-        execFileAsync(file, args, { timeout: 5000, maxBuffer: 1024 * 1024, windowsHide: true }))
+        execFileAsync(file, args, { timeout: WINDOWS_POWERSHELL_PROBE_TIMEOUT_MS, maxBuffer: 1024 * 1024, windowsHide: true }))
     } else {
       located = locateCursorWorkbenchBundle()
     }

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import {
+  WINDOWS_POWERSHELL_PROBE_TIMEOUT_MS,
   cursorWindowsExecutableCandidates,
   cursorWindowsStartCommand,
   describeWindowsCdpStartFailure,
@@ -26,10 +27,11 @@ describe('Windows Cursor executable resolution', () => {
   const bundleIn = (root: string) => `${root}\\resources\\app\\out\\vs\\workbench\\workbench.desktop.main.js`
 
   it.skipIf(process.platform !== 'win32')('resolves an actual process in a custom Unicode folder through Windows PowerShell', async (context) => {
-    // exec 超时 20s 而非 5s：09-18 main 两连红（7001bee / e25321a）都是本用例在 windows-latest 上收到 undefined，
-    // 相关代码零改动、同一 run 里 knip 从 10s 慢到 25s / 72s——整台 VM 慢，PowerShell 启动 + Get-Process 超过 5s
-    // 被 runningCursorWindowsExecutable 按「探测失败」吞成 undefined，回退到不存在的候选目录后断言只剩 undefined，
-    // CI retry 落在同一台 VM 再挂一次。20s 与 vitest.config testTimeout 放宽的慢盘前科同理。
+    // exec 超时用生产同一个预算而非曾经的 5s：09-18 main 两连红（7001bee / e25321a）都是本用例在 windows-latest 上
+    // 收到 undefined，相关代码零改动、同一 run 里 knip 从 10s 慢到 25s / 72s——整台 VM 慢，PowerShell 启动 + Get-Process
+    // 超过 5s 被 runningCursorWindowsExecutable 按「探测失败」吞成 undefined，回退到不存在的候选目录后断言只剩 undefined，
+    // CI retry 落在同一台 VM 再挂一次。生产（账号切换器、补丁安装器）吞掉超时的后果是漏掉自定义安装，所以预算同源：
+    // 这里用真实 PowerShell 验证的就是用户机上实际生效的那个数。
     // calls 记录每次真实 PowerShell 调用的脚本、耗时、首行输出或失败原因，断言失败时随消息进 annotation，下次不用再猜。
     const calls: string[] = []
     const firstLine = (text: string) => text.split(/\r?\n/).map(line => line.trim()).find(Boolean)
@@ -37,7 +39,7 @@ describe('Windows Cursor executable resolution', () => {
       const label = `${file} ${args.at(-1)?.split(';').at(-1)?.trim().split(' ')[0] ?? ''}`
       const started = Date.now()
       try {
-        const result = await promisify(execFile)(file, args, { timeout: 20_000, windowsHide: true })
+        const result = await promisify(execFile)(file, args, { timeout: WINDOWS_POWERSHELL_PROBE_TIMEOUT_MS, windowsHide: true })
         const stderr = firstLine(result.stderr)
         calls.push(`${label} ok in ${Date.now() - started}ms → ${firstLine(result.stdout) ?? '<empty>'}${stderr ? ` (stderr: ${stderr})` : ''}`)
         return result
@@ -68,9 +70,14 @@ describe('Windows Cursor executable resolution', () => {
       }
       rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
-    // 最坏路径三次 20s 的 PowerShell（skip 探测 + running 探测 + 注册表查询）= 60s，再加拷贝 node.exe 与拉起；
+    // 最坏路径三次探测超时的 PowerShell（skip 探测 + running 探测 + 注册表查询）= 60s，再加拷贝 node.exe 与拉起；
     // 沿用 30s 会先于断言掐掉，只剩一个没有诊断的 timeout。
   }, 90_000)
+
+  it('gives real PowerShell probes at least the budget the slow CI VM needed (5s was swallowed as "not running")', () => {
+    // 5s 在 windows-latest 慢 VM 上不够（09-18 两连红）；低于 20s 的值没有在真实慢机器上验证过。
+    expect(WINDOWS_POWERSHELL_PROBE_TIMEOUT_MS).toBeGreaterThanOrEqual(20_000)
+  })
 
   it('targets the running D-drive install even if a C-drive copy exists or the running bundle is missing', async () => {
     let calls = 0

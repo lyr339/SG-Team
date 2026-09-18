@@ -56,6 +56,16 @@ export function windowsPowerShellCommandArgs(script: string): string[] {
   return ['-NoProfile', '-Command', `${POWERSHELL_UTF8_OUTPUT_PRELUDE}${script}`]
 }
 
+/**
+ * 真实 PowerShell 探测（运行中 Cursor 路径 / 注册表安装位置）交给 execFile 的超时。
+ * 曾是 5s：windows-latest 慢 VM 上 PowerShell 启动 + Get-Process 就超过 5s（09-18 main 两连红，
+ * 同一 job 里 knip 慢了 2.5–7 倍），而下面的探测把超时按「探测失败」吞成 undefined——生产上这意味着
+ * 慢机器（杀软实时扫描、低配、PowerShell 冷启动）上自定义安装位置被漏掉：切号后拉起另一份副本，
+ * 补丁安装器报「未找到 bundle」。20s 只在 PowerShell 真慢时多等，热机上探测仍是百毫秒级。
+ * tests/cursor-windows-launch.test.ts 用同一个值跑真实 PowerShell：这个预算在 CI 的慢 VM 上也必须过。
+ */
+export const WINDOWS_POWERSHELL_PROBE_TIMEOUT_MS = 20_000
+
 const RUNNING_CURSOR_PATH_ARGS = windowsPowerShellCommandArgs(
   'Get-Process -Name Cursor -ErrorAction SilentlyContinue | Where-Object { $_.Path } | Select-Object -First 1 -ExpandProperty Path'
 )

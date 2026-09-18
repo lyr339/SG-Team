@@ -13,7 +13,12 @@ import {
 } from './cursor-desktop-token-exchanger'
 import { cursorUserDataRoot } from './cursor-install-paths'
 import { isCursorMainProcessRunning } from './cursor-process-probe'
-import { cursorWindowsStartCommand, resolveCursorWindowsExecutable, runningCursorWindowsExecutable } from './cursor-windows-launch'
+import {
+  WINDOWS_POWERSHELL_PROBE_TIMEOUT_MS,
+  cursorWindowsStartCommand,
+  resolveCursorWindowsExecutable,
+  runningCursorWindowsExecutable
+} from './cursor-windows-launch'
 
 const execFileAsync = promisify(execFile)
 
@@ -103,6 +108,18 @@ export class CursorAccountSwitcher {
       encoding: 'utf8',
       timeout: 5_000,
       ...options
+    }))
+  }
+
+  /**
+   * Windows 运行路径探测走真实 PowerShell，慢机器上远超 exec 的 5s；超时会被探测吞成 undefined，
+   * 随后拉起就退回候选目录、漏掉自定义安装。只给这一条探测更长预算，taskkill / tasklist / start 仍是 5s。
+   */
+  private get probeExec(): (file: string, args: string[]) => Promise<{ stdout: string }> {
+    return this.options.execFn ?? ((file, args) => execFileAsync(file, args, {
+      encoding: 'utf8',
+      timeout: WINDOWS_POWERSHELL_PROBE_TIMEOUT_MS,
+      windowsHide: true
     }))
   }
 
@@ -243,7 +260,7 @@ export class CursorAccountSwitcher {
     if (!running) return false
     const name = this.cursorProcessName()
     if (this.platform() === 'win32') {
-      this.windowsRunningExecutable = await runningCursorWindowsExecutable(this.exec) ?? this.windowsRunningExecutable
+      this.windowsRunningExecutable = await runningCursorWindowsExecutable(this.probeExec) ?? this.windowsRunningExecutable
       await this.exec('taskkill', ['/F', '/IM', name])
     } else {
       await this.exec('pkill', ['-x', name])
