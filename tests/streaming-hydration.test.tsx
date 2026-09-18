@@ -100,11 +100,14 @@ describe('streaming hydration on session switch（已呈现过的内容不重放
     expect(thoughtBodies()).toEqual([t1.text, t2.text])
 
     // 回合继续：新出现的思考块从空串打字（RC-9：到达时已 done 也播），正文只播增量。
+    // 上一段自动展开的 t2 随新一段开始收起（Cursor 同款，2026-09-18 审查项 2）；
+    // 用户手动展开的 t1 不受影响。
     const t3 = thinking('th:3', '切进来之后新生成的思考，这段应该打字机播放。')
     const grown = `${streamed}然后这一句是切进来之后才生成的。`
     renderWorkspace({ liveProcess: process([t1, t2, t3]), liveAgentResponse: response(grown) })
-    expect(thoughtBodies().slice(0, 2)).toEqual([t1.text, t2.text])
-    expect(thoughtBodies()[2]).toBe('')
+    expect(thoughtBodies()[0]).toBe(t1.text)
+    expect(thoughtBodies()).toHaveLength(2)
+    expect(thoughtBodies()[1]).toBe('')
     expect(responseText()).toBe(streamed)
     let previous = streamed
     for (let round = 0; round < 40; round += 1) {
@@ -113,16 +116,16 @@ describe('streaming hydration on session switch（已呈现过的内容不重放
       expect(current.startsWith(streamed)).toBe(true)
       expect(current.length).toBeGreaterThanOrEqual(previous.length)
       previous = current
-      if (current === grown && thoughtBodies()[2] === t3.text) break
+      if (current === grown && thoughtBodies()[1] === t3.text) break
     }
     expect(responseText()).toBe(grown)
-    expect(thoughtBodies()[2]).toBe(t3.text)
+    expect(thoughtBodies()[1]).toBe(t3.text)
 
-    // complete 到达：静止收尾，不回退、不重放。
+    // complete 到达：静止收尾，不回退、不重放（t2 保持一行「思考」折叠头）。
     renderWorkspace({ liveProcess: { ...process([t1, t2, t3]), generating: false }, liveAgentResponse: response(grown, 'complete') })
     act(() => { vi.advanceTimersByTime(600) })
     expect(responseText()).toBe(grown)
-    expect(thoughtBodies()).toEqual([t1.text, t2.text, t3.text])
+    expect(thoughtBodies()).toEqual([t1.text, t3.text])
   })
 
   it('a viewer already watching still sees the first process frame typed out', () => {
@@ -142,12 +145,14 @@ describe('streaming hydration on session switch（已呈现过的内容不重放
       act(() => root.render(<ProcessTurnCard id="turn:x" blocks={blocks} startedAt={1_000_100} updatedAt={1_000_400} compact live />))
     }
     renderCard([t1])
+    // 挂载时已存在 → 落位不重播（全文直出，而不是从空串打字）。
     expect(thoughtBodies()).toEqual([t1.text])
     const t2 = thinking('th:2', '之后新出现的思考。')
     renderCard([t1, t2])
-    expect(thoughtBodies()[1]).toBe('')
+    // 新一段开始：上一段自动展开的 t1 收起（Cursor 同款），t2 从空串打字。
+    expect(thoughtBodies()).toEqual([''])
     act(() => { vi.advanceTimersByTime(900) })
-    expect(thoughtBodies()).toEqual([t1.text, t2.text])
+    expect(thoughtBodies()).toEqual([t2.text])
   })
 
   it('a response that starts after the viewer arrived types from the first character', () => {

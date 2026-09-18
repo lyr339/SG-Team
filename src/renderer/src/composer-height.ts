@@ -46,6 +46,17 @@ export function dragManualHeight(startHeight: number, startClientY: number, clie
   return clampManualHeight(startHeight + (startClientY - clientY), viewportHeight)
 }
 
+/**
+ * 预算回收：工作区网格放不下（时间线已压到下限、附件条/警示条/错误行等把发送栏推出
+ * 窗口）时，溢出多少就从 textarea 让出多少——输入区里唯一无界的高度来源是 textarea，
+ * 其余（工具条 / 附件条 / 发送栏）都是内容自身的合理高度，不该被裁。
+ * 让到最小高度为止；仍放不下属于窗口小于应用最小尺寸的病理场景，交给外层裁切。
+ */
+export function shrinkComposerHeightByOverflow(height: number, overflowPx: number): number {
+  if (!Number.isFinite(overflowPx) || overflowPx <= 0) return height
+  return Math.max(COMPOSER_TEXTAREA_MIN_HEIGHT, Math.round(height - overflowPx))
+}
+
 export function readStoredComposerHeight(storage: Pick<Storage, 'getItem'> | undefined = safeStorage()): number | undefined {
   try {
     const raw = storage?.getItem(COMPOSER_HEIGHT_STORAGE_KEY)

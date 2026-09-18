@@ -373,7 +373,7 @@ export function SessionWorkspace({
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
     anchor.href = url
-    anchor.download = `wedge-ch${session.channelId}-transcript.md`
+    anchor.download = `shiguang-ch${session.channelId}-transcript.md`
     anchor.click()
     URL.revokeObjectURL(url)
   }
@@ -531,14 +531,19 @@ export function SessionWorkspace({
               </div>
             ) : null}
             {idle ? (
-              <>
-                <span className="typing-indicator"><i /><i /><i /></span>
-                <span className={`live-process-idle__hint ${nativeProcessStream?.state !== 'connected' ? 'is-warning' : ''}`}>
-                  {nativeProcessStream?.state === 'connected'
-                    ? '过程流就绪后将在此实时展示'
-                    : `原生过程流${nativeProcessStream?.state === 'reconnecting' ? '正在重连' : '当前不可用'}：${nativeProcessStream?.detail ?? '等待 Cursor 调试连接'}`}
-                </span>
-              </>
+              // 回合开场（已投递、首个过程块未到）：链路健康时说 Agent 在做什么
+              //（Cursor 开场 Planning next moves 的同款表达，文字流光），不再报系统腔的
+              // 「过程流就绪后将在此实时展示」；只有链路真出问题才降级为诊断提示。
+              nativeProcessStream?.state === 'connected' ? (
+                <span className="live-process-planning" role="status">正在规划下一步</span>
+              ) : (
+                <>
+                  <span className="typing-indicator"><i /><i /><i /></span>
+                  <span className="live-process-idle__hint is-warning">
+                    {`原生过程流${nativeProcessStream?.state === 'reconnecting' ? '正在重连' : '当前不可用'}：${nativeProcessStream?.detail ?? '等待 Cursor 调试连接'}`}
+                  </span>
+                </>
+              )
             ) : null}
             {hasProcess ? (
               <ProcessTurnCard
@@ -801,8 +806,8 @@ export function SessionWorkspace({
           <div className="workspace-timeline__content" ref={follow.contentRef}>
             {timelineItems.length === 0 ? (
               <div className="timeline-empty">
-                <h2>本轮尚无消息</h2>
-                <p>这里只显示当前 TeamRun 的新消息；旧对话仍保留在 Cursor 历史中。</p>
+                <h2>还没有消息</h2>
+                <p>这里只显示本会话的消息；更早的对话仍保留在 Cursor 历史中。</p>
               </div>
             ) : timelineContent}
           </div>

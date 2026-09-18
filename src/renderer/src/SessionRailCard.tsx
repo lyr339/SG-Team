@@ -143,13 +143,21 @@ function SessionRailCardView({
         </span>
         <span className="session-row__line session-row__line--meta">
           <span className="session-row__metrics">
-            {session.changes ? (
+            {/* 零的一侧不显示（与过程卡、本轮文件栏同一规则）；两侧都为零时整个徽记不出现。 */}
+            {session.changes && (session.changes.additions || session.changes.deletions) ? (
               <span
                 className="session-row__changes"
-                title={`Cursor 当前 Composer 实时代码变更：新增 ${session.changes.additions} 行，删除 ${session.changes.deletions} 行`}
-                aria-label={`实时变更，新增 ${session.changes.additions} 行，删除 ${session.changes.deletions} 行`}
+                title={`Cursor 当前 Composer 实时代码变更：${[
+                  session.changes.additions ? `新增 ${session.changes.additions} 行` : '',
+                  session.changes.deletions ? `删除 ${session.changes.deletions} 行` : ''
+                ].filter(Boolean).join('，')}`}
+                aria-label={`实时变更，${[
+                  session.changes.additions ? `新增 ${session.changes.additions} 行` : '',
+                  session.changes.deletions ? `删除 ${session.changes.deletions} 行` : ''
+                ].filter(Boolean).join('，')}`}
               >
-                <b>+{session.changes.additions}</b><em>−{session.changes.deletions}</em>
+                {session.changes.additions ? <b>+{session.changes.additions}</b> : null}
+                {session.changes.deletions ? <em>−{session.changes.deletions}</em> : null}
               </span>
             ) : null}
             {session.queueDepth > 0 ? (

@@ -60,6 +60,11 @@ export function EraseIcon(props: IconProps): React.JSX.Element {
   return <Icon {...props}><path d="m13.5 4.5 6 6L12 18H7.5l-3-3 9-10.5Z" {...stroke} /><path d="M7 19.5h13" {...stroke} /></Icon>
 }
 
+/** 置顶：移到最前（横杠 + 上箭头）。 */
+export function PinTopIcon(props: IconProps): React.JSX.Element {
+  return <Icon {...props}><path d="M5 5h14" {...stroke} /><path d="M12 19.5V9M7.5 13.5 12 9l4.5 4.5" {...stroke} /></Icon>
+}
+
 export function HandoffIcon(props: IconProps): React.JSX.Element {
   return <Icon {...props}><path d="M4 8h12.5M13 4.5 16.5 8 13 11.5M20 16H7.5M11 12.5 7.5 16l3.5 3.5" {...stroke} /></Icon>
 }

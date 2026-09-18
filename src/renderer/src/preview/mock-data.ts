@@ -342,6 +342,8 @@ export const desktopSnapshot: DesktopSnapshot = {
     attempt: 0,
     lastError: ''
   },
+  // 过程流链路健康：占位走「正在规划下一步」开场，而不是链路诊断降级。
+  nativeProcessStream: { state: 'connected', detail: 'hook v35 已附着', updatedAt: NOW },
   sessions,
   conversations,
   liveProcess: {
@@ -352,7 +354,7 @@ export const desktopSnapshot: DesktopSnapshot = {
       blocks: [
         { kind: 'thinking', id: 'live-1', text: '正在比对渲染层挂接点与数据契约，确认原生事件顺序与状态翻转……', status: 'done', durationMs: 3_200 },
         { kind: 'message', id: 'live-message', text: '先检查过程卡的实时渲染，再运行浏览器验证。', status: 'done' },
-        // 探索类连续调用 → 折叠为「Explored 3 files, 1 search」组（Cursor detailed 分组）。
+        // 探索类连续调用 → 折叠为「已探索 3 个文件、1 次搜索」组（Cursor detailed 分组）。
         { kind: 'tool', id: 'live-2', toolName: 'ripgrep_raw_search', toolKind: 'search', toolCase: 'grepToolCall', summary: 'process 展示', hint: 'SessionWorkspace.tsx', status: 'done', output: '命中 3 个文件' },
         { kind: 'tool', id: 'live-read', toolName: 'read_file_v2', toolKind: 'read', toolCase: 'readToolCall', summary: 'src/renderer/src/ProcessTurnCard.tsx', hint: 'L120-180', status: 'done' },
         { kind: 'tool', id: 'live-read-2', toolName: 'read_file_v2', toolKind: 'read', toolCase: 'readToolCall', summary: 'src/renderer/src/process-turn-view.ts', hint: 'L1-90', status: 'done' },
@@ -384,7 +386,7 @@ export const desktopSnapshot: DesktopSnapshot = {
             { type: 'added', text: '  if (source) lines = parseStreamingDiff(source)', newLine: 213 }
           ] }
         },
-        // 浏览器 MCP 连续两次 → 「Ran 2 browser actions」组。
+        // 浏览器 MCP 连续两次 → 「已操作浏览器 2 次操作」组。
         { kind: 'tool', id: 'live-3', toolName: 'mcp-user-playwright-browser_navigate', toolKind: 'mcp', toolCase: 'mcpToolCall', summary: 'http://127.0.0.1:5173', status: 'done', output: '页面已加载' },
         { kind: 'tool', id: 'live-3b', toolName: 'mcp-user-playwright-browser_snapshot', toolKind: 'mcp', toolCase: 'mcpToolCall', summary: '', status: 'done', output: '- heading "拾光"' },
         {
@@ -437,7 +439,7 @@ export const desktopSnapshot: DesktopSnapshot = {
             { content: '完成响应式和透明模式走查', status: 'pending' }
           ]
         },
-        // 进行中的思考：头部显示「Thinking」+ 脉冲点；结束后变「Thought for Ns」（上面 live-1）。
+        // 进行中的思考：头部显示「思考中」文字流光；结束后变「思考 N 秒」（上面 live-1）。
         { kind: 'thinking', id: 'live-5', text: '测试全绿，接下来核对右侧工作区在窄栏下的折叠行为，再决定是否需要补一条回归用例……', status: 'running' }
       ]
     }

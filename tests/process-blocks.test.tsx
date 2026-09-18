@@ -54,20 +54,20 @@ describe('ProcessBlocks', () => {
 
     const html = renderToStaticMarkup(<ProcessBlocks blocks={blocks} />)
 
-    // 动词随状态变化（对齐 Cursor 的 Running / Ran / Run），不再是猜测性的「运行验证」。
+    // 动词随状态变化（对齐 Cursor 的 Running / Ran / Run 三态），不再是猜测性的「运行验证」。
     expect(html).toContain('<strong>运行失败</strong>')
     expect(html).toContain('失败')
-    // 组头：进行中取 loading 形态 + 明细计数；预览窗内成员行可见。
+    // 组头：进行中取 loading 形态 + 明细计数（中文文案，2026-09-18 审查项 1）；预览窗内成员行可见。
     expect(html).toContain('cursor-native-group is-explore is-running')
-    expect(html).toContain('<strong>Exploring</strong>')
-    expect(html).toContain('1 search')
+    expect(html).toContain('<strong>探索中</strong>')
+    expect(html).toContain('1 次搜索')
     expect(html).toContain('cursor-native-group__preview')
     expect(html).toContain('已搜索')
-    // 进行中的思考：标题即状态「Thinking」，流光由 CSS 按 is-running 应用（原脉冲点已移除，2026-09-13）
-    expect(html).toContain('<strong>Thinking</strong>')
+    // 进行中的思考：标题即状态「思考中」，流光由 CSS 按 is-running 应用（原脉冲点已移除，2026-09-13）
+    expect(html).toContain('<strong>思考中</strong>')
     expect(html).toContain('cursor-native-thought is-running')
     expect(html).not.toContain('cursor-native-thought__pulse')
-    expect(html).not.toContain('<strong>Thought</strong>')
+    expect(html).not.toContain('<strong>思考</strong>')
     expect(html).toContain('aria-expanded="false"')
   })
 
@@ -297,7 +297,7 @@ describe('ProcessBlocks', () => {
     expect([...container.querySelectorAll('.cursor-native-diff__text')].map((node) => node.textContent)).toEqual(lines)
   })
 
-  it('collapses a finished exploration group to its header and expands members only on demand', () => {
+  it('collapses a finished exploration group to its header and expands members only on demand', async () => {
     const blocks: ProcessBlock[] = [
       { kind: 'tool', id: 'r1', toolName: 'read_file_v2', toolKind: 'read', toolCase: 'readToolCall', summary: '/a.ts', hint: 'L1-20', status: 'done' },
       { kind: 'tool', id: 'r2', toolName: 'read_file_v2', toolKind: 'read', toolCase: 'readToolCall', summary: '/b.ts', status: 'done' },
@@ -306,21 +306,28 @@ describe('ProcessBlocks', () => {
     ]
     const html = renderToStaticMarkup(<ProcessBlocks blocks={blocks} />)
     expect(html).toContain('data-group-id="group:block:r1"')
-    expect(html).toContain('<strong>Explored</strong>')
-    expect(html).toContain('3 files')
+    expect(html).toContain('<strong>已探索</strong>')
+    expect(html).toContain('3 个文件')
     // 已完成的组不带预览窗，成员行折叠不可见；shell 保持独立卡。
     expect(html).not.toContain('cursor-native-group__preview')
     expect(html).not.toContain('/a.ts')
     expect(html).toContain('<strong>跑测试</strong>')
+    // 完成的命令收成一行 `$ 命令`（审查项 2）：输出不再常驻，点头部展开 200px 阅读区。
+    expect(html).toContain('cursor-native-shell__command')
+    expect(html).not.toContain('cursor-native-shell__output')
+    await act(async () => { root.render(<ProcessBlocks blocks={blocks} />) })
+    const shellHead = [...container.querySelectorAll<HTMLButtonElement>('.cursor-native-shell .cursor-native-tool__head')].at(-1)!
+    await act(async () => { shellHead.click() })
+    expect(container.querySelector('.cursor-native-shell__output.is-expanded')?.textContent).toBe('ok')
   })
 
-  it('flips the thinking header to “Thought for …” once the block is done', () => {
+  it('flips the thinking header to “思考 N 秒” once the block is done', () => {
     const html = renderToStaticMarkup(<ProcessBlocks blocks={[
       { kind: 'thinking', id: 'th-done', text: '想清楚了。', status: 'done', durationMs: 38_429 }
     ]} />)
-    expect(html).toContain('<strong>Thought</strong>')
-    expect(html).toContain('for 38s')
-    expect(html).not.toContain('Thinking')
+    expect(html).toContain('<strong>思考</strong>')
+    expect(html).toContain('38 秒')
+    expect(html).not.toContain('思考中')
     expect(html).not.toContain('cursor-native-thought__pulse')
   })
 
@@ -341,16 +348,26 @@ describe('ProcessBlocks', () => {
     expect(html).toContain('过程记录')
   })
 
-  it('shows a state word only while running, on failure, or for questionnaire states', () => {
+  it('leaves the state word to the verb itself; only questionnaire states get the right-side label', () => {
+    // 审查项 6：动词随状态取词（读取中 / 读取失败），右侧不再挂重复的「进行中 / 失败」；
+    // 进行中由行标题流光表达，失败由红色动词与红框表达。
     const running = renderToStaticMarkup(<ProcessBlocks blocks={[
       { kind: 'tool', id: 'r', toolName: 'read_file_v2', toolKind: 'read', summary: '/a.ts', status: 'running' }
     ]} />)
-    // 运行态不再带脉冲点：状态字为静态文字，行标题的流光承担"进行中"表达（2026-09-13）。
-    expect(running).toContain('<span class="cursor-native-tool__state">进行中</span>')
+    expect(running).toContain('<strong>读取中</strong>')
+    expect(running).toContain('is-read is-running')
+    expect(running).not.toContain('cursor-native-tool__state')
     const failed = renderToStaticMarkup(<ProcessBlocks blocks={[
       { kind: 'tool', id: 'f', toolName: 'read_file_v2', toolKind: 'read', summary: '/a.ts', status: 'failed', error: 'ENOENT' }
     ]} />)
-    expect(failed).toContain('<span class="cursor-native-tool__state">失败</span>')
+    expect(failed).toContain('<strong>读取失败</strong>')
+    expect(failed).toContain('is-read is-failed')
+    expect(failed).not.toContain('cursor-native-tool__state')
+    // 未知工具平时以工具名作标题，失败时也必须说出「执行失败」。
+    const failedOther = renderToStaticMarkup(<ProcessBlocks blocks={[
+      { kind: 'tool', id: 'o', toolName: 'custom_probe', toolKind: 'other', summary: 'probe', status: 'failed', error: 'boom' }
+    ]} />)
+    expect(failedOther).toContain('<strong>执行失败</strong>')
   })
 
   it('renders escaped newlines inside process text as real line breaks', () => {
@@ -375,7 +392,7 @@ describe('ProcessBlocks', () => {
     expect(html).not.toContain('\\n')
   })
 
-  it('collapses earlier thoughts and keeps only the latest thought expanded by default', () => {
+  it('collapses earlier thoughts and keeps only the running thought expanded by default', () => {
     const html = renderToStaticMarkup(<ProcessBlocks blocks={[
       { kind: 'thinking', id: 'thought-1', text: '较早的长思考', status: 'done' },
       { kind: 'thinking', id: 'thought-2', text: '当前最新思考', status: 'running' }
@@ -384,6 +401,40 @@ describe('ProcessBlocks', () => {
     expect(html).toContain('当前最新思考')
     expect(html).toContain('aria-expanded="false"')
     expect(html).toContain('aria-expanded="true"')
+  })
+
+  it('mounts sealed history fully folded and folds the previous auto-expanded thought when a new step begins', async () => {
+    // 历史轻量（审查项 2）：封口卡挂载时思考一律折叠成一行，不再默认展开最后一段。
+    const sealed = renderToStaticMarkup(<ProcessTurnCard id="turn-sealed" compact blocks={[
+      { kind: 'thinking', id: 'th-a', text: '第一段完整思考', status: 'done', durationMs: 2_000 },
+      { kind: 'thinking', id: 'th-b', text: '最后一段完整思考', status: 'done', durationMs: 1_000 }
+    ]} />)
+    expect(sealed).not.toContain('第一段完整思考')
+    expect(sealed).not.toContain('最后一段完整思考')
+
+    // 直播中：自动展开的上一段思考在新的一段开始时收起（Cursor 同款）；
+    // 用户手动展开过的段落不受自动收起影响。
+    const first: ProcessBlock = { kind: 'thinking', id: 'th-1', text: '第一段直播思考', status: 'running' }
+    await act(async () => { root.render(<ProcessTurnCard id="turn-live" compact live blocks={[first]} />) })
+    // 挂载时已在生成 → 落位直出全文。
+    expect(container.textContent).toContain('第一段直播思考')
+    const second: ProcessBlock = { kind: 'thinking', id: 'th-2', text: '第二段直播思考', status: 'running' }
+    await act(async () => {
+      root.render(<ProcessTurnCard id="turn-live" compact live blocks={[{ ...first, status: 'done', durationMs: 900 }, second]} />)
+    })
+    // 上一段收起（正文不再可见）；新一段展开（is-open，正文由打字机逐帧播出——
+    // 打字节奏由 streaming-hydration / use-streaming-text 用例锁定，这里断言结构）。
+    expect(container.textContent).not.toContain('第一段直播思考')
+    const thoughts = [...container.querySelectorAll('.cursor-native-thought')]
+    expect(thoughts[0]!.className).not.toContain('is-open')
+    expect(thoughts[1]!.className).toContain('is-open')
+    // 用户点开第一段（接管）：下一帧不再被自动收起。
+    const heads = [...container.querySelectorAll<HTMLButtonElement>('.cursor-native-thought__head')]
+    await act(async () => { heads[0]!.click() })
+    await act(async () => {
+      root.render(<ProcessTurnCard id="turn-live" compact live blocks={[{ ...first, status: 'done', durationMs: 900 }, { ...second, text: '第二段直播思考继续增长' }]} />)
+    })
+    expect(container.textContent).toContain('第一段直播思考')
   })
 
   it('returns null for an empty block list', () => {
@@ -396,10 +447,10 @@ describe('ProcessBlocks', () => {
       summary: 'package.json', status: 'done', startedAt: 1_000, completedAt: 1_120,
       timingEstimated: true
     }]} />)
-    expect(html).toContain('观测 ~0.1s')
-    // Cursor 不显示单个工具耗时；采样估算的 ~0.1s 只是噪音，工具行上不再出现。
-    expect(html).not.toContain('<time>~0.1s</time>')
-    expect(html).not.toContain('累计 0.1s')
+    expect(html).toContain('观测 ~0.1 秒')
+    // Cursor 不显示单个工具耗时；采样估算的 ~0.1 秒只是噪音，工具行上不再出现。
+    expect(html).not.toContain('<time>~0.1 秒</time>')
+    expect(html).not.toContain('累计 0.1 秒')
   })
 
   it('keeps the Thought header duration (native or estimated) while tool rows stay duration-free', () => {
@@ -407,8 +458,8 @@ describe('ProcessBlocks', () => {
       { kind: 'thinking', id: 'th', text: '想一想', status: 'done', startedAt: 1_000, completedAt: 13_400, timingEstimated: true },
       { kind: 'tool', id: 'r', toolName: 'read_file_v2', toolKind: 'read', summary: '/a.ts', status: 'done', startedAt: 13_400, completedAt: 13_500, timingEstimated: true }
     ]} />)
-    expect(html).toContain('<time>for ~12s</time>')
-    expect(html).not.toContain('<time>~0.1s</time>')
+    expect(html).toContain('<time>~12 秒</time>')
+    expect(html).not.toContain('<time>~0.1 秒</time>')
   })
 
   it('renders Cursor-native thinking duration and expandable browser/todo actions', () => {
@@ -417,11 +468,11 @@ describe('ProcessBlocks', () => {
       { kind: 'tool', id: 'browser', toolName: 'browser_navigate', toolKind: 'browser', summary: 'http://localhost', output: '页面已加载', status: 'done' },
       { kind: 'tool', id: 'todo', toolName: 'todos', toolKind: 'todo', summary: '待办清单 0/1', todos: [{ content: '视觉验收', status: 'in_progress' }], status: 'running' }
     ]} />)
-    // 单个抓取类调用按 Cursor 规则也成组（非轻探索阈值 1），组头 Explored 1 fetch，成员折叠。
-    expect(html).toContain('<strong>Explored</strong>')
-    expect(html).toContain('1 fetch')
+    // 单个抓取类调用按 Cursor 规则也成组（非轻探索阈值 1），组头「已探索 1 次抓取」，成员折叠。
+    expect(html).toContain('<strong>已探索</strong>')
+    expect(html).toContain('1 次抓取')
     expect(html).not.toContain('<strong>已浏览</strong>')
-    expect(html).toContain('<time>for 3.0s</time>')
+    expect(html).toContain('<time>3.0 秒</time>')
     expect(html).toContain('待办清单 0/1')
     expect(html).toContain('aria-expanded="false"')
   })

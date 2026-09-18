@@ -7,13 +7,18 @@ import { useNow } from './inspector/use-now'
 import { MenuSelect } from './lobby/MenuSelect'
 import { ConfirmSheet } from './run/ConfirmSheet'
 import { removeMembersConsequence, type RemoveMemberFact } from './run/pool-view'
-import { SessionsIcon } from './UiIcons'
+import { EraseIcon, PinTopIcon, SessionsIcon } from './UiIcons'
 import {
   applySessionOrder,
   moveSessionWithinGroup,
   persistSessionOrder,
   readSessionOrder
 } from './session-order'
+import {
+  partitionClearedSessions,
+  persistClearedSessions,
+  readClearedSessions
+} from './session-rail-hidden'
 import {
   buildSessionRailSections,
   sessionRailGroupOf,
@@ -104,6 +109,17 @@ function prefersReducedMotion(): boolean {
 }
 
 /**
+ * 「清除」的唯一判定：已离线且未入组。组内席位（含已离线成员）是组的事实——去留由交接 /
+ * 移出组决定；已清除的独立席位一旦入组或回到线上，同一判定让它自愈回名册（见 partitionClearedSessions）。
+ */
+function isClearableSession(
+  session: Parameters<typeof sessionRailGroupOf>[0] & { channelId: string },
+  groupedChannelIds: ReadonlySet<string>
+): boolean {
+  return sessionRailGroupOf(session) === 'offline' && !groupedChannelIds.has(session.channelId)
+}
+
+/**
  * 折叠一组时的滚动锚定：动画开始前算出终态 scrollTop（见 session-group-collapse.ts），
  * 用与列表收缩同一时长、同一曲线的 rAF 缓动过去。返回取消函数；不需要挪时返回 undefined。
  */
@@ -167,6 +183,9 @@ function isPickKey(event: KeyboardEvent<HTMLElement>): 'toggle' | 'range' | unde
  *
  * 多选（⌘/Ctrl+点击、Shift 范围、行首复选框、⌘/Ctrl+空格）是建组 / 改组的暂态：底部浮动条按选中的
  * 内容给动作——全是独立会话 → 建组 / 加入现有组；含组内会话 → 只能移出。普通点击、Esc、动作完成都清掉它。
+ *
+ * 行上的悬停操作层（置顶 / 清除）是单行快捷面：置顶＝拖到同状态段最前的一键版；清除＝微信式「不显示」，
+ * 只对「独立」段的离线行开放（组内离线成员由组决定去留）。拖拽或多选进行中整层撤下——批量动作归浮动条。
  */
 export function SessionSidebar({
   snapshot,
@@ -178,6 +197,7 @@ export function SessionSidebar({
 }: SessionSidebarProps): React.JSX.Element {
   const [order, setOrder] = useState<string[] | undefined>(() => readSessionOrder())
   const [collapsedGroups, setCollapsedGroups] = useState<ReadonlySet<string>>(() => readCollapsedSections())
+  const [clearedIds, setClearedIds] = useState<string[]>(() => readClearedSessions())
   const [dragOrigin, setDragOrigin] = useState<{ sessionId: string; channelId: string; groupId: string } | null>(null)
   const [insertionIndex, setInsertionIndex] = useState<number | null>(null)
   // 跨分区拖放的放置目标（组头 / 「独立」头）：id + 此刻的判定，拒绝也高亮（红调），落下时才说原因。
@@ -192,9 +212,31 @@ export function SessionSidebar({
   const cancelAnchorRef = useRef<(() => void) | undefined>(undefined)
   const now = useNow(60_000)
 
+  // 组成员的通道号集合：清除只对「独立」段开放——组内席位（含已离线成员）是组的事实，
+  // 去留走交接 / 移出组，不能被一枚名册按钮悄悄藏掉。
+  const groupedChannelIds = useMemo(
+    () => new Set((groupSources ?? []).flatMap((group) => group.channelIds)),
+    [groupSources]
+  )
+  // 「清除」＝微信式不显示：只藏仍离线且未入组的行；回到线上或入了组即自愈可见（见 session-rail-hidden.ts）。
+  // isClearableSession 同时决定行上出不出「清除」钮与已清除的 id 还藏不藏——两处永远一致。
+  const clearedPartition = useMemo(
+    () => partitionClearedSessions(snapshot.sessions, clearedIds, {
+      idOf: (session) => session.id,
+      isClearable: (session) => isClearableSession(session, groupedChannelIds)
+    }),
+    [clearedIds, groupedChannelIds, snapshot.sessions]
+  )
+  // 名单收敛回写：席位复活 / 离开名册后其 id 不再占名单（不改变可见性，只做持久化收敛）。
+  useEffect(() => {
+    if (clearedPartition.prunedIds.length === clearedIds.length) return
+    setClearedIds(clearedPartition.prunedIds)
+    persistClearedSessions(clearedPartition.prunedIds)
+  }, [clearedPartition.prunedIds, clearedIds.length])
+
   const orderedSessions = useMemo(
-    () => applySessionOrder(snapshot.sessions, order, (session) => session.id),
-    [order, snapshot.sessions]
+    () => applySessionOrder(clearedPartition.visible, order, (session) => session.id),
+    [order, clearedPartition.visible]
   )
   const groups = useMemo(
     () => buildSessionRailSections(orderedSessions, groupSources ?? []),
@@ -442,6 +484,30 @@ export function SessionSidebar({
     resetDrag()
   }
 
+  /** 置顶＝拖到同状态段最前的一键版：走同一套顺序机制与持久化，状态排序的语义不被破坏。 */
+  const pinSessionToBandHead = (section: SessionRailSection<(typeof orderedSessions)[number]>, sessionId: string): void => {
+    const band = rankBandOf(section, sessionId)
+    if (!band) return
+    const ids = orderedSessions.map((session) => session.id)
+    const bandIds = section.sessions.slice(band.start, band.end).map((session) => session.id)
+    const next = moveSessionWithinGroup(ids, bandIds, sessionId, 0)
+    if (next.some((id, index) => id !== ids[index])) {
+      setOrder(next)
+      persistSessionOrder(next)
+    }
+  }
+
+  const clearSession = (sessionId: string): void => {
+    const next = [...new Set([...clearedPartition.prunedIds, sessionId])]
+    setClearedIds(next)
+    persistClearedSessions(next)
+  }
+
+  const restoreClearedSessions = (): void => {
+    setClearedIds([])
+    persistClearedSessions([])
+  }
+
   const onListKeyDown = (event: KeyboardEvent<HTMLElement>): void => {
     const target = event.target as HTMLElement | null
     if (!target?.classList.contains('session-row') || !listRef.current) return
@@ -478,7 +544,7 @@ export function SessionSidebar({
       />
       <nav
         ref={listRef}
-        className={`session-list${picked.size ? ' is-picking' : ''}`}
+        className={`session-list${dragOrigin ? ' is-reordering' : ''}${picked.size ? ' is-picking' : ''}`}
         aria-label="Cursor 会话"
         onKeyDown={onListKeyDown}
         onKeyUp={onListKeyUp}
@@ -594,6 +660,10 @@ export function SessionSidebar({
                     const isPicked = picked.has(session.channelId)
                     // 只有同状态段里不止一行才有可重排的余地；独占一段的行拖起来也无处可落。
                     const band = rankBandOf(group, session.id)
+                    // 悬停操作层：置顶只在能动的时候出现（同状态段 >1 行且不在段首）；清除只对「独立」段的
+                    // 离线行开放（组内离线成员由组决定去留：交接 / 移出），正在查看的行先切走再清。
+                    const pinnable = Boolean(band && band.end - band.start > 1 && group.sessions[band.start]?.id !== session.id)
+                    const clearable = isClearableSession(session, groupedChannelIds)
                     return (
                       <div
                         key={session.id}
@@ -631,6 +701,36 @@ export function SessionSidebar({
                           }}
                           onDragEnd={resetDrag}
                         />
+                        {pinnable || clearable ? (
+                          // 行按钮的兄弟节点（不嵌套 button）：悬停 / 行获得焦点时浮现在右上角。
+                          <span className="session-row-actions" role="group" aria-label={`${session.displayName} 的快捷操作`}>
+                            {pinnable ? (
+                              <button
+                                type="button"
+                                className="session-row-actions__button"
+                                title="置顶：移到同状态段最前"
+                                aria-label={`置顶 ${session.displayName}`}
+                                onClick={() => pinSessionToBandHead(group, session.id)}
+                              >
+                                <PinTopIcon />
+                              </button>
+                            ) : null}
+                            {clearable ? (
+                              <button
+                                type="button"
+                                className="session-row-actions__button"
+                                disabled={selected}
+                                title={selected
+                                  ? '正在查看这条会话：先切换到其他会话再清除'
+                                  : '从名册清除这条离线会话（数据保留；席位重新上线会自动回来）'}
+                                aria-label={`清除 ${session.displayName}`}
+                                onClick={() => clearSession(session.id)}
+                              >
+                                <EraseIcon />
+                              </button>
+                            ) : null}
+                          </span>
+                        ) : null}
                       </div>
                     )
                   })}
@@ -651,6 +751,12 @@ export function SessionSidebar({
               : undefined}
           />
         )}
+        {clearedPartition.hidden.length ? (
+          // 清除的安全阀：有隐藏行时名册末尾常驻一行入口，一键全部恢复——不需要进设置页找。
+          <button type="button" className="session-list__restore" onClick={restoreClearedSessions}>
+            已清除 {clearedPartition.hidden.length} 条离线会话 · 恢复显示
+          </button>
+        ) : null}
       </nav>
       {multiSelect && (pickedRows.length || removal || notice) ? (
         // 底部浮动条：session-pane 网格的第三行，名册收缩让位，从不遮挡最后一行。
