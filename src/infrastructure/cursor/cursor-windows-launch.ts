@@ -1,5 +1,7 @@
+import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { win32 } from 'node:path'
+import { promisify } from 'node:util'
 import { CURSOR_CDP_PORT_ENV } from './cursor-cdp-session-creator'
 import { cursorInstallRoots, cursorWorkbenchBundleCandidates } from './cursor-install-paths'
 
@@ -65,6 +67,31 @@ export function windowsPowerShellCommandArgs(script: string): string[] {
  * tests/cursor-windows-launch.test.ts 用同一个值跑真实 PowerShell：这个预算在 CI 的慢 VM 上也必须过。
  */
 export const WINDOWS_POWERSHELL_PROBE_TIMEOUT_MS = 20_000
+
+/** 进程命令注入点（测试替身）；第三个参数只有 Windows 拉起用（原样命令串）。 */
+export type ProcessExecFileFn = (
+  file: string,
+  args: string[],
+  options?: { windowsVerbatimArguments?: boolean }
+) => Promise<{ stdout: string }>
+
+const execFileAsync = promisify(execFile)
+
+/**
+ * 生产默认的进程命令执行器（CDP 重启 / 看门、账号切换器的 PowerShell 探测共用）。
+ * 有界：最慢的一条是 PowerShell 探测，预算即 WINDOWS_POWERSHELL_PROBE_TIMEOUT_MS；其余命令毫秒级返回，
+ * 卡住同样按失败处理，而不是像裸 execFile 那样永远等下去（挂死的 PowerShell 曾能挂住整个 CDP 重启）。
+ * 不闪控制台窗：Electron 主进程没有控制台，裸 execFile 会给 tasklist / taskkill / powershell / cmd 各弹一个黑窗
+ *（windowsHide 在 mac 上无效）。cmd start 拉起的 Cursor 不会继承 SW_HIDE——start 给子进程的 STARTUPINFO
+ * 不带 STARTF_USESHOWWINDOW（09-18 实测：直接子进程 dwFlags=0x101 / wShowWindow=0，经 start 的子进程 dwFlags=0）。
+ */
+export function defaultProcessExecFile(
+  file: string,
+  args: string[],
+  options?: { windowsVerbatimArguments?: boolean }
+): Promise<{ stdout: string }> {
+  return execFileAsync(file, args, { encoding: 'utf8', timeout: WINDOWS_POWERSHELL_PROBE_TIMEOUT_MS, windowsHide: true, ...options })
+}
 
 const RUNNING_CURSOR_PATH_ARGS = windowsPowerShellCommandArgs(
   'Get-Process -Name Cursor -ErrorAction SilentlyContinue | Where-Object { $_.Path } | Select-Object -First 1 -ExpandProperty Path'

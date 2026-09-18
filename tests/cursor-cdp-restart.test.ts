@@ -11,8 +11,10 @@ interface FakeExec {
   failOpen?: boolean
   /** cmd.exe 调用时收到的 spawn 选项（Windows 拉起必须原样传递命令串）。 */
   cmdOptions?: { windowsVerbatimArguments?: boolean }
-  /** Windows 优雅退出是否真的让进程退净（false = 模拟未保存弹窗拦住）。 */
+  /** 优雅退出（taskkill / osascript）是否真的让进程退净（false = 模拟未保存弹窗拦住）。 */
   quitSucceeds: boolean
+  /** mac：osascript quit 被有界执行器超时 kill（Cursor 弹窗未答，AppleScript 一直等）。 */
+  osascriptFails: boolean
   /** 端口未就绪时 Get-CimInstance 回显的 Cursor.exe 命令行；'fail' = PowerShell 查询失败。 */
   commandLines: string[] | 'fail'
 }
@@ -22,6 +24,7 @@ function createHarness(options: {
   portReadyAfter?: number
   failOpen?: boolean
   quitSucceeds?: boolean
+  osascriptFails?: boolean
   commandLines?: string[] | 'fail'
 } = {}) {
   const exec: FakeExec = {
@@ -30,6 +33,7 @@ function createHarness(options: {
     openCalled: false,
     failOpen: options.failOpen,
     quitSucceeds: options.quitSucceeds ?? true,
+    osascriptFails: options.osascriptFails ?? false,
     commandLines: options.commandLines ?? []
   }
   let clock = 0
@@ -55,7 +59,16 @@ function createHarness(options: {
       return { stdout: lines.length ? lines.join('\r\n') : 'INFO: No tasks are running which match the specified criteria.', stderr: '' }
     }
     if (file === 'osascript') {
-      exec.cursorProcesses = 0
+      // quit 事件已送达：进程是否退净只取决于有没有弹窗拦住，与 osascript 自身是否被 kill 无关。
+      if (exec.quitSucceeds) exec.cursorProcesses = 0
+      if (exec.osascriptFails) {
+        // execFile 超时 kill 的真实形状：killed=true、code=null、signal=SIGTERM。
+        const error = new Error('Command failed: osascript -e tell application "Cursor" to quit') as Error & { killed?: boolean; code?: null; signal?: string }
+        error.killed = true
+        error.code = null
+        error.signal = 'SIGTERM'
+        throw error
+      }
       return { stdout: '', stderr: '' }
     }
     if (file === 'taskkill') {
@@ -165,6 +178,39 @@ describe('restartCursorWithCdp', () => {
     const openIndex = harness.exec.calls.findIndex((call) => call.startsWith('open -a Cursor'))
     expect(quitIndex).toBeGreaterThanOrEqual(0)
     expect(openIndex).toBeGreaterThan(quitIndex)
+  })
+
+  it('macOS：osascript quit 被超时 kill 不算失败——进程退净后照常拉起（quit 事件早已送达）', async () => {
+    const harness = createHarness({ cursorProcesses: 2, portReadyAfter: 1, osascriptFails: true })
+    const result = await restartCursorWithCdp({
+      port: 9333,
+      platform: 'darwin',
+      execFileFn: harness.execFileFn as never,
+      fetchFn: harness.fetchFn,
+      sleep: harness.sleep,
+      now: harness.now
+    })
+    expect(result.ok).toBe(true)
+    const quitIndex = harness.exec.calls.findIndex((call) => call.startsWith('osascript'))
+    const openIndex = harness.exec.calls.findIndex((call) => call.startsWith('open -a Cursor'))
+    expect(quitIndex).toBeGreaterThanOrEqual(0)
+    expect(openIndex).toBeGreaterThan(quitIndex)
+  })
+
+  it('macOS：osascript 被 kill 且进程不退（保存弹窗拦住）→ 报退出超时并附 osascript 输出，不拉起第二个实例', async () => {
+    const harness = createHarness({ cursorProcesses: 2, quitSucceeds: false, osascriptFails: true })
+    const result = await restartCursorWithCdp({
+      port: 9333,
+      platform: 'darwin',
+      execFileFn: harness.execFileFn as never,
+      fetchFn: harness.fetchFn,
+      sleep: harness.sleep,
+      now: harness.now
+    })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('未能在限定时间内退出')
+    expect(result.message).toContain('osascript：')
+    expect(harness.exec.calls.some((call) => call.startsWith('open '))).toBe(false)
   })
 
   it('端口一直不就绪 → 明确报错', async () => {

@@ -14,8 +14,8 @@ import {
 import { cursorUserDataRoot } from './cursor-install-paths'
 import { isCursorMainProcessRunning } from './cursor-process-probe'
 import {
-  WINDOWS_POWERSHELL_PROBE_TIMEOUT_MS,
   cursorWindowsStartCommand,
+  defaultProcessExecFile,
   resolveCursorWindowsExecutable,
   runningCursorWindowsExecutable
 } from './cursor-windows-launch'
@@ -107,6 +107,9 @@ export class CursorAccountSwitcher {
     return this.options.execFn ?? ((file, args, options) => execFileAsync(file, args, {
       encoding: 'utf8',
       timeout: 5_000,
+      // Electron 主进程没有控制台：不加这个，tasklist（退出轮询每 300ms 一次）/ taskkill / cmd 各闪一个黑窗。
+      // cmd start 拉起的 Cursor 不受影响——start 给子进程的 STARTUPINFO 不带 SW_HIDE（见 defaultProcessExecFile）。
+      windowsHide: true,
       ...options
     }))
   }
@@ -116,11 +119,7 @@ export class CursorAccountSwitcher {
    * 随后拉起就退回候选目录、漏掉自定义安装。只给这一条探测更长预算，taskkill / tasklist / start 仍是 5s。
    */
   private get probeExec(): (file: string, args: string[]) => Promise<{ stdout: string }> {
-    return this.options.execFn ?? ((file, args) => execFileAsync(file, args, {
-      encoding: 'utf8',
-      timeout: WINDOWS_POWERSHELL_PROBE_TIMEOUT_MS,
-      windowsHide: true
-    }))
+    return this.options.execFn ?? defaultProcessExecFile
   }
 
   private get sleep(): (ms: number) => Promise<void> {

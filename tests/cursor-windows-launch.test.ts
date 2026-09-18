@@ -8,6 +8,7 @@ import {
   WINDOWS_POWERSHELL_PROBE_TIMEOUT_MS,
   cursorWindowsExecutableCandidates,
   cursorWindowsStartCommand,
+  defaultProcessExecFile,
   describeWindowsCdpStartFailure,
   resolveCursorWindowsExecutable,
   resolveWindowsCursorWorkbench,
@@ -77,6 +78,12 @@ describe('Windows Cursor executable resolution', () => {
   it('gives real PowerShell probes at least the budget the slow CI VM needed (5s was swallowed as "not running")', () => {
     // 5s 在 windows-latest 慢 VM 上不够（09-18 两连红）；低于 20s 的值没有在真实慢机器上验证过。
     expect(WINDOWS_POWERSHELL_PROBE_TIMEOUT_MS).toBeGreaterThanOrEqual(20_000)
+  })
+
+  it('default process executor runs a real command and hands back utf8 text (CDP restart / keeper / switcher probe share it)', async () => {
+    // 忘掉 encoding 就会拿到 Buffer，下游 stdout.split 直接炸；用 node 自己当被测命令，三个平台都能跑。
+    const { stdout } = await defaultProcessExecFile(process.execPath, ['-e', 'process.stdout.write("路径 ok")'])
+    expect(stdout).toBe('路径 ok')
   })
 
   it('targets the running D-drive install even if a C-drive copy exists or the running bundle is missing', async () => {

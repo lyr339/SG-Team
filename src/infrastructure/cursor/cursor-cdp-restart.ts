@@ -1,9 +1,9 @@
-import { execFile } from 'node:child_process'
 import { existsSync, statSync } from 'node:fs'
-import { promisify } from 'node:util'
 import {
+  type ProcessExecFileFn,
   countWindowsCursorProcesses,
   cursorWindowsStartCommand,
+  defaultProcessExecFile,
   describeWindowsCdpStartFailure,
   resolveCursorWindowsExecutable,
   runningCursorWindowsExecutable,
@@ -15,8 +15,6 @@ import {
  * 支持 macOS 与 Windows（两平台彻底分离：mac 走 osascript/open，win 走 taskkill/cmd start）。
  * 优雅退出优先，避免强杀丢失未保存状态。
  */
-
-const execFileAsync = promisify(execFile)
 
 const CURSOR_PROCESS_PATTERN = 'Cursor.app/Contents/MacOS/Cursor'
 const QUIT_TIMEOUT_MS = 12_000
@@ -44,14 +42,14 @@ export interface CursorCdpRestartResult {
 export interface CursorCdpRestartOptions {
   port: number
   workspacePath?: string
-  execFileFn?: typeof execFileAsync
+  execFileFn?: ProcessExecFileFn
   fetchFn?: (url: string) => Promise<{ status: number }>
   sleep?: (ms: number) => Promise<void>
   now?: () => number
   platform?: NodeJS.Platform
 }
 
-async function cursorMainProcessCount(execFileFn: typeof execFileAsync, platform: NodeJS.Platform): Promise<number> {
+async function cursorMainProcessCount(execFileFn: ProcessExecFileFn, platform: NodeJS.Platform): Promise<number> {
   if (platform === 'win32') return countWindowsCursorProcesses(execFileFn)
   try {
     const { stdout } = await execFileFn('pgrep', ['-f', CURSOR_PROCESS_PATTERN])
@@ -67,7 +65,8 @@ export async function restartCursorWithCdp(options: CursorCdpRestartOptions): Pr
   if (platform !== 'darwin' && platform !== 'win32') {
     return { ok: false, message: '当前平台不支持自动重启 Cursor（仅 macOS / Windows）；请手动以 --remote-debugging-port 启动' }
   }
-  const execFileFn = options.execFileFn ?? execFileAsync
+  // 默认执行器有界（PowerShell 探测预算）且不闪控制台窗；裸 execFile 曾让挂死的 PowerShell 挂住整个重启。
+  const execFileFn = options.execFileFn ?? defaultProcessExecFile
   // 默认探测必须带超时：裸 fetch 在端口无响应时会挂起，拖延 PORT_READY_TIMEOUT_MS 的退出时机
   const fetchFn = options.fetchFn ?? defaultFetchWithTimeout
   const sleep = options.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
@@ -96,16 +95,23 @@ export async function restartCursorWithCdp(options: CursorCdpRestartOptions): Pr
           quitIssue = summarizeError(error)
         }
       } else {
-        await execFileFn('osascript', ['-e', 'tell application "Cursor" to quit'])
+        // AppleScript quit 在 Cursor 弹出「保存更改？」时会一直等对话框（AppleScript 默认 2 分钟才放弃）；执行器
+        // 有界后到点被 kill 也不是失败——quit 事件早已送达，成败仍只看进程数是否归零，与 Windows taskkill 同一套处理。
+        try {
+          await execFileFn('osascript', ['-e', 'tell application "Cursor" to quit'])
+        } catch (error) {
+          quitIssue = summarizeError(error)
+        }
       }
       const quitDeadline = now() + QUIT_TIMEOUT_MS
       while (now() < quitDeadline && await cursorMainProcessCount(execFileFn, platform) > 0) {
         await sleep(POLL_INTERVAL_MS)
       }
       if (await cursorMainProcessCount(execFileFn, platform) > 0) {
+        const quitTool = platform === 'win32' ? 'taskkill' : 'osascript'
         return {
           ok: false,
-          message: `Cursor 未能在限定时间内退出（可能有未保存的拦截弹窗），请手动关闭后重试${quitIssue ? `；taskkill：${quitIssue}` : ''}`
+          message: `Cursor 未能在限定时间内退出（可能有未保存的拦截弹窗），请手动关闭后重试${quitIssue ? `；${quitTool}：${quitIssue}` : ''}`
         }
       }
     }

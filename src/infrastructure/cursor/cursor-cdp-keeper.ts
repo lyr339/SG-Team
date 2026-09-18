@@ -1,8 +1,6 @@
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
 import type { CursorCdpRestartResult } from './cursor-cdp-restart'
 import { restartCursorWithCdp } from './cursor-cdp-restart'
-import { windowsPowerShellCommandArgs } from './cursor-windows-launch'
+import { type ProcessExecFileFn, defaultProcessExecFile, windowsPowerShellCommandArgs } from './cursor-windows-launch'
 import type { CdpAutoHealEvent } from '../../domain/cursor-cdp'
 
 export type { CdpAutoHealEvent }
@@ -23,8 +21,6 @@ export type { CdpAutoHealEvent }
  * 用户取消后该指纹不再打扰；自动重启产生的新进程若端口仍不就绪也不再重启。
  * 所有外部副作用（进程探测 / fetch / 计时 / 重启）注入化，测试用假时钟驱动。
  */
-
-const execFileAsync = promisify(execFile)
 
 const CURSOR_PROCESS_PATTERN = 'Cursor.app/Contents/MacOS/Cursor'
 /**
@@ -54,7 +50,7 @@ export interface CursorCdpKeeperOptions {
   emit: (event: CdpAutoHealEvent) => void
   workspacePath?: () => string | undefined
   restart?: (port: number, workspacePath?: string) => Promise<CursorCdpRestartResult>
-  execFileFn?: typeof execFileAsync
+  execFileFn?: ProcessExecFileFn
   fetchFn?: (url: string) => Promise<{ status: number }>
   sleep?: (ms: number) => Promise<void>
   now?: () => number
@@ -70,7 +66,7 @@ interface CursorProcess {
 
 export class CursorCdpKeeper {
   private readonly options: CursorCdpKeeperOptions
-  private readonly execFileFn: typeof execFileAsync
+  private readonly execFileFn: ProcessExecFileFn
   private readonly fetchFn: (url: string) => Promise<{ status: number }>
   private readonly sleep: (ms: number) => Promise<void>
   private readonly now: () => number
@@ -85,7 +81,8 @@ export class CursorCdpKeeper {
 
   constructor(options: CursorCdpKeeperOptions) {
     this.options = options
-    this.execFileFn = options.execFileFn ?? execFileAsync
+    // 每 5s 一次的探测走有界执行器：挂死的 PowerShell 只拖住这一轮（按未运行处理），不把看门永远卡住。
+    this.execFileFn = options.execFileFn ?? defaultProcessExecFile
     this.fetchFn = options.fetchFn ?? defaultFetch
     this.sleep = options.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
     this.now = options.now ?? Date.now
