@@ -67,7 +67,7 @@ describe('groupProcessSteps · Cursor detailed 密度分组（Jmd 移植）', ()
   it('folds three consecutive light reads into one Explored group, but leaves two as singles (XUv 阈值 3)', () => {
     const three = itemsOf([read('/a.ts'), read('/b.ts'), read('/c.ts')])
     expect(shape(three)).toEqual(['group(explore:3)'])
-    expect(groupAt(three, 0)).toMatchObject({ action: 'Explored', details: '3 files', status: 'done' })
+    expect(groupAt(three, 0)).toMatchObject({ action: '已探索', details: '3 个文件', status: 'done' })
 
     const two = itemsOf([read('/a.ts'), read('/b.ts')])
     expect(shape(two)).toEqual(['step(read)', 'step(read)'])
@@ -76,7 +76,7 @@ describe('groupProcessSteps · Cursor detailed 密度分组（Jmd 移植）', ()
   it('absorbs a thinking step that follows a groupable tool, but a leading thinking cannot open a group', () => {
     const readThenThink = itemsOf([read('/a.ts'), thinking('看看实现')])
     expect(shape(readThenThink)).toEqual(['group(explore:2)'])
-    expect(groupAt(readThenThink, 0).details).toBe('1 file')
+    expect(groupAt(readThenThink, 0).details).toBe('1 个文件')
 
     const thinkThenRead = itemsOf([thinking('先看文件'), read('/a.ts')])
     expect(shape(thinkThenRead)).toEqual(['step(thinking)', 'step(read)'])
@@ -85,10 +85,10 @@ describe('groupProcessSteps · Cursor detailed 密度分组（Jmd 移植）', ()
   it('counts searches next to files and groups non-light tools at threshold 1', () => {
     const items = itemsOf([grep('foo'), read('/a.ts')])
     expect(shape(items)).toEqual(['group(explore:2)'])
-    expect(groupAt(items, 0).details).toBe('1 file, 1 search')
+    expect(groupAt(items, 0).details).toBe('1 个文件、1 次搜索')
 
     const directories = itemsOf([ls('/src'), ls('/tests'), grep('bar')])
-    expect(groupAt(directories, 0).details).toBe('2 directories, 1 search')
+    expect(groupAt(directories, 0).details).toBe('2 个目录、1 次搜索')
   })
 
   it('keeps shell and edit standalone under detailed density and splits the exploration around them', () => {
@@ -99,12 +99,12 @@ describe('groupProcessSteps · Cursor detailed 密度分组（Jmd 移植）', ()
   it('groups shell calls only under compact density', () => {
     const compact = itemsOf([shell('npm test'), shell('npm run build')], { density: 'compact-grouped' })
     expect(shape(compact)).toEqual(['group(commands:2)'])
-    expect(groupAt(compact, 0)).toMatchObject({ action: 'Ran', details: '2 commands' })
+    expect(groupAt(compact, 0)).toMatchObject({ action: '已运行', details: '2 条命令' })
     // compact 下 edit 与 shell 不混组（Xev）。
     const mixed = itemsOf([shell('npm test'), edit('/a.ts'), edit('/b.ts')], { density: 'compact-grouped' })
     expect(shape(mixed)).toEqual(['step(command)', 'group(edits:2)'])
     const edits = groupAt(mixed, 1)
-    expect(edits).toMatchObject({ action: 'Edited', details: '2 files', fileChangeStats: { additions: 24, deletions: 6 } })
+    expect(edits).toMatchObject({ action: '已编辑', details: '2 个文件', fileChangeStats: { additions: 24, deletions: 6 } })
   })
 
   it('names a single edited file in the header when the name is short enough (iqv=20)', () => {
@@ -114,13 +114,13 @@ describe('groupProcessSteps · Cursor detailed 密度分组（Jmd 移植）', ()
     // compact-all-grouped 才允许混组，此时组头带文件名与 explored 前缀。
     const items = itemsOf([edit('/src/renderer/styles.css', '+4 −1'), read('/a.ts')], { density: 'compact-all-grouped' })
     expect(shape(items)).toEqual(['group(edits:2)'])
-    expect(groupAt(items, 0)).toMatchObject({ action: 'Edited', details: 'styles.css, explored 1 file', fileChangeStats: { additions: 4, deletions: 1 } })
+    expect(groupAt(items, 0)).toMatchObject({ action: '已编辑', details: 'styles.css、探索了 1 个文件', fileChangeStats: { additions: 4, deletions: 1 } })
   })
 
   it('folds two browser MCP calls into a browser-actions group and leaves a lone one standalone', () => {
     const pair = itemsOf([browserMcp('browser_navigate'), browserMcp('browser_click')])
     expect(shape(pair)).toEqual(['group(browser:2)'])
-    expect(groupAt(pair, 0)).toMatchObject({ action: 'Ran', details: '2 browser actions' })
+    expect(groupAt(pair, 0)).toMatchObject({ action: '已操作浏览器', details: '2 次操作' })
     expect(shape(itemsOf([browserMcp('browser_navigate')]))).toEqual(['step(mcp)'])
     // 非浏览器 MCP（team_task）不可归组。
     expect(shape(itemsOf([teamMcp(), teamMcp()]))).toEqual(['step(mcp)', 'step(mcp)'])
@@ -129,7 +129,7 @@ describe('groupProcessSteps · Cursor detailed 密度分组（Jmd 移植）', ()
   it('monitors background tasks: two awaits open a waiting group that keeps absorbing shells and reads until text arrives', () => {
     const items = itemsOf([awaitCall('t1'), awaitCall('t2', 'running'), shell('tail log'), read('/log.txt'), message('后台任务完成了，接下来处理结果。这段正文足够长因此不会被当作短文本吸入任何组里面去。')])
     expect(shape(items)).toEqual(['group(waiting:4)', 'step(message)'])
-    expect(groupAt(items, 0)).toMatchObject({ action: 'Monitoring background tasks', details: '1 complete, 1 active', status: 'running' })
+    expect(groupAt(items, 0)).toMatchObject({ action: '监控后台任务', details: '1 已完成、1 进行中', status: 'running' })
     expect(shape(itemsOf([awaitCall('t1')]))).toEqual(['step(task)'])
   })
 
@@ -145,8 +145,8 @@ describe('groupProcessSteps · Cursor detailed 密度分组（Jmd 移植）', ()
     const growing = itemsOf([first!, second!, thought])
     const grown = itemsOf([first!, second!, { ...thought, status: 'done', durationMs: 1_800 } as ProcessBlock, read('/c.ts')])
     expect(groupAt(growing, 0).id).toBe(groupAt(grown, 0).id)
-    expect(groupAt(growing, 0)).toMatchObject({ status: 'running', action: 'Exploring' })
-    expect(groupAt(grown, 0)).toMatchObject({ status: 'done', action: 'Explored', details: '3 files', thinkingDurationMs: 1_800 })
+    expect(groupAt(growing, 0)).toMatchObject({ status: 'running', action: '探索中' })
+    expect(groupAt(grown, 0)).toMatchObject({ status: 'done', action: '已探索', details: '3 个文件', thinkingDurationMs: 1_800 })
   })
 
   it('never groups a pending ask_question and flushes the activity around it', () => {
@@ -203,10 +203,10 @@ describe('groupProcessSteps · helpers', () => {
   })
 
   it('formats thought duration like Cursor ($md)', () => {
-    expect(thoughtDurationDetails(300)).toBe('briefly')
-    // Cursor 先四舍五入到秒：0.8s → for 1s。
-    expect(thoughtDurationDetails(800)).toBe('for 1s')
-    expect(thoughtDurationDetails(12_400)).toBe('for 12s')
-    expect(thoughtDurationDetails(undefined)).toBe('briefly')
+    expect(thoughtDurationDetails(300)).toBe('片刻')
+    // Cursor 先四舍五入到秒：0.8s → 1 秒。
+    expect(thoughtDurationDetails(800)).toBe('1 秒')
+    expect(thoughtDurationDetails(12_400)).toBe('12 秒')
+    expect(thoughtDurationDetails(undefined)).toBe('片刻')
   })
 })

@@ -36,6 +36,9 @@
   --accent: var(--anthropic-orange);
   --accent-deep: light-dark(#dc4718, #ff8a61);
   --accent-bright: light-dark(#ff6b35, #ff8056);
+  /* 用户气泡底色：白字在两种主题下都 ≥ 4.5:1（--accent-deep 的深色值 #ff8a61 只有 2.3:1，
+     用作大面积文字底色看不清；它继续服务描边 / 文字 / 光带等小面积角色）。 */
+  --accent-bubble: light-dark(#d84010, #b8400f);
   /* 光刃余晖：仅名册选中态的左缘脊线使用；暗色降一档，是余晖不是霓虹。 */
   --accent-glow: light-dark(color-mix(in srgb, var(--accent-bright) 32%, transparent), color-mix(in srgb, var(--accent-bright) 20%, transparent));
   --accent-soft: color-mix(in srgb, var(--anthropic-orange) 16%, var(--color-background-primary));
@@ -1125,7 +1128,7 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 .chat-row.is-grouped .chat-bubble { border-radius: 12px; }
 .chat-row--mine .chat-bubble {
   color: white;
-  background: var(--accent-deep);
+  background: var(--accent-bubble);
   border-color: transparent;
   border-radius: 12px 4px 12px 12px;
   box-shadow: var(--shadow-sm);
@@ -2120,6 +2123,9 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 .cursor-native-tool__state { min-width: 42px; display: inline-flex; justify-content: flex-end; align-items: center; gap: 5px; color: var(--muted); font-size: var(--fs-10); }
 .cursor-native-tool.is-running .cursor-native-tool__state { color: var(--tool-hue, var(--color-text-info)); }
 .cursor-native-tool.is-failed .cursor-native-tool__state { color: var(--red); }
+/* 右侧不再挂重复的「失败」状态词（审查项 6）：失败语义由红色动词/标题承担。 */
+.cursor-native-tool.is-failed .cursor-native-tool__label > strong,
+.cursor-native-tool.is-failed .cursor-native-tool__verb { color: var(--red); }
 .cursor-native-tool__meta > svg { width: 15px; height: 15px; color: var(--muted); }
 .cursor-native-tool > .process-turn-step__details { gap: 10px; padding: 10px 12px 12px; background: var(--color-background-secondary); border-top: var(--border-width-regular) solid var(--color-border-tertiary); }
 .cursor-native-tool > .process-turn-step__details dl { grid-template-columns: 44px minmax(0, 1fr); }
@@ -2386,7 +2392,9 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .ses
 .chat-attachment-file span { color: var(--text); }
 .chat-attachment-file small { color: var(--faint); font-size: var(--fs-10); }
 
-.composer-attachments { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 12px; background: var(--canvas); border-top: var(--border-width-regular) solid var(--line-faint); }
+/* 附件条最多两整行（第三行露出一线作滚动提示），再多内部滚动——它的高度有界，
+   发送栏的可见性不随附件数量变化（预算回收见 ComposerWorkbench 的高度效应）。 */
+.composer-attachments { display: flex; flex-wrap: wrap; gap: 8px; max-height: 142px; padding: 8px 12px; overflow-y: auto; background: var(--canvas); border-top: var(--border-width-regular) solid var(--line-faint); }
 .composer-attachment { position: relative; display: flex; align-items: center; gap: 8px; padding: 6px 28px 6px 8px; background: var(--surface); border: var(--border-width-regular) solid var(--line); border-radius: 8px; max-width: 220px; }
 .composer-attachment-preview { width: 40px; height: 40px; border-radius: 6px; }
 /* 图片缩略图（输入区芯片 / 时间线共用）：可点击查看、右键菜单；描边保证深色截图在深色背景上可辨。 */

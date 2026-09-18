@@ -7,6 +7,7 @@ import {
   dragManualHeight,
   readStoredComposerHeight,
   resolveComposerHeight,
+  shrinkComposerHeightByOverflow,
   storeComposerHeight
 } from '../src/renderer/src/composer-height'
 
@@ -37,6 +38,17 @@ describe('composer height model（内容自适应 + 可拖高）', () => {
     expect(dragManualHeight(120, 500, 380, 900)).toBe(240)
     expect(dragManualHeight(120, 500, 600, 900)).toBe(COMPOSER_TEXTAREA_MIN_HEIGHT)
     expect(dragManualHeight(120, 500, -2_000, 900)).toBe(405)
+  })
+
+  it('yields exactly the grid overflow so the send bar is never pushed out (attachments strip, warning rail…)', () => {
+    // 无溢出：保持模型求得的高度（包括手动高度）。
+    expect(shrinkComposerHeightByOverflow(360, 0)).toBe(360)
+    expect(shrinkComposerHeightByOverflow(360, -20)).toBe(360)
+    expect(shrinkComposerHeightByOverflow(360, Number.NaN)).toBe(360)
+    // 附件条 / 警示条把网格撑溢出：溢出多少让多少。
+    expect(shrinkComposerHeightByOverflow(360, 88)).toBe(272)
+    // 让到最小高度为止，不再进一步（窗口小于最小尺寸的病理场景交给外层）。
+    expect(shrinkComposerHeightByOverflow(120, 500)).toBe(COMPOSER_TEXTAREA_MIN_HEIGHT)
   })
 
   it('persists a manual height and ignores garbage', () => {

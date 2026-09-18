@@ -368,7 +368,7 @@ export function SessionWorkspace({
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
     anchor.href = url
-    anchor.download = `wedge-ch${session.channelId}-transcript.md`
+    anchor.download = `shiguang-ch${session.channelId}-transcript.md`
     anchor.click()
     URL.revokeObjectURL(url)
   }
@@ -782,8 +782,8 @@ export function SessionWorkspace({
           <div className="workspace-timeline__content" ref={follow.contentRef}>
             {timelineItems.length === 0 ? (
               <div className="timeline-empty">
-                <h2>本轮尚无消息</h2>
-                <p>这里只显示当前 TeamRun 的新消息；旧对话仍保留在 Cursor 历史中。</p>
+                <h2>还没有消息</h2>
+                <p>这里只显示本会话的消息；更早的对话仍保留在 Cursor 历史中。</p>
               </div>
             ) : timelineContent}
           </div>

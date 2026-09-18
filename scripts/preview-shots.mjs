@@ -952,6 +952,47 @@ const scenes = [
       })()`
     }]
   },
+  // 满高草稿 + 粘贴附件：textarea 已到视口上限时附件条再插入，发送栏不得被推出窗口
+  //（预算回收：网格溢出多少 textarea 让多少；附件条自身两行封顶内部滚动）。
+  {
+    name: 'composer-attachment-overflow', width: 1280, height: 800, colorScheme: 'light',
+    storage: railStorage(), clip: '.workspace-composer',
+    actions: [{ wait: 400 }, {
+      eval: `(() => {
+        const textarea = document.querySelector('.workspace-composer textarea')
+        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set
+        setter.call(textarea, Array.from({ length: 40 }, (_, i) => '第' + (i + 1) + '行草稿').join('\\n'))
+        textarea.dispatchEvent(new Event('input', { bubbles: true }))
+        return true
+      })()`
+    }, { wait: 200 }, {
+      eval: `(() => {
+        const textarea = document.querySelector('.workspace-composer textarea')
+        const transfer = new DataTransfer()
+        const pixel = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
+        transfer.items.add(new File([pixel], 'pasted-shot-1.png', { type: 'image/png' }))
+        transfer.items.add(new File([pixel], 'pasted-shot-2.png', { type: 'image/png' }))
+        textarea.dispatchEvent(new ClipboardEvent('paste', { clipboardData: transfer, bubbles: true, cancelable: true }))
+        return true
+      })()`
+    }, { wait: 500 }, {
+      label: '附件条插入后发送栏仍完整可见',
+      probe: `(() => {
+        const controls = document.querySelector('.composer-controls').getBoundingClientRect()
+        const strip = document.querySelector('.composer-attachments')
+        const textarea = document.querySelector('.workspace-composer textarea')
+        if (!strip) throw new Error('粘贴的附件没有进入附件条')
+        if (controls.bottom > innerHeight + 0.5) throw new Error('发送栏被推出窗口：bottom ' + Math.round(controls.bottom) + ' > ' + innerHeight)
+        return {
+          attachments: strip.querySelectorAll('.composer-attachment').length,
+          controlsBottom: Math.round(controls.bottom),
+          viewport: innerHeight,
+          textareaH: Math.round(textarea.getBoundingClientRect().height),
+          timelineFloorKept: document.querySelector('.workspace-timeline-wrap').getBoundingClientRect().height >= 144
+        }
+      })()`
+    }]
+  },
   // 「上一轮」保持：新消息刚被取走、Agent 还在想：栏保住上一轮的四个文件并标「上一轮」、降色；审查走「未提交」范围。
   {
     name: 'session-turn-files-previous', width: 1440, height: 900, colorScheme: 'light', query: 'turnfiles=previous',

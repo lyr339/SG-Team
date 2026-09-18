@@ -7,6 +7,7 @@ import {
   dragManualHeight,
   readStoredComposerHeight,
   resolveComposerHeight,
+  shrinkComposerHeightByOverflow,
   storeComposerHeight
 } from './composer-height'
 import { AttachmentThumbnail } from './AttachmentImageViewer'
@@ -210,11 +211,37 @@ export function ComposerWorkbench({
         viewportHeight: window.innerHeight
       })
       textarea.style.height = `${next}px`
+      // 预算回收（2026-09-18 附件把发送栏推出窗口的修复）：视口比例上限只约束
+      // textarea 自身，附件条 / 错误行 / 警示条等其余行不在预算内。工作区网格的
+      // 时间线行压到下限后内容仍放不下时，网格向下溢出、发送栏被推出窗口——
+      // 此处量出真实溢出量并从 textarea 让回去，发送栏永远完整可见。
+      const grid = textarea.closest('.workspace-main')
+      if (grid && grid.clientHeight > 0) {
+        const overflow = grid.scrollHeight - grid.clientHeight
+        const shrunk = shrinkComposerHeightByOverflow(next, overflow)
+        if (shrunk !== next) textarea.style.height = `${shrunk}px`
+      }
     }
     apply()
     window.addEventListener('resize', apply)
-    return () => window.removeEventListener('resize', apply)
-  }, [draft, manualHeight])
+    // 输入区之外的行也会改变预算：警示条出现/消失、停靠区（托盘/文件栏）伸缩、
+    // 附件条换行……观察网格除时间线外的每一行（时间线是 1fr 弹性行，它的变化是
+    // 其他行变化的结果，且直播流式期间尺寸帧帧在变，观察它只会空转）。
+    // apply 幂等：尺寸收敛后 ResizeObserver 不再回调，不会形成循环。
+    const grid = textarea.closest('.workspace-main')
+    const observer = typeof ResizeObserver !== 'undefined' && grid
+      ? new ResizeObserver(apply)
+      : undefined
+    if (observer && grid) {
+      for (const row of Array.from(grid.children)) {
+        if (!row.classList.contains('workspace-timeline-wrap')) observer.observe(row)
+      }
+    }
+    return () => {
+      window.removeEventListener('resize', apply)
+      observer?.disconnect()
+    }
+  }, [draft, manualHeight, attachments.length, attachmentError, pendingAttachmentIntakes, sendError])
 
   const commitManualHeight = (value: number | undefined): void => {
     setManualHeight(value)

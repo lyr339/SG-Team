@@ -286,11 +286,13 @@ function blockStep(raw: ProcessBlock, id: string): ProcessTurnStep {
   // 动词：MCP 用真实工具名（team_task / browser_navigate），计划更新单列，其余先按原生 case
   // 细分（ls / glob / fetch / await …），再回退类别 + 状态取词。
   const verbs = (block.toolCase ? CASE_VERBS[block.toolCase] : undefined) ?? TOOL_VERBS[kind]
+  // 未知工具平时以工具名作标题，但失败时必须由动词说出「执行失败」——
+  // 右侧不再挂重复的状态词（审查项 6），失败语义只能落在这里。
   const verb = mcp?.tool
     ? `${TOOL_VERBS.mcp[block.status]} ${mcp.tool}`
     : block.toolName === 'planUpdate'
       ? (block.status === 'running' ? '更新计划' : '已更新计划')
-      : kind === 'other' && block.toolName && !title ? block.toolName : verbs[block.status]
+      : kind === 'other' && block.toolName && !title && block.status !== 'failed' ? block.toolName : verbs[block.status]
   const details: ProcessStepDetail[] = []
   // 有意图说明时对象不再占头部，但要在明细里第一眼可见。
   if (title && target) details.push({ label: TARGET_LABEL[kind], value: target, kind: 'code' })

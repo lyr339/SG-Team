@@ -33,11 +33,11 @@ interface ProcessTurnCardProps {
 
 function formatDuration(milliseconds?: number): string {
   if (milliseconds === undefined || !Number.isFinite(milliseconds)) return ''
-  if (milliseconds < 1_000) return `${Math.max(0.1, milliseconds / 1_000).toFixed(1)}s`
-  if (milliseconds < 60_000) return `${(milliseconds / 1_000).toFixed(milliseconds < 10_000 ? 1 : 0)}s`
+  if (milliseconds < 1_000) return `${Math.max(0.1, milliseconds / 1_000).toFixed(1)} 秒`
+  if (milliseconds < 60_000) return `${(milliseconds / 1_000).toFixed(milliseconds < 10_000 ? 1 : 0)} 秒`
   const minutes = Math.floor(milliseconds / 60_000)
   const seconds = Math.round((milliseconds % 60_000) / 1_000)
-  return seconds ? `${minutes}m ${seconds}s` : `${minutes}m`
+  return seconds ? `${minutes} 分 ${seconds} 秒` : `${minutes} 分`
 }
 
 /** 组头图标：按组语义取与成员工具同一套图标（探索=搜索、命令=终端、编辑=笔、思考=灯泡、浏览器、等待=时钟）。 */
@@ -113,12 +113,12 @@ function editFileMeta(path: string): { name: string; language: string } {
 }
 
 /**
- * 会话页工具行右侧的状态词：Cursor 不显示单个工具的耗时，完成态由动词本身表达（已读取 / Ran），
- * 只有进行中（脉冲）、失败与问卷状态（等待回答 / 已回答 / 已跳过）才需要额外的状态词。
+ * 会话页工具行右侧的状态词：动词本身随状态取词（读取中 / 已读取 / 读取失败），
+ * 再挂一个「进行中 / 失败」只是同义重复（2026-09-18 审查项 6）——进行中由文字流光表达，
+ * 失败由红色动词与红框表达。只有问卷需要独立的回答状态词（等待回答 / 已回答 / 已跳过）。
  */
 function compactStateText(step: ProcessTurnStep): string {
-  if (step.question) return step.stateText
-  return step.status === 'done' ? '' : step.stateText
+  return step.question ? step.stateText : ''
 }
 
 /**
@@ -153,8 +153,9 @@ function StreamingTextBody({
 
 /**
  * Shell 卡正文（Cursor `ui-shell-tool-call` 同款）：`$ 命令` 着色行 + 输出面板。
- * 折叠态是 5 行定高预览：column-reverse 贴底显示最新输出、顶部渐隐，运行中天然跟随尾部；
- * 展开态 200px 可滚动，运行中每帧贴底，完成后停止跟随、把滚动交还用户。
+ * 运行中输出是 5 行定高预览：column-reverse 贴底显示最新输出、顶部渐隐，天然跟随尾部；
+ * 完成后收成一行 `$ 命令`（历史轻量，2026-09-18 审查项 2），点头部/箭头再展开 200px 可滚动区；
+ * 失败保留输出与错误现场。展开态运行中每帧贴底，完成后停止跟随、把滚动交还用户。
  */
 function ShellBody({
   step,
@@ -169,6 +170,7 @@ function ShellBody({
   const outputRef = useRef<HTMLPreElement | null>(null)
   const running = step.status === 'running'
   const output = shell?.output ?? ''
+  const outputVisible = Boolean(output) && (expanded || running || step.status === 'failed')
   useEffect(() => {
     if (!expanded || !running) return
     const node = outputRef.current
@@ -186,7 +188,7 @@ function ShellBody({
           ))}
         </code>
       ) : null}
-      {output ? (
+      {outputVisible ? (
         <pre
           ref={outputRef}
           className={`cursor-native-shell__output ${expanded ? 'is-expanded' : 'is-preview'}`}
@@ -278,15 +280,17 @@ function ImageBody({ step }: { step: ProcessTurnStep }): React.JSX.Element | nul
   )
 }
 
-/** 工具行提示：编辑类的 `+N −M` 拆成绿 / 红两段（增删语义色），其余原样。 */
+/** 工具行提示：编辑类的 `+N −M` 拆成绿 / 红两段（增删语义色），零的一侧不显示
+ *（与组头、本轮文件栏同一规则），其余原样。 */
 function StepHint({ step }: { step: ProcessTurnStep }): React.JSX.Element | null {
   if (!step.hint) return null
   const stats = step.kind === 'edit' || step.kind === 'write' ? parseFileChangeStats(step.hint) : undefined
   if (!stats) return <span className="cursor-native-tool__hint">{step.hint}</span>
+  if (!stats.additions && !stats.deletions) return null
   return (
     <span className="cursor-native-tool__hint cursor-native-tool__stats">
-      <i data-kind="additions">+{stats.additions}</i>
-      <i data-kind="deletions">−{stats.deletions}</i>
+      {stats.additions ? <i data-kind="additions">+{stats.additions}</i> : null}
+      {stats.deletions ? <i data-kind="deletions">−{stats.deletions}</i> : null}
     </span>
   )
 }
@@ -368,27 +372,47 @@ function ProcessTurnCardImpl({
     return map
   }, [items])
   const [open, setOpen] = useState(defaultOpen)
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => {
-    const lastThinking = [...model.steps].reverse().find((step) => step.kind === 'thinking')
-    return new Set(model.steps
-      .filter((step) => step.id === lastThinking?.id)
-      .map((step) => step.id))
-  })
-  const toggleExpanded = (key: string): void => setExpanded((current) => {
-    const next = new Set(current)
-    if (next.has(key)) next.delete(key)
-    else next.add(key)
-    return next
-  })
-  /** 展开某一步，并连同它所在的组（若有）——右栏定位用。 */
-  const revealStep = (stepId: string): void => setExpanded((current) => {
-    const groupId = groupOfStep.get(stepId)
-    if (current.has(stepId) && (!groupId || current.has(groupId))) return current
-    const next = new Set(current)
-    next.add(stepId)
-    if (groupId) next.add(groupId)
-    return next
-  })
+  /**
+   * 挂载时的默认展开（2026-09-18 审查项 2「历史轻量」）：只有仍在生成中的思考
+   * 首帧即展开（正在发生的必须可见，静态渲染 / 水合同样成立）；已完成的思考一律
+   * 折叠成一行「思考 N 秒」——旧行为把每张历史卡的最后一段思考全文展开，长会话
+   * 的时间线被过程细节挤成文字墙。
+   */
+  const mountRunningThinking = useRef<readonly string[] | null>(null)
+  if (mountRunningThinking.current === null) {
+    mountRunningThinking.current = model.steps
+      .filter((step) => step.kind === 'thinking' && step.status === 'running')
+      .map((step) => step.id)
+  }
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set(mountRunningThinking.current ?? []))
+  /**
+   * 由本组件自动展开、用户尚未接管的步骤：新的一步开始时上一段自动收起，
+   * 回合封口时全部收起——手动展开/收起过的步骤（含右栏定位展开的）不在此集合，
+   * 永远不被自动折叠。
+   */
+  const autoExpandedIds = useRef(new Set<string>(mountRunningThinking.current ?? []))
+  const toggleExpanded = (key: string): void => {
+    autoExpandedIds.current.delete(key)
+    setExpanded((current) => {
+      const next = new Set(current)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+  /** 展开某一步，并连同它所在的组（若有）——右栏定位用；定位展开视为用户接管。 */
+  const revealStep = (stepId: string): void => {
+    autoExpandedIds.current.delete(stepId)
+    setExpanded((current) => {
+      const groupId = groupOfStep.get(stepId)
+      if (groupId) autoExpandedIds.current.delete(groupId)
+      if (current.has(stepId) && (!groupId || current.has(groupId))) return current
+      const next = new Set(current)
+      next.add(stepId)
+      if (groupId) next.add(groupId)
+      return next
+    })
+  }
   /** 已自动展开过的最新步骤：内容继续增长时不与用户的手动收起对抗。 */
   const lastAutoExpanded = useRef<string | null>(null)
   /**
@@ -403,18 +427,34 @@ function ProcessTurnCardImpl({
     : (stepsAtMount.current?.has(step.id) ?? false)
   useEffect(() => {
     if (!live) return
-    // 直播时展开「最新可见的文本内容」：优先运行中的块；Cursor 常把生成中的
+    // 直播时展开「最新可见的文本内容」：优先运行中的文本块；Cursor 常把生成中的
     // Thinking 标记为 done（RC-9），因此最新文本块即使 done 也展开——否则
     // 新内容折叠不可见，用户只能看到整段瞬现的最终结果。
+    // 只针对思考/正文：shell 的 5 行贴底预览与编辑卡的直播 diff 本来就可见，
+    // 自动展开它们只会把卡撑大（历史项 2 的直播侧）。
     const last = model.steps.at(-1)
-    const active = [...model.steps].reverse().find((step) => step.status === 'running')
+    const active = [...model.steps].reverse()
+      .find((step) => step.status === 'running' && (step.kind === 'thinking' || step.kind === 'message'))
       ?? (last && (last.kind === 'thinking' || last.kind === 'message') && last.body ? last : undefined)
     if (!active || lastAutoExpanded.current === active.id) return
-    // 文件卡的直播预览本来就可见；expanded 仅记录手动展开/右栏定位，避免结束后撑开整卡。
-    if (compact && active.kind === 'edit') return
+    const previous = lastAutoExpanded.current
     lastAutoExpanded.current = active.id
-    setExpanded((current) => current.has(active.id) ? current : new Set([...current, active.id]))
-  }, [live, compact, model.steps])
+    autoExpandedIds.current.add(active.id)
+    setExpanded((current) => {
+      const next = new Set(current)
+      // Cursor 同款：新的一步开始时，上一段自动展开的思考随之收起（手动展开的不动）。
+      if (previous && previous !== active.id && autoExpandedIds.current.has(previous)) {
+        next.delete(previous)
+        autoExpandedIds.current.delete(previous)
+      }
+      next.add(active.id)
+      return next
+    })
+  }, [live, model.steps])
+  // 刻意不在 live 翻 false（封口）时收起自动展开的最后一段思考：RC-8 的封口不跳变
+  // 纪律要求尾部继续匀速播完（session-workspace-turn-identity 锁定），观看者正读着的
+  // 内容也不该在落库瞬间消失。历史轻量由「挂载即折叠 + 直播中上一段随新步骤收起」达成：
+  // 重新进入会话时这段思考就是一行「思考 N 秒」。
   // 右栏「定位」到本卡的某一步：先把整卡与该步（及所在组）展开，定位方随后滚动到已展开的节点。
   // 只做准备（返回 undefined），是否找到由定位方判定。
   useEffect(() => subscribeReveal((target) => {
@@ -461,10 +501,10 @@ function ProcessTurnCardImpl({
         return (
           <article key={step.id} className={`cursor-native-thought is-${step.status} ${stepOpen ? 'is-open' : ''} ${nested ? 'is-nested' : ''}`} data-step-id={step.id}>
             <button className="cursor-native-thought__head" onClick={() => toggleExpanded(step.id)} aria-expanded={stepOpen}>
-              {/* 与 Cursor 自身一致：进行中是「Thinking」文字流光，结束后变成「Thought for Ns」。 */}
+              {/* 与 Cursor 的 Thinking / Thought for Ns 同构，文案中文：进行中「思考中」文字流光，结束后「思考 N 秒」。 */}
               {step.status === 'running'
-                ? <strong>Thinking</strong>
-                : <><strong>Thought</strong>{duration ? <time>for {duration}</time> : null}</>}
+                ? <strong>思考中</strong>
+                : <><strong>思考</strong>{duration ? <time>{duration}</time> : null}</>}
               {chevron(stepOpen)}
             </button>
             {stepOpen && step.body ? <StreamingTextBody step={step} live={live} hydrate={hydrated(step)} className="cursor-native-thought__body" /> : null}
@@ -496,10 +536,17 @@ function ProcessTurnCardImpl({
             >
               <span className="cursor-native-edit__language">{file.language}</span>
               <strong>{file.name}</strong>
-              {stats ? (
-                <span className="cursor-native-edit__stats" aria-label={`新增 ${stats.additions} 行，删除 ${stats.deletions} 行`}>
-                  <i data-kind="additions">+{stats.additions}</i>
-                  <i data-kind="deletions">−{stats.deletions}</i>
+              {/* 零的一侧不显示（与组头、本轮文件栏同一规则）：+3 −0 只读作 +3。 */}
+              {stats && (stats.additions || stats.deletions) ? (
+                <span
+                  className="cursor-native-edit__stats"
+                  aria-label={[
+                    stats.additions ? `新增 ${stats.additions} 行` : '',
+                    stats.deletions ? `删除 ${stats.deletions} 行` : ''
+                  ].filter(Boolean).join('，')}
+                >
+                  {stats.additions ? <i data-kind="additions">+{stats.additions}</i> : null}
+                  {stats.deletions ? <i data-kind="deletions">−{stats.deletions}</i> : null}
                 </span>
               ) : null}
             </button>

@@ -119,7 +119,10 @@ describe('SessionWorkspace', () => {
         startedAt: 180_000, updatedAt: 180_100
       }
     })
-    expect(html).toContain('长任务完整过程')
+    // 已完成的思考折叠成一行「思考」头（历史轻量，2026-09-18），过程卡与回答仍在同一回合行。
+    expect(html).toContain('<strong>思考</strong>')
+    expect(html).toContain('data-step-id="block:thought-long"')
+    expect(html).not.toContain('长任务完整过程')
     expect(html).toContain('长任务最终回答')
     expect(html.match(/chat-row chat-row--agent live-process-row[" ]/g)).toHaveLength(1)
   })
@@ -195,7 +198,7 @@ describe('SessionWorkspace', () => {
       session: { status: 'running', waiting: false, connectionPhase: 'processing' },
       entries: []
     })
-    expect(html).toContain('本轮尚无消息')
+    expect(html).toContain('还没有消息')
     expect(html).not.toContain('live-process-idle')
     expect(html).not.toContain('running-placeholder')
   })
@@ -686,9 +689,9 @@ describe('SessionWorkspace', () => {
     expect(html).not.toContain('实时生成中')
   })
 
-  it('空会话显示「本轮尚无消息」空态', () => {
+  it('空会话显示「还没有消息」空态', () => {
     const html = renderWorkspace({ entries: [] })
-    expect(html).toContain('本轮尚无消息')
+    expect(html).toContain('还没有消息')
     expect(html).toContain('timeline-empty')
   })
 
@@ -755,7 +758,9 @@ describe('统一回合时间线（阶段 F：RC-8 turn identity）', () => {
     })
     expect(sealed).toContain('统一身份验证')
     expect(sealed).toContain('最终回答')
-    expect(sealed).toContain('思考完成')
+    // 历史轻量（2026-09-18 审查项 2）：封口后的思考折叠成一行「思考」头，正文点开再看。
+    expect(sealed).toContain('<strong>思考</strong>')
+    expect(sealed).not.toContain('思考完成')
     expect(sealed.match(/chat-row chat-row--agent live-process-row[" ]/g)).toBe(null)
   })
 
@@ -860,8 +865,10 @@ describe('统一回合时间线（阶段 F：RC-8 turn identity）', () => {
       }
     })
     expect(history).not.toContain('Cursor 实时过程')
-    // 历史上下文（immediate）：正文完整直接渲染（静态渲染可见全文）。
-    expect(history).toContain('历史思考内容')
+    // 历史上下文：已完成的思考折叠成一行头（正文点开即全文直出，immediate 语义由
+    // streaming-hydration / use-streaming-text 用例锁定）。
+    expect(history).toContain('<strong>思考</strong>')
+    expect(history).not.toContain('历史思考内容')
   })
 })
 
