@@ -67,7 +67,7 @@ describe('账号卡片：次要操作溢出菜单', () => {
       onStartProUpgrade: async () => {},
       onSwitchLiveAccount: async () => {},
       onRestartWithAccount: async () => {},
-      aozaiStatus: { saved: true } as Props['aozaiStatus'],
+      aozaiStatus: { saved: true, remainingPoints: 87, pointsPerOperation: 3 } as Props['aozaiStatus'],
       onProcessAozaiAccount
     })
 
@@ -78,6 +78,7 @@ describe('账号卡片：次要操作溢出菜单', () => {
 
     await openMenu()
     expect(items()).toEqual(['重新登录', '升级 Pro', '处理'])
+    expect(item('处理').title).toContain('扣 3 点')
 
     await act(async () => item('处理').click())
     expect(onProcessAozaiAccount).toHaveBeenCalledWith('acc-1')

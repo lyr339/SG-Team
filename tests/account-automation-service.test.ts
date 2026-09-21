@@ -104,7 +104,7 @@ function createHarness(options: HarnessOptions = {}) {
         liveSwitchOrder.push('process')
         processCalls.push(token)
         processOptions.push(processOptionsArg)
-        return options.processResult ?? { ok: true, message: '处理完成', remaining: 45 }
+        return options.processResult ?? { ok: true, message: '处理完成', remainingPoints: 45 }
       },
       warmup: async () => {
         warmupCalls.push(1)
@@ -580,12 +580,12 @@ describe('AccountAutomationService', () => {
   })
 
   it('奥仔处理失败 → 中止并保留本地账号', async () => {
-    const harness = createHarness({ processResult: { ok: false, message: '卡密次数用尽' } })
+    const harness = createHarness({ processResult: { ok: false, message: '卡密点数用尽' } })
     cleanup = harness.cleanup
     harness.service.onAllSessionsTriggered('plan-1')
     const run = await waitForTerminal(harness.service)
     expect(run.phase).toBe('failed')
-    expect(run.message).toContain('卡密次数用尽')
+    expect(run.message).toContain('卡密点数用尽')
     expect(run.message).toContain('已保留')
     expect(harness.accounts[0]?.removed).toBeFalsy()
     expect(harness.deleteCalls).toHaveLength(0)

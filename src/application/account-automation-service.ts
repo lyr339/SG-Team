@@ -108,7 +108,7 @@ const RATE_LIMIT_WINDOW_MS = 300_000
  * 账号自动化编排器（玩法 A）：一键创建会话全部提交成功后触发。
  *
  * 链条（每步失败即中止并保留本地账号记录）：
- *   处理前倒计时（可取消；末段预热奥仔登录）→ 奥仔自助处理（扣 1 次）
+ *   处理前倒计时（可取消；末段预热奥仔认证）→ 奥仔自助处理（按服务端规则扣点）
  *   → 加固前倒计时（可取消）→ 秒级删除（首选：浏览器会话内直接删，~3s）
  *   → cookie 轮换（换发新 token 入库后用新会话删除，~15-30s；含退团/限流自愈重试；
  *     轮换超时且旧会话仍有效时兜底直删——奥仔副作用延迟场景）
@@ -164,7 +164,7 @@ export class AccountAutomationService {
     void this.execute(planId)
   }
 
-  /** 两段倒计时均可取消；处理/删除请求已发出后不可中止（奥仔扣次/删号无回滚）。 */
+  /** 两段倒计时均可取消；处理/删除请求已发出后不可中止（奥仔扣点/删号无回滚）。 */
   cancel(): AccountAutomationRun {
     if (this.run.phase !== 'countdown' && this.run.phase !== 'hardening-countdown') return this.getRun()
     this.cancelRequested = true

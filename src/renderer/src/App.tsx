@@ -684,7 +684,7 @@ export function App(): React.JSX.Element {
       setAozaiFeedback({ ok: result.ok, message: result.message })
       setAozaiStatus((previous) => ({
         ...previous,
-        remaining: typeof result.remaining === 'number' ? result.remaining : previous.remaining
+        remainingPoints: typeof result.remainingPoints === 'number' ? result.remainingPoints : previous.remainingPoints
       }))
       // 处理完成 = 档位大概率已变（free → 试用/付费），立即重查被动档位行。
       if (result.ok) void refreshMembership()
@@ -707,7 +707,7 @@ export function App(): React.JSX.Element {
       setAozaiFeedback({ ok: result.ok, message: result.message })
       setAozaiStatus((previous) => ({
         ...previous,
-        remaining: typeof result.remaining === 'number' ? result.remaining : previous.remaining
+        remainingPoints: typeof result.remainingPoints === 'number' ? result.remainingPoints : previous.remainingPoints
       }))
     } catch (reason) {
       setAozaiFeedback({ ok: false, message: userFacingErrorMessage(reason) })

@@ -1054,13 +1054,13 @@ const api: SgDesktopApi = {
       }])
   ),
   getAozaiCardStatus: async () => automationSceneRun
-    ? { saved: true, maskedCode: '••••6l8Q', type: '50次卡', remaining: 46 }
+    ? { saved: true, maskedCode: '••••6l8Q', remainingPoints: 87, maxPoints: 100, pointsPerOperation: 3 }
     : { saved: false },
-  saveAozaiCard: async () => ({ saved: true, maskedCode: '••••6l8Q', type: '50次卡', remaining: 46 }),
+  saveAozaiCard: async () => ({ saved: true, maskedCode: '••••6l8Q', remainingPoints: 87, maxPoints: 100, pointsPerOperation: 3 }),
   clearAozaiCard: async () => ({ saved: false }),
-  refreshAozaiBalance: async () => ({ saved: true, maskedCode: '••••6l8Q', type: '50次卡', remaining: 46 }),
-  processAozaiAccount: async () => ({ ok: true, message: '处理成功', remaining: 45 }),
-  processAozaiToken: async () => ({ ok: true, message: '处理成功', remaining: 45 }),
+  refreshAozaiBalance: async () => ({ saved: true, maskedCode: '••••6l8Q', remainingPoints: 87, maxPoints: 100, pointsPerOperation: 3 }),
+  processAozaiAccount: async () => ({ ok: true, message: '处理成功', remainingPoints: 84 }),
+  processAozaiToken: async () => ({ ok: true, message: '处理成功', remainingPoints: 84 }),
   onAozaiProgress: () => () => {},
   launchAgentSessions: async (requests) => ({
     id: 'preview-launch',

@@ -418,6 +418,7 @@ const scenes = [
   ...['accounts', 'import', 'automation', 'aozai', 'maintenance', 'cleanup'].flatMap(group =>
     ['light', 'dark'].map(colorScheme => ({
       name: `settings-${group}-${colorScheme}`, hash: `account:${group}`,
+      ...(group === 'aozai' ? { query: 'automation=processing' } : {}),
       width: 1440, height: 900, colorScheme, storage: baseStorage({ colorMode: colorScheme }), clip: null
     }))
   ),

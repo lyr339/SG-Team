@@ -9,7 +9,7 @@ type AozaiProps = Pick<SettingsPageProps,
 
 /**
  * 奥仔服务分组：卡密保存/更换、余额刷新、手动 token 处理、处理进度与反馈。
- * 全部结构与文案逐字继承自原 LobbyAccountTile 步骤三。
+ * 点数与单次扣点来自公开 API；字段缺失时明确显示未知，不在前端猜价格。
  */
 export function SettingsAozai({
   aozaiStatus,
@@ -25,6 +25,12 @@ export function SettingsAozai({
   const [cardCode, setCardCode] = useState('')
   const [manualToken, setManualToken] = useState('')
   const aozaiEnabled = Boolean(onSaveAozaiCard)
+  const balanceText = typeof aozaiStatus?.remainingPoints === 'number'
+    ? `剩余 ${aozaiStatus.remainingPoints} 点`
+    : '余额待刷新'
+  const chargeText = typeof aozaiStatus?.pointsPerOperation === 'number'
+    ? `每次 ${aozaiStatus.pointsPerOperation} 点`
+    : '单次扣点以服务端为准'
 
   const submitCard = async (): Promise<void> => {
     if (!onSaveAozaiCard) return
@@ -52,10 +58,10 @@ export function SettingsAozai({
   return (
     <SettingsSection
       title="奥仔自助服务"
-      description="提交奥仔自助服务处理，成功扣 1 次，失败自动退还。"
+      description="处理成功后按服务端规则扣点，失败不扣点。"
       aside={aozaiStatus?.saved ? (
         <span className="settings-section__meta">
-          {aozaiStatus.type ?? '次卡'} · 剩余 {typeof aozaiStatus.remaining === 'number' ? `${aozaiStatus.remaining} 次` : '—'}
+          {balanceText} · {chargeText}
         </span>
       ) : undefined}
     >
@@ -65,7 +71,7 @@ export function SettingsAozai({
             <div className="account-aozai__card">
               <span className="account-aozai__code">{aozaiStatus.maskedCode}</span>
               <span className="account-aozai__meta">
-                {aozaiStatus.type ?? '次卡'} · 剩余 {typeof aozaiStatus.remaining === 'number' ? `${aozaiStatus.remaining} 次` : '—'}
+                点数卡 · {balanceText} · {chargeText}
               </span>
               {onRefreshAozaiBalance ? (
                 <button disabled={aozaiBusy} onClick={() => void onRefreshAozaiBalance()}>刷新余额</button>

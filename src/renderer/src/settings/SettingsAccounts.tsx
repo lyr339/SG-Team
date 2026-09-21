@@ -219,10 +219,13 @@ export function SettingsAccounts({
                     })
                   }
                   if (aozaiEnabled && aozaiStatus?.saved && onProcessAozaiAccount) {
+                    const charge = typeof aozaiStatus.pointsPerOperation === 'number'
+                      ? `扣 ${aozaiStatus.pointsPerOperation} 点`
+                      : '按服务端规则扣点'
                     secondary.push({
                       key: 'aozai',
                       label: aozaiBusy && aozaiProgress?.accountId === account.id ? '处理中…' : '处理',
-                      title: '将此账号的 Session Token 提交奥仔自助服务处理（扣 1 次）',
+                      title: `将此账号的 Session Token 提交奥仔自助服务处理（${charge}）`,
                       disabled: busy || aozaiBusy,
                       onSelect: () => void onProcessAozaiAccount(account.id)
                     })

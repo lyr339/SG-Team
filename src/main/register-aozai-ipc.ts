@@ -6,6 +6,10 @@ import type { AozaiCardStatus, AozaiProgressEvent } from '../domain/aozai-servic
 import { IPC } from '../shared/desktop-api'
 import { assertTrustedSender } from './ipc-security'
 
+function savedStatus(maskedCode: string, info: Awaited<ReturnType<AozaiService['refreshBalance']>>): AozaiCardStatus {
+  return { saved: true, maskedCode, ...info }
+}
+
 function cardCodeOf(value: unknown): string {
   if (typeof value !== 'string' || !value.trim() || value.length > 200) throw new Error('卡密无效')
   return value.trim()
@@ -37,8 +41,7 @@ export function registerAozaiIpc(
     const maskedCode = cardVault.maskedCode()
     if (!maskedCode) return { saved: false }
     if (!refresh) return { saved: true, maskedCode }
-    const info = await service.refreshBalance()
-    return { saved: true, maskedCode, type: info.type, remaining: info.remaining }
+    return savedStatus(maskedCode, await service.refreshBalance())
   }
 
   ipcMain.handle(IPC.aozaiGetCardStatus, (event) => {
@@ -52,12 +55,19 @@ export function registerAozaiIpc(
   ipcMain.handle(IPC.aozaiSaveCard, async (event, value: unknown) => {
     assertTrustedSender(event, getWindow)
     const cardCode = cardCodeOf(value)
+    service.resetAuthorization()
     const info = await service.verifyCard(cardCode)
-    const maskedCode = cardVault.save(cardCode)
-    return { saved: true, maskedCode, type: info.type, remaining: info.remaining } satisfies AozaiCardStatus
+    try {
+      return savedStatus(cardVault.save(cardCode), info)
+    } catch (error) {
+      // 验证成功但本地保存失败时，不得继续持有一张未落盘新卡的 Bearer。
+      service.resetAuthorization()
+      throw error
+    }
   })
   ipcMain.handle(IPC.aozaiClearCard, (event) => {
     assertTrustedSender(event, getWindow)
+    service.resetAuthorization()
     cardVault.clear()
     return { saved: false } satisfies AozaiCardStatus
   })

@@ -22,7 +22,7 @@ describe('奥仔手动处理区', () => {
 
   type Props = Parameters<typeof SettingsAozai>[0]
   const propsFor = (overrides: Partial<Props> = {}): Props => ({
-    aozaiStatus: { saved: true, maskedCode: '••••card', type: '次卡', remaining: 5 },
+    aozaiStatus: { saved: true, maskedCode: '••••card', remainingPoints: 87, maxPoints: 100, pointsPerOperation: 3 },
     aozaiBusy: false,
     onSaveAozaiCard: async () => {},
     onClearAozaiCard: async () => {},
@@ -107,5 +107,20 @@ describe('奥仔手动处理区', () => {
 
     await act(async () => root.render(<SettingsAozai {...propsFor({ onProcessAozaiToken: undefined })} />))
     expect(container.querySelector('.account-aozai__manual')).toBeNull()
+  })
+
+  it('展示服务端点数和动态单次扣点，不再写死次数卡', async () => {
+    await render(propsFor())
+    expect(container.textContent).toContain('剩余 87 点')
+    expect(container.textContent).toContain('每次 3 点')
+    expect(container.textContent).toContain('处理成功后按服务端规则扣点，失败不扣点。')
+    expect(container.textContent).not.toContain('扣 1 次')
+    expect(container.textContent).not.toContain('剩余 87 次')
+  })
+
+  it('API 未返回 points_per_op 时明确显示服务端为准，不猜固定单价', async () => {
+    await render(propsFor({ aozaiStatus: { saved: true, maskedCode: '••••card', remainingPoints: 87 } }))
+    expect(container.textContent).toContain('单次扣点以服务端为准')
+    expect(container.textContent).not.toContain('每次 3 点')
   })
 })

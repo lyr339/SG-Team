@@ -30,7 +30,7 @@ function propsFor(overrides: Partial<SettingsPageProps> = {}): SettingsPageProps
     onRestartWithAccount: async () => {},
     onImportFromLocal: async () => {},
     onImportFromBrowser: async () => {},
-    aozaiStatus: { saved: true, maskedCode: '••••card', type: '次卡', remaining: 5 },
+    aozaiStatus: { saved: true, maskedCode: '••••card', remainingPoints: 87, maxPoints: 100, pointsPerOperation: 3 },
     aozaiBusy: false,
     aozaiError: '',
     onSaveAozaiCard: async () => {},

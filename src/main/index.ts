@@ -304,15 +304,10 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   )
   const aozaiFetch: AozaiFetch = async (url, init) => {
     const response = await fetch(url, init)
-    const headers = response.headers as Headers & { getSetCookie?: () => string[] }
-    const setCookie = typeof headers.getSetCookie === 'function'
-      ? headers.getSetCookie()
-      : (headers.get('set-cookie') ? [headers.get('set-cookie') as string] : [])
     return {
       ok: response.ok,
       status: response.status,
-      json: () => response.json() as Promise<unknown>,
-      getSetCookie: () => setCookie
+      json: () => response.json() as Promise<unknown>
     }
   }
   const aozaiService = new AozaiService(aozaiCardVault, aozaiFetch)
