@@ -356,24 +356,25 @@
 .account-browser__modes > button > i { width: 7px; height: 7px; justify-self: end; background: var(--color-border-secondary); border: 2px solid var(--surface-pure); border-radius: 50%; box-shadow: 0 0 0 1px var(--color-border-tertiary); }
 .account-browser__modes > button.is-active > i { background: var(--accent); box-shadow: 0 0 0 1px var(--accent-border); }
 .account-browser__config { container: account-browser-config / inline-size; display: grid; gap: 7px; padding: 0 8px 8px; }
-.account-browser__connection-row { min-width: 0; display: grid; grid-template-columns: minmax(330px, .95fr) 1px minmax(300px, 1.2fr); align-items: center; gap: 10px; padding: 8px 9px; background: var(--color-background-secondary); border: 1px solid var(--color-border-tertiary); border-radius: 10px; }
-.account-browser__key-cell { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); align-items: center; gap: 8px; }
+.account-browser__connection-row { min-width: 0; display: grid; grid-template-columns: minmax(300px, .88fr) minmax(340px, 1.12fr); align-items: start; gap: 18px; padding: 11px 12px; background: color-mix(in srgb, var(--color-background-secondary) 82%, var(--surface-pure)); border: 1px solid var(--color-border-tertiary); border-radius: 12px; box-shadow: inset 0 1px 0 color-mix(in srgb, var(--surface-pure) 70%, transparent); }
+.account-browser__key-cell { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; gap: 9px; }
 .account-browser__key-cell > span:first-child, .account-browser__window-cell > span:first-child { min-width: 0; display: grid; gap: 2px; }
-.account-browser__key-cell b, .account-browser__window-cell b { color: var(--text-soft); font-size: var(--fs-10); }
+.account-browser__key-cell b, .account-browser__window-cell b { color: var(--text); font-size: var(--fs-10); font-weight: 650; }
 .account-browser__key-cell small, .account-browser__window-cell small { overflow: hidden; color: var(--muted); font-size: var(--fs-10); text-overflow: ellipsis; white-space: nowrap; }
-.account-browser__key-cell code { max-width: 150px; overflow: hidden; padding: 5px 8px; color: var(--color-text-success); background: var(--color-background-success); border: 1px solid color-mix(in srgb, var(--color-border-success) 60%, transparent); border-radius: 7px; font: 600 var(--fs-10)/1 var(--mono); text-overflow: ellipsis; white-space: nowrap; }
-.account-browser__key-controls { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) 76px; align-items: center; gap: 6px; }
-.account-browser__key-input { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-auto-flow: column; grid-auto-columns: auto; align-items: center; gap: 5px; }
-.account-browser__key-saved { min-width: 0; }
+.account-browser__key-cell code { max-width: 190px; overflow: hidden; padding: 7px 10px; color: var(--color-text-success); background: color-mix(in srgb, var(--color-background-success) 78%, var(--surface-pure)); border: 1px solid color-mix(in srgb, var(--color-border-success) 62%, transparent); border-radius: 8px; font: 600 var(--fs-10)/1 var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+.account-browser__key-controls { min-width: 0; display: flex; align-items: center; gap: 6px; }
+.account-browser__key-input { min-width: 0; display: flex; align-items: center; gap: 5px; }
+.account-browser__key-input:not(.account-browser__key-saved) { flex: 1 1 220px; }
+.account-browser__key-saved { flex: 0 1 auto; }
 .account-browser__key-input input { width: 100%; min-width: 0; min-height: 34px; padding: 0 8px; color: var(--text); background: var(--surface-pure); border: 1px solid var(--color-border-tertiary); border-radius: 7px; outline: none; font: var(--fs-10)/1 var(--mono); }
 .account-browser__key-input input:focus { border-color: var(--accent-border-strong); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 8%, transparent); }
 .account-browser__key-input button { white-space: nowrap; min-height: 34px; padding: 0 9px; color: white; background: var(--accent); border: 1px solid var(--accent); border-radius: 7px; font-size: var(--fs-10); font-weight: 650; }
 .account-browser__key-input button.is-secondary { color: var(--text-soft); background: var(--surface-pure); border-color: var(--color-border-tertiary); }
 .account-browser__key-input button.is-secondary:hover:not(:disabled) { color: var(--text); border-color: var(--accent-border-strong); }
-.account-browser__port { min-width: 0; height: 34px; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 4px; padding: 0 6px; color: var(--muted); background: var(--surface-pure); border: 1px solid var(--color-border-tertiary); border-radius: 7px; font-size: var(--fs-10); }
+.account-browser__port { flex: 0 0 88px; min-width: 0; height: 34px; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 4px; padding: 0 7px; color: var(--muted); background: color-mix(in srgb, var(--surface-pure) 76%, transparent); border: 1px solid var(--color-border-tertiary); border-radius: 8px; font-size: var(--fs-10); }
 .account-browser__port input { width: 100%; min-width: 0; padding: 0; color: var(--text); background: transparent; border: 0; outline: none; font: 600 var(--fs-10)/1 var(--mono); text-align: right; }
-.account-browser__divider { width: 1px; height: 34px; background: var(--color-border-tertiary); }
-.account-browser__window-cell { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); align-items: center; gap: 8px; }
+.account-browser__divider { display: none; }
+.account-browser__window-cell { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; gap: 9px; }
 .account-browser__window-controls { min-width: 0; display: flex; align-items: center; gap: 8px; }
 .account-browser__window-controls .menu-select { flex: 1; min-width: 0; }
 .account-browser__window-cell .menu-select__button { min-height: 34px; background: var(--surface-pure); border-radius: 8px; }
@@ -568,7 +569,13 @@
 /* 按连接区实际宽度换行，而不是按整个窗口宽度。 */
 @container account-browser-config (max-width: 640px) {
   .account-browser__connection-row { grid-template-columns: minmax(0, 1fr); }
-  .account-browser__divider { width: 100%; height: 1px; }
+  .account-browser__window-cell { padding-top: 10px; border-top: 1px solid var(--color-border-tertiary); }
+}
+
+@container account-browser-config (max-width: 390px) {
+  .account-browser__key-controls { align-items: stretch; flex-wrap: wrap; }
+  .account-browser__key-input { flex: 1 1 100%; }
+  .account-browser__port { flex-basis: 96px; }
 }
 
 @media (max-width: 760px) {

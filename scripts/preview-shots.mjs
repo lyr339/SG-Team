@@ -460,7 +460,8 @@ const scenes = [
           const input = controls.querySelector('input')
           if (input && input.getBoundingClientRect().width < 100) throw new Error('Key 输入区过窄')
           const port = cell.querySelector('.account-browser__port').getBoundingClientRect()
-          if (port.left < box.right + 4 || port.right > cell.getBoundingClientRect().right + 1) throw new Error('端口控件与 Key 控件重叠或溢出')
+          const sameRow = port.top < box.bottom - 1 && port.bottom > box.top + 1
+          if ((sameRow && port.left < box.right + 4) || port.right > cell.getBoundingClientRect().right + 1) throw new Error('端口控件与 Key 控件重叠或溢出')
           if (cell.querySelector('.account-browser__port input').value !== '50000') throw new Error('默认端口未呈现')
           const select = document.querySelector('.account-browser__window-cell .menu-select__button').getBoundingClientRect()
           const refresh = document.querySelector('.account-browser__refresh').getBoundingClientRect()
