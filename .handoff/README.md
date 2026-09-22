@@ -13,6 +13,7 @@
 | `DYNAMIC-GROUPS-PHASE3-UI-TODO.md` | 阶段 3：渲染层「会话与分组」——名册按组分区、多选建组、PoolPage、组卡片、ConfirmSheet、TransferMembershipDialog | 已合回 main（09-18 夜）；真机验收待全部阶段完成后一次进行 |
 | `DYNAMIC-GROUPS-PHASE4-MCP-TODO.md` | 阶段 4：MCP 工具面收敛——按分组状态暴露工具、判别联合、删死参数、团队消息内联投递、删探活 / renew | 待动工（依赖 1、2 已满足） |
 | `AUTO-UPDATE-TODO.md` | 应用自更新：Windows electron-updater（v0.3.3 已发）+ mac 静态清单自替换（已在 main） | 代码完成；待用户真机验收（§0.6.4、§11） |
+| `STATS-PAGE-REFINE-TODO.md` | 设置页「统计」精致化：KPI 三卡、带坐标系与图例的趋势图（席位 / 模型 / 分组切分）、逐回合明细 + 导出 CSV、实底卡片与尺度收敛、本月 / 上月范围 | 09-22 动工；分支 `feat/stats-refine`（worktree `../SG-Team-stats`），进度看其 §7 |
 
 ## 已归档（`archive/`，只读历史）
 
