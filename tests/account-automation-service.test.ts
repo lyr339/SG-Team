@@ -6,6 +6,7 @@ import { AccountAutomationService } from '../src/application/account-automation-
 import { AccountAutomationSettingsStore } from '../src/application/account-automation-store'
 import type { AccountAutomationRun } from '../src/domain/account-automation'
 import { DEFAULT_CURSOR_CHECKOUT_PROFILE } from '../src/domain/cursor-checkout-profile'
+import type { ProcessingOptions, ProcessingProviderId, ProcessingResult } from '../src/domain/processing-provider'
 
 interface FakeAccount {
   id: string
@@ -38,8 +39,9 @@ interface HarnessOptions {
   /** 加固前第二段倒计时（缺省回落 delaySec，与旧设置迁移语义一致）。 */
   postProcessDelaySec?: number
   cardSaved?: boolean
+  processingProvider?: ProcessingProviderId
   accounts?: FakeAccount[]
-  processResult?: { ok: boolean; message: string; remaining?: number }
+  processResult?: Omit<ProcessingResult, 'providerId'>
   browserToken?: string
   browserTokenError?: string
   readBrowserToken?: string
@@ -71,6 +73,7 @@ function createHarness(options: HarnessOptions = {}) {
   store.save({
     enabled: options.enabled ?? true,
     delaySec: options.delaySec ?? 7,
+    processingProvider: options.processingProvider ?? 'aozai',
     seamlessHandoverEnabled: options.seamlessHandoverEnabled ?? true,
     ...(options.postProcessDelaySec !== undefined ? { postProcessDelaySec: options.postProcessDelaySec } : {}),
     ...(options.handoverDelaySec !== undefined ? { handoverDelaySec: options.handoverDelaySec } : {}),
@@ -81,7 +84,7 @@ function createHarness(options: HarnessOptions = {}) {
     .map((account) => ({ ...account }))
   let clock = 0
   const processCalls: string[] = []
-  const processOptions: Array<{ refreshRemaining?: boolean } | undefined> = []
+  const processOptions: Array<ProcessingOptions | undefined> = []
   const warmupCalls: number[] = []
   const replacedTokens: Array<{ id: string; token: string }> = []
   const deleteCalls: string[] = []
@@ -96,22 +99,33 @@ function createHarness(options: HarnessOptions = {}) {
   const runMessages: string[] = []
   const liveSwitchCalls: string[] = []
   const liveSwitchOrder: string[] = []
+  const providerRequireCalls: ProcessingProviderId[] = []
 
   const service = new AccountAutomationService({
     settings: store,
-    aozai: {
-      processToken: async (token, _onProgress, processOptionsArg) => {
-        liveSwitchOrder.push('process')
-        processCalls.push(token)
-        processOptions.push(processOptionsArg)
-        return options.processResult ?? { ok: true, message: '处理完成', remainingPoints: 45 }
+    processingProviders: {
+      require: (providerId: ProcessingProviderId) => {
+        providerRequireCalls.push(providerId)
+        return {
+          vault: {} as never,
+          service: {
+            id: providerId,
+            label: providerId === 'henxin' ? '痕心' : '奥仔',
+            unit: providerId === 'henxin' ? 'uses' as const : 'points' as const,
+            verifyCredential: async () => ({ unit: 'points' as const, remaining: 1 }),
+            refreshBalance: async () => ({ unit: 'points' as const, remaining: 1 }),
+            resetAuthorization: () => {},
+            processToken: async (token, _onProgress, processOptionsArg) => {
+              liveSwitchOrder.push('process')
+              processCalls.push(token)
+              processOptions.push(processOptionsArg)
+              return { providerId, ...(options.processResult ?? { ok: true, message: '处理完成', balance: { unit: 'points', remaining: 45 } }) }
+            },
+            warmup: async () => { warmupCalls.push(1) }
+          }
+        }
       },
-      warmup: async () => {
-        warmupCalls.push(1)
-      }
-    },
-    cardVault: {
-      maskedCode: () => (options.cardSaved ?? true) ? 'C***1234' : undefined
+      hasCredential: () => options.cardSaved ?? true
     },
     accounts: {
       list: () => accounts.filter((a) => !a.removed).map((a) => ({
@@ -247,6 +261,7 @@ function createHarness(options: HarnessOptions = {}) {
     runMessages,
     liveSwitchCalls,
     liveSwitchOrder,
+    providerRequireCalls,
     cleanup: () => rmSync(dir, { recursive: true, force: true })
   }
 }
@@ -311,6 +326,17 @@ describe('AccountAutomationService', () => {
     expect(harness.refreshCalls).toHaveLength(0)
     expect(harness.replacedTokens).toHaveLength(0)
     expect(harness.accounts[0]?.removed).toBe(true)
+  })
+
+  it('每轮冻结所选处理服务：痕心链只解析一次痕心 Provider，运行快照与消息同源', async () => {
+    const harness = createHarness({ processingProvider: 'henxin' })
+    cleanup = harness.cleanup
+    harness.service.onAllSessionsTriggered('plan-henxin')
+    const run = await waitForTerminal(harness.service)
+    expect(run.processingProvider).toBe('henxin')
+    expect(harness.providerRequireCalls).toEqual(['henxin'])
+    expect(harness.runMessages).toContain('痕心自助处理中…')
+    expect(harness.processCalls).toEqual(['old-token'])
   })
 
   it('完整链（会话已失效）：奥仔→删除遇 307→浏览器换新 token 入库→新会话删除→移除本地', async () => {
@@ -407,7 +433,7 @@ describe('AccountAutomationService', () => {
     const run = await waitForTerminal(harness.service)
     expect(run.phase).toBe('done')
     expect(harness.warmupCalls).toHaveLength(1)
-    expect(harness.processOptions[0]).toEqual({ refreshRemaining: false })
+    expect(harness.processOptions[0]).toEqual({ refreshBalance: false })
   })
 
   it('运行态硬闸：Cursor 登录 ≠ 活跃账号 → 倒计时前即中止（卡密未扣、账号保留）', async () => {
@@ -793,6 +819,8 @@ describe('AccountAutomationService', () => {
       delaySec: 60,
       // 旧设置迁移：postProcessDelaySec 缺省沿用 delaySec（同步钳制）
       postProcessDelaySec: 60,
+      processingProvider: 'aozai',
+      roxyApiPort: 50_000,
       browserHost: 'fingerprint',
       bitProfileId: undefined,
       autoAcknowledgeModelDataPolicies: true,

@@ -72,7 +72,7 @@ describe('settings navigation', () => {
         { ...props.accounts[0]!, active: true },
         { id: 'b', label: 'next@example.com', active: false, maskedToken: '***', createdAt: 2, updatedAt: 2 }
       ]}
-      automationSettings={{ enabled: false, delaySec: 10, postProcessDelaySec: 10, seamlessHandoverEnabled: false }}
+      automationSettings={{ enabled: false, delaySec: 10, postProcessDelaySec: 10, processingProvider: 'aozai', seamlessHandoverEnabled: false }}
       switchPumpStatus={{ kind: 'installed', managed: false, message: '兼容可用', config: { port: 51_824, key: 'key', revision: 2 } }}
       onSwitchLiveAccount={liveSwitch} />))
     const button = [...visible().querySelectorAll<HTMLButtonElement>('button')].find(candidate => candidate.textContent === '无感切换')!

@@ -1053,15 +1053,23 @@ const api: SgDesktopApi = {
         profile: { tier: index === 0 ? 'free' as const : 'pro' as const, raw: index === 0 ? 'free' : 'pro', fetchedAt: Date.now() }
       }])
   ),
-  getAozaiCardStatus: async () => automationSceneRun
-    ? { saved: true, maskedCode: '••••6l8Q', remainingPoints: 87, maxPoints: 100, pointsPerOperation: 3 }
-    : { saved: false },
-  saveAozaiCard: async () => ({ saved: true, maskedCode: '••••6l8Q', remainingPoints: 87, maxPoints: 100, pointsPerOperation: 3 }),
-  clearAozaiCard: async () => ({ saved: false }),
-  refreshAozaiBalance: async () => ({ saved: true, maskedCode: '••••6l8Q', remainingPoints: 87, maxPoints: 100, pointsPerOperation: 3 }),
-  processAozaiAccount: async () => ({ ok: true, message: '处理成功', remainingPoints: 84 }),
-  processAozaiToken: async () => ({ ok: true, message: '处理成功', remainingPoints: 84 }),
-  onAozaiProgress: () => () => {},
+  getProcessingProviderStatuses: async () => automationSceneRun ? [
+    { providerId: 'aozai' as const, label: '奥仔', saved: true, maskedCode: '••••6l8Q', unit: 'points' as const, remaining: 87, capacity: 100, costPerOperation: 3 },
+    { providerId: 'henxin' as const, label: '痕心', saved: true, maskedCode: '••••CA23', unit: 'uses' as const, remaining: 5, capacity: 5, costPerOperation: 1 }
+  ] : [
+    { providerId: 'aozai' as const, label: '奥仔', unit: 'points' as const, saved: false },
+    { providerId: 'henxin' as const, label: '痕心', unit: 'uses' as const, saved: false }
+  ],
+  saveProcessingCredential: async ({ providerId }) => providerId === 'henxin'
+    ? { providerId, label: '痕心', saved: true, maskedCode: '••••CA23', unit: 'uses' as const, remaining: 5, capacity: 5, costPerOperation: 1 }
+    : { providerId, label: '奥仔', saved: true, maskedCode: '••••6l8Q', unit: 'points' as const, remaining: 87, capacity: 100, costPerOperation: 3 },
+  clearProcessingCredential: async (providerId) => ({ providerId, label: providerId === 'henxin' ? '痕心' : '奥仔', unit: providerId === 'henxin' ? 'uses' as const : 'points' as const, saved: false }),
+  refreshProcessingBalance: async (providerId) => providerId === 'henxin'
+    ? { providerId, label: '痕心', saved: true, maskedCode: '••••CA23', unit: 'uses' as const, remaining: 5, capacity: 5, costPerOperation: 1 }
+    : { providerId, label: '奥仔', saved: true, maskedCode: '••••6l8Q', unit: 'points' as const, remaining: 87, capacity: 100, costPerOperation: 3 },
+  processAccount: async ({ providerId }) => ({ providerId, ok: true, message: '处理成功', balance: { unit: providerId === 'henxin' ? 'uses' as const : 'points' as const, remaining: providerId === 'henxin' ? 4 : 84 } }),
+  processToken: async ({ providerId }) => ({ providerId, ok: true, message: '处理成功', balance: { unit: providerId === 'henxin' ? 'uses' as const : 'points' as const, remaining: providerId === 'henxin' ? 4 : 84 } }),
+  onProcessingProgress: () => () => {},
   launchAgentSessions: async (requests) => ({
     id: 'preview-launch',
     state: 'done',
@@ -1194,7 +1202,7 @@ const api: SgDesktopApi = {
     updateListeners.add(listener)
     return () => { updateListeners.delete(listener) }
   },
-  getAccountAutomationSettings: async () => ({ enabled: Boolean(automationSceneRun), delaySec: 10, postProcessDelaySec: 10 }),
+  getAccountAutomationSettings: async () => ({ enabled: Boolean(automationSceneRun), delaySec: 10, postProcessDelaySec: 10, processingProvider: 'aozai' as const }),
   saveAccountAutomationSettings: async (settings) => settings,
   getAccountAutomationRun: async () => automationSceneRun ?? { phase: 'idle' as const, message: '', startedAt: 0 },
   cancelAccountAutomation: async () => ({ phase: 'cancelled' as const, message: '已取消本次自动化', startedAt: 0, finishedAt: Date.now() }),

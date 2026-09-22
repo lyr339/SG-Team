@@ -976,6 +976,45 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
 .settings-aozai.account-aozai .account-aozai__setup input,
 .settings-aozai.account-aozai .account-aozai__setup button { min-height: 32px; }
 
+.processing-provider-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.processing-provider-tabs > button {
+  min-width: 0;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 12px;
+  color: var(--text-soft);
+  background: var(--surface-solid);
+  border: 1px solid var(--color-border-tertiary);
+  border-radius: 10px;
+}
+
+.processing-provider-tabs > button.is-active {
+  color: var(--accent-deep);
+  background: var(--accent-wash);
+  border-color: var(--accent-border);
+}
+
+.processing-provider-tabs small { color: var(--muted); font-size: var(--fs-10); }
+.processing-provider-note {
+  margin: 0 0 8px;
+  padding: 7px 9px;
+  color: var(--text-soft);
+  background: var(--color-background-info);
+  border: 1px solid color-mix(in srgb, var(--color-border-info) 52%, transparent);
+  border-radius: 8px;
+  font-size: var(--fs-10);
+  line-height: 1.45;
+}
+
 .settings-maintenance {
   padding: 0;
   background: transparent;

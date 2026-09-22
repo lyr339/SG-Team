@@ -1,5 +1,4 @@
-import type { AozaiService } from './aozai-service'
-import type { AozaiCardVault } from './aozai-card-vault'
+import type { ProcessingProviderRegistry } from './processing-provider-registry'
 import type { CursorAccountVault } from './cursor-account-vault'
 import type { AccountAutomationSettingsStore } from './account-automation-store'
 import type { CursorAccountDeleter, CursorAccountDeleteResult } from '../infrastructure/cursor/cursor-account-deleter'
@@ -12,12 +11,11 @@ import {
 
 export interface AccountAutomationServiceDeps {
   settings: AccountAutomationSettingsStore
-  aozai: Pick<AozaiService, 'processToken' | 'warmup'>
-  cardVault: Pick<AozaiCardVault, 'maskedCode'>
+  processingProviders: Pick<ProcessingProviderRegistry, 'require' | 'hasCredential'>
   accounts: Pick<CursorAccountVault, 'list' | 'credential' | 'replaceToken' | 'remove'>
   /** 读取浏览器当前 WorkosCursorSessionToken；存在时用于执行前校验「浏览器会话与拾光凭据一致」。 */
   readBrowserToken?: () => Promise<string>
-  /** 刷新浏览器会话并返回新 WorkosCursorSessionToken（奥仔处理后旧 token 失效，须经浏览器换发）。 */
+  /** 刷新浏览器会话并返回新 WorkosCursorSessionToken（处理服务完成后旧 token 失效，须经浏览器换发）。 */
   refreshBrowserToken: (previousToken: string) => Promise<string>
   /**
    * Cursor 运行时登录态与活跃账号一致性核对（JWT sub 比对）。不一致/未登录时
@@ -27,7 +25,7 @@ export interface AccountAutomationServiceDeps {
   verifyCursorRuntime?: () => { ok: boolean; reason?: string }
   deleter: Pick<CursorAccountDeleter, 'deleteAccount'>
   /**
-   * 无感换号（热切）：奥仔退款成功后把运行中的 Cursor 热切到接手账号。
+   * 无感换号（热切）：处理成功后把运行中的 Cursor 热切到接手账号。
    * 结果永不 throw（内部全降级）；缺省 = 未装配热切能力，自动化主链不受影响。
    */
   liveSwitch?: (accountId: string) => Promise<LiveSwitchResult>
@@ -108,10 +106,10 @@ const RATE_LIMIT_WINDOW_MS = 300_000
  * 账号自动化编排器（玩法 A）：一键创建会话全部提交成功后触发。
  *
  * 链条（每步失败即中止并保留本地账号记录）：
- *   处理前倒计时（可取消；末段预热奥仔认证）→ 奥仔自助处理（按服务端规则扣点）
+ *   处理前倒计时（可取消；末段预热处理服务）→ 所选服务自助处理（按服务端规则扣点）
  *   → 加固前倒计时（可取消）→ 秒级删除（首选：浏览器会话内直接删，~3s）
  *   → cookie 轮换（换发新 token 入库后用新会话删除，~15-30s；含退团/限流自愈重试；
- *     轮换超时且旧会话仍有效时兜底直删——奥仔副作用延迟场景）
+ *     轮换超时且旧会话仍有效时兜底直删——处理服务副作用延迟场景）
  *   → 移除拾光本地记录
  *
  * 与 AgentSessionLauncher 解耦：launcher 只发「全部提交成功」事件，
@@ -127,7 +125,7 @@ export class AccountAutomationService {
   private running = false
   /** 运行序号：新一轮触发取代倒计时中的旧轮，旧链检测到序号变化即静默退出。 */
   private runSeq = 0
-  /** 本轮退款成功后放出的热切；绑定 run 序号与目标，避免跨轮污染或补切旧账号。 */
+  /** 本轮处理成功后放出的热切；绑定 run 序号与目标，避免跨轮污染或补切旧账号。 */
   private pendingLiveSwitch: {
     runSeq: number
     promise: Promise<LiveSwitchResult>
@@ -164,7 +162,7 @@ export class AccountAutomationService {
     void this.execute(planId)
   }
 
-  /** 两段倒计时均可取消；处理/删除请求已发出后不可中止（奥仔扣点/删号无回滚）。 */
+  /** 两段倒计时均可取消；处理/删除请求已发出后不可中止（服务商扣费/删号无回滚）。 */
   cancel(): AccountAutomationRun {
     if (this.run.phase !== 'countdown' && this.run.phase !== 'hardening-countdown') return this.getRun()
     this.cancelRequested = true
@@ -180,7 +178,7 @@ export class AccountAutomationService {
    * 删除调用统一入口，带两类自愈重试：
    *
    * 1. 退团等待：官网报「先退出团队」时每 2s 自动重试、最长 60s。
-   *    奥仔 completed ≠ 副作用已落地——退团/会话失效有服务端延迟（实机实测：
+   *    服务商 completed ≠ 副作用已落地——退团/会话失效有服务端延迟（实机实测：
    *    completed 后 1s 删除撞 leave team，约一小时后 team_id 已清空）。
    * 2. 限流退避：限流型拒绝（HTTP 429 / Retry-After / "Try again later"）做指数
    *    退避重试——起始 5s、逐次翻倍、单次上限 120s，总窗口 ≤5min；服务端给了
@@ -254,7 +252,7 @@ export class AccountAutomationService {
   }
 
   /**
-   * 奥仔处理开始时预热接手票据（不触碰 Cursor 运行态）：开关关闭、能力未装配
+   * 服务商处理开始时预热接手票据（不触碰 Cursor 运行态）：开关关闭、能力未装配
    * 或没有接手号时跳过；目标账号在这里冻结，后续不随列表变化漂移。
    */
   private prepareLiveSwitch(processedAccountId: string, runSeq: number): LiveSwitchPreparation | undefined {
@@ -289,7 +287,7 @@ export class AccountAutomationService {
             handover: {
               ...this.run.handover,
               status: result.ok ? 'preparing' : 'failed',
-              message: result.ok ? '票据已就绪，等待退款完成' : (result.result.reason ?? '票据准备失败'),
+              message: result.ok ? '票据已就绪，等待处理完成' : (result.result.reason ?? '票据准备失败'),
               ...(result.ok ? {} : { finishedAt: this.now() })
             }
           })
@@ -304,7 +302,7 @@ export class AccountAutomationService {
     }
   }
 
-  /** 退款确认后提交已预热票据，并把结果即时写入独立子状态。delaySec > 0 时先等待再 commit。 */
+  /** 处理成功确认后提交已预热票据，并把结果即时写入独立子状态。delaySec > 0 时先等待再 commit。 */
   private startLiveSwitch(preparation: LiveSwitchPreparation, delaySec = 0): typeof this.pendingLiveSwitch {
     const handoverBase = {
       accountId: preparation.targetAccountId,
@@ -368,7 +366,7 @@ export class AccountAutomationService {
     }
   }
 
-  /** 等待已在退款后执行（含切换前等待与精准补投）的热切，并生成最终摘要。 */
+  /** 等待已在处理成功后执行（含切换前等待与精准补投）的热切，并生成最终摘要。 */
   private async settleLiveSwitch(runSeq: number): Promise<string | undefined> {
     const pending = this.pendingLiveSwitch
     if (!pending || pending.runSeq !== runSeq) return undefined
@@ -475,9 +473,12 @@ export class AccountAutomationService {
     const startedAt = this.now()
     try {
       const settings = this.getSettings()
+      const processing = this.deps.processingProviders.require(settings.processingProvider)
+      const provider = processing.service
       this.setRun({
         phase: 'countdown',
         planId,
+        processingProvider: provider.id,
         startedAt,
         finishedAt: undefined,
         handover: undefined,
@@ -489,7 +490,7 @@ export class AccountAutomationService {
       // stage='recheck' 时闸 4（浏览器会话一致性，要连/读浏览器窗口）可按
       // preflightRecheckEnabled 关闭；闸 1-3 是内存/SQLite 毫秒级读，始终复检。
       const preflight = async (stage: 'early' | 'recheck'): Promise<string | undefined> => {
-        if (!this.deps.cardVault.maskedCode()) return '未配置奥仔卡密，自动化中止'
+        if (!this.deps.processingProviders.hasCredential(provider.id)) return `未配置${provider.label}卡密，自动化中止`
         const active = this.deps.accounts.list().find((account) => account.active)
         if (!active) return '尚未选择 Cursor 账号，自动化中止'
         // 运行态一致性硬闸：Cursor 登录的必须是活跃账号本身（本地 SQLite 读毫秒级）。
@@ -499,7 +500,7 @@ export class AccountAutomationService {
           if (!runtime.ok) return runtime.reason ?? 'Cursor 登录态与活跃账号不一致，自动化中止'
         }
         // 消耗卡密前的最后一道闸：浏览器会话必须可读且与拾光凭据一致——
-        // 否则会把已失效/错误账号的 token 提交给奥仔，失败还浪费一次排查时间
+        // 否则会把已失效/错误账号的 token 提交给所选服务，失败还浪费一次排查时间
         if (this.deps.readBrowserToken && !(stage === 'recheck' && this.getSettings().preflightRecheckEnabled === false)) {
           // 会话来源描述：指纹宿主精确到「账号绑定窗口 / 默认窗口」，外部宿主为系统浏览器。
           // 绑定语义让报错能指到具体窗口与修法，而不是泛泛的「重新导入」。
@@ -543,9 +544,9 @@ export class AccountAutomationService {
         durationSec: settings.delaySec,
         tickMessage: (left) => `将在 ${left}s 后自动处理当前账号（可取消）`,
         cancelledMessage: '已取消本次自动化',
-        // 倒计时末段预热奥仔登录：执行时直接进入提交，省一次往返
+        // 倒计时末段预热处理服务：执行时直接进入提交，省一次往返
         onTick: (left) => {
-          if (left === Math.min(3, settings.delaySec)) void this.deps.aozai.warmup().catch(() => {})
+          if (left === Math.min(3, settings.delaySec)) void provider.warmup().catch(() => {})
         }
       })
       if (beforeProcess !== 'completed') return
@@ -561,29 +562,29 @@ export class AccountAutomationService {
         return
       }
 
-      this.setRun({ phase: 'processing', message: '奥仔自助处理中…' })
+      this.setRun({ phase: 'processing', message: `${provider.label}自助处理中…` })
       const previousToken = this.deps.accounts.credential(account.id)
-      // 目标在本轮固定；票据兑换与奥仔请求并行。预热不触碰 Cursor，只有退款
+      // 目标在本轮固定；票据兑换与服务商请求并行。预热不触碰 Cursor，只有退款
       // 成功后的 startLiveSwitch 才提交运行态写票。
       const liveSwitchPreparation = this.prepareLiveSwitch(account.id, mySeq)
-      const processed = await this.deps.aozai.processToken(
+      const processed = await provider.processToken(
         previousToken,
         (_state, message) => {
-          if (this.run.phase === 'processing') this.setRun({ message: `奥仔：${message}` })
+          if (this.run.phase === 'processing') this.setRun({ message: `${provider.label}：${message}` })
         },
-        { refreshRemaining: false }
+        { refreshBalance: false }
       )
       if (!processed.ok) {
         this.setRun({
           phase: 'failed',
-          message: `奥仔处理失败：${processed.message}（本地账号已保留）`,
+          message: `${provider.label}处理失败：${processed.message}（本地账号已保留）`,
           handover: undefined,
           finishedAt: this.now()
         })
         return
       }
 
-      // 退款成功即热切（对齐小辰 accountRefunded 点）：旧号额度已废，运行中的
+      // 处理成功即热切（对齐小辰 accountRefunded 点）：旧号额度已废，运行中的
       // Cursor 必须尽快落到接手号上；加固倒计时/删除与热切并行，互不阻塞。
       // fire-and-forget：结果在 finishDeletedAccount 收口时 settle 呈现。
       // handoverDelaySec > 0 时先经「切换前等待」再 commit（commit 未发出前取消即放弃）。
@@ -591,22 +592,22 @@ export class AccountAutomationService {
         ? this.startLiveSwitch(liveSwitchPreparation, settings.handoverDelaySec ?? 0)
         : undefined
 
-      // 加固前第二段倒计时：奥仔已完成（卡密已扣），此段取消只跳过加固、保留本地账号。
+      // 加固前第二段倒计时：处理服务已完成（卡密已扣），此段取消只跳过加固、保留本地账号。
       const beforeHardening = await this.waitCountdown({
         mySeq,
         phase: 'hardening-countdown',
         durationSec: settings.postProcessDelaySec,
-        tickMessage: (left) => `奥仔已完成，将在 ${left}s 后加固当前账号（可取消）`,
-        cancelledMessage: '奥仔处理已完成；已取消后续账号加固，本地账号保留'
+        tickMessage: (left) => `${provider.label}已完成，将在 ${left}s 后加固当前账号（可取消）`,
+        cancelledMessage: `${provider.label}处理已完成；已取消后续账号加固，本地账号保留`
       })
       if (beforeHardening !== 'completed') return
 
       const inBrowser = this.deps.inBrowserDeleter
 
-      // 主路径：奥仔完成后旧 token 通常已失效，新会话首先出现在浏览器内存中。
+      // 主路径：处理服务完成后旧 token 通常已失效，新会话首先出现在浏览器内存中。
       // 优先使用 AppleScript 秒级通道（外部浏览器会话内直接删），失败后回退 cookie 轮换。
       if (inBrowser) {
-        this.setRun({ phase: 'deleting', message: '奥仔已完成，正在刷新浏览器会话并秒级加固账号…' })
+        this.setRun({ phase: 'deleting', message: `${provider.label}已完成，正在刷新浏览器会话并秒级加固账号…` })
         let fast: InBrowserDeleteResult
         try {
           await inBrowser.prepareRefresh()
@@ -653,7 +654,7 @@ export class AccountAutomationService {
       try {
         newToken = await this.deps.refreshBrowserToken(previousToken)
       } catch (error) {
-        // 轮换超时的真实成因之一：奥仔副作用延迟，旧 token 仍有效（completed ≠ 已落地，
+        // 轮换超时的真实成因之一：处理服务副作用延迟，旧 token 仍有效（completed ≠ 已落地，
         // 与退团延迟同理的实机先例）。秒级通道在场时兜底用旧 token 直删一次——
         // 仍有效则直接完成；无通道路径此前已直删并确认失效，重试无意义，维持原失败语义。
         if (inBrowser) {

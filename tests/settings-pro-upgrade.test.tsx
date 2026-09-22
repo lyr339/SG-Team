@@ -47,6 +47,7 @@ describe('升级 Pro：账号卡片按钮 + 自动化页账单资料表单', () 
     enabled: false,
     delaySec: 30,
     postProcessDelaySec: 30,
+    processingProvider: 'aozai',
     checkoutProfile: { ...DEFAULT_CURSOR_CHECKOUT_PROFILE },
     ...overrides
   })
@@ -162,8 +163,11 @@ describe('升级 Pro：账号卡片按钮 + 自动化页账单资料表单', () 
     await renderAutomation(automationPropsFor({ automationSettings: undefined }))
     expect(container.querySelector('.settings-checkout-form')).toBeNull()
 
-    // 奥仔未就绪（自动化控制区收起为提示），账单资料区仍可用
-    await renderAutomation(automationPropsFor({ aozaiStatus: { saved: false } }))
+    // 所选处理服务未就绪（自动化控制区收起为提示），账单资料区仍可用
+    await renderAutomation(automationPropsFor({ processingStatuses: {
+      aozai: { providerId: 'aozai', label: '奥仔', unit: 'points', saved: false },
+      henxin: { providerId: 'henxin', label: '痕心', unit: 'uses', saved: false }
+    } }))
     expect(container.querySelector('.settings-checkout-form')).not.toBeNull()
   })
 })

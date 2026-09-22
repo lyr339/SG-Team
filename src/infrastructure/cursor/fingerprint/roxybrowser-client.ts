@@ -43,7 +43,8 @@ export class RoxyBrowserClient implements FingerprintBrowser {
   private readonly apiKey: string
   private readonly fetchImpl: typeof fetch
   private readonly timeoutMs: number
-  private workspaceId: number | undefined
+  private workspaceIds: number[] | undefined
+  private readonly profileWorkspace = new Map<string, number>()
 
   constructor(options: RoxyBrowserClientOptions) {
     this.baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, '')
@@ -66,7 +67,7 @@ export class RoxyBrowserClient implements FingerprintBrowser {
         signal: AbortSignal.timeout(this.timeoutMs)
       })
     } catch (error) {
-      throw new Error(`RoxyBrowser Local API 不可达（${boundedDetail(error)}）——请确认 RoxyBrowser 客户端已运行且 API 状态为 Enabled`)
+      throw new Error(`RoxyBrowser Local API 不可达（${this.baseUrl}；${boundedDetail(error)}）——请确认客户端已运行、API 状态为 Enabled 且端口设置一致`)
     }
     if (!response.ok) throw new Error(`RoxyBrowser Local API ${path} 返回 HTTP ${response.status}`)
     return (await response.json().catch(() => undefined)) as RoxyResponse<T> ?? { code: -1, msg: '响应不是合法 JSON' }
@@ -85,33 +86,49 @@ export class RoxyBrowserClient implements FingerprintBrowser {
     this.unwrap(response, '健康检查')
   }
 
-  private async resolveWorkspaceId(): Promise<number> {
-    if (this.workspaceId !== undefined) return this.workspaceId
+  private async resolveWorkspaceIds(): Promise<number[]> {
+    if (this.workspaceIds) return this.workspaceIds
     const response = await this.request<{ rows?: Array<{ id?: string | number }> }>('/browser/workspace', { method: 'GET' })
-    const raw = this.unwrap(response, 'workspace 列表获取')?.rows?.[0]?.id
-    const workspaceId = Number(raw)
-    if (!Number.isSafeInteger(workspaceId) || workspaceId <= 0) {
+    const workspaceIds = (this.unwrap(response, 'workspace 列表获取')?.rows ?? [])
+      .map((row) => Number(row.id))
+      .filter((id) => Number.isSafeInteger(id) && id > 0)
+    if (!workspaceIds.length) {
       throw new Error('RoxyBrowser 未返回有效 workspace（请确认账号已登录）')
     }
-    this.workspaceId = workspaceId
-    return workspaceId
+    this.workspaceIds = [...new Set(workspaceIds)]
+    return this.workspaceIds
   }
 
-  /** 列出窗口：取首个 workspace 的窗口（name 模糊可选）。 */
-  async listWindows(): Promise<FingerprintBrowserWindow[]> {
-    const workspaceId = await this.resolveWorkspaceId()
+  private async windowsInWorkspace(workspaceId: number): Promise<FingerprintBrowserWindow[]> {
     const listResponse = await this.request<{ rows?: Array<{ dirId?: string; windowName?: string; windowSortNum?: number }> }>(
       '/browser/list_v3',
-      { method: 'GET', query: { workspaceId, page_index: 1, page_size: 15 } }
+      { method: 'GET', query: { workspaceId, page_index: 1, page_size: 100 } }
     )
-    const rows = this.unwrap(listResponse, '窗口列表获取')?.rows ?? []
-    return rows
+    return (this.unwrap(listResponse, '窗口列表获取')?.rows ?? [])
       .filter((row): row is { dirId: string; windowName?: string; windowSortNum?: number } => Boolean(row.dirId))
-      .map((row) => ({
-        id: String(row.dirId),
-        name: row.windowName?.trim() || String(row.dirId),
-        seq: typeof row.windowSortNum === 'number' ? row.windowSortNum : undefined
-      }))
+      .map((row) => {
+        this.profileWorkspace.set(String(row.dirId), workspaceId)
+        return {
+          id: String(row.dirId),
+          name: row.windowName?.trim() || String(row.dirId),
+          seq: typeof row.windowSortNum === 'number' ? row.windowSortNum : undefined
+        }
+      })
+  }
+
+  /** 列出全部 workspace 的窗口；登录窗口不再因不在第一个 workspace 而消失。 */
+  async listWindows(): Promise<FingerprintBrowserWindow[]> {
+    const groups = await Promise.all((await this.resolveWorkspaceIds()).map((id) => this.windowsInWorkspace(id)))
+    return [...new Map(groups.flat().map((window) => [window.id, window])).values()]
+  }
+
+  private async workspaceIdFor(profileId: string): Promise<number> {
+    const cached = this.profileWorkspace.get(profileId)
+    if (cached) return cached
+    await this.listWindows()
+    const resolved = this.profileWorkspace.get(profileId)
+    if (!resolved) throw new Error(`RoxyBrowser 找不到窗口 ${profileId} 所属 workspace（请刷新窗口列表后重试）`)
+    return resolved
   }
 
   /** 打开窗口并返回 browser 级 CDP ws endpoint（重复调用幂等返回当前实例）。 */
@@ -148,7 +165,7 @@ export class RoxyBrowserClient implements FingerprintBrowser {
    * 决定如何呈现（不静默：残留会让下一账号被风控跨账号关联）。
    */
   async finalizeProfile(profileId: string): Promise<void> {
-    const workspaceId = await this.resolveWorkspaceId()
+    const workspaceId = await this.workspaceIdFor(profileId)
     await this.request('/browser/close', { method: 'POST', body: { dirId: profileId } })
     this.unwrap(
       await this.request('/browser/clear_local_cache', {

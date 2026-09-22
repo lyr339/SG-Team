@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { AozaiCardVault } from '../src/application/aozai-card-vault'
+import { ProcessingCredentialVault } from '../src/application/processing-credential-vault'
 import { AozaiService, type AozaiFetch } from '../src/application/aozai-service'
 import type { CursorAccountVaultCrypto } from '../src/application/cursor-account-vault'
 
@@ -66,7 +66,7 @@ function createFetch(queue: StubResponse[], calls: RecordedCall[]): AozaiFetch {
 function createContext(queue: StubResponse[], options: ConstructorParameters<typeof AozaiService>[2] = {}) {
   const calls: RecordedCall[] = []
   const path = join(mkdtempSync(join(tmpdir(), 'sg-aozai-')), 'card.json')
-  const vault = new AozaiCardVault(path, crypto, () => NOW)
+  const vault = new ProcessingCredentialVault(path, crypto, '奥仔', () => NOW)
   const service = new AozaiService(vault, createFetch(queue, calls), {
     pollIntervalMs: 0,
     sleep: async () => {},
@@ -79,7 +79,7 @@ function createContext(queue: StubResponse[], options: ConstructorParameters<typ
 describe('AozaiCardVault', () => {
   it('加密落盘且可读取明文，权限 0o600', () => {
     const path = join(mkdtempSync(join(tmpdir(), 'sg-aozai-card-')), 'card.json')
-    const vault = new AozaiCardVault(path, crypto, () => 123)
+    const vault = new ProcessingCredentialVault(path, crypto, '奥仔', () => 123)
     expect(vault.maskedCode()).toBeUndefined()
     expect(vault.save('CARD-SECRET-6l8Q')).toBe('••••6l8Q')
     expect(vault.maskedCode()).toBe('••••6l8Q')
@@ -92,18 +92,18 @@ describe('AozaiCardVault', () => {
 
   it('拒绝过短卡密', () => {
     const path = join(mkdtempSync(join(tmpdir(), 'sg-aozai-card-')), 'card.json')
-    const vault = new AozaiCardVault(path, crypto)
+    const vault = new ProcessingCredentialVault(path, crypto, '奥仔')
     expect(() => vault.save('abc')).toThrowError(/卡密长度无效/)
   })
 
   it('系统钥匙变化时返回可操作提示而不是暴露 safeStorage 底层异常', () => {
     const path = join(mkdtempSync(join(tmpdir(), 'sg-aozai-card-')), 'card.json')
-    const vault = new AozaiCardVault(path, crypto)
+    const vault = new ProcessingCredentialVault(path, crypto, '奥仔')
     vault.save('CARD-SECRET-6l8Q')
-    const unreadable = new AozaiCardVault(path, {
+    const unreadable = new ProcessingCredentialVault(path, {
       ...crypto,
       decrypt: () => { throw new Error('Error while decrypting the ciphertext provided to safeStorage.decryptString.') }
-    })
+    }, '奥仔')
     expect(() => unreadable.credential()).toThrowError(/重新粘贴卡密/)
     expect(() => unreadable.credential()).not.toThrowError(/safeStorage/)
   })
@@ -112,11 +112,12 @@ describe('AozaiCardVault', () => {
 describe('AozaiService Bearer API', () => {
   it('用卡密换 Bearer，并动态读取点数与单次扣点', async () => {
     const { service, calls } = createContext([AUTH_OK()])
-    await expect(service.verifyCard(' CARD-XXXX-6l8Q ')).resolves.toEqual({
-      remainingPoints: 87,
-      usedPoints: 13,
-      maxPoints: 100,
-      pointsPerOperation: 3,
+    await expect(service.verifyCredential(' CARD-XXXX-6l8Q ')).resolves.toEqual({
+      unit: 'points',
+      remaining: 87,
+      used: 13,
+      capacity: 100,
+      costPerOperation: 3,
       apiAllowed: true
     })
     expect(calls).toEqual([expect.objectContaining({
@@ -130,21 +131,21 @@ describe('AozaiService Bearer API', () => {
 
   it('官方未返回 points_per_op 时不猜 3 点', async () => {
     const { service } = createContext([AUTH_OK({ points_per_op: undefined })])
-    const info = await service.verifyCard('CARD-XXXX-6l8Q')
-    expect(info).toEqual({ remainingPoints: 87, usedPoints: 13, maxPoints: 100, apiAllowed: true })
-    expect(info).not.toHaveProperty('pointsPerOperation')
+    const info = await service.verifyCredential('CARD-XXXX-6l8Q')
+    expect(info).toEqual({ unit: 'points', remaining: 87, used: 13, capacity: 100, apiAllowed: true })
+    expect(info).not.toHaveProperty('costPerOperation')
   })
 
   it('卡密错误保留服务端 detail；成功响应缺字段时明确报契约错误', async () => {
-    await expect(createContext([{ status: 401, data: { detail: '卡密不存在或已停用' } }]).service.verifyCard('BAD-CARD'))
+    await expect(createContext([{ status: 401, data: { detail: '卡密不存在或已停用' } }]).service.verifyCredential('BAD-CARD'))
       .rejects.toThrowError(/卡密不存在或已停用/)
-    await expect(createContext([{ status: 200, data: { token: 'x' } }]).service.verifyCard('BAD-RESPONSE'))
+    await expect(createContext([{ status: 200, data: { token: 'x' } }]).service.verifyCredential('BAD-RESPONSE'))
       .rejects.toThrowError(/认证响应格式异常/)
   })
 
   it('卡密未开通 API 时在保存阶段明确提示，不等到处理才报 403', async () => {
     const { service } = createContext([AUTH_OK({ api_allowed: false })])
-    await expect(service.verifyCard('CARD-NOT-ENABLED')).rejects.toThrowError(/尚未开通 API 调用/)
+    await expect(service.verifyCredential('CARD-NOT-ENABLED')).rejects.toThrowError(/尚未开通 API 调用/)
   })
 
   it('完整流程只用 Bearer：换票→提交→轮询→GET card 刷新点数', async () => {
@@ -158,7 +159,7 @@ describe('AozaiService Bearer API', () => {
     vault.save('CARD-XXXX-6l8Q')
     const progress: string[] = []
     await expect(service.processToken('user_123::jwt', (state, message) => progress.push(`${state}:${message}`)))
-      .resolves.toEqual({ ok: true, message: '处理成功', remainingPoints: 84 })
+      .resolves.toMatchObject({ providerId: 'aozai', ok: true, message: '处理成功', operationId: 'op-1', balance: { unit: 'points', remaining: 84 } })
     expect(calls.map((call) => call.url)).toEqual([
       'https://getdoubao.com/api/v1/auth/token',
       'https://getdoubao.com/api/v1/process',
@@ -177,7 +178,7 @@ describe('AozaiService Bearer API', () => {
       { status: 503, data: { maintenance: true, message: '临时维护，不扣点' } }
     ])
     vault.save('CARD-XXXX-6l8Q')
-    await expect(service.processToken('user_123::jwt')).resolves.toEqual({ ok: false, message: '临时维护，不扣点' })
+    await expect(service.processToken('user_123::jwt')).resolves.toEqual({ providerId: 'aozai', ok: false, message: '临时维护，不扣点' })
     expect(calls).toHaveLength(2)
   })
 
@@ -191,7 +192,7 @@ describe('AozaiService Bearer API', () => {
       { status: 200, data: { remaining: 84, used: 16, max_uses: 100 } }
     ])
     vault.save('CARD-XXXX-6l8Q')
-    await expect(service.processToken('user_123::jwt')).resolves.toMatchObject({ ok: true, remainingPoints: 84 })
+    await expect(service.processToken('user_123::jwt')).resolves.toMatchObject({ providerId: 'aozai', ok: true, balance: { remaining: 84 } })
     expect(calls.filter((call) => call.url.endsWith('/auth/token'))).toHaveLength(2)
     expect(calls[1]?.headers.Authorization).toBe('Bearer expired-token')
     expect(calls[3]?.headers.Authorization).toBe('Bearer fresh-token')
@@ -206,7 +207,7 @@ describe('AozaiService Bearer API', () => {
     ])
     vault.save('CARD-XXXX-6l8Q')
     const result = await service.processToken('user_123::jwt')
-    expect(result).toEqual({ ok: false, message: 'Token 已过期（失败不扣点）', remainingPoints: 87 })
+    expect(result).toMatchObject({ providerId: 'aozai', ok: false, message: 'Token 已过期（失败不扣点）', balance: { remaining: 87 } })
   })
 
   it('轮询网络错误达到上限后停止，任务已提交的提示不诱导重复扣点', async () => {
@@ -217,7 +218,7 @@ describe('AozaiService Bearer API', () => {
     ]
     const { service, vault } = createContext(queue)
     vault.save('CARD-XXXX-6l8Q')
-    const result = await service.processToken('user_123::jwt', () => {}, { refreshRemaining: false })
+    const result = await service.processToken('user_123::jwt', () => {}, { refreshBalance: false })
     expect(result.ok).toBe(false)
     expect(result.message).toContain('任务已提交')
     expect(result.message).toContain('刷新点数')
@@ -236,15 +237,15 @@ describe('AozaiService Bearer API', () => {
     expect(calls.filter((call) => call.url.endsWith('/auth/token'))).toHaveLength(1)
   })
 
-  it('自动化 refreshRemaining:false 完成即返回，不阻塞 GET card', async () => {
+  it('自动化 refreshBalance:false 完成即返回，不阻塞 GET card', async () => {
     const { service, vault, calls } = createContext([
       AUTH_OK(),
       { status: 200, data: { operation_id: 'op-10' } },
       { status: 200, data: { status: 'completed' } }
     ])
     vault.save('CARD-XXXX-6l8Q')
-    const result = await service.processToken('user_123::jwt', () => {}, { refreshRemaining: false })
-    expect(result).toEqual({ ok: true, message: '处理成功' })
+    const result = await service.processToken('user_123::jwt', () => {}, { refreshBalance: false })
+    expect(result).toEqual({ providerId: 'aozai', ok: true, message: '处理成功', operationId: 'op-10' })
     expect(calls.some((call) => call.url.endsWith('/card'))).toBe(false)
   })
 
@@ -253,7 +254,7 @@ describe('AozaiService Bearer API', () => {
     const gate = new Promise<void>((resolve) => { release = resolve })
     const calls: RecordedCall[] = []
     const path = join(mkdtempSync(join(tmpdir(), 'sg-aozai-')), 'card.json')
-    const vault = new AozaiCardVault(path, crypto)
+    const vault = new ProcessingCredentialVault(path, crypto, '奥仔')
     vault.save('CARD-XXXX-6l8Q')
     const fetch: AozaiFetch = async (url, init) => {
       calls.push({ url, method: init.method, headers: init.headers })
@@ -278,10 +279,10 @@ describe('AozaiService Bearer API', () => {
       AUTH_OK({ token: 'token-2', remaining: 80 })
     ], { now: () => now })
     vault.save('CARD-XXXX-6l8Q')
-    await expect(service.refreshBalance()).resolves.toMatchObject({ remainingPoints: 87 })
-    await expect(service.refreshBalance()).resolves.toMatchObject({ remainingPoints: 86, usedPoints: 14 })
+    await expect(service.refreshBalance()).resolves.toMatchObject({ remaining: 87 })
+    await expect(service.refreshBalance()).resolves.toMatchObject({ remaining: 86, used: 14 })
     now += 25 * 60 * 60 * 1000
-    await expect(service.refreshBalance()).resolves.toMatchObject({ remainingPoints: 80 })
+    await expect(service.refreshBalance()).resolves.toMatchObject({ remaining: 80 })
     expect(calls.map((call) => call.url)).toEqual([
       'https://getdoubao.com/api/v1/auth/token',
       'https://getdoubao.com/api/v1/card',
@@ -294,7 +295,7 @@ describe('AozaiService Bearer API', () => {
     const gate = new Promise<void>((resolve) => { release = resolve })
     const calls: RecordedCall[] = []
     const path = join(mkdtempSync(join(tmpdir(), 'sg-aozai-')), 'card.json')
-    const vault = new AozaiCardVault(path, crypto)
+    const vault = new ProcessingCredentialVault(path, crypto, '奥仔')
     vault.save('CARD-XXXX-6l8Q')
     let call = 0
     const fetch: AozaiFetch = async () => {
@@ -322,7 +323,7 @@ describe('AozaiService Bearer API', () => {
       { status: 200, data: { status: 'completed' } }
     ], { pollIntervalMs: undefined, sleep: async (ms) => { waits.push(ms) } })
     vault.save('CARD-XXXX-6l8Q')
-    await service.processToken('user_123::jwt', () => {}, { refreshRemaining: false })
+    await service.processToken('user_123::jwt', () => {}, { refreshBalance: false })
     expect(waits).toEqual([1_000, 1_000])
   })
 
@@ -330,6 +331,7 @@ describe('AozaiService Bearer API', () => {
     const limited = createContext([AUTH_OK(), { status: 429, data: {} }])
     limited.vault.save('CARD-XXXX-6l8Q')
     await expect(limited.service.processToken('user_123::jwt')).resolves.toEqual({
+      providerId: 'aozai',
       ok: false,
       message: '请求过于频繁或服务繁忙，请稍后重试'
     })
@@ -340,7 +342,7 @@ describe('AozaiService Bearer API', () => {
       sleep: async () => gate
     })
     running.vault.save('CARD-XXXX-6l8Q')
-    const first = running.service.processToken('user_123::jwt', () => {}, { refreshRemaining: false })
+    const first = running.service.processToken('user_123::jwt', () => {}, { refreshBalance: false })
     await Promise.resolve(); await Promise.resolve()
     await expect(running.service.processToken('user_456::jwt')).rejects.toThrowError(/进行中/)
     release()

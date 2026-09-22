@@ -1,5 +1,7 @@
-import type { AozaiProcessResult, AozaiProgressState } from '../domain/aozai-service'
-import type { AozaiCardVault } from './aozai-card-vault'
+import type { ProcessingCredentialVault } from './processing-credential-vault'
+import type {
+  CursorProcessingProvider, ProcessingBalance, ProcessingOptions, ProcessingProgressState, ProcessingResult
+} from '../domain/processing-provider'
 
 export interface AozaiFetchResponse {
   ok: boolean
@@ -11,17 +13,12 @@ export type AozaiFetch = (url: string, init: {
   method: string
   headers: Record<string, string>
   body?: string
+  signal?: AbortSignal
 }) => Promise<AozaiFetchResponse>
 
-export interface AozaiCardInfo {
-  remainingPoints: number
-  usedPoints?: number
-  maxPoints?: number
-  pointsPerOperation?: number
-  apiAllowed?: boolean
-}
+export type AozaiCardInfo = ProcessingBalance
 
-interface AozaiAuthorization extends AozaiCardInfo {
+interface AozaiAuthorization extends ProcessingBalance {
   token: string
   expiresAt: number
 }
@@ -33,11 +30,6 @@ interface AozaiServiceOptions {
   maxNetworkErrors?: number
   sleep?: (ms: number) => Promise<void>
   now?: () => number
-}
-
-export interface AozaiProcessOptions {
-  /** 完成后是否查询点数余额（默认 true；自动化链内传 false，由 UI 链外异步补刷）。 */
-  refreshRemaining?: boolean
 }
 
 const DEFAULT_BASE_URL = 'https://getdoubao.com'
@@ -72,7 +64,10 @@ function messageOf(data: Record<string, unknown> | undefined, fallback: string):
  * 奥仔公开 API 客户端：卡密只用于换取 24h Bearer，之后所有调用复用内存令牌。
  * Bearer 不落盘、不进入渲染进程；卡密仍由 AozaiCardVault/safeStorage 单独持久化。
  */
-export class AozaiService {
+export class AozaiService implements CursorProcessingProvider {
+  readonly id = 'aozai' as const
+  readonly label = '奥仔'
+  readonly unit = 'points' as const
   private readonly baseUrl: string
   private readonly pollIntervalMs: number
   private readonly overallTimeoutMs: number
@@ -85,7 +80,7 @@ export class AozaiService {
   private running = false
 
   constructor(
-    private readonly cardVault: AozaiCardVault,
+    private readonly cardVault: ProcessingCredentialVault,
     private readonly fetchImpl: AozaiFetch,
     options: AozaiServiceOptions = {}
   ) {
@@ -103,7 +98,7 @@ export class AozaiService {
   }
 
   /** 用指定卡密换取令牌并验证，成功后由 IPC 保存卡密。 */
-  async verifyCard(cardCode: string): Promise<AozaiCardInfo> {
+  async verifyCredential(cardCode: string): Promise<ProcessingBalance> {
     const code = cardCode.trim()
     if (!code) throw new Error('卡密不能为空')
     return this.cardInfo(await this.exchangeCard(code))
@@ -117,7 +112,7 @@ export class AozaiService {
   }
 
   /** 用已保存卡密查询点数。首次换令牌的响应已含余额，不再额外请求 /card。 */
-  async refreshBalance(): Promise<AozaiCardInfo> {
+  async refreshBalance(): Promise<ProcessingBalance> {
     const hadFreshAuthorization = this.hasFreshAuthorization()
     const authorization = await this.ensureAuthorization()
     return hadFreshAuthorization ? this.queryCard() : this.cardInfo(authorization)
@@ -126,9 +121,9 @@ export class AozaiService {
   /** 提交 Session Token 并轮询至完成；所有凭据只在主进程内流转。 */
   async processToken(
     sessionToken: string,
-    onProgress: (state: AozaiProgressState, message: string) => void = () => {},
-    options: AozaiProcessOptions = {}
-  ): Promise<AozaiProcessResult> {
+    onProgress: (state: ProcessingProgressState, message: string) => void = () => {},
+    options: ProcessingOptions = {}
+  ): Promise<ProcessingResult> {
     if (this.running) throw new Error('已有处理任务进行中，请等待完成')
     const token = sessionToken.trim()
     if (!token) throw new Error('Session Token 不能为空')
@@ -141,9 +136,9 @@ export class AozaiService {
       if (!submitted.ok) return submitted
       onProgress('processing', '已受理，正在跟踪处理进度…')
       const finished = await this.trackOperation(submitted.operationId, onProgress)
-      if (options.refreshRemaining === false) return finished
-      const remainingPoints = await this.safeRefreshRemaining()
-      return { ...finished, remainingPoints }
+      if (options.refreshBalance === false) return finished
+      const balance = await this.safeRefreshBalance()
+      return { ...finished, ...(balance ? { balance } : {}) }
     } finally {
       this.running = false
     }
@@ -176,19 +171,20 @@ export class AozaiService {
     if (!response.ok) throw new Error(detailOf(data) ?? `卡密验证失败（HTTP ${response.status}）`)
     const token = typeof data?.token === 'string' ? data.token.trim() : ''
     const expiresAt = typeof data?.expires_at === 'string' ? Date.parse(data.expires_at) : Number.NaN
-    const remainingPoints = optionalNumber(data, 'remaining')
+    const remaining = optionalNumber(data, 'remaining')
     const tokenType = typeof data?.token_type === 'string' ? data.token_type.trim() : 'Bearer'
-    if (!token || !Number.isFinite(expiresAt) || remainingPoints === undefined || tokenType.toLowerCase() !== 'bearer') {
+    if (!token || !Number.isFinite(expiresAt) || remaining === undefined || tokenType.toLowerCase() !== 'bearer') {
       throw new Error('认证响应格式异常：缺少 Bearer、到期时间或点数余额')
     }
     if (data?.api_allowed === false) throw new Error('该卡密尚未开通 API 调用，请先在奥仔服务站同意开通')
     const authorization: AozaiAuthorization = {
+      unit: this.unit,
       token,
       expiresAt,
-      remainingPoints,
-      usedPoints: optionalNumber(data, 'used'),
-      maxPoints: optionalNumber(data, 'max_uses'),
-      pointsPerOperation: optionalNumber(data, 'points_per_op'),
+      remaining,
+      used: optionalNumber(data, 'used'),
+      capacity: optionalNumber(data, 'max_uses'),
+      costPerOperation: optionalNumber(data, 'points_per_op'),
       apiAllowed: optionalBoolean(data, 'api_allowed')
     }
     // 清除/换卡期间可能仍有旧预热请求在飞；过期请求可以返回给原调用方，但不得回填共享认证态。
@@ -196,12 +192,13 @@ export class AozaiService {
     return authorization
   }
 
-  private cardInfo(value: AozaiAuthorization | AozaiCardInfo): AozaiCardInfo {
+  private cardInfo(value: AozaiAuthorization | ProcessingBalance): ProcessingBalance {
     return {
-      remainingPoints: value.remainingPoints,
-      ...(value.usedPoints !== undefined ? { usedPoints: value.usedPoints } : {}),
-      ...(value.maxPoints !== undefined ? { maxPoints: value.maxPoints } : {}),
-      ...(value.pointsPerOperation !== undefined ? { pointsPerOperation: value.pointsPerOperation } : {}),
+      unit: this.unit,
+      remaining: value.remaining,
+      ...(value.used !== undefined ? { used: value.used } : {}),
+      ...(value.capacity !== undefined ? { capacity: value.capacity } : {}),
+      ...(value.costPerOperation !== undefined ? { costPerOperation: value.costPerOperation } : {}),
       ...(value.apiAllowed !== undefined ? { apiAllowed: value.apiAllowed } : {})
     }
   }
@@ -210,38 +207,39 @@ export class AozaiService {
     const { response, data } = await this.authorizedRequest('/api/v1/card')
     if (!response.ok) throw new Error(this.httpMessage(response.status, data, '余额查询失败'))
     if (data?.api_allowed === false) throw new Error('该卡密的 API 调用已停用，请在奥仔服务站检查状态')
-    const remainingPoints = optionalNumber(data, 'remaining')
-    if (remainingPoints === undefined) throw new Error('余额响应格式异常：缺少 remaining')
+    const remaining = optionalNumber(data, 'remaining')
+    if (remaining === undefined) throw new Error('余额响应格式异常：缺少 remaining')
     return this.cardInfo({
-      remainingPoints,
-      usedPoints: optionalNumber(data, 'used'),
-      maxPoints: optionalNumber(data, 'max_uses'),
-      pointsPerOperation: optionalNumber(data, 'points_per_op') ?? this.authorization?.pointsPerOperation,
+      unit: this.unit,
+      remaining,
+      used: optionalNumber(data, 'used'),
+      capacity: optionalNumber(data, 'max_uses'),
+      costPerOperation: optionalNumber(data, 'points_per_op') ?? this.authorization?.costPerOperation,
       apiAllowed: optionalBoolean(data, 'api_allowed') ?? this.authorization?.apiAllowed
     })
   }
 
-  private async submitProcess(sessionToken: string): Promise<{ ok: true; operationId: string } | ({ ok: false } & AozaiProcessResult)> {
+  private async submitProcess(sessionToken: string): Promise<{ ok: true; operationId: string } | ({ ok: false } & ProcessingResult)> {
     let result: Awaited<ReturnType<AozaiService['authorizedRequest']>>
     try {
       result = await this.authorizedRequest('/api/v1/process', { session_token: sessionToken })
     } catch (error) {
-      return { ok: false, message: error instanceof Error ? error.message : '网络错误，请检查连接后重试' }
+      return { providerId: this.id, ok: false, message: error instanceof Error ? error.message : '网络错误，请检查连接后重试' }
     }
     const { response, data } = result
     if (data?.maintenance === true) {
-      return { ok: false, message: messageOf(data, '系统维护升级中，请稍后再试。卡密点数不受影响。') }
+      return { providerId: this.id, ok: false, message: messageOf(data, '系统维护升级中，请稍后再试。卡密点数不受影响。') }
     }
-    if (!response.ok) return { ok: false, message: this.httpMessage(response.status, data, '提交失败') }
+    if (!response.ok) return { providerId: this.id, ok: false, message: this.httpMessage(response.status, data, '提交失败') }
     const operationId = typeof data?.operation_id === 'string' ? data.operation_id.trim() : ''
-    if (!operationId) return { ok: false, message: '服务响应缺少 operation_id' }
+    if (!operationId) return { providerId: this.id, ok: false, message: '服务响应缺少 operation_id' }
     return { ok: true, operationId }
   }
 
   private async trackOperation(
     operationId: string,
-    onProgress: (state: AozaiProgressState, message: string) => void
-  ): Promise<AozaiProcessResult> {
+    onProgress: (state: ProcessingProgressState, message: string) => void
+  ): Promise<ProcessingResult> {
     const deadline = this.now() + this.overallTimeoutMs
     let networkErrors = 0
     let lastStepMessage = ''
@@ -253,21 +251,21 @@ export class AozaiService {
       } catch {
         networkErrors += 1
         if (networkErrors >= this.maxNetworkErrors) {
-          return { ok: false, message: '网络错误，请检查连接后重试；任务已提交，可稍后刷新点数确认结果' }
+          return { providerId: this.id, ok: false, message: '网络错误，请检查连接后重试；任务已提交，可稍后刷新点数确认结果', operationId }
         }
         continue
       }
       const { response, data } = result
       if (data?.maintenance === true) {
-        return { ok: false, message: messageOf(data, '系统维护升级中；任务状态暂不可查询，请稍后刷新点数确认结果') }
+        return { providerId: this.id, ok: false, message: messageOf(data, '系统维护升级中；任务状态暂不可查询，请稍后刷新点数确认结果'), operationId }
       }
       if (!response.ok) {
         if (response.status === 401 || response.status === 403 || response.status === 404) {
-          return { ok: false, message: this.httpMessage(response.status, data, '查询处理状态失败') }
+          return { providerId: this.id, ok: false, message: this.httpMessage(response.status, data, '查询处理状态失败'), operationId }
         }
         networkErrors += 1
         if (networkErrors >= this.maxNetworkErrors) {
-          return { ok: false, message: this.httpMessage(response.status, data, '查询进度失败，请稍后刷新点数确认结果') }
+          return { providerId: this.id, ok: false, message: this.httpMessage(response.status, data, '查询进度失败，请稍后刷新点数确认结果'), operationId }
         }
         continue
       }
@@ -280,7 +278,7 @@ export class AozaiService {
         lastStepMessage = stepMessage
         onProgress('processing', stepMessage)
       }
-      if (status === 'completed') return { ok: true, message: '处理成功' }
+      if (status === 'completed') return { providerId: this.id, ok: true, message: '处理成功', operationId }
       if (status === 'failed') {
         const failedStep = steps
           .map((step) => asRecord(step))
@@ -288,15 +286,15 @@ export class AozaiService {
         const reason = typeof data?.error === 'string' && data.error.trim()
           ? data.error.trim()
           : (failedStep?.message as string | undefined)?.trim()
-        return { ok: false, message: `${reason || '处理失败'}（失败不扣点）` }
+        return { providerId: this.id, ok: false, message: `${reason || '处理失败'}（失败不扣点）`, operationId }
       }
     }
-    return { ok: false, message: '处理超时，任务仍可能在后台进行；请稍后刷新点数确认结果' }
+    return { providerId: this.id, ok: false, message: '处理超时，任务仍可能在后台进行；请稍后刷新点数确认结果', operationId }
   }
 
-  private async safeRefreshRemaining(): Promise<number | undefined> {
+  private async safeRefreshBalance(): Promise<ProcessingBalance | undefined> {
     try {
-      return (await this.refreshBalance()).remainingPoints
+      return await this.refreshBalance()
     } catch {
       return undefined
     }

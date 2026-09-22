@@ -10,7 +10,12 @@ import type { CursorMembershipStatus } from '../domain/cursor-membership'
 import type { MembershipTransferInput, MembershipTransferOptions, MembershipTransferOutcome } from '../domain/team-handoff'
 import type { CursorWorkspaceDetection } from '../domain/cursor-workspace'
 import type { CursorModelOption, CursorModelSelection } from '../domain/cursor-model'
-import type { AozaiCardStatus, AozaiProcessResult, AozaiProgressEvent } from '../domain/aozai-service'
+import type {
+  ProcessingCredentialStatus,
+  ProcessingProgressEvent,
+  ProcessingProviderId,
+  ProcessingResult
+} from '../domain/processing-provider'
 import type { AgentLaunchPlan, AgentLaunchRequest } from '../domain/agent-launch'
 import type { SessionWarmupRun } from '../domain/session-warmup'
 import type { CdpAutoHealEvent, CursorCdpSettings } from '../domain/cursor-cdp'
@@ -353,14 +358,14 @@ export interface SgDesktopApi {
   refreshCursorMembership(): Promise<CursorMembershipStatus>
   /** 按本地账号库存逐个读取加密凭据并在线查询档位；Token 不离开主进程。 */
   refreshCursorAccountMemberships(accountIds?: string[]): Promise<Record<string, CursorMembershipStatus>>
-  getAozaiCardStatus(): Promise<AozaiCardStatus>
-  saveAozaiCard(cardCode: string): Promise<AozaiCardStatus>
-  clearAozaiCard(): Promise<AozaiCardStatus>
-  refreshAozaiBalance(): Promise<AozaiCardStatus>
-  processAozaiAccount(input: { accountId: string; requestId: string }): Promise<AozaiProcessResult>
+  getProcessingProviderStatuses(): Promise<ProcessingCredentialStatus[]>
+  saveProcessingCredential(input: { providerId: ProcessingProviderId; code: string }): Promise<ProcessingCredentialStatus>
+  clearProcessingCredential(providerId: ProcessingProviderId): Promise<ProcessingCredentialStatus>
+  refreshProcessingBalance(providerId: ProcessingProviderId): Promise<ProcessingCredentialStatus>
+  processAccount(input: { providerId: ProcessingProviderId; accountId: string; requestId: string }): Promise<ProcessingResult>
   /** 手动模式：用户自行粘贴任意 Session Token 提交处理；token 不持久化，独立于自动化链。 */
-  processAozaiToken(input: { token: string; requestId: string }): Promise<AozaiProcessResult>
-  onAozaiProgress(listener: (event: AozaiProgressEvent) => void): () => void
+  processToken(input: { providerId: ProcessingProviderId; token: string; requestId: string }): Promise<ProcessingResult>
+  onProcessingProgress(listener: (event: ProcessingProgressEvent) => void): () => void
   launchAgentSessions(requests: AgentLaunchRequest[]): Promise<AgentLaunchPlan>
   getAgentLaunchPlan(): Promise<AgentLaunchPlan | undefined>
   onAgentLaunchProgress(listener: (plan: AgentLaunchPlan) => void): () => void
@@ -527,13 +532,13 @@ export const IPC = {
   cursorAccountsVerifyRuntime: 'cursor-accounts:verify-runtime',
   cursorAccountsRefreshMembership: 'cursor-accounts:refresh-membership',
   cursorAccountsRefreshMemberships: 'cursor-accounts:refresh-memberships',
-  aozaiGetCardStatus: 'aozai:get-card-status',
-  aozaiSaveCard: 'aozai:save-card',
-  aozaiClearCard: 'aozai:clear-card',
-  aozaiRefreshBalance: 'aozai:refresh-balance',
-  aozaiProcessAccount: 'aozai:process-account',
-  aozaiProcessToken: 'aozai:process-token',
-  aozaiProgress: 'aozai:progress',
+  processingGetStatuses: 'processing:get-statuses',
+  processingSaveCredential: 'processing:save-credential',
+  processingClearCredential: 'processing:clear-credential',
+  processingRefreshBalance: 'processing:refresh-balance',
+  processingProcessAccount: 'processing:process-account',
+  processingProcessToken: 'processing:process-token',
+  processingProgress: 'processing:progress',
   agentLaunchStart: 'agent-launch:start',
   agentLaunchGet: 'agent-launch:get',
   agentLaunchProgress: 'agent-launch:progress',

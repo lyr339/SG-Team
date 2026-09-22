@@ -30,14 +30,17 @@ function propsFor(overrides: Partial<SettingsPageProps> = {}): SettingsPageProps
     onRestartWithAccount: async () => {},
     onImportFromLocal: async () => {},
     onImportFromBrowser: async () => {},
-    aozaiStatus: { saved: true, maskedCode: '••••card', remainingPoints: 87, maxPoints: 100, pointsPerOperation: 3 },
-    aozaiBusy: false,
-    aozaiError: '',
-    onSaveAozaiCard: async () => {},
-    onClearAozaiCard: async () => {},
-    onRefreshAozaiBalance: async () => {},
-    onProcessAozaiAccount: async () => {},
-    onProcessAozaiToken: async () => {},
+    processingStatuses: {
+      aozai: { providerId: 'aozai', label: '奥仔', saved: true, maskedCode: '••••card', unit: 'points', remaining: 87, capacity: 100, costPerOperation: 3 },
+      henxin: { providerId: 'henxin', label: '痕心', saved: false, unit: 'uses' }
+    },
+    processingBusy: false,
+    processingError: null,
+    onSaveProcessingCredential: async () => {},
+    onClearProcessingCredential: async () => {},
+    onRefreshProcessingBalance: async () => {},
+    onProcessAccount: async () => {},
+    onProcessToken: async () => {},
     automationSettings: { ...DEFAULT_ACCOUNT_AUTOMATION_SETTINGS, enabled: true, delaySec: 10 },
     automationRun: { phase: 'idle', message: '', startedAt: 0 },
     cursorUpdatePreferences: {
@@ -116,7 +119,7 @@ describe('SettingsPage', () => {
   it('renders settings navigation without an idle pipeline taking up the page', () => {
     const html = renderToStaticMarkup(<SettingsPage {...propsFor()} />)
     expect(html).toContain('aria-label="设置分组"')
-    for (const label of ['账号', '导入来源', '自动化', '奥仔服务', 'Cursor 维护']) expect(html).toContain(label)
+    for (const label of ['账号', '导入来源', '自动化', '处理服务', 'Cursor 维护']) expect(html).toContain(label)
     expect(html).not.toContain('aria-label="账号自动化流程"')
     expect(html).not.toContain('lobby-account__columns')
   })
@@ -273,7 +276,7 @@ describe('SettingsPage', () => {
       automationSettings: { ...DEFAULT_ACCOUNT_AUTOMATION_SETTINGS, enabled: true, seamlessHandoverEnabled: false },
       onSaveAutomationSettings: onSave
     })} />)
-    const label = '退款完成后无感切换'
+    const label = '处理完成后无感切换'
     const toggleMarkup = (html: string): string => {
       const textAt = html.indexOf(`aria-label="${label}"`)
       return html.slice(html.lastIndexOf('<label', textAt), html.indexOf('</label>', textAt) + 8)
@@ -295,7 +298,7 @@ describe('SettingsPage', () => {
     expect(selectAccountHandoverTarget(candidates, 'account:1', 'account:1')?.id).toBe('account:3')
   })
 
-  it('运行卡把本轮冻结的接手账号挂在奥仔处理步下：用户语句上屏，服务端原文留在悬停', () => {
+  it('运行卡把本轮冻结的接手账号挂在服务处理步下：用户语句上屏，服务端原文留在悬停', () => {
     const html = renderToStaticMarkup(<SettingsPage {...propsFor({
       automationRun: runFor({
         phase: 'processing',
@@ -305,15 +308,15 @@ describe('SettingsPage', () => {
           accountId: 'account:2',
           label: 'spare@example.com',
           status: 'preparing',
-          message: '票据已就绪，等待退款完成',
+          message: '票据已就绪，等待处理完成',
           startedAt: 1_100
         }
       })
     })} />)
-    expect(html).toMatch(/第 2 步：奥仔处理，进行中[\s\S]*?第 4 步：收尾，等待[\s\S]*?automation-run__handover is-preparing/)
+    expect(html).toMatch(/第 2 步：服务处理，进行中[\s\S]*?第 4 步：收尾，等待[\s\S]*?automation-run__handover is-preparing/)
     expect(html).toContain('<strong>spare@example.com</strong>')
     expect(html).toContain('<em>准备中</em>')
-    expect(html).toContain('title="票据已就绪，等待退款完成"')
+    expect(html).toContain('title="票据已就绪，等待处理完成"')
     expect(html).not.toContain('<em>票据已就绪')
   })
 
@@ -324,7 +327,7 @@ describe('SettingsPage', () => {
     // 双倒计时在编组子组内：处理前 + 加固前各一个步进输入（role="spinbutton"）
     expect(html).toMatch(/settings-collapse is-open[\s\S]*?settings-subgroup[\s\S]*?处理前倒计时[\s\S]*?role="spinbutton"[\s\S]*?加固前倒计时[\s\S]*?role="spinbutton"/)
     // 无感切换为独立平级行，接手账号选择器与切换前等待编组于其下
-    expect(html).toMatch(/settings-row--divided[\s\S]*?退款完成后无感切换[\s\S]*?settings-row--sub[\s\S]*?接手账号/)
+    expect(html).toMatch(/settings-row--divided[\s\S]*?处理完成后无感切换[\s\S]*?settings-row--sub[\s\S]*?接手账号/)
     expect(html).toContain('切换前等待')
     expect(html).toContain('aria-label="无感切换前等待秒数"')
     // 复核开关：倒计时后会话复检的显式开关
@@ -411,13 +414,13 @@ describe('SettingsPage', () => {
     expect(html).toContain('自动获取本机 Token')
     expect(html).toContain('手动粘贴卡号 / Token')
     expect(html).not.toContain('其他获取方式')
-    // 奥仔卡密：刷新余额 / 更换卡密
+    // 处理服务卡密：刷新余额 / 更换卡密
     expect(html).toContain('刷新余额')
     expect(html).toContain('更换卡密')
-    // 奥仔手动处理：独立于自动化的任意 Token 直提入口
+    // 手动处理：独立于自动化的任意 Token 直提入口
     expect(html).toContain('手动处理')
     expect(html).toContain('aria-label="手动处理的 Session Token"')
-    expect(html).toContain('提交处理')
+    expect(html).toContain('提交给奥仔')
     // 自动化开关（自绘 ToggleSwitch，保留原生 checkbox 可达性）与倒计时步进输入
     expect(html).toContain('会话创建后自动处理账号')
     expect(html).toContain('toggle-switch')
@@ -474,7 +477,7 @@ describe('SettingsPage', () => {
     expect(html).not.toContain('automation-run__cancel')
   })
 
-  it('处理相位：实时消息落在奥仔处理步的说明行，前一步完成、后两步等待', () => {
+  it('处理相位：实时消息落在服务处理步的说明行，前一步完成、后两步等待', () => {
     const html = renderToStaticMarkup(
       <SettingsPage {...propsFor({
         automationRun: runFor({ phase: 'processing', message: '奥仔：正在提交 Session Token 处理…', startedAt: 1_000 })
@@ -483,7 +486,7 @@ describe('SettingsPage', () => {
     )
 
     expect(html).toContain('aria-label="第 1 步：准备，完成"')
-    expect(html).toContain('aria-label="第 2 步：奥仔处理，进行中"')
+    expect(html).toContain('aria-label="第 2 步：服务处理，进行中"')
     expect(html).toContain('aria-label="第 3 步：加固账号，等待"')
     expect(html).toContain('aria-label="第 4 步：收尾，等待"')
     expect(html).toMatch(/automation-run__stage-detail" aria-live="polite">奥仔：正在提交 Session Token 处理…</)
@@ -497,7 +500,7 @@ describe('SettingsPage', () => {
       })}
       />
     )
-    expect(html).toContain('aria-label="第 2 步：奥仔处理，完成"')
+    expect(html).toContain('aria-label="第 2 步：服务处理，完成"')
     expect(html).toContain('aria-label="第 3 步：加固账号，进行中"')
     expect(html).toContain('4 秒后加固账号')
     expect(html).toContain('automation-run__cancel')
@@ -513,7 +516,7 @@ describe('SettingsPage', () => {
     )
 
     expect(html).toContain('automation-run__badge is-done">已完成')
-    for (const step of ['第 1 步：准备，完成', '第 2 步：奥仔处理，完成', '第 3 步：加固账号，完成', '第 4 步：收尾，完成']) {
+    for (const step of ['第 1 步：准备，完成', '第 2 步：服务处理，完成', '第 3 步：加固账号，完成', '第 4 步：收尾，完成']) {
       expect(html).toContain(`aria-label="${step}"`)
     }
     expect(html).toContain('automation-run__duration">耗时 12.5 秒')
@@ -531,8 +534,8 @@ describe('SettingsPage', () => {
     )
 
     expect(html).toContain('automation-run__badge is-failed">未完成')
-    // 无活跃轨迹时按消息文案归属到奥仔处理步骤
-    expect(html).toContain('aria-label="第 2 步：奥仔处理，失败"')
+    // 无活跃轨迹时按消息文案归属到服务处理步骤
+    expect(html).toContain('aria-label="第 2 步：服务处理，失败"')
     expect(html).toContain('aria-label="第 3 步：加固账号，未执行"')
     expect(html).toContain('aria-label="第 4 步：收尾，未执行"')
     expect(html).toMatch(new RegExp(`role="alert">${message}<`))
@@ -740,15 +743,16 @@ describe('SettingsPage', () => {
     expect(html).toContain('6192****eada')
   })
 
-  it('奥仔手动处理区：有卡密且有回调才渲染；无卡密或无回调时隐藏', () => {
+  it('处理服务手动区：所选服务有卡密且有回调才渲染', () => {
     const withCard = renderToStaticMarkup(<SettingsPage {...propsFor()} />)
     expect(withCard).toContain('手动处理')
     expect(withCard).toContain('aria-label="手动处理的 Session Token"')
 
-    const noCard = renderToStaticMarkup(<SettingsPage {...propsFor({ aozaiStatus: { saved: false } })} />)
+    const statuses = propsFor().processingStatuses!
+    const noCard = renderToStaticMarkup(<SettingsPage {...propsFor({ processingStatuses: { ...statuses, aozai: { providerId: 'aozai', label: '奥仔', unit: 'points', saved: false } } })} />)
     expect(noCard).not.toContain('手动处理')
 
-    const noHandler = renderToStaticMarkup(<SettingsPage {...propsFor({ onProcessAozaiToken: undefined })} />)
+    const noHandler = renderToStaticMarkup(<SettingsPage {...propsFor({ onProcessToken: undefined })} />)
     expect(noHandler).not.toContain('手动处理')
   })
 

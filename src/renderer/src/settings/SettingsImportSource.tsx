@@ -13,7 +13,7 @@ type ImportSourceProps = Pick<SettingsPageProps,
   | 'onOpenFingerprintLogin' | 'onCleanupFingerprintEnvironment'
   | 'automationSettings' | 'onSaveAutomationSettings'
   | 'bitProfiles' | 'bitProfilesMessage' | 'onRefreshBitProfiles'
-  | 'roxyApiKeyStatus' | 'onSaveRoxyApiKey' | 'platform' | 'aozaiBusy'
+  | 'roxyApiKeyStatus' | 'onSaveRoxyApiKey' | 'platform' | 'processingBusy'
 >
 
 interface SettingsImportSourceProps extends ImportSourceProps {
@@ -42,7 +42,7 @@ export function SettingsImportSource({
   roxyApiKeyStatus,
   onSaveRoxyApiKey,
   platform,
-  aozaiBusy = false,
+  processingBusy = false,
   phase
 }: SettingsImportSourceProps): React.JSX.Element {
   const [adding, setAdding] = useState(false)
@@ -64,7 +64,7 @@ export function SettingsImportSource({
         >
           <AccountBrowserPanel
             settings={automationSettings}
-            disabled={busy || aozaiBusy || isActiveAutomationPhase(phase)}
+            disabled={busy || processingBusy || isActiveAutomationPhase(phase)}
             isWindows={isWindows}
             providerLabel={fingerprintProviderLabel}
             profiles={bitProfiles}
@@ -96,7 +96,7 @@ export function SettingsImportSource({
               自动化活跃阶段必须禁用——此时导航的正是自动化链在用的 tab，
               会破坏就绪探测与 token 轮换基准（与窗口选择器同一禁用条件）。 */}
           {onOpenFingerprintLogin && (automationSettings?.browserHost ?? 'fingerprint') === 'fingerprint' ? (
-            <button disabled={busy || aozaiBusy || isActiveAutomationPhase(phase) || !automationSettings?.bitProfileId}
+            <button disabled={busy || processingBusy || isActiveAutomationPhase(phase) || !automationSettings?.bitProfileId}
               title={automationSettings?.bitProfileId
                 ? '打开选定的指纹浏览器窗口并进入 cursor.com——未登录可先登录（登录态保存到该窗口，之后导入直接读取）'
                 : '请先在上方选择指纹浏览器窗口'}

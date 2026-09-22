@@ -72,7 +72,7 @@ function installDesktopMock(desktopSnapshot: DesktopSnapshot = snapshot): void {
     onTaskPoolSnapshot: () => () => {},
     onTeamControlSnapshot: () => () => {},
     onTeamCollaborationSnapshot: () => () => {},
-    onAozaiProgress: () => () => {},
+    onProcessingProgress: () => () => {},
     onAgentLaunchProgress: () => () => {},
     onCdpAutoHealEvent: () => () => {},
     onAccountAutomationProgress: () => () => {},
@@ -81,14 +81,17 @@ function installDesktopMock(desktopSnapshot: DesktopSnapshot = snapshot): void {
     getTeamControlSnapshot: async () => emptyTeamControlSnapshot(),
     getTeamCollaborationSnapshot: async () => emptyTeamCollaborationSnapshot(),
     listCursorAccounts: async () => [],
-    getAozaiCardStatus: async () => ({ saved: false }),
+    getProcessingProviderStatuses: async () => [
+      { providerId: 'aozai', label: '奥仔', unit: 'points', saved: false },
+      { providerId: 'henxin', label: '痕心', unit: 'uses', saved: false }
+    ],
     getAgentLaunchPlan: async () => undefined,
-    getAccountAutomationSettings: async () => ({ enabled: false, delaySec: 30 }),
+    getAccountAutomationSettings: async () => ({ enabled: false, delaySec: 30, postProcessDelaySec: 30, processingProvider: 'aozai' }),
     getAccountAutomationRun: async () => ({ phase: 'idle' }),
     getCursorCdpSettings: async () => ({ autoHealEnabled: false }),
     getCursorUpdatePreferences: async () => ({}),
     detectCursorWorkspace: async () => ({ state: 'none', source: 'test', confidence: 0, candidates: [], detail: '' }),
-    refreshAozaiBalance: async () => ({ saved: false }),
+    refreshProcessingBalance: async (providerId: 'aozai' | 'henxin') => ({ providerId, label: providerId === 'henxin' ? '痕心' : '奥仔', unit: providerId === 'henxin' ? 'uses' : 'points', saved: false }),
     installTaskMcp: async () => ({ workspacePath: '/workspace/demo', workspaceId: 'demo', runId: 'run-1', serverNames: ['SG Team'] }),
     sendMessage
   }

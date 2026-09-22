@@ -419,7 +419,17 @@ const scenes = [
     ['light', 'dark'].map(colorScheme => ({
       name: `settings-${group}-${colorScheme}`, hash: `account:${group}`,
       ...(group === 'aozai' ? { query: 'automation=processing' } : {}),
-      width: 1440, height: 900, colorScheme, storage: baseStorage({ colorMode: colorScheme }), clip: null
+      width: 1440, height: 900, colorScheme, storage: baseStorage({ colorMode: colorScheme }), clip: null,
+      ...(group === 'aozai' ? { actions: [
+        { click: '.processing-provider-tabs button:nth-child(2)' },
+        { label: '痕心服务商切换与次数语义', probe: `(() => {
+          const panel = document.querySelector('.settings-aozai')
+          if (!panel.textContent.includes('剩余 5 次') || !panel.textContent.includes('每次 1 次')) throw new Error('痕心次数未呈现')
+          if (!panel.textContent.includes('单网页会话') || !panel.textContent.includes('提交给痕心')) throw new Error('痕心说明或操作缺失')
+          if (panel.textContent.includes('剩余 87 点')) throw new Error('切换后仍展示奥仔余额')
+          return { provider:'henxin', noOverflow:panel.scrollWidth <= panel.clientWidth + 1 }
+        })()` }
+      ] } : {})
     }))
   ),
   // 自动化运行卡：每个相位一张整页 + 一张卡片特写（空闲态已在 settings-automation-* 覆盖）。
@@ -449,6 +459,9 @@ const scenes = [
           }
           const input = controls.querySelector('input')
           if (input && input.getBoundingClientRect().width < 100) throw new Error('Key 输入区过窄')
+          const port = cell.querySelector('.account-browser__port').getBoundingClientRect()
+          if (port.left < box.right + 4 || port.right > cell.getBoundingClientRect().right + 1) throw new Error('端口控件与 Key 控件重叠或溢出')
+          if (cell.querySelector('.account-browser__port input').value !== '50000') throw new Error('默认端口未呈现')
           const select = document.querySelector('.account-browser__window-cell .menu-select__button').getBoundingClientRect()
           const refresh = document.querySelector('.account-browser__refresh').getBoundingClientRect()
           if (Math.abs(select.top + select.height / 2 - refresh.top - refresh.height / 2) > 1) throw new Error('刷新按钮未与下拉框垂直居中对齐')

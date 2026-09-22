@@ -16,6 +16,13 @@ describe('RoxyBrowserClient', () => {
     )
   })
 
+  it('custom port：所有请求使用配置的 Local API 地址', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ code: 0, data: 'ok' }))
+    const client = new RoxyBrowserClient({ apiKey: 'key', baseUrl: 'http://127.0.0.1:51823/', fetchImpl })
+    await client.health()
+    expect(fetchImpl).toHaveBeenCalledWith('http://127.0.0.1:51823/health', expect.anything())
+  })
+
   it('listWindows：workspace → list_v3 两级查询并归一化', async () => {
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ code: 0, data: { rows: [{ id: '90072' }] }, msg: '成功' }))
@@ -39,9 +46,23 @@ describe('RoxyBrowserClient', () => {
     expect(fetchImpl).toHaveBeenNthCalledWith(1, 'http://127.0.0.1:50000/browser/workspace', expect.anything())
     expect(fetchImpl).toHaveBeenNthCalledWith(
       2,
-      'http://127.0.0.1:50000/browser/list_v3?workspaceId=90072&page_index=1&page_size=15',
+      'http://127.0.0.1:50000/browser/list_v3?workspaceId=90072&page_index=1&page_size=100',
       expect.objectContaining({ method: 'GET' })
     )
+  })
+
+  it('listWindows：合并全部 workspace，窗口归属供后续清场复用', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ code: 0, data: { rows: [{ id: 1 }, { id: 2 }] } }))
+      .mockResolvedValueOnce(jsonResponse({ code: 0, data: { rows: [{ dirId: 'w1', windowName: '第一空间' }] } }))
+      .mockResolvedValueOnce(jsonResponse({ code: 0, data: { rows: [{ dirId: 'w2', windowName: '第二空间' }] } }))
+    const client = new RoxyBrowserClient({ apiKey: 'k', fetchImpl })
+    await expect(client.listWindows()).resolves.toEqual([
+      { id: 'w1', name: '第一空间', seq: undefined },
+      { id: 'w2', name: '第二空间', seq: undefined }
+    ])
+    expect(fetchImpl).toHaveBeenNthCalledWith(2, expect.stringContaining('workspaceId=1'), expect.anything())
+    expect(fetchImpl).toHaveBeenNthCalledWith(3, expect.stringContaining('workspaceId=2'), expect.anything())
   })
 
   it('openWindow：POST {dirId, args:[]} → data.ws', async () => {
@@ -77,6 +98,7 @@ describe('RoxyBrowserClient', () => {
   it('finalizeProfile：关窗后按事务顺序清理缓存并轮换指纹', async () => {
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ code: 0, data: { rows: [{ id: '90072' }] } }))   // workspace
+      .mockResolvedValueOnce(jsonResponse({ code: 0, data: { rows: [{ dirId: 'w1', windowName: 'cursor' }] } })) // windows
       .mockResolvedValueOnce(jsonResponse({ code: 0, data: null }))                            // close
       .mockResolvedValueOnce(jsonResponse({ code: 0, data: null }))                            // clear_local_cache
       .mockResolvedValueOnce(jsonResponse({ code: 0, data: null }))                            // clear_server_cache
@@ -86,24 +108,26 @@ describe('RoxyBrowserClient', () => {
     const calls = fetchImpl.mock.calls.map((call) => String(call[0]))
     expect(calls).toEqual([
       'http://127.0.0.1:50000/browser/workspace',
+      'http://127.0.0.1:50000/browser/list_v3?workspaceId=90072&page_index=1&page_size=100',
       'http://127.0.0.1:50000/browser/close',
       'http://127.0.0.1:50000/browser/clear_local_cache',
       'http://127.0.0.1:50000/browser/clear_server_cache',
       'http://127.0.0.1:50000/browser/random_env'
     ])
-    expect(fetchImpl).toHaveBeenNthCalledWith(2, 'http://127.0.0.1:50000/browser/close',
+    expect(fetchImpl).toHaveBeenNthCalledWith(3, 'http://127.0.0.1:50000/browser/close',
       expect.objectContaining({ method: 'POST', body: JSON.stringify({ dirId: 'w1' }) }))
-    expect(fetchImpl).toHaveBeenNthCalledWith(3, 'http://127.0.0.1:50000/browser/clear_local_cache',
+    expect(fetchImpl).toHaveBeenNthCalledWith(4, 'http://127.0.0.1:50000/browser/clear_local_cache',
       expect.objectContaining({ method: 'POST', body: JSON.stringify({ dirIds: ['w1'], type: 'all' }) }))
-    expect(fetchImpl).toHaveBeenNthCalledWith(4, 'http://127.0.0.1:50000/browser/clear_server_cache',
+    expect(fetchImpl).toHaveBeenNthCalledWith(5, 'http://127.0.0.1:50000/browser/clear_server_cache',
       expect.objectContaining({ method: 'POST', body: JSON.stringify({ workspaceId: 90072, dirIds: ['w1'] }) }))
-    expect(fetchImpl).toHaveBeenNthCalledWith(5, 'http://127.0.0.1:50000/browser/random_env',
+    expect(fetchImpl).toHaveBeenNthCalledWith(6, 'http://127.0.0.1:50000/browser/random_env',
       expect.objectContaining({ method: 'POST', body: JSON.stringify({ workspaceId: 90072, dirId: 'w1' }) }))
   })
 
   it('finalizeProfile：本地缓存清理失败 → 明确抛错（兼作关窗后置校验）', async () => {
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ code: 0, data: { rows: [{ id: '90072' }] } }))
+      .mockResolvedValueOnce(jsonResponse({ code: 0, data: { rows: [{ dirId: 'w1', windowName: 'cursor' }] } }))
       .mockResolvedValueOnce(jsonResponse({ code: 0, data: null }))
       .mockResolvedValueOnce(jsonResponse({ code: 1005, msg: 'window is open' }))
     const client = new RoxyBrowserClient({ apiKey: 'k', fetchImpl })

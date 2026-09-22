@@ -55,8 +55,12 @@ describe('账号卡片：次要操作溢出菜单', () => {
       .find((b) => b.textContent === text)!
 
   const aozaiProps = {
-    aozaiStatus: { saved: true } as Props['aozaiStatus'],
-    onProcessAozaiAccount: vi.fn(async () => {})
+    processingStatuses: {
+      aozai: { providerId: 'aozai', label: '奥仔', unit: 'points', saved: true },
+      henxin: { providerId: 'henxin', label: '痕心', unit: 'uses', saved: false }
+    } as Props['processingStatuses'],
+    automationSettings: { enabled: false, delaySec: 10, postProcessDelaySec: 10, processingProvider: 'aozai' as const },
+    onProcessAccount: vi.fn(async () => {})
   }
 
   it('三个次要动作都在菜单里，行内只剩切换 / 删除；点「处理」把账号 id 交给回调并收起菜单', async () => {
@@ -67,8 +71,12 @@ describe('账号卡片：次要操作溢出菜单', () => {
       onStartProUpgrade: async () => {},
       onSwitchLiveAccount: async () => {},
       onRestartWithAccount: async () => {},
-      aozaiStatus: { saved: true, remainingPoints: 87, pointsPerOperation: 3 } as Props['aozaiStatus'],
-      onProcessAozaiAccount
+      processingStatuses: {
+        aozai: { providerId: 'aozai', label: '奥仔', unit: 'points', saved: true, remaining: 87, costPerOperation: 3 },
+        henxin: { providerId: 'henxin', label: '痕心', unit: 'uses', saved: false }
+      } as Props['processingStatuses'],
+      automationSettings: { enabled: false, delaySec: 10, postProcessDelaySec: 10, processingProvider: 'aozai' },
+      onProcessAccount: onProcessAozaiAccount
     })
 
     // 行内按钮：⋯ + 无感切换 + 切换并重启 + 删除，恰好四个，与账号是否当前无关。
@@ -77,11 +85,11 @@ describe('账号卡片：次要操作溢出菜单', () => {
     expect(inline[0]!.className).toContain('account-actions-menu__trigger')
 
     await openMenu()
-    expect(items()).toEqual(['重新登录', '升级 Pro', '处理'])
-    expect(item('处理').title).toContain('扣 3 点')
+    expect(items()).toEqual(['重新登录', '升级 Pro', '奥仔处理'])
+    expect(item('奥仔处理').title).toContain('扣 3 点')
 
-    await act(async () => item('处理').click())
-    expect(onProcessAozaiAccount).toHaveBeenCalledWith('acc-1')
+    await act(async () => item('奥仔处理').click())
+    expect(onProcessAozaiAccount).toHaveBeenCalledWith('aozai', 'acc-1')
     expect(menu()).toBeNull()
   })
 

@@ -109,12 +109,12 @@ describe('AccountBrowserPanel', () => {
 
     // 已保存：只回显掩码 + 「更换」，没有输入框（这正是此前无法更改的缺陷点）。
     expect(keyCell().querySelector('code')?.textContent).toBe('6192****eada')
-    expect(keyCell().querySelector('input')).toBeNull()
+    expect(keyCell().querySelector('input[type="password"]')).toBeNull()
     expect(buttonNamed('更换')).toBeTruthy()
 
     // 「更换」→ 输入态：输入框 + 「保存」（不足 8 位禁用）+ 「取消」。
     await act(async () => buttonNamed('更换')!.click())
-    const input = () => keyCell().querySelector<HTMLInputElement>('input')!
+    const input = () => keyCell().querySelector<HTMLInputElement>('input[type="password"]')!
     expect(input()).toBeTruthy()
     expect(input().placeholder).toBe('粘贴新的 Roxy API Key')
     expect(buttonNamed('保存')!.disabled).toBe(true)
@@ -122,7 +122,7 @@ describe('AccountBrowserPanel', () => {
 
     // 「取消」→ 回到掩码态，旧 Key 不动。
     await act(async () => buttonNamed('取消')!.click())
-    expect(keyCell().querySelector('input')).toBeNull()
+    expect(keyCell().querySelector('input[type="password"]')).toBeNull()
     expect(keyCell().querySelector('code')?.textContent).toBe('6192****eada')
     expect(saved).toHaveLength(0)
 
@@ -136,9 +136,39 @@ describe('AccountBrowserPanel', () => {
     expect(buttonNamed('保存')!.disabled).toBe(false)
     await act(async () => buttonNamed('保存')!.click())
     expect(saved).toEqual(['roxy-new-key-7788'])
-    expect(keyCell().querySelector('input')).toBeNull()
+    expect(keyCell().querySelector('input[type="password"]')).toBeNull()
     expect(keyCell().querySelector('code')?.textContent).toBe('roxy****7788')
     expect(buttonNamed('更换')).toBeTruthy()
+  })
+
+  it('persists a valid custom Roxy Local API port and rejects invalid edits', async () => {
+    const saved: AccountAutomationSettings[] = []
+    function Harness(): React.JSX.Element {
+      const [settings, setSettings] = useState<AccountAutomationSettings>({
+        ...DEFAULT_ACCOUNT_AUTOMATION_SETTINGS,
+        browserHost: 'fingerprint',
+        roxyApiPort: 50_000
+      })
+      return <AccountBrowserPanel settings={settings} disabled={false} isWindows={false} providerLabel="Roxy"
+        profiles={[]} apiKeyStatus={{ saved: true, maskedKey: '6192****eada' }}
+        onSettingsChange={(next) => { saved.push(next); setSettings(next) }} />
+    }
+    await act(async () => root.render(<Harness />))
+    const port = () => container.querySelector<HTMLInputElement>('input[aria-label="Roxy Local API 端口"]')!
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    await act(async () => {
+      setter.call(port(), '51823')
+      port().dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => { port().focus(); port().blur() })
+    expect(saved.at(-1)?.roxyApiPort).toBe(51_823)
+    await act(async () => {
+      setter.call(port(), '99999')
+      port().dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => { port().focus(); port().blur() })
+    expect(saved).toHaveLength(1)
+    expect(port().value).toBe('51823')
   })
 
   it('switches the whole-pipeline browser source and renders provider-specific configuration', async () => {

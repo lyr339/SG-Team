@@ -28,7 +28,11 @@ import type { CursorMembershipStatus } from '../../domain/cursor-membership'
 import type { CursorUpdatePreferences } from '../../domain/cursor-update'
 import type { CursorSwitchPumpStatus } from '../../domain/cursor-switch-pump'
 import type { CursorStorageCleanupResult, CursorStorageScan } from '../../domain/cursor-storage-cleanup'
-import type { AozaiCardStatus, AozaiProgressEvent } from '../../domain/aozai-service'
+import type {
+  ProcessingCredentialStatus,
+  ProcessingProgressEvent,
+  ProcessingProviderId
+} from '../../domain/processing-provider'
 import type { AgentLaunchPlan, AgentLaunchRequest } from '../../domain/agent-launch'
 import type { SessionWarmupRun } from '../../domain/session-warmup'
 import type { AccountAutomationRun, AccountAutomationSettings } from '../../domain/account-automation'
@@ -160,16 +164,19 @@ export function App(): React.JSX.Element {
   const [storageScanError, setStorageScanError] = useState('')
   const [storageCleanupBusy, setStorageCleanupBusy] = useState(false)
   const [storageCleanupResult, setStorageCleanupResult] = useState<CursorStorageCleanupResult>()
-  const [aozaiStatus, setAozaiStatus] = useState<AozaiCardStatus>({ saved: false })
-  const [aozaiBusy, setAozaiBusy] = useState(false)
-  const [aozaiError, setAozaiError] = useState('')
-  const [aozaiProgress, setAozaiProgress] = useState<AozaiProgressEvent | null>(null)
-  const [aozaiFeedback, setAozaiFeedback] = useState<{ ok: boolean; message: string } | null>(null)
+  const [processingStatuses, setProcessingStatuses] = useState<Record<ProcessingProviderId, ProcessingCredentialStatus>>({
+    aozai: { providerId: 'aozai', label: '奥仔', unit: 'points', saved: false },
+    henxin: { providerId: 'henxin', label: '痕心', unit: 'uses', saved: false }
+  })
+  const [processingBusy, setProcessingBusy] = useState(false)
+  const [processingError, setProcessingError] = useState<{ providerId: ProcessingProviderId; message: string } | null>(null)
+  const [processingProgress, setProcessingProgress] = useState<ProcessingProgressEvent | null>(null)
+  const [processingFeedback, setProcessingFeedback] = useState<{ providerId: ProcessingProviderId; ok: boolean; message: string } | null>(null)
   const [agentLaunchPlan, setAgentLaunchPlan] = useState<AgentLaunchPlan | undefined>(undefined)
   // 会话预热探针：批量发起前用最低成本模型验证账号能真实跑通响应（绝不触发账号自动化）。
   const [sessionWarmupRun, setSessionWarmupRun] = useState<SessionWarmupRun | undefined>(undefined)
   const [sessionWarmupEnabled, setSessionWarmupEnabled] = useState<boolean>(() => readSessionWarmupEnabled())
-  const [accountAutomationSettings, setAccountAutomationSettings] = useState<AccountAutomationSettings>({ enabled: false, delaySec: 30, postProcessDelaySec: 30 })
+  const [accountAutomationSettings, setAccountAutomationSettings] = useState<AccountAutomationSettings>({ enabled: false, delaySec: 30, postProcessDelaySec: 30, processingProvider: 'aozai' })
   const [accountAutomationRun, setAccountAutomationRun] = useState<AccountAutomationRun | undefined>(undefined)
   // 指纹浏览器窗口列表（账号自动化链的浏览器宿主；用户按当次网络选「代理/直连」窗口。
   // 提供方恒 RoxyBrowser，与平台无关）
@@ -339,8 +346,11 @@ export function App(): React.JSX.Element {
         void refreshAccountMemberships()
       })
       .catch((reason: unknown) => setCursorAccountError(reason instanceof Error ? reason.message : String(reason)))
-    void window.sgDesktop.getAozaiCardStatus()
-      .then(setAozaiStatus)
+    void window.sgDesktop.getProcessingProviderStatuses()
+      .then((statuses) => setProcessingStatuses((current) => ({
+        ...current,
+        ...Object.fromEntries(statuses.map((status) => [status.providerId, status]))
+      })))
       .catch(() => {})
     void window.sgDesktop.getAgentLaunchPlan()
       .then((plan) => { if (plan) setAgentLaunchPlan(plan) })
@@ -367,7 +377,7 @@ export function App(): React.JSX.Element {
     void window.sgDesktop.getAccountAutomationRoxyApiKey()
       .then(setRoxyApiKeyStatus)
       .catch(() => {})
-    const unsubscribeAozai = window.sgDesktop.onAozaiProgress(setAozaiProgress)
+    const unsubscribeProcessing = window.sgDesktop.onProcessingProgress(setProcessingProgress)
     const unsubscribeAgentLaunch = window.sgDesktop.onAgentLaunchProgress(setAgentLaunchPlan)
     const unsubscribeSessionWarmup = window.sgDesktop.onSessionWarmupProgress(setSessionWarmupRun)
     const unsubscribeCdpAutoHeal = window.sgDesktop.onCdpAutoHealEvent((event) => {
@@ -399,16 +409,17 @@ export function App(): React.JSX.Element {
         // 自动化会改动账号列表（新 token 入库 / 移除本地记录），终态后刷新
         void window.sgDesktop.listCursorAccounts().then(setCursorAccounts).catch(() => {})
         // 链内为提速跳过了余额刷新，这里链外异步补齐
-        void window.sgDesktop.refreshAozaiBalance().then(setAozaiStatus).catch(() => {})
+        const providerId = run.processingProvider ?? 'aozai'
+        void window.sgDesktop.refreshProcessingBalance(providerId).then(updateProcessingStatus).catch(() => {})
         // 活跃账号可能已被移除/换发，一致性指示立即重算（不等 30s 轮询）
         void refreshRuntimeMatch()
-        // 奥仔处理会改变账号档位，档位行同样立即重查
+        // 处理服务会改变账号档位，档位行同样立即重查
         void refreshMembership()
         void refreshAccountMemberships()
       }
     })
     return () => {
-      unsubscribeAozai()
+      unsubscribeProcessing()
       unsubscribeAgentLaunch()
       unsubscribeSessionWarmup()
       unsubscribeCdpAutoHeal()
@@ -633,87 +644,92 @@ export function App(): React.JSX.Element {
     }
   }, [membershipGuard, performAgentLaunch, refreshMembership])
 
-  const refreshAozaiBalance = useCallback(async (options: { silent?: boolean } = {}): Promise<void> => {
-    if (!options.silent) {
-      setAozaiBusy(true)
-      setAozaiError('')
-    }
-    try {
-      setAozaiStatus(await window.sgDesktop.refreshAozaiBalance())
-    } catch (reason) {
-      if (!options.silent) setAozaiError(userFacingErrorMessage(reason))
-    } finally {
-      if (!options.silent) setAozaiBusy(false)
-    }
+  const updateProcessingStatus = useCallback((status: ProcessingCredentialStatus): void => {
+    setProcessingStatuses((current) => ({ ...current, [status.providerId]: status }))
   }, [])
 
-  const saveAozaiCard = useCallback(async (cardCode: string): Promise<void> => {
-    setAozaiBusy(true)
-    setAozaiError('')
-    setAozaiFeedback(null)
+  const refreshProcessingBalance = useCallback(async (
+    providerId: ProcessingProviderId,
+    options: { silent?: boolean } = {}
+  ): Promise<void> => {
+    if (!options.silent) {
+      setProcessingBusy(true)
+      setProcessingError(null)
+    }
     try {
-      setAozaiStatus(await window.sgDesktop.saveAozaiCard(cardCode))
+      updateProcessingStatus(await window.sgDesktop.refreshProcessingBalance(providerId))
     } catch (reason) {
-      setAozaiError(userFacingErrorMessage(reason))
+      if (!options.silent) setProcessingError({ providerId, message: userFacingErrorMessage(reason) })
+    } finally {
+      if (!options.silent) setProcessingBusy(false)
+    }
+  }, [updateProcessingStatus])
+
+  const saveProcessingCredential = useCallback(async (providerId: ProcessingProviderId, code: string): Promise<void> => {
+    setProcessingBusy(true)
+    setProcessingError(null)
+    setProcessingFeedback(null)
+    try {
+      updateProcessingStatus(await window.sgDesktop.saveProcessingCredential({ providerId, code }))
+    } catch (reason) {
+      setProcessingError({ providerId, message: userFacingErrorMessage(reason) })
       throw reason
     } finally {
-      setAozaiBusy(false)
+      setProcessingBusy(false)
     }
-  }, [])
+  }, [updateProcessingStatus])
 
-  const clearAozaiCard = useCallback(async (): Promise<void> => {
-    setAozaiBusy(true)
-    setAozaiError('')
-    setAozaiFeedback(null)
+  const clearProcessingCredential = useCallback(async (providerId: ProcessingProviderId): Promise<void> => {
+    setProcessingBusy(true)
+    setProcessingError(null)
+    setProcessingFeedback(null)
     try {
-      setAozaiStatus(await window.sgDesktop.clearAozaiCard())
+      updateProcessingStatus(await window.sgDesktop.clearProcessingCredential(providerId))
     } catch (reason) {
-      setAozaiError(userFacingErrorMessage(reason))
+      setProcessingError({ providerId, message: userFacingErrorMessage(reason) })
     } finally {
-      setAozaiBusy(false)
+      setProcessingBusy(false)
     }
-  }, [])
+  }, [updateProcessingStatus])
 
-  const processAozaiAccount = useCallback(async (accountId: string): Promise<void> => {
-    setAozaiBusy(true)
-    setAozaiError('')
-    setAozaiFeedback(null)
-    setAozaiProgress(null)
+  const processAccount = useCallback(async (providerId: ProcessingProviderId, accountId: string): Promise<void> => {
+    setProcessingBusy(true)
+    setProcessingError(null)
+    setProcessingFeedback(null)
+    setProcessingProgress(null)
     try {
-      const result = await window.sgDesktop.processAozaiAccount({ accountId, requestId: crypto.randomUUID() })
-      setAozaiFeedback({ ok: result.ok, message: result.message })
-      setAozaiStatus((previous) => ({
-        ...previous,
-        remainingPoints: typeof result.remainingPoints === 'number' ? result.remainingPoints : previous.remainingPoints
-      }))
+      const result = await window.sgDesktop.processAccount({ providerId, accountId, requestId: crypto.randomUUID() })
+      setProcessingFeedback({ providerId, ok: result.ok, message: result.message })
+      if (result.balance) {
+        setProcessingStatuses((current) => ({ ...current, [providerId]: { ...current[providerId], ...result.balance } }))
+      }
       // 处理完成 = 档位大概率已变（free → 试用/付费），立即重查被动档位行。
       if (result.ok) void refreshMembership()
     } catch (reason) {
-      setAozaiFeedback({ ok: false, message: userFacingErrorMessage(reason) })
+      setProcessingFeedback({ providerId, ok: false, message: userFacingErrorMessage(reason) })
     } finally {
-      setAozaiBusy(false)
-      setAozaiProgress(null)
+      setProcessingBusy(false)
+      setProcessingProgress(null)
     }
   }, [refreshMembership])
 
   // 手动模式：token 由用户粘贴，不属于库内账号——不触发档位重查，其余状态流与账号处理一致。
-  const processAozaiToken = useCallback(async (token: string): Promise<void> => {
-    setAozaiBusy(true)
-    setAozaiError('')
-    setAozaiFeedback(null)
-    setAozaiProgress(null)
+  const processToken = useCallback(async (providerId: ProcessingProviderId, token: string): Promise<void> => {
+    setProcessingBusy(true)
+    setProcessingError(null)
+    setProcessingFeedback(null)
+    setProcessingProgress(null)
     try {
-      const result = await window.sgDesktop.processAozaiToken({ token, requestId: crypto.randomUUID() })
-      setAozaiFeedback({ ok: result.ok, message: result.message })
-      setAozaiStatus((previous) => ({
-        ...previous,
-        remainingPoints: typeof result.remainingPoints === 'number' ? result.remainingPoints : previous.remainingPoints
-      }))
+      const result = await window.sgDesktop.processToken({ providerId, token, requestId: crypto.randomUUID() })
+      setProcessingFeedback({ providerId, ok: result.ok, message: result.message })
+      if (result.balance) {
+        setProcessingStatuses((current) => ({ ...current, [providerId]: { ...current[providerId], ...result.balance } }))
+      }
     } catch (reason) {
-      setAozaiFeedback({ ok: false, message: userFacingErrorMessage(reason) })
+      setProcessingFeedback({ providerId, ok: false, message: userFacingErrorMessage(reason) })
     } finally {
-      setAozaiBusy(false)
-      setAozaiProgress(null)
+      setProcessingBusy(false)
+      setProcessingProgress(null)
     }
   }, [])
 
@@ -1228,16 +1244,16 @@ export function App(): React.JSX.Element {
       if (accountId) await refreshAccountMemberships([accountId])
       else await refreshMembership()
     },
-    aozaiStatus,
-    aozaiBusy,
-    aozaiError,
-    aozaiProgress,
-    aozaiFeedback,
-    onSaveAozaiCard: saveAozaiCard,
-    onClearAozaiCard: clearAozaiCard,
-    onRefreshAozaiBalance: refreshAozaiBalance,
-    onProcessAozaiAccount: processAozaiAccount,
-    onProcessAozaiToken: processAozaiToken,
+    processingStatuses,
+    processingBusy,
+    processingError,
+    processingProgress,
+    processingFeedback,
+    onSaveProcessingCredential: saveProcessingCredential,
+    onClearProcessingCredential: clearProcessingCredential,
+    onRefreshProcessingBalance: refreshProcessingBalance,
+    onProcessAccount: processAccount,
+    onProcessToken: processToken,
     automationSettings: accountAutomationSettings,
     automationRun: accountAutomationRun,
     bitProfiles,
@@ -1372,7 +1388,7 @@ export function App(): React.JSX.Element {
     onSaveAutomationSettings: (settings) => {
       void window.sgDesktop.saveAccountAutomationSettings(settings)
         .then((saved) => setAccountAutomationSettings(saved))
-        .catch((reason: unknown) => setAozaiError(userFacingErrorMessage(reason)))
+        .catch((reason: unknown) => setProcessingError({ providerId: settings.processingProvider, message: userFacingErrorMessage(reason) }))
     },
     onCancelAutomation: () => {
       void window.sgDesktop.cancelAccountAutomation().catch(() => {})

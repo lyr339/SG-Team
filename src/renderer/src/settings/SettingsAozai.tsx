@@ -1,41 +1,53 @@
 import { useState } from 'react'
+import { PROCESSING_PROVIDER_IDS, PROCESSING_PROVIDER_LABEL } from '../../../domain/processing-provider'
 import type { SettingsPageProps } from './settings-view'
 import { SettingsSection } from './SettingsSection'
 
-type AozaiProps = Pick<SettingsPageProps,
-  | 'aozaiStatus' | 'aozaiBusy' | 'aozaiError' | 'aozaiProgress' | 'aozaiFeedback'
-  | 'onSaveAozaiCard' | 'onClearAozaiCard' | 'onRefreshAozaiBalance' | 'onProcessAozaiToken'
+type ProcessingProps = Pick<SettingsPageProps,
+  | 'processingStatuses' | 'processingBusy' | 'processingError' | 'processingProgress' | 'processingFeedback'
+  | 'onSaveProcessingCredential' | 'onClearProcessingCredential' | 'onRefreshProcessingBalance' | 'onProcessToken'
+  | 'automationSettings' | 'onSaveAutomationSettings'
 >
 
-/**
- * 奥仔服务分组：卡密保存/更换、余额刷新、手动 token 处理、处理进度与反馈。
- * 点数与单次扣点来自公开 API；字段缺失时明确显示未知，不在前端猜价格。
- */
+/** 处理服务分组：选择服务商、分别保存卡密、刷新余额与手动处理。 */
 export function SettingsAozai({
-  aozaiStatus,
-  aozaiBusy = false,
-  aozaiError,
-  aozaiProgress,
-  aozaiFeedback,
-  onSaveAozaiCard,
-  onClearAozaiCard,
-  onRefreshAozaiBalance,
-  onProcessAozaiToken
-}: AozaiProps): React.JSX.Element {
+  processingStatuses,
+  processingBusy = false,
+  processingError,
+  processingProgress,
+  processingFeedback,
+  onSaveProcessingCredential,
+  onClearProcessingCredential,
+  onRefreshProcessingBalance,
+  onProcessToken,
+  automationSettings,
+  onSaveAutomationSettings
+}: ProcessingProps): React.JSX.Element {
   const [cardCode, setCardCode] = useState('')
   const [manualToken, setManualToken] = useState('')
-  const aozaiEnabled = Boolean(onSaveAozaiCard)
-  const balanceText = typeof aozaiStatus?.remainingPoints === 'number'
-    ? `剩余 ${aozaiStatus.remainingPoints} 点`
+  const providerId = automationSettings?.processingProvider ?? 'aozai'
+  const providerLabel = PROCESSING_PROVIDER_LABEL[providerId]
+  const status = processingStatuses?.[providerId]
+  const enabled = Boolean(onSaveProcessingCredential)
+  const balanceText = typeof status?.remaining === 'number'
+    ? `剩余 ${status.remaining} ${status.unit === 'uses' ? '次' : '点'}`
     : '余额待刷新'
-  const chargeText = typeof aozaiStatus?.pointsPerOperation === 'number'
-    ? `每次 ${aozaiStatus.pointsPerOperation} 点`
-    : '单次扣点以服务端为准'
+  const chargeText = typeof status?.costPerOperation === 'number'
+    ? `每次 ${status.costPerOperation} ${status.unit === 'uses' ? '次' : '点'}`
+    : '单次扣费以服务端为准'
+
+  const selectProvider = (next: typeof providerId): void => {
+    setCardCode('')
+    setManualToken('')
+    if (automationSettings && onSaveAutomationSettings) {
+      void onSaveAutomationSettings({ ...automationSettings, processingProvider: next })
+    }
+  }
 
   const submitCard = async (): Promise<void> => {
-    if (!onSaveAozaiCard) return
+    if (!onSaveProcessingCredential) return
     try {
-      await onSaveAozaiCard(cardCode)
+      await onSaveProcessingCredential(providerId, cardCode)
       setCardCode('')
     } catch {
       // 错误由父级展示
@@ -43,12 +55,11 @@ export function SettingsAozai({
   }
 
   const submitManualToken = async (): Promise<void> => {
-    // busy 守卫必须在按钮 disabled 之外单设：⌘/Ctrl+Enter 快捷键不经过 disabled。
-    if (!onProcessAozaiToken || aozaiBusy) return
+    if (!onProcessToken || processingBusy) return
     const token = manualToken.trim()
     if (!token) return
     try {
-      await onProcessAozaiToken(token)
+      await onProcessToken(providerId, token)
       setManualToken('')
     } catch {
       // 错误由父级展示
@@ -57,50 +68,66 @@ export function SettingsAozai({
 
   return (
     <SettingsSection
-      title="奥仔自助服务"
-      description="处理成功后按服务端规则扣点，失败不扣点。"
-      aside={aozaiStatus?.saved ? (
-        <span className="settings-section__meta">
-          {balanceText} · {chargeText}
-        </span>
-      ) : undefined}
+      title="处理服务"
+      description="选择账号处理服务；每家卡密、余额和认证会话完全隔离。"
+      aside={status?.saved ? <span className="settings-section__meta">{providerLabel} · {balanceText} · {chargeText}</span> : undefined}
     >
-      {aozaiEnabled ? (
+      {enabled ? (
         <div className="account-aozai settings-aozai">
-          {aozaiStatus?.saved ? (
+          <div className="processing-provider-tabs" role="radiogroup" aria-label="账号处理服务">
+            {PROCESSING_PROVIDER_IDS.map((id) => (
+              <button
+                type="button"
+                role="radio"
+                aria-checked={providerId === id}
+                className={providerId === id ? 'is-active' : ''}
+                disabled={processingBusy}
+                onClick={() => selectProvider(id)}
+                key={id}
+              >
+                <strong>{PROCESSING_PROVIDER_LABEL[id]}</strong>
+                <small>{processingStatuses?.[id]?.saved ? '已配置' : '未配置'}</small>
+              </button>
+            ))}
+          </div>
+
+          {providerId === 'henxin' ? (
+            <p className="processing-provider-note">痕心卡密采用单网页会话；拾光仅在保存卡密或主动刷新余额时登录，自动处理直接使用机器 API。</p>
+          ) : null}
+
+          {status?.saved ? (
             <div className="account-aozai__card">
-              <span className="account-aozai__code">{aozaiStatus.maskedCode}</span>
-              <span className="account-aozai__meta">
-                点数卡 · {balanceText} · {chargeText}
-              </span>
-              {onRefreshAozaiBalance ? (
-                <button disabled={aozaiBusy} onClick={() => void onRefreshAozaiBalance()}>刷新余额</button>
+              <span className="account-aozai__code">{status.maskedCode}</span>
+              <span className="account-aozai__meta">{providerLabel} · {balanceText} · {chargeText}</span>
+              {onRefreshProcessingBalance ? (
+                <button disabled={processingBusy} onClick={() => void onRefreshProcessingBalance(providerId)}>刷新余额</button>
               ) : null}
-              {onClearAozaiCard ? (
-                <button className="account-aozai__change" disabled={aozaiBusy} onClick={() => void onClearAozaiCard()}>更换卡密</button>
+              {onClearProcessingCredential ? (
+                <button className="account-aozai__change" disabled={processingBusy} onClick={() => void onClearProcessingCredential(providerId)}>更换卡密</button>
               ) : null}
             </div>
           ) : (
             <div className="account-aozai__setup">
               <input
-                aria-label="奥仔卡密"
+                aria-label={`${providerLabel}卡密`}
                 value={cardCode}
                 maxLength={200}
                 autoComplete="off"
                 spellCheck={false}
-                placeholder="粘贴卡密"
-                disabled={aozaiBusy}
+                placeholder={`粘贴${providerLabel}卡密`}
+                disabled={processingBusy}
                 onChange={(event) => setCardCode(event.target.value)}
               />
-              <button disabled={aozaiBusy || cardCode.trim().length < 6} onClick={() => void submitCard()}>
-                {aozaiBusy ? '验证中…' : '保存并验证'}
+              <button disabled={processingBusy || cardCode.trim().length < 6} onClick={() => void submitCard()}>
+                {processingBusy ? '验证中…' : '保存并验证'}
               </button>
             </div>
           )}
-          {aozaiStatus?.saved && onProcessAozaiToken ? (
+
+          {status?.saved && onProcessToken ? (
             <div className="account-aozai__manual">
               <div className="account-aozai__manual-copy">
-                <strong>手动处理</strong>
+                <strong>手动处理 · {providerLabel}</strong>
                 <span className="account-aozai__manual-hint">
                   粘贴任意 Session Token 直接提交，独立于自动化——不触发账号加固、删除或换号；Token 不保存。
                 </span>
@@ -114,7 +141,7 @@ export function SettingsAozai({
                   autoComplete="off"
                   spellCheck={false}
                   placeholder="user_xxx::eyJhbGciOi… 或完整 JWT"
-                  disabled={aozaiBusy}
+                  disabled={processingBusy}
                   onChange={(event) => setManualToken(event.target.value)}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
@@ -124,25 +151,25 @@ export function SettingsAozai({
                   }}
                 />
                 <button
-                  disabled={aozaiBusy || !manualToken.trim()}
-                  title="提交处理（⌘/Ctrl+Enter）"
+                  disabled={processingBusy || !manualToken.trim()}
+                  title={`提交给${providerLabel}（⌘/Ctrl+Enter）`}
                   onClick={() => void submitManualToken()}
                 >
-                  {aozaiBusy ? '处理中…' : '提交处理'}
+                  {processingBusy ? '处理中…' : `提交给${providerLabel}`}
                 </button>
               </div>
             </div>
           ) : null}
-          {aozaiBusy && aozaiProgress ? (
-            <p className="account-aozai__progress">{aozaiProgress.message}</p>
+          {processingBusy && processingProgress?.providerId === providerId ? (
+            <p className="account-aozai__progress">{processingProgress.message}</p>
           ) : null}
-          {!aozaiBusy && aozaiFeedback ? (
-            <p className={aozaiFeedback.ok ? 'account-aozai__ok' : 'account-aozai__fail'}>{aozaiFeedback.message}</p>
+          {!processingBusy && processingFeedback?.providerId === providerId ? (
+            <p className={processingFeedback.ok ? 'account-aozai__ok' : 'account-aozai__fail'}>{processingFeedback.message}</p>
           ) : null}
-          {aozaiError ? <p className="account-aozai__fail">{aozaiError}</p> : null}
+          {processingError?.providerId === providerId ? <p className="account-aozai__fail">{processingError.message}</p> : null}
         </div>
       ) : (
-        <p className="flow-step__hint">当前环境未接入奥仔自助服务。</p>
+        <p className="flow-step__hint">当前环境未接入账号处理服务。</p>
       )}
     </SettingsSection>
   )

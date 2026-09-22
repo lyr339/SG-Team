@@ -45,12 +45,12 @@ const api: SgDesktopApi = {
   verifyCursorRuntimeAccount: () => ipcRenderer.invoke(IPC.cursorAccountsVerifyRuntime),
   refreshCursorMembership: () => ipcRenderer.invoke(IPC.cursorAccountsRefreshMembership),
   refreshCursorAccountMemberships: (accountIds) => ipcRenderer.invoke(IPC.cursorAccountsRefreshMemberships, accountIds),
-  getAozaiCardStatus: () => ipcRenderer.invoke(IPC.aozaiGetCardStatus),
-  saveAozaiCard: (cardCode) => ipcRenderer.invoke(IPC.aozaiSaveCard, cardCode),
-  clearAozaiCard: () => ipcRenderer.invoke(IPC.aozaiClearCard),
-  refreshAozaiBalance: () => ipcRenderer.invoke(IPC.aozaiRefreshBalance),
-  processAozaiAccount: (input) => ipcRenderer.invoke(IPC.aozaiProcessAccount, input),
-  processAozaiToken: (input) => ipcRenderer.invoke(IPC.aozaiProcessToken, input),
+  getProcessingProviderStatuses: () => ipcRenderer.invoke(IPC.processingGetStatuses),
+  saveProcessingCredential: (input) => ipcRenderer.invoke(IPC.processingSaveCredential, input),
+  clearProcessingCredential: (providerId) => ipcRenderer.invoke(IPC.processingClearCredential, providerId),
+  refreshProcessingBalance: (providerId) => ipcRenderer.invoke(IPC.processingRefreshBalance, providerId),
+  processAccount: (input) => ipcRenderer.invoke(IPC.processingProcessAccount, input),
+  processToken: (input) => ipcRenderer.invoke(IPC.processingProcessToken, input),
   launchAgentSessions: (requests) => ipcRenderer.invoke(IPC.agentLaunchStart, requests),
   getAgentLaunchPlan: () => ipcRenderer.invoke(IPC.agentLaunchGet),
   enableCursorCdp: () => ipcRenderer.invoke(IPC.agentLaunchEnableCdp),
@@ -170,10 +170,10 @@ const api: SgDesktopApi = {
     ipcRenderer.on(IPC.teamCollaborationSnapshot, handler)
     return () => ipcRenderer.removeListener(IPC.teamCollaborationSnapshot, handler)
   },
-  onAozaiProgress: (listener) => {
+  onProcessingProgress: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: Parameters<typeof listener>[0]): void => listener(payload)
-    ipcRenderer.on(IPC.aozaiProgress, handler)
-    return () => ipcRenderer.removeListener(IPC.aozaiProgress, handler)
+    ipcRenderer.on(IPC.processingProgress, handler)
+    return () => ipcRenderer.removeListener(IPC.processingProgress, handler)
   },
   onAgentLaunchProgress: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, plan: Parameters<typeof listener>[0]): void => listener(plan)

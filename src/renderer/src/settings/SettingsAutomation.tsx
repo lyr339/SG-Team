@@ -15,10 +15,11 @@ import type { SettingsPageProps } from './settings-view'
 import { automationBrowserFollowText, isActiveAutomationPhase } from './settings-view'
 import { AutomationRunCard } from './AutomationRunCard'
 import { SettingsSection } from './SettingsSection'
+import { PROCESSING_PROVIDER_LABEL } from '../../../domain/processing-provider'
 
 type AutomationProps = Pick<SettingsPageProps,
-  | 'accounts' | 'automationSettings' | 'automationRun' | 'aozaiStatus'
-  | 'aozaiBusy' | 'onSaveAutomationSettings' | 'onCancelAutomation' | 'bitProfiles'
+  | 'accounts' | 'automationSettings' | 'automationRun' | 'processingStatuses'
+  | 'processingBusy' | 'onSaveAutomationSettings' | 'onCancelAutomation' | 'bitProfiles'
 >
 
 /**
@@ -29,15 +30,17 @@ export function SettingsAutomation({
   accounts,
   automationSettings,
   automationRun,
-  aozaiStatus,
-  aozaiBusy = false,
+  processingStatuses,
+  processingBusy = false,
   onSaveAutomationSettings,
   onCancelAutomation,
   bitProfiles
 }: AutomationProps): React.JSX.Element {
-  const aozaiReady = Boolean(aozaiStatus?.saved)
+  const providerId = automationSettings?.processingProvider ?? 'aozai'
+  const providerLabel = PROCESSING_PROVIDER_LABEL[providerId]
+  const providerReady = Boolean(processingStatuses?.[providerId]?.saved)
   const phase = automationRun?.phase ?? 'idle'
-  const automationControlsReady = aozaiReady && Boolean(automationSettings) && Boolean(onSaveAutomationSettings)
+  const automationControlsReady = providerReady && Boolean(automationSettings) && Boolean(onSaveAutomationSettings)
   const active = isActiveAutomationPhase(phase)
   const activeAccount = accounts.find((account) => account.active)
   const handoverCandidates = accounts.filter((account) => !account.active)
@@ -75,7 +78,7 @@ export function SettingsAutomation({
               </div>
               <ToggleSwitch
                 checked={automationSettings.enabled}
-                disabled={aozaiBusy || active}
+                disabled={processingBusy || active}
                 label="会话创建后自动处理账号"
                 onChange={(enabled) => onSaveAutomationSettings({ ...automationSettings, enabled })}
               />
@@ -95,8 +98,8 @@ export function SettingsAutomation({
                       max={ACCOUNT_AUTOMATION_DELAY_MAX_SEC}
                       step={0.5}
                       unit="秒"
-                      disabled={aozaiBusy}
-                      label="奥仔处理前倒计时秒数"
+                      disabled={processingBusy}
+                      label={`${providerLabel}处理前倒计时秒数`}
                       onChange={(delaySec) => onSaveAutomationSettings({ ...automationSettings, delaySec })}
                     />
                   </div>
@@ -111,8 +114,8 @@ export function SettingsAutomation({
                       max={ACCOUNT_AUTOMATION_DELAY_MAX_SEC}
                       step={0.5}
                       unit="秒"
-                      disabled={aozaiBusy}
-                      label="奥仔完成后账号加固前倒计时秒数"
+                      disabled={processingBusy}
+                      label={`${providerLabel}完成后账号加固前倒计时秒数`}
                       onChange={(postProcessDelaySec) => onSaveAutomationSettings({ ...automationSettings, postProcessDelaySec })}
                     />
                   </div>
@@ -125,7 +128,7 @@ export function SettingsAutomation({
                   </div>
                   <ToggleSwitch
                     checked={automationSettings.preflightRecheckEnabled !== false}
-                    disabled={aozaiBusy || active}
+                    disabled={processingBusy || active}
                     label="倒计时后复核会话"
                     onChange={(preflightRecheckEnabled) => onSaveAutomationSettings({ ...automationSettings, preflightRecheckEnabled })}
                   />
@@ -133,14 +136,14 @@ export function SettingsAutomation({
 
                 <div className="settings-row settings-row--divided">
                   <div className="settings-row__copy">
-                    <span className="settings-row__label">退款完成后无感切换</span>
+                    <span className="settings-row__label">处理完成后无感切换</span>
                     <span className="settings-row__hint">不重启 Cursor，接续到下一可用账号</span>
                   </div>
                   <ToggleSwitch
                     checked={automationSettings.seamlessHandoverEnabled !== false}
-                    disabled={aozaiBusy || active}
-                    label="退款完成后无感切换"
-                    title="奥仔退款成功后，经切号补丁把运行中的 Cursor 直接换到指定接手账号（不换机器码、不中断会话）"
+                    disabled={processingBusy || active}
+                    label="处理完成后无感切换"
+                    title={`${providerLabel}处理成功后，经切号补丁把运行中的 Cursor 直接换到指定接手账号（不换机器码、不中断会话）`}
                     onChange={(seamlessHandoverEnabled) => onSaveAutomationSettings({ ...automationSettings, seamlessHandoverEnabled })}
                   />
                 </div>
@@ -155,7 +158,7 @@ export function SettingsAutomation({
                         </div>
                         <MenuSelect
                           value={effectivePreferredId}
-                          disabled={aozaiBusy || active || handoverCandidates.length === 0}
+                          disabled={processingBusy || active || handoverCandidates.length === 0}
                           ariaLabel="自动化无感换号接手账号"
                           options={[
                             { value: '', label: `自动${handoverTarget ? ` · ${handoverTarget.label}` : ' · 暂无可用账号'}` },
@@ -170,7 +173,7 @@ export function SettingsAutomation({
                       <div className="settings-row settings-row--sub">
                         <div className="settings-row__copy">
                           <span className="settings-row__label">切换前等待</span>
-                          <span className="settings-row__hint">退款成功后等待再热切运行中的 Cursor；0 = 立即。等待期间取消自动化则不再切换；等待长于加固倒计时时，切换会发生在旧号删除之后</span>
+                          <span className="settings-row__hint">处理成功后等待再热切运行中的 Cursor；0 = 立即。等待期间取消自动化则不再切换；等待长于加固倒计时时，切换会发生在旧号删除之后</span>
                         </div>
                         <NumberStepperField
                           value={automationSettings.handoverDelaySec ?? 0}
@@ -178,7 +181,7 @@ export function SettingsAutomation({
                           max={ACCOUNT_AUTOMATION_DELAY_MAX_SEC}
                           step={0.5}
                           unit="秒"
-                          disabled={aozaiBusy || active}
+                          disabled={processingBusy || active}
                           label="无感切换前等待秒数"
                           onChange={(handoverDelaySec) => onSaveAutomationSettings({ ...automationSettings, handoverDelaySec })}
                         />
@@ -199,7 +202,7 @@ export function SettingsAutomation({
             </div>
           </div>
         ) : (
-          <p className="flow-step__hint">保存奥仔卡密后开启自动化。</p>
+          <p className="flow-step__hint">请先在“处理服务”中保存当前所选服务的卡密。</p>
         )}
       </SettingsSection>
 

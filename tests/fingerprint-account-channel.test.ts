@@ -18,6 +18,10 @@ class FakeCdpSocket {
   private nextId = 100
   /** 每次调用 Network.getCookies 时按序出队；空时返回 undefined（无 cookie）。 */
   tokenQueue: Array<string | undefined> = []
+  /** BrowserContext 全局 cookie 罐兜底。 */
+  storageToken: string | undefined
+  /** 已有页面 target；生产优先附着 Cursor 页或在同 BrowserContext 新建页。 */
+  targetInfos: Array<{ targetId: string; type: string; url: string; browserContextId?: string }> = []
   /** Runtime.evaluate 的 READINESS_JS 逐次返回；空时用最后一项。 */
   readinessQueue: string[] = []
   /** FIRE_DELETE_JS evaluate 的返回值。 */
@@ -74,6 +78,9 @@ class FakeCdpSocket {
       this.messageHandler?.(JSON.stringify({ id: message.id, result }))
     }
     switch (message.method) {
+      case 'Target.getTargets':
+        respond({ targetInfos: this.targetInfos })
+        return
       case 'Target.createTarget':
         respond({ targetId: 'target-1' })
         return
@@ -98,6 +105,9 @@ class FakeCdpSocket {
         respond({ cookies })
         return
       }
+      case 'Storage.getCookies':
+        respond({ cookies: this.storageToken === undefined ? [] : [{ name: 'WorkosCursorSessionToken', value: this.storageToken, domain: '.cursor.com' }] })
+        return
       case 'Runtime.evaluate': {
         const expression = String(message.params.expression ?? '')
         if (expression.includes('__sgLoginProbe')) {
@@ -256,7 +266,31 @@ describe('FingerprintAccountChannel', () => {
   it('readToken：窗口内未登录 → 抛错引导登录', async () => {
     const harness = createHarness()
     harness.socket.tokenQueue = [undefined]
-    await expect(harness.channel.readToken()).rejects.toThrow(/未登录 cursor\.com/)
+    await expect(harness.channel.readToken()).rejects.toThrow(/窗口 win-1 已连接.*WorkosCursorSessionToken/)
+  })
+
+  it('优先附着 Roxy 已有 Cursor 标签，并从同 BrowserContext 全局 cookie 罐兜底', async () => {
+    const harness = createHarness({ autoPolicy: false })
+    harness.socket.targetInfos = [
+      { targetId: 'other-tab', type: 'page', url: 'https://example.com', browserContextId: 'ctx-roxy' },
+      { targetId: 'cursor-tab', type: 'page', url: 'https://cursor.com/dashboard', browserContextId: 'ctx-roxy' }
+    ]
+    harness.socket.tokenQueue = [undefined]
+    harness.socket.storageToken = OLD_TOKEN
+    await expect(harness.channel.readToken()).resolves.toBe('user_abc::old-jwt')
+    expect(harness.socket.methodCount('Target.createTarget')).toBe(0)
+    expect(harness.socket.sent.find((entry) => entry.method === 'Target.attachToTarget')?.params.targetId).toBe('cursor-tab')
+    expect(harness.socket.sent.find((entry) => entry.method === 'Storage.getCookies')?.params.browserContextId).toBe('ctx-roxy')
+  })
+
+  it('没有 Cursor 标签时在 Roxy 的 BrowserContext 内新建测试页', async () => {
+    const harness = createHarness({ autoPolicy: false })
+    harness.socket.targetInfos = [
+      { targetId: 'existing', type: 'page', url: 'about:blank', browserContextId: 'ctx-roxy' }
+    ]
+    harness.socket.tokenQueue = [OLD_TOKEN]
+    await expect(harness.channel.readToken()).resolves.toBe('user_abc::old-jwt')
+    expect(harness.socket.sent.find((entry) => entry.method === 'Target.createTarget')?.params.browserContextId).toBe('ctx-roxy')
   })
 
   it('模型政策：缺失时提交并复核，返回 changed=true；同账号再次调用走成功缓存', async () => {

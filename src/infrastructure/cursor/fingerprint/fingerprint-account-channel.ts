@@ -348,6 +348,9 @@ interface ChannelSession {
   cdp: CdpConnection
   targetId: string
   sessionId: string
+  /** 复用用户已有 Cursor 标签时为 false，释放连接不得把用户标签关掉。 */
+  ownsTarget: boolean
+  browserContextId?: string
   /** 新建 target 初始为 about:blank；导航到官网后才允许执行同源政策接口。 */
   cursorPageOpened: boolean
 }
@@ -460,14 +463,42 @@ export class FingerprintAccountChannel implements AccountAutomationBrowserHost {
       const socket = this.connectSocket(opened.ws)
       const cdp = new CdpConnection(socket)
       try {
-        const created = await cdp.send('Target.createTarget', { url: 'about:blank' })
-        const targetId = String((created as { targetId?: unknown }).targetId ?? '')
+        const targets = await cdp.send('Target.getTargets', {}).catch(() => ({ targetInfos: [] }))
+        const targetInfos = ((targets as { targetInfos?: unknown }).targetInfos as Array<{
+          targetId?: string; type?: string; url?: string; browserContextId?: string
+        }> | undefined) ?? []
+        const pages = targetInfos.filter((target) => target.type === 'page' && target.targetId)
+        const cursorTarget = pages.find((target) => {
+          try {
+            const hostname = new URL(target.url ?? '').hostname
+            return hostname === 'cursor.com' || hostname.endsWith('.cursor.com')
+          } catch { return false }
+        })
+        const contextTarget = cursorTarget ?? pages.find((target) => target.browserContextId) ?? pages[0]
+        let targetId = cursorTarget?.targetId ?? ''
+        let ownsTarget = false
+        const browserContextId = contextTarget?.browserContextId
+        if (!targetId && browserContextId) {
+          const created = await cdp.send('Target.createTarget', { url: 'about:blank', browserContextId })
+          targetId = String((created as { targetId?: unknown }).targetId ?? '')
+          ownsTarget = true
+        } else if (!targetId && contextTarget?.targetId) {
+          // 某些内核不回 browserContextId；附着已有页仍比在错误默认上下文中新建页可靠。
+          targetId = contextTarget.targetId
+        } else if (!targetId) {
+          const created = await cdp.send('Target.createTarget', { url: 'about:blank' })
+          targetId = String((created as { targetId?: unknown }).targetId ?? '')
+          ownsTarget = true
+        }
         const attached = await cdp.send('Target.attachToTarget', { targetId, flatten: true })
         const sessionId = String((attached as { sessionId?: unknown }).sessionId ?? '')
         if (!targetId || !sessionId) throw new Error('CDP 会话建立失败：未返回 targetId/sessionId')
         await cdp.send('Page.enable', {}, sessionId)
         await cdp.send('Network.enable', {}, sessionId)
-        const next: ChannelSession = { client, profileId, cdp, targetId, sessionId, cursorPageOpened: false }
+        const next: ChannelSession = {
+          client, profileId, cdp, targetId, sessionId, ownsTarget, browserContextId,
+          cursorPageOpened: Boolean(cursorTarget)
+        }
         // 断链感知：用户关窗/指纹浏览器退出时失效缓存，下次操作自动重开
         //（否则死会话被永久缓存，每次调用都挂到 CDP 超时且重试必败）。
         socket.onClose(() => {
@@ -494,13 +525,27 @@ export class FingerprintAccountChannel implements AccountAutomationBrowserHost {
   private async readTokenFromSession(session: ChannelSession): Promise<string | undefined> {
     const result = await session.cdp.send('Network.getCookies', { urls: [CURSOR_ORIGIN] }, session.sessionId)
     const cookies = (result.cookies as Array<{ name?: string; value?: string }>) ?? []
-    const found = cookies.find((cookie) => cookie.name === TOKEN_COOKIE_NAME)
+    let found = cookies.find((cookie) => cookie.name === TOKEN_COOKIE_NAME)
+    // Roxy 可能把 profile 放在非默认 BrowserContext；页面会话读不到时，从该上下文全局 cookie 罐兜底。
+    if (!found) {
+      const stored = await session.cdp.send(
+        'Storage.getCookies',
+        session.browserContextId ? { browserContextId: session.browserContextId } : {}
+      ).catch(() => ({ cookies: [] }))
+      const all = (stored.cookies as Array<{ name?: string; value?: string; domain?: string }>) ?? []
+      found = all.find((cookie) => cookie.name === TOKEN_COOKIE_NAME && /(^|\.)cursor\.com$/i.test(cookie.domain ?? 'cursor.com'))
+    }
     // CDP 返回的 cookie 值保持站点写入时的 URL 编码形态，须先解码（与浏览器 cookie 库读取器一致）
-    return found?.value ? decodeURIComponent(found.value) : undefined
+    if (!found?.value) return undefined
+    try { return decodeURIComponent(found.value) } catch { return found.value }
   }
 
   private async readTokenFromCdp(profileIdOverride?: string): Promise<string | undefined> {
     return this.readTokenFromSession(await this.ensureSession(profileIdOverride))
+  }
+
+  private missingTokenMessage(session: ChannelSession): string {
+    return `窗口 ${session.profileId} 已连接，但未找到 ${TOKEN_COOKIE_NAME}（请确认账号绑定/默认窗口就是已登录的窗口，并在该窗口刷新 cursor.com 后重试）`
   }
 
   private async navigate(bustPrefix: string): Promise<void> {
@@ -987,7 +1032,7 @@ export class FingerprintAccountChannel implements AccountAutomationBrowserHost {
     // 一次操作固定锚定起始 session；并发切 profile 时，后续导航/查询/复读都不会串到另一窗口。
     const session = await this.ensureSession(profileIdOverride)
     const token = await this.readTokenFromSession(session)
-    if (!token) throw new Error('指纹浏览器窗口内未登录 cursor.com（请先在该窗口手动登录一次）')
+    if (!token) throw new Error(this.missingTokenMessage(session))
     const policies = await this.ensureRequiredModelDataPolicies(session, token)
     // about:blank → dashboard 的导航可能换发 token；向上层只交付导航后的当前值。
     const current = await this.readTokenFromSession(session)
@@ -1009,8 +1054,9 @@ export class FingerprintAccountChannel implements AccountAutomationBrowserHost {
    */
   async readToken(profileIdOverride?: string): Promise<string> {
     if (!this.shouldAcknowledgeModelDataPolicies()) {
-      const token = await this.readTokenFromCdp(profileIdOverride)
-      if (!token) throw new Error('指纹浏览器窗口内未登录 cursor.com（请先在该窗口手动登录一次）')
+      const session = await this.ensureSession(profileIdOverride)
+      const token = await this.readTokenFromSession(session)
+      if (!token) throw new Error(this.missingTokenMessage(session))
       this.lastKnownToken = token
       return token
     }
@@ -1241,10 +1287,8 @@ export class FingerprintAccountChannel implements AccountAutomationBrowserHost {
     this.session = undefined
     this.lastKnownToken = undefined
     if (!session) return
-    try {
-      await session.cdp.send('Target.closeTarget', { targetId: session.targetId })
-    } catch {
-      // target 已随页面关闭/窗口退出而失效
+    if (session.ownsTarget) {
+      try { await session.cdp.send('Target.closeTarget', { targetId: session.targetId }) } catch { /* target 已失效 */ }
     }
     session.cdp.close()
   }
@@ -1259,10 +1303,8 @@ export class FingerprintAccountChannel implements AccountAutomationBrowserHost {
     this.lastKnownToken = undefined
     this.acknowledgedPolicyKeys.clear()
     if (!session) return
-    try {
-      await session.cdp.send('Target.closeTarget', { targetId: session.targetId })
-    } catch {
-      // target 已随页面关闭/窗口退出而失效
+    if (session.ownsTarget) {
+      try { await session.cdp.send('Target.closeTarget', { targetId: session.targetId }) } catch { /* target 已失效 */ }
     }
     session.cdp.close()
     await session.client.closeWindow(session.profileId)

@@ -2,7 +2,7 @@
  * 自动化运行卡的视图模型：把 AccountAutomationRun 投影成「卡头 + 四阶段时间线 + 结束摘要」。
  * 纯函数、零副作用；只做投影，不改运行相位、不改服务端消息。
  *
- * 四阶段是真实的工作阶段：准备（前置检查 + 处理前倒计时）→ 奥仔处理 → 加固账号（加固前倒计时 +
+ * 四阶段是真实的工作阶段：准备（前置检查 + 处理前倒计时）→ 服务处理 → 加固账号（加固前倒计时 +
  * 会话刷新 + 删除）→ 收尾（清场）。倒计时不是独立步骤，而是当前步骤上的一个进度环。
  */
 import type { AccountAutomationPhase, AccountAutomationRun } from '../../../domain/account-automation'
@@ -49,7 +49,7 @@ const AUTOMATION_STAGE_ORDER: readonly AutomationStageKey[] = ['prepare', 'proce
 
 const STAGE_COPY: Record<AutomationStageKey, { title: string; waiting: string; done: string }> = {
   prepare: { title: '准备', waiting: '检查卡密、活跃账号与浏览器会话', done: '检查通过' },
-  process: { title: '奥仔处理', waiting: '提交当前账号的 Token 自助处理', done: '奥仔已完成' },
+  process: { title: '服务处理', waiting: '提交当前账号的 Token 自助处理', done: '处理已完成' },
   // 「加固」是删除官网账号的界面趣称；协议语义（deleting / importing）保持原表述。
   harden: { title: '加固账号', waiting: '处理完成后秒级加固（不可撤销）', done: '账号已加固' },
   finish: { title: '收尾', waiting: '移除本地记录并清理浏览器环境', done: '已完成' }
@@ -100,7 +100,7 @@ export function countdownSeconds(remainingSec: number | undefined): number | und
  */
 export function automationTerminalStageHint(message: string): AutomationStageKey {
   if (/取消后续账号加固|加固前/.test(message)) return 'harden'
-  if (/奥仔处理失败/.test(message)) return 'process'
+  if (/处理失败/.test(message)) return 'process'
   // 加固链路的失败必含新凭据或删除语义；裸「会话」会误吞 preflight 失败（如浏览器会话读取失败），不用。
   if (/新 Token|删除|官网|入库/.test(message)) return 'harden'
   return 'prepare'

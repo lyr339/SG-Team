@@ -1,17 +1,20 @@
 /** 会话创建后的账号自动化（玩法开关 + 延时 + RoxyBrowser 指纹浏览器窗口）。 */
 
 import { normalizeCursorCheckoutProfile, type CursorCheckoutProfile } from './cursor-checkout-profile'
+import { normalizeProcessingProviderId, type ProcessingProviderId } from './processing-provider'
 
 export interface AccountAutomationSettings {
   /** 总开关：一键创建会话全部提交成功后，是否自动执行账号自动化链。默认关。 */
   enabled: boolean
   /** 触发后倒计时秒数（支持 0.5 步进），倒计时内可取消。 */
   delaySec: number
-  /** 奥仔完成后、账号加固前的第二段倒计时秒数（支持 0.5 步进），倒计时内可取消。 */
+  /** 处理服务完成后、账号加固前的第二段倒计时秒数（支持 0.5 步进），倒计时内可取消。 */
   postProcessDelaySec: number
+  /** 当前账号处理服务；运行开始后冻结，本轮中途改设置只影响下一轮。 */
+  processingProvider: ProcessingProviderId
   /**
    * 账号管线的浏览器宿主——在第一步「获取 Token」选定，贯穿整条管线：
-   *   - 'fingerprint' 指纹浏览器（RoxyBrowser profile + CDP）：Token 从 profile 导入，奥仔后的
+   *   - 'fingerprint' 指纹浏览器（RoxyBrowser profile + CDP）：Token 从 profile 导入，处理后的
    *                  换发与页内删除也在同一 profile 执行（一致性天然成立）。提供方恒 Roxy，
    *                  不落设置（比特已全面退役）
    *   - 'external'   系统浏览器（Edge/Chrome，仅 macOS）：Token 从 cookie 库导入，后续走 AppleScript 链
@@ -26,10 +29,12 @@ export interface AccountAutomationSettings {
    * 「挂代理」或「直连」窗口；两个窗口都需在指纹浏览器里预先登录 cursor.com。
    */
   bitProfileId?: string
+  /** Roxy Local API 端口；客户端可改，默认 50000。 */
+  roxyApiPort?: number
   /** 指纹浏览器账号导入/预检时，自动查询并确认受限模型的数据政策。默认开启。 */
   autoAcknowledgeModelDataPolicies?: boolean
   /**
-   * 无感换号（换票续接）：奥仔退款成功后，不重启 Cursor 直接把运行态热切到下一
+   * 无感换号（换票续接）：处理成功后，不重启 Cursor 直接把运行态热切到下一
    * 可用账号（切号泵补丁回执为准），删除旧号照常进行。默认开启；关闭则自动化
    * 不动运行中的 Cursor。手动「无感切换」按钮不受此开关约束。
    */
@@ -57,11 +62,14 @@ export interface AccountAutomationSettings {
 
 export const ACCOUNT_AUTOMATION_DELAY_MIN_SEC = 0.5
 export const ACCOUNT_AUTOMATION_DELAY_MAX_SEC = 60
+export const DEFAULT_ROXY_API_PORT = 50_000
 
 export const DEFAULT_ACCOUNT_AUTOMATION_SETTINGS: AccountAutomationSettings = {
   enabled: false,
   delaySec: 10,
   postProcessDelaySec: 10,
+  processingProvider: 'aozai',
+  roxyApiPort: DEFAULT_ROXY_API_PORT,
   autoAcknowledgeModelDataPolicies: true
 }
 
@@ -75,6 +83,10 @@ export function normalizeAccountAutomationSettings(value: unknown): AccountAutom
     // 旧设置迁移：新增字段首次读取时沿用原倒计时，保持用户既有节奏。
     : delay
   const bitProfileId = typeof raw.bitProfileId === 'string' && raw.bitProfileId.trim() ? raw.bitProfileId.trim() : undefined
+  const roxyApiPort = typeof raw.roxyApiPort === 'number' && Number.isInteger(raw.roxyApiPort)
+    && raw.roxyApiPort >= 1 && raw.roxyApiPort <= 65_535
+    ? raw.roxyApiPort
+    : DEFAULT_ROXY_API_PORT
   // 宿主白名单；缺省回落 'fingerprint'（未迁移的旧设置仍走已配置的指纹链路）。
   // 旧设置里的 fingerprintProvider 字段已被统一 Roxy 提供方取代，读取时直接丢弃。
   const browserHost = raw.browserHost === 'external' ? 'external' : 'fingerprint'
@@ -89,6 +101,8 @@ export function normalizeAccountAutomationSettings(value: unknown): AccountAutom
     enabled: raw.enabled === true,
     delaySec: Math.min(ACCOUNT_AUTOMATION_DELAY_MAX_SEC, Math.max(ACCOUNT_AUTOMATION_DELAY_MIN_SEC, delay)),
     postProcessDelaySec: Math.min(ACCOUNT_AUTOMATION_DELAY_MAX_SEC, Math.max(ACCOUNT_AUTOMATION_DELAY_MIN_SEC, postProcessDelay)),
+    processingProvider: normalizeProcessingProviderId(raw.processingProvider),
+    roxyApiPort,
     browserHost,
     bitProfileId,
     autoAcknowledgeModelDataPolicies: raw.autoAcknowledgeModelDataPolicies !== false,
@@ -148,7 +162,7 @@ export type AccountAutomationPhase =
   | 'idle'
   | 'countdown'
   | 'processing'
-  /** 奥仔完成后、账号加固前的第二段倒计时（可取消）。 */
+  /** 处理服务完成后、账号加固前的第二段倒计时（可取消）。 */
   | 'hardening-countdown'
   | 'importing'
   | 'deleting'
@@ -165,6 +179,8 @@ export interface AccountAutomationRun {
   /** countdown / hardening-countdown 阶段剩余秒数。 */
   remainingSec?: number
   startedAt: number
+  /** 本轮冻结的处理服务；旧持久化记录缺省。 */
+  processingProvider?: ProcessingProviderId
   finishedAt?: number
   /** 与主流程并行的无感换号子状态；目标在本轮开始后冻结。 */
   handover?: {

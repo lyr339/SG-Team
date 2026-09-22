@@ -1,7 +1,11 @@
 import type { CursorAccountMetadata, CursorRuntimeAccountMatch } from '../../../domain/cursor-account'
 import type { CursorMembershipStatus, CursorMembershipTier } from '../../../domain/cursor-membership'
 import { cursorMembershipTierLabel } from '../../../domain/cursor-membership'
-import type { AozaiCardStatus, AozaiProgressEvent } from '../../../domain/aozai-service'
+import type {
+  ProcessingCredentialStatus,
+  ProcessingProgressEvent,
+  ProcessingProviderId
+} from '../../../domain/processing-provider'
 import { resolveExecutionProfileId } from '../../../domain/account-automation'
 import type {
   AccountAutomationPhase,
@@ -131,10 +135,12 @@ export function accountStatusLineFor(
   }
 }
 
-interface AozaiFeedback {
+interface StatusFeedback {
   ok: boolean
   message: string
 }
+
+interface ProcessingFeedback extends StatusFeedback { providerId: ProcessingProviderId }
 
 export interface SettingsPageProps {
   accounts: CursorAccountMetadata[]
@@ -153,7 +159,7 @@ export interface SettingsPageProps {
   /** 升级 Pro 扫码付款：直达 Stripe 月付结账（USD · 支付宝）并自动填写账单资料；结果经 proUpgradeFeedback 亮出。 */
   onStartProUpgrade?: (accountId: string) => Promise<void>
   /** 升级 Pro 结果反馈（待扫码/复核通过/失败原因）。 */
-  proUpgradeFeedback?: AozaiFeedback | null
+  proUpgradeFeedback?: StatusFeedback | null
   onSelect: (accountId: string) => Promise<void>
   onRemove: (accountId: string) => Promise<void>
   onRestartWithAccount?: (accountId: string) => Promise<void>
@@ -166,17 +172,17 @@ export interface SettingsPageProps {
   onCleanupFingerprintEnvironment?: () => Promise<void>
   /** 绑定/改绑/解绑账号的指纹窗口（undefined 解绑，自动化回退默认窗口）。 */
   onSetAccountFingerprintProfile?: (accountId: string, profileId?: string) => Promise<void>
-  aozaiStatus?: AozaiCardStatus
-  aozaiBusy?: boolean
-  aozaiError?: string
-  aozaiProgress?: AozaiProgressEvent | null
-  aozaiFeedback?: AozaiFeedback | null
-  onSaveAozaiCard?: (cardCode: string) => Promise<void>
-  onClearAozaiCard?: () => Promise<void>
-  onRefreshAozaiBalance?: () => Promise<void>
-  onProcessAozaiAccount?: (accountId: string) => Promise<void>
+  processingStatuses?: Record<ProcessingProviderId, ProcessingCredentialStatus>
+  processingBusy?: boolean
+  processingError?: { providerId: ProcessingProviderId; message: string } | null
+  processingProgress?: ProcessingProgressEvent | null
+  processingFeedback?: ProcessingFeedback | null
+  onSaveProcessingCredential?: (providerId: ProcessingProviderId, code: string) => Promise<void>
+  onClearProcessingCredential?: (providerId: ProcessingProviderId) => Promise<void>
+  onRefreshProcessingBalance?: (providerId: ProcessingProviderId) => Promise<void>
+  onProcessAccount?: (providerId: ProcessingProviderId, accountId: string) => Promise<void>
   /** 手动模式：用户粘贴任意 Session Token 直接提交处理（独立于自动化，不触发加固/删除/换号；token 不持久化）。 */
-  onProcessAozaiToken?: (token: string) => Promise<void>
+  onProcessToken?: (providerId: ProcessingProviderId, token: string) => Promise<void>
   automationSettings?: AccountAutomationSettings
   automationRun?: AccountAutomationRun
   /** 指纹浏览器窗口列表（账号自动化链的浏览器宿主，用户按当次网络选择）。 */

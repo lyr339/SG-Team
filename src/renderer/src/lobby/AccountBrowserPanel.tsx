@@ -50,6 +50,8 @@ export function AccountBrowserPanel({
   const [keyEditing, setKeyEditing] = useState(false)
   const keySaved = apiKeyStatus?.saved === true && Boolean(apiKeyStatus.maskedKey)
   useEffect(() => { setKeyEditing(false); setKeyInput('') }, [apiKeyStatus?.maskedKey])
+  const [portInput, setPortInput] = useState(String(settings.roxyApiPort ?? 50_000))
+  useEffect(() => { setPortInput(String(settings.roxyApiPort ?? 50_000)) }, [settings.roxyApiPort])
   const [cleanupArmed, setCleanupArmed] = useState(false)
   const [cleanupBusy, setCleanupBusy] = useState(false)
   const [cleanupNote, setCleanupNote] = useState('')
@@ -59,6 +61,14 @@ export function AccountBrowserPanel({
   useEffect(() => { setCleanupArmed(false); setCleanupNote('') }, [settings.bitProfileId, settings.browserHost])
   const host = settings.browserHost ?? 'fingerprint'
   const selectedProfile = profiles?.find((profile) => profile.id === settings.bitProfileId)
+  const commitPort = (): void => {
+    const port = Number(portInput)
+    if (Number.isInteger(port) && port >= 1 && port <= 65_535) {
+      if (port !== (settings.roxyApiPort ?? 50_000)) onSettingsChange({ ...settings, roxyApiPort: port })
+      return
+    }
+    setPortInput(String(settings.roxyApiPort ?? 50_000))
+  }
 
   const runCleanup = (): void => {
     if (!onCleanupEnvironment || cleanupBusy) return
@@ -123,56 +133,33 @@ export function AccountBrowserPanel({
           <div className="account-browser__connection-row">
             <div className="account-browser__key-cell">
               <span><b>Roxy 连接</b><small>{keySaved ? (keyEditing ? '粘贴新的 Key 覆盖已保存的' : 'API Key 已保存在本机') : '先连接本机 Roxy 客户端'}</small></span>
-            {keySaved && !keyEditing ? (
-              <span className="account-browser__key-input account-browser__key-saved">
-                <code title="Roxy API Key 已保存在本机；点「更换」粘贴新的 Key 覆盖">{apiKeyStatus?.maskedKey}</code>
-                {onSaveApiKey ? (
-                  <button
-                    type="button"
-                    className="is-secondary"
-                    disabled={disabled}
-                    title="粘贴新的 Roxy API Key 覆盖已保存的 Key"
-                    onClick={() => setKeyEditing(true)}
-                  >更换</button>
-                ) : null}
-              </span>
-            ) : (
-              <span className="account-browser__key-input">
-                <input
-                  type="password"
-                  value={keyInput}
-                  maxLength={128}
-                  autoComplete="off"
-                  autoFocus={keyEditing}
-                  spellCheck={false}
-                  placeholder={keySaved ? '粘贴新的 Roxy API Key' : 'Roxy API Key'}
-                  disabled={keySaving || disabled}
-                  onChange={(event) => setKeyInput(event.target.value)}
-                />
-                {onSaveApiKey ? (
-                  <button
-                    type="button"
-                    disabled={keySaving || disabled || keyInput.trim().length < 8}
-                    onClick={() => {
-                      setKeySaving(true)
-                      void onSaveApiKey(keyInput.trim())
-                        .then(() => { setKeyInput(''); setKeyEditing(false) })
-                        .catch(() => {})
-                        .finally(() => setKeySaving(false))
-                    }}
-                  >{keySaving ? '保存中…' : keySaved ? '保存' : '连接'}</button>
-                ) : null}
-                {keySaved ? (
-                  <button
-                    type="button"
-                    className="is-secondary"
-                    disabled={keySaving}
-                    title="放弃更换，保留已保存的 Key"
-                    onClick={() => { setKeyEditing(false); setKeyInput('') }}
-                  >取消</button>
-                ) : null}
-              </span>
-            )}
+              <div className="account-browser__key-controls">
+                {keySaved && !keyEditing ? (
+                  <span className="account-browser__key-input account-browser__key-saved">
+                    <code title="Roxy API Key 已保存在本机；点「更换」粘贴新的 Key 覆盖">{apiKeyStatus?.maskedKey}</code>
+                    {onSaveApiKey ? <button type="button" className="is-secondary" disabled={disabled} onClick={() => setKeyEditing(true)}>更换</button> : null}
+                  </span>
+                ) : (
+                  <span className="account-browser__key-input">
+                    <input type="password" value={keyInput} maxLength={128} autoComplete="off" autoFocus={keyEditing} spellCheck={false}
+                      placeholder={keySaved ? '粘贴新的 Roxy API Key' : 'Roxy API Key'} disabled={keySaving || disabled}
+                      onChange={(event) => setKeyInput(event.target.value)} />
+                    {onSaveApiKey ? (
+                      <button type="button" disabled={keySaving || disabled || keyInput.trim().length < 8} onClick={() => {
+                        setKeySaving(true)
+                        void onSaveApiKey(keyInput.trim()).then(() => { setKeyInput(''); setKeyEditing(false) }).catch(() => {}).finally(() => setKeySaving(false))
+                      }}>{keySaving ? '保存中…' : keySaved ? '保存' : '连接'}</button>
+                    ) : null}
+                    {keySaved ? <button type="button" className="is-secondary" disabled={keySaving} onClick={() => { setKeyEditing(false); setKeyInput('') }}>取消</button> : null}
+                  </span>
+                )}
+                <label className="account-browser__port">
+                  <span>端口</span>
+                  <input type="text" inputMode="numeric" aria-label="Roxy Local API 端口" value={portInput} maxLength={5}
+                    disabled={disabled} onChange={(event) => setPortInput(event.target.value.replace(/\D/g, '').slice(0, 5))}
+                    onBlur={commitPort} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur() }} />
+                </label>
+              </div>
             </div>
             <i className="account-browser__divider" aria-hidden="true" />
             <div className="account-browser__window-cell" title="新账号从此窗口导入并自动绑定；已绑定账号的自动化改用各自绑定窗口（账号列表可改绑），未绑定账号回退到此默认窗口。按当前网络选择挂代理或直连，窗口需预先登录 cursor.com">

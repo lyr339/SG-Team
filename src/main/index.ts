@@ -39,9 +39,11 @@ import { CursorRuntimeAccountBridge } from '../infrastructure/cursor/cursor-runt
 import { CursorDesktopTokenExchanger } from '../infrastructure/cursor/cursor-desktop-token-exchanger'
 import { registerCursorAccountIpc } from './register-cursor-account-ipc'
 import { registerWindowChromeIpc, syncWindowFullscreen, WINDOW_TOPBAR_HEIGHT } from './register-window-chrome-ipc'
-import { AozaiCardVault } from '../application/aozai-card-vault'
-import { AozaiService, type AozaiFetch } from '../application/aozai-service'
-import { registerAozaiIpc } from './register-aozai-ipc'
+import { ProcessingCredentialVault } from '../application/processing-credential-vault'
+import { ProcessingProviderRegistry } from '../application/processing-provider-registry'
+import { AozaiService } from '../application/aozai-service'
+import { HenxinService } from '../application/henxin-service'
+import { registerProcessingProviderIpc } from './register-processing-provider-ipc'
 import {
   initializeSafeStorageNamespace,
   selectSafeStorageNamespace
@@ -115,7 +117,7 @@ let disposeTeamCollaborationIpc: (() => void) | undefined
 let disposeTeamGroupIpc: (() => void) | undefined
 let disposeRunContext: (() => void) | undefined
 let disposeCursorAccountIpc: (() => void) | undefined
-let disposeAozaiIpc: (() => void) | undefined
+let disposeProcessingProviderIpc: (() => void) | undefined
 let disposeAgentLaunchIpc: (() => void) | undefined
 let disposeSessionWarmupIpc: (() => void) | undefined
 let disposeAccountAutomationIpc: (() => void) | undefined
@@ -286,31 +288,35 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   setMacDockIcon()
   createTray()
   const databasePath = join(app.getPath('userData'), 'task-pool.sqlite3')
+  const credentialCrypto = {
+    available: () => safeStorage.isEncryptionAvailable(),
+    encrypt: (value: string) => safeStorage.encryptString(value),
+    decrypt: (value: Buffer) => safeStorage.decryptString(value)
+  }
   const cursorAccountVault = new CursorAccountVault(
     join(app.getPath('userData'), 'cursor-accounts.json'),
-    {
-      available: () => safeStorage.isEncryptionAvailable(),
-      encrypt: (value) => safeStorage.encryptString(value),
-      decrypt: (value) => safeStorage.decryptString(value)
-    }
+    credentialCrypto
   )
-  const aozaiCardVault = new AozaiCardVault(
-    join(app.getPath('userData'), 'aozai-card.json'),
-    {
-      available: () => safeStorage.isEncryptionAvailable(),
-      encrypt: (value) => safeStorage.encryptString(value),
-      decrypt: (value) => safeStorage.decryptString(value)
-    }
-  )
-  const aozaiFetch: AozaiFetch = async (url, init) => {
+  const aozaiCardVault = new ProcessingCredentialVault(join(app.getPath('userData'), 'aozai-card.json'), credentialCrypto, '奥仔')
+  const henxinCardVault = new ProcessingCredentialVault(join(app.getPath('userData'), 'henxin-card.json'), credentialCrypto, '痕心')
+  const processingFetch = async (url: string, init: { method: string; headers: Record<string, string>; body?: string; signal?: AbortSignal }) => {
     const response = await fetch(url, init)
+    const headers = response.headers as Headers & { getSetCookie?: () => string[] }
     return {
       ok: response.ok,
       status: response.status,
-      json: () => response.json() as Promise<unknown>
+      json: () => response.json() as Promise<unknown>,
+      getSetCookie: () => typeof headers.getSetCookie === 'function'
+        ? headers.getSetCookie()
+        : (headers.get('set-cookie') ? [headers.get('set-cookie') as string] : [])
     }
   }
-  const aozaiService = new AozaiService(aozaiCardVault, aozaiFetch)
+  const aozaiService = new AozaiService(aozaiCardVault, processingFetch)
+  const henxinService = new HenxinService(henxinCardVault, processingFetch)
+  const processingProviders = new ProcessingProviderRegistry([
+    { service: aozaiService, vault: aozaiCardVault },
+    { service: henxinService, vault: henxinCardVault }
+  ])
   taskPoolRepository = new SqliteTaskPoolRepository(databasePath)
   teamControlRepository = new SqliteTeamControlRepository(databasePath)
   teamCollaborationRepository = new SqliteTeamCollaborationRepository(databasePath)
@@ -451,11 +457,14 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   // 正好触发会话重开，语义自然正确。
   let cachedRoxyClient: RoxyBrowserClient | undefined
   let cachedRoxyApiKey: string | undefined
+  let cachedRoxyPort: number | undefined
   const resolveFingerprintClient = (): FingerprintBrowser => {
     const apiKey = readRoxyApiKey() ?? (process.env.ROXY_API_KEY || '')
-    if (!cachedRoxyClient || cachedRoxyApiKey !== apiKey) {
-      cachedRoxyClient = new RoxyBrowserClient({ apiKey })
+    const port = accountAutomationSettingsStore.load().roxyApiPort ?? 50_000
+    if (!cachedRoxyClient || cachedRoxyApiKey !== apiKey || cachedRoxyPort !== port) {
+      cachedRoxyClient = new RoxyBrowserClient({ apiKey, baseUrl: `http://127.0.0.1:${port}` })
       cachedRoxyApiKey = apiKey
+      cachedRoxyPort = port
     }
     return cachedRoxyClient
   }
@@ -502,8 +511,7 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   })
   const accountAutomationService = new AccountAutomationService({
     settings: accountAutomationSettingsStore,
-    aozai: aozaiService,
-    cardVault: aozaiCardVault,
+    processingProviders,
     accounts: cursorAccountVault,
     // preflight＝运行起点：显式锚定本轮窗口（活跃账号绑定 ?? 默认窗口），
     // 活会话此后即为运行锚——热切接手、默认窗口改动都不会把链抢到别的窗口。
@@ -725,7 +733,7 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
       switchMutex: cursorSwitchMutex
     }
   )
-  disposeAozaiIpc = registerAozaiIpc(aozaiCardVault, aozaiService, cursorAccountVault, () => mainWindow)
+  disposeProcessingProviderIpc = registerProcessingProviderIpc(processingProviders, cursorAccountVault, () => mainWindow)
   const cursorUpdatePreferencesStore = new CursorUpdatePreferencesStore()
   const cursorCdpKeeper = new CursorCdpKeeper({
     port: cursorCdpCreator.debugPort,
@@ -966,7 +974,7 @@ app.on('before-quit', () => {
   disposeTeamGroupIpc?.()
   disposeRunContext?.()
   disposeCursorAccountIpc?.()
-  disposeAozaiIpc?.()
+  disposeProcessingProviderIpc?.()
   disposeAgentLaunchIpc?.()
   disposeSessionWarmupIpc?.()
   disposeAccountAutomationIpc?.()

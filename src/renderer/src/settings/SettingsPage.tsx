@@ -35,7 +35,7 @@ const GROUPS = [
   { id: 'accounts', label: '账号', description: '已保存的 Cursor 账号与当前活跃选择', icon: SettingsAccountsIcon },
   { id: 'import', label: '导入来源', description: 'Token 的获取方式与执行浏览器', icon: SettingsImportIcon },
   { id: 'automation', label: '自动化', description: '会话创建后的账号自动处理流程', icon: SettingsAutomationIcon },
-  { id: 'aozai', label: '奥仔服务', description: '自助处理的卡密与点数', icon: SettingsAozaiIcon },
+  { id: 'aozai', label: '处理服务', description: '奥仔、痕心的卡密与余额', icon: SettingsAozaiIcon },
   { id: 'maintenance', label: 'Cursor 维护', description: '本机 Cursor 的更新与数据政策', icon: SettingsMaintenanceIcon },
   { id: 'cleanup', label: '存储清理', description: '盘点 Cursor 本机数据，按项清理', icon: SettingsCleanupIcon },
   { id: 'update', label: '软件更新', description: '检查新版本，手动下载与安装', icon: SettingsUpdateIcon }
