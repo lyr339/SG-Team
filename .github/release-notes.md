@@ -1,3 +1,17 @@
+## v0.4.4 更新
+
+**修复部分 Roxy 账号明明已登录，却提示“未返回有效 workspace”的兼容问题。**
+
+- workspace ID 不再强制转成正整数：支持数字、数字字符串、UUID 与普通字符串标识。
+- workspace 列表兼容 `rows / list / workspaces / workspaceList / projects / items`，以及单对象响应；支持 `id / workspaceId / workspace_id / spaceId / space_id / projectId / project_id` 字段。
+- workspace 列表为空或结构异常、但 Roxy 已有窗口打开时，回退 `/browser/connection_info` 交付可导入窗口，不再让已登录用户卡死在空列表。
+- 若仍无法识别，错误信息会显示脱敏后的 `data` 与首行字段名，便于定位客户端版本差异，不再统一误报“请确认账号已登录”。
+- 数字字符串仍归一为数字，保证清理缓存、指纹轮换等旧版接口请求体兼容。
+
+验证：2201 项测试通过（1 项按平台跳过），新增 UUID workspace、替代列表字段、未知结构诊断与 connection_info 回退用例；类型检查、dead-code、构建和 MCP 冒烟通过。
+
+**迁移**：无数据或数据库迁移。
+
 ## v0.4.3 更新
 
 **Roxy 连接区重新排版，收敛为精致、同构的连接控制卡。**

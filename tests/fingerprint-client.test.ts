@@ -65,6 +65,32 @@ describe('RoxyBrowserClient', () => {
     expect(fetchImpl).toHaveBeenNthCalledWith(3, expect.stringContaining('workspaceId=2'), expect.anything())
   })
 
+  it('workspace 兼容新版 list 字段与 UUID 字符串 ID，不再强制转数字', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ code: 0, data: { list: [{ workspaceId: 'ws-team-uuid' }] } }))
+      .mockResolvedValueOnce(jsonResponse({ code: 0, data: { rows: [{ dirId: 'window-1', windowName: '同事窗口' }] } }))
+    const client = new RoxyBrowserClient({ apiKey: 'k', fetchImpl })
+    await expect(client.listWindows()).resolves.toEqual([{ id: 'window-1', name: '同事窗口', seq: undefined }])
+    expect(fetchImpl).toHaveBeenNthCalledWith(2, expect.stringContaining('workspaceId=ws-team-uuid'), expect.anything())
+  })
+
+  it('workspace 结构不认识时回显脱敏字段形状，避免误报成单纯未登录', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ code: 0, data: { groups: [{ uuid: 'x' }] } }))
+      .mockResolvedValueOnce(jsonResponse({ code: 0, data: { rows: [] } }))
+    const client = new RoxyBrowserClient({ apiKey: 'k', fetchImpl })
+    await expect(client.listWindows()).rejects.toThrow(/data=groups.*row=无行/)
+  })
+
+  it('workspace 列表为空但窗口已打开时，connection_info 仍交付可导入窗口', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ code: 0, data: { rows: [] } }))
+      .mockResolvedValueOnce(jsonResponse({ code: 0, data: { rows: [{ dirId: 'open-1', windowName: '已登录窗口', windowSortNum: 7 }] } }))
+    const client = new RoxyBrowserClient({ apiKey: 'k', fetchImpl })
+    await expect(client.listWindows()).resolves.toEqual([{ id: 'open-1', name: '已登录窗口', seq: 7 }])
+    expect(fetchImpl).toHaveBeenNthCalledWith(2, 'http://127.0.0.1:50000/browser/connection_info', expect.anything())
+  })
+
   it('openWindow：POST {dirId, args:[]} → data.ws', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({
       code: 0,

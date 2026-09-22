@@ -43,8 +43,8 @@ export class RoxyBrowserClient implements FingerprintBrowser {
   private readonly apiKey: string
   private readonly fetchImpl: typeof fetch
   private readonly timeoutMs: number
-  private workspaceIds: number[] | undefined
-  private readonly profileWorkspace = new Map<string, number>()
+  private workspaceIds: Array<string | number> | undefined
+  private readonly profileWorkspace = new Map<string, string | number>()
 
   constructor(options: RoxyBrowserClientOptions) {
     this.baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, '')
@@ -86,43 +86,101 @@ export class RoxyBrowserClient implements FingerprintBrowser {
     this.unwrap(response, '健康检查')
   }
 
-  private async resolveWorkspaceIds(): Promise<number[]> {
-    if (this.workspaceIds) return this.workspaceIds
-    const response = await this.request<{ rows?: Array<{ id?: string | number }> }>('/browser/workspace', { method: 'GET' })
-    const workspaceIds = (this.unwrap(response, 'workspace 列表获取')?.rows ?? [])
-      .map((row) => Number(row.id))
-      .filter((id) => Number.isSafeInteger(id) && id > 0)
-    if (!workspaceIds.length) {
-      throw new Error('RoxyBrowser 未返回有效 workspace（请确认账号已登录）')
+  private workspaceRows(data: unknown): Array<Record<string, unknown>> {
+    if (Array.isArray(data)) return data.filter((row): row is Record<string, unknown> => Boolean(row && typeof row === 'object'))
+    if (!data || typeof data !== 'object') return []
+    const record = data as Record<string, unknown>
+    for (const key of ['rows', 'list', 'workspaces', 'workspaceList', 'projects', 'items']) {
+      const value = record[key]
+      if (Array.isArray(value)) return value.filter((row): row is Record<string, unknown> => Boolean(row && typeof row === 'object'))
     }
-    this.workspaceIds = [...new Set(workspaceIds)]
+    if (this.workspaceIdOf(record) !== undefined) return [record]
+    return []
+  }
+
+  private workspaceIdOf(row: Record<string, unknown>): string | number | undefined {
+    const raw = row.id ?? row.workspaceId ?? row.workspace_id ?? row.spaceId ?? row.space_id ?? row.projectId ?? row.project_id
+    if (typeof raw === 'number') return Number.isSafeInteger(raw) && raw > 0 ? raw : undefined
+    if (typeof raw === 'string') {
+      const value = raw.trim()
+      if (!value || value === '0') return undefined
+      if (/^\d+$/.test(value)) {
+        const numeric = Number(value)
+        if (Number.isSafeInteger(numeric) && numeric > 0) return numeric
+      }
+      return value
+    }
+    return undefined
+  }
+
+  private async resolveWorkspaceIds(): Promise<Array<string | number>> {
+    if (this.workspaceIds) return this.workspaceIds
+    const response = await this.request<unknown>('/browser/workspace', { method: 'GET' })
+    const data = this.unwrap(response, 'workspace 列表获取')
+    const rows = this.workspaceRows(data)
+    const workspaceIds = rows.map((row) => this.workspaceIdOf(row)).filter((id): id is string | number => id !== undefined)
+    if (!workspaceIds.length) {
+      const keys = data && typeof data === 'object' && !Array.isArray(data) ? Object.keys(data as object).slice(0, 8).join(',') : typeof data
+      const sampleKeys = rows[0] ? Object.keys(rows[0]).slice(0, 8).join(',') : '无行'
+      throw new Error(`RoxyBrowser workspace 响应中没有可识别的 ID（data=${keys || '空'}；row=${sampleKeys}）。请确认 Roxy 已登录；若仍出现，请反馈此段字段名`)
+    }
+    this.workspaceIds = [...new Map(workspaceIds.map((id) => [String(id), id])).values()]
     return this.workspaceIds
   }
 
-  private async windowsInWorkspace(workspaceId: number): Promise<FingerprintBrowserWindow[]> {
+  private async windowsInWorkspace(workspaceId: string | number): Promise<FingerprintBrowserWindow[]> {
     const listResponse = await this.request<{ rows?: Array<{ dirId?: string; windowName?: string; windowSortNum?: number }> }>(
       '/browser/list_v3',
       { method: 'GET', query: { workspaceId, page_index: 1, page_size: 100 } }
     )
-    return (this.unwrap(listResponse, '窗口列表获取')?.rows ?? [])
-      .filter((row): row is { dirId: string; windowName?: string; windowSortNum?: number } => Boolean(row.dirId))
-      .map((row) => {
-        this.profileWorkspace.set(String(row.dirId), workspaceId)
-        return {
-          id: String(row.dirId),
-          name: row.windowName?.trim() || String(row.dirId),
-          seq: typeof row.windowSortNum === 'number' ? row.windowSortNum : undefined
-        }
-      })
+    return this.normalizeWindows(this.unwrap(listResponse, '窗口列表获取')?.rows ?? [], workspaceId)
+  }
+
+  private normalizeWindows(rows: unknown[], workspaceId?: string | number): FingerprintBrowserWindow[] {
+    return rows.flatMap((raw) => {
+      if (!raw || typeof raw !== 'object') return []
+      const row = raw as Record<string, unknown>
+      const id = row.dirId ?? row.profileId ?? row.id
+      if (typeof id !== 'string' && typeof id !== 'number') return []
+      const normalizedId = String(id).trim()
+      if (!normalizedId) return []
+      if (workspaceId !== undefined) this.profileWorkspace.set(normalizedId, workspaceId)
+      const name = typeof row.windowName === 'string' ? row.windowName.trim()
+        : typeof row.name === 'string' ? row.name.trim() : ''
+      const seq = Number(row.windowSortNum ?? row.sortNum)
+      return [{ id: normalizedId, name: name || normalizedId, seq: Number.isFinite(seq) ? seq : undefined }]
+    })
+  }
+
+  /** workspace 接口异常/空列表时，已打开窗口仍可经 connection_info 进入导入链。 */
+  private async connectedWindows(): Promise<FingerprintBrowserWindow[]> {
+    try {
+      const response = await this.request<unknown>('/browser/connection_info', { method: 'GET' })
+      const data = this.unwrap(response, '已打开窗口获取')
+      return this.normalizeWindows(this.workspaceRows(data))
+    } catch {
+      return []
+    }
   }
 
   /** 列出全部 workspace 的窗口；登录窗口不再因不在第一个 workspace 而消失。 */
   async listWindows(): Promise<FingerprintBrowserWindow[]> {
-    const groups = await Promise.all((await this.resolveWorkspaceIds()).map((id) => this.windowsInWorkspace(id)))
-    return [...new Map(groups.flat().map((window) => [window.id, window])).values()]
+    let workspaceError: unknown
+    let groups: FingerprintBrowserWindow[][] = []
+    try {
+      groups = await Promise.all((await this.resolveWorkspaceIds()).map((id) => this.windowsInWorkspace(id)))
+    } catch (error) {
+      workspaceError = error
+    }
+    const listed = groups.flat()
+    const connected = listed.length ? [] : await this.connectedWindows()
+    const windows = [...new Map([...listed, ...connected].map((window) => [window.id, window])).values()]
+    if (windows.length) return windows
+    if (workspaceError) throw workspaceError
+    return []
   }
 
-  private async workspaceIdFor(profileId: string): Promise<number> {
+  private async workspaceIdFor(profileId: string): Promise<string | number> {
     const cached = this.profileWorkspace.get(profileId)
     if (cached) return cached
     await this.listWindows()
