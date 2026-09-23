@@ -1,6 +1,6 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, win32 } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
@@ -16,6 +16,7 @@ import type {
   CursorRuntimeSwitchPayload
 } from '../src/infrastructure/cursor/cursor-runtime-account-bridge'
 import type { CursorDesktopTokenExchangePort } from '../src/infrastructure/cursor/cursor-desktop-token-exchanger'
+import { CursorRuntimeCompanionConfig } from '../src/infrastructure/cursor/cursor-runtime-companion-config'
 
 /** 与切换器内部的 reactiveStorage 持久层键保持一致（未导出，测试侧镜像）。 */
 const APPLICATION_USER_KEY = 'src.vs.platform.reactivestorage.browser.reactiveStorageServiceImpl.persistentStorage.applicationUser'
@@ -50,6 +51,7 @@ interface Fixture {
     execFn?: (file: string, args: string[]) => Promise<{ stdout: string }>
     runtimeBridge?: CursorRuntimeAccountBridgePort
     tokenExchanger?: CursorDesktopTokenExchangePort
+    locateRuntimeBundle?: () => Promise<string | undefined>
   }) => CursorAccountSwitcher
   input: (overrides?: Partial<CursorAccountSwitchInput>) => CursorAccountSwitchInput
 }
@@ -377,6 +379,95 @@ describe('CursorAccountSwitcher', () => {
     // 登录态与机器码写入平台无关，照常生效
     expect(itemTableValue(fixture.stateDbPath, 'cursorAuth/accessToken')).toEqual({ value: fixture.input().token })
     expect(readFileSync(fixture.machineIdPath, 'utf8')).toBe(fixture.input().identity.machineGuid)
+  })
+
+  it('windows: 自定义安装的 bundle 在退出前定位，Companion 与重启用同一份安装', async () => {
+    const bundlePath = join(fixture.root, 'D-drive', 'Cursor', 'resources', 'app', 'out', 'vs', 'workbench', 'workbench.desktop.main.js')
+    mkdirSync(dirname(bundlePath), { recursive: true })
+    const config = Buffer.from(JSON.stringify({ port: 51_824, key: 'old-key' })).toString('base64')
+    writeFileSync(bundlePath, `/*ZMO_SWITCH_CONFIG:${config}*/const zP=51824,zK="old-key"`)
+    let alive = true
+    const order: string[] = []
+    const result = await fixture.switcherFor({
+      platform: () => 'win32',
+      locateRuntimeBundle: async () => { order.push('locate'); return bundlePath },
+      runtimeBridge: {
+        applyAfterLaunch: async (_payload, launch, lockedBundlePath) => {
+          order.push('bridge')
+          expect(lockedBundlePath).toBe(bundlePath)
+          expect(new CursorRuntimeCompanionConfig(lockedBundlePath).ensure({ port: 51_825, key: 'new-key' }).changed).toBe(true)
+          return { launchResult: await launch(), ack: { success: true, reason: '' } }
+        }
+      },
+      execFn: async (file, args) => {
+        order.push(file)
+        if (file === 'tasklist') return { stdout: alive ? '"Cursor.exe","4242","Console","1","45,678 K"' : '' }
+        if (file === 'taskkill') alive = false
+        if (file === 'cmd.exe') {
+          expect(args.join(' ')).toContain(`"${win32.resolve(bundlePath, '..', '..', '..', '..', '..', '..', 'Cursor.exe')}"`)
+        }
+        return { stdout: '' }
+      }
+    }).switchAccount(fixture.input())
+    expect(result.runtimeVerified).toBe(true)
+    expect(order.indexOf('locate')).toBeLessThan(order.indexOf('taskkill'))
+    expect(order.indexOf('bridge')).toBeGreaterThan(order.indexOf('taskkill'))
+    expect(readFileSync(bundlePath, 'utf8')).toContain('const zP=51825,zK="new-key"')
+  })
+
+  it('windows: bundle 缺失或 Companion 锚点损坏时，退出与写库之前明确停止', async () => {
+    for (const source of [undefined, 'plain Cursor bundle']) {
+      const bundlePath = join(fixture.root, 'custom', 'resources', 'app', 'out', 'vs', 'workbench', 'workbench.desktop.main.js')
+      if (source) {
+        mkdirSync(dirname(bundlePath), { recursive: true })
+        writeFileSync(bundlePath, source)
+      }
+      const calls: string[] = []
+      await expect(fixture.switcherFor({
+        platform: () => 'win32',
+        locateRuntimeBundle: async () => bundlePath,
+        runtimeBridge: { applyAfterLaunch: async (_payload, launch) => ({ launchResult: await launch(), ack: { success: true, reason: '' } }) },
+        execFn: async (file) => { calls.push(file); return { stdout: '' } }
+      }).switchAccount(fixture.input())).rejects.toThrow(/切换前检查 Cursor 主程序 bundle 失败/)
+      expect(calls).not.toContain('taskkill')
+      expect(itemTableValue(fixture.stateDbPath, 'cursorAuth/accessToken')).toEqual({ value: 'old-token' })
+    }
+  })
+
+  it('windows: 所有定位方式均未找到安装时，保持 Cursor 运行和旧账号原样', async () => {
+    const calls: string[] = []
+    await expect(fixture.switcherFor({
+      platform: () => 'win32',
+      locateRuntimeBundle: async () => undefined,
+      runtimeBridge: { applyAfterLaunch: async (_payload, launch) => ({ launchResult: await launch(), ack: { success: true, reason: '' } }) },
+      execFn: async (file) => { calls.push(file); return { stdout: '' } }
+    }).switchAccount(fixture.input())).rejects.toThrow(/切换前未定位到 Cursor 主程序 bundle/)
+    expect(calls).not.toContain('taskkill')
+    expect(itemTableValue(fixture.stateDbPath, 'cursorAuth/accessToken')).toEqual({ value: 'old-token' })
+  })
+
+  it('windows: Companion 写入阶段失败时先复活旧账号，不提前把新票据写入数据库', async () => {
+    const bundlePath = join(fixture.root, 'custom', 'resources', 'app', 'out', 'vs', 'workbench', 'workbench.desktop.main.js')
+    mkdirSync(dirname(bundlePath), { recursive: true })
+    const config = Buffer.from(JSON.stringify({ port: 51_824, key: 'old-key' })).toString('base64')
+    writeFileSync(bundlePath, `/*ZMO_SWITCH_CONFIG:${config}*/const zP=51824,zK="old-key"`)
+    let alive = true
+    const calls: string[] = []
+    await expect(fixture.switcherFor({
+      platform: () => 'win32',
+      locateRuntimeBundle: async () => bundlePath,
+      runtimeBridge: { applyAfterLaunch: async () => { throw new Error('bundle write denied') } },
+      execFn: async (file, args) => {
+        calls.push([file, ...args].join(' '))
+        if (file === 'tasklist') return { stdout: alive ? '"Cursor.exe","4242","Console","1","45,678 K"' : '' }
+        if (file === 'taskkill') alive = false
+        return { stdout: '' }
+      }
+    }).switchAccount(fixture.input())).rejects.toThrow('bundle write denied')
+    expect(calls.some((call) => call.startsWith('taskkill'))).toBe(true)
+    expect(calls.some((call) => call.startsWith('cmd.exe'))).toBe(true)
+    expect(itemTableValue(fixture.stateDbPath, 'cursorAuth/accessToken')).toEqual({ value: 'old-token' })
+    expect(readFileSync(fixture.machineIdPath, 'utf8')).toBe('old-machine-guid')
   })
 
   it('windows: tasklist 探测真实失败 → fail-closed 中止切换（绝不带未确认的进程状态写库）', async () => {

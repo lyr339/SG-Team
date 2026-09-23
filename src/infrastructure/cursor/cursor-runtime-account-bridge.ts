@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
-import { CursorRuntimeCompanionConfig } from './cursor-runtime-companion-config'
+import { CursorRuntimeCompanionConfig, locateCursorRuntimeCompanionBundle } from './cursor-runtime-companion-config'
 
 /** 51823 是旧织梦桌面的固定端口；拾光使用独立范围并同步改写 Cursor Companion。 */
 export const CURSOR_RUNTIME_SWITCH_PORT = 51_824
@@ -23,7 +23,8 @@ export interface CursorRuntimeSwitchAck {
 export interface CursorRuntimeAccountBridgePort {
   applyAfterLaunch<Result>(
     payload: CursorRuntimeSwitchPayload,
-    launch: () => Promise<Result>
+    launch: () => Promise<Result>,
+    bundlePath?: string
   ): Promise<{ launchResult: Result; ack: CursorRuntimeSwitchAck }>
 }
 
@@ -93,7 +94,8 @@ export class CursorRuntimeAccountBridge implements CursorRuntimeAccountBridgePor
 
   async applyAfterLaunch<Result>(
     payload: CursorRuntimeSwitchPayload,
-    launch: () => Promise<Result>
+    launch: () => Promise<Result>,
+    bundlePath?: string
   ): Promise<{ launchResult: Result; ack: CursorRuntimeSwitchAck }> {
     const key = this.options.key ?? CURSOR_RUNTIME_SWITCH_KEY
     const timeoutMs = this.options.timeoutMs ?? 30_000
@@ -104,7 +106,11 @@ export class CursorRuntimeAccountBridge implements CursorRuntimeAccountBridgePor
     })
     const prepareCompanion = this.options.prepareCompanion
       ?? (this.options.port === undefined
-        ? (selectedPort: number, selectedKey: string) => new CursorRuntimeCompanionConfig().ensure({ port: selectedPort, key: selectedKey })
+        ? async (selectedPort: number, selectedKey: string) => {
+            const path = bundlePath ?? await locateCursorRuntimeCompanionBundle()
+            if (!path) throw new Error('未找到 Cursor 主程序 bundle')
+            new CursorRuntimeCompanionConfig(path).ensure({ port: selectedPort, key: selectedKey })
+          }
         : undefined)
 
     try {

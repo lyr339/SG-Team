@@ -102,11 +102,13 @@ jobs:
           merge-multiple: true
       # mac 自更新的更新源：静态清单登记本版每个产物的 sha512 / 大小与发布说明，随资产一起上传；
       # 客户端经 releases/latest/download/update-manifest.json 取（不计 REST 限额）。Windows 仍读 latest.yml。
+      - name: 提取本版简要说明
+        run: awk '/^## / { section++; if (section > 1) exit } section == 1 { print }' .github/release-notes.md > current-release-notes.md
       - name: 生成更新清单
         run: |
           node scripts/update-manifest.mjs \
             --version "${GITHUB_REF_NAME#v}" --tag "$GITHUB_REF_NAME" \
-            --notes .github/release-notes.md --assets artifacts --out artifacts/update-manifest.json \
+            --notes current-release-notes.md --assets artifacts --out artifacts/update-manifest.json \
             --repo "$GITHUB_REPOSITORY"
       - name: 建 Release（已存在则只覆盖上传产物）
         env:
@@ -118,6 +120,6 @@ jobs:
           else
             gh release create "$GITHUB_REF_NAME" artifacts/* \
               --title "拾光 $GITHUB_REF_NAME" \
-              --notes-file .github/release-notes.md
+              --notes-file current-release-notes.md
           fi
           echo "Windows 打包结果：${{ needs.windows.result }}"

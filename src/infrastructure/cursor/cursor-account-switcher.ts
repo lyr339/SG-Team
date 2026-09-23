@@ -11,7 +11,12 @@ import {
   CursorDesktopTokenExchanger,
   type CursorDesktopTokenExchangePort
 } from './cursor-desktop-token-exchanger'
-import { cursorUserDataRoot } from './cursor-install-paths'
+import { cursorUserDataRoot, cursorWorkbenchBundleCandidates } from './cursor-install-paths'
+import {
+  CursorRuntimeCompanionConfig,
+  cursorExecutableFromRuntimeBundle,
+  locateCursorRuntimeCompanionBundle
+} from './cursor-runtime-companion-config'
 import { isCursorMainProcessRunning } from './cursor-process-probe'
 import {
   cursorWindowsStartCommand,
@@ -93,6 +98,8 @@ export class CursorAccountSwitcher {
     platform?: () => NodeJS.Platform
     /** Cursor Companion 运行时换号桥；生产必传，测试可省略。 */
     runtimeBridge?: CursorRuntimeAccountBridgePort
+    /** 测试注入：生产按正在运行的进程 → 安装登记 → 默认目录发现真实 bundle。 */
+    locateRuntimeBundle?: () => Promise<string | undefined>
     /** 网页 Token → IDE session Token 兑换器（测试注入点）。 */
     tokenExchanger?: CursorDesktopTokenExchangePort
     /** 冷热切换互斥锁（热切持锁期间冷切换必须拒绝，防写库竞争/进程误杀）。 */
@@ -145,6 +152,7 @@ export class CursorAccountSwitcher {
   }
 
   private async switchAccountOnce(input: CursorAccountSwitchInput): Promise<CursorAccountSwitchResult> {
+    this.windowsRunningExecutable = undefined
     const rawToken = input.token.trim()
     if (rawToken.length < 8 || rawToken.length > 8_192) throw new Error('Cursor Token 长度无效')
     // 网页登录/浏览器导入链路保存的是 WorkosCursorSessionToken（user_xxx::eyJ...）；
@@ -164,53 +172,65 @@ export class CursorAccountSwitcher {
       .resolve(rawToken, stateDbPath)
     const token = tokens.accessToken
 
+    // Windows 自定义安装不在三个默认目录内。退出前锁定正在运行的那份安装，
+    // 同一路径交给 Companion 改写与重启；路径/补丁有问题就在杀进程、写库之前停下。
+    const runtimeBundlePath = await this.preflightWindowsRuntimeBundle()
+
     // ① 确定性退出：不确认死透不动数据库（旧路径卡死根因）。
     const killedCursor = await this.killCursor()
     // 主进程死亡 ≠ 孤儿 Helper/utility 进程停止 flush state.vscdb（Chromium 收尸有
     // 窗口）；写库前静置，关闭最后一格写竞争窗口。
     if (killedCursor) await this.sleep(POST_EXIT_SETTLE_MS)
 
-    // ②③④ 任何一步失败且 Cursor 已被我们杀死时，必须尽力拉起 Cursor 再抛错——
-    // 事务回滚保证旧登录态完整，部分失败的 sane 终态是「Cursor 复活 + 旧账号」，
-    // 而不是把用户的编辑器留在死亡状态。
-    let backupDir: string | undefined
-    try {
-      // ② 逻辑备份（Cursor 已死，读库无竞争；恒为 KB 级，不复制可能巨大的主库文件）。
-      backupDir = this.backupTouchedState(stateDbPath)
-
-      // ③ 认证 + 机器码写入。
+    // ② 逻辑备份（Cursor 已死，读库无竞争；恒为 KB 级，不复制可能巨大的主库文件）。
+    const backupDir = this.backupTouchedState(stateDbPath)
+    const writeAccountState = (): void => {
       this.applyDatabaseState(stateDbPath, tokens, input)
       this.applyStorageJson(input.identity)
       this.applyMachineIdFile(input.identity.machineGuid)
-    } catch (error) {
-      if (killedCursor) await this.launchCursor()
-      throw error
     }
 
+    // ③ Companion 改写先于账号落库：若 Windows 自定义安装没有写权限，
+    // 此时仍是旧账号；先复活 Cursor，绝不留下“数据库新号、拾光旧号”的半切换。
     // ④ 拉起后必须再走 Cursor 内部 authenticationService：仅离线改库会在启动阶段
     // 被旧运行时状态覆盖。Companion 回执同时证明目标 Token 已被当前进程读回并 flush。
     const userId = decodeJwtSubject(token)
     let relaunchMode: CursorAccountSwitchResult['relaunchMode']
     let runtimeVerified = false
     if (this.options.runtimeBridge) {
-      const applied = await this.options.runtimeBridge.applyAfterLaunch({
-        accessToken: token,
-        refreshToken: tokens.refreshToken,
-        email: input.email?.trim() || undefined,
-        signUpType: isAuth0Token(token) ? 'Auth_0' : '',
-        userId
-      }, async () => {
-        const mode = await this.launchCursor()
-        if (mode === 'failed') throw new Error('Cursor 拉起失败，运行时账号尚未切换')
-        return mode
-      })
-      relaunchMode = applied.launchResult
-      if (!applied.ack.success) {
-        throw new Error(`Cursor 运行时拒绝账号切换：${applied.ack.reason || 'unknown'}`)
+      let launched = false
+      try {
+        const applied = await this.options.runtimeBridge.applyAfterLaunch({
+          accessToken: token,
+          refreshToken: tokens.refreshToken,
+          email: input.email?.trim() || undefined,
+          signUpType: isAuth0Token(token) ? 'Auth_0' : '',
+          userId
+        }, async () => {
+          writeAccountState()
+          const mode = await this.launchCursor()
+          if (mode === 'failed') throw new Error('Cursor 拉起失败，运行时账号尚未切换')
+          launched = true
+          return mode
+        }, runtimeBundlePath)
+        relaunchMode = applied.launchResult
+        if (!applied.ack.success) {
+          throw new Error(`Cursor 运行时拒绝账号切换：${applied.ack.reason || 'unknown'}`)
+        }
+        this.verifyDatabaseAccount(stateDbPath, userId, tokens.runtimeType)
+        runtimeVerified = true
+      } catch (error) {
+        // prepareCompanion / 写库 / 拉起任一阶段出错且 Cursor 仍未复活时，尽力恢复编辑器。
+        if (killedCursor && !launched) await this.launchCursor()
+        throw error
       }
-      this.verifyDatabaseAccount(stateDbPath, userId, tokens.runtimeType)
-      runtimeVerified = true
     } else {
+      try {
+        writeAccountState()
+      } catch (error) {
+        if (killedCursor) await this.launchCursor()
+        throw error
+      }
       relaunchMode = await this.launchCursor()
     }
     const cdpPortReady = relaunchMode === 'cdp'
@@ -259,7 +279,8 @@ export class CursorAccountSwitcher {
     if (!running) return false
     const name = this.cursorProcessName()
     if (this.platform() === 'win32') {
-      this.windowsRunningExecutable = await runningCursorWindowsExecutable(this.probeExec) ?? this.windowsRunningExecutable
+      // 有 Companion 的生产链已在退出前从同一份 bundle 推出 exe；不再重复启动 PowerShell。
+      this.windowsRunningExecutable ??= await runningCursorWindowsExecutable(this.probeExec)
       await this.exec('taskkill', ['/F', '/IM', name])
     } else {
       await this.exec('pkill', ['-x', name])
@@ -271,6 +292,24 @@ export class CursorAccountSwitcher {
       }
     }
     return true
+  }
+
+  private async preflightWindowsRuntimeBundle(): Promise<string | undefined> {
+    if (this.platform() !== 'win32' || !this.options.runtimeBridge) return undefined
+    const bundlePath = await (this.options.locateRuntimeBundle?.()
+      ?? locateCursorRuntimeCompanionBundle('win32', this.probeExec))
+    if (!bundlePath) {
+      throw new Error(`切换前未定位到 Cursor 主程序 bundle（已查找：${cursorWorkbenchBundleCandidates('win32').join('；')}）。Cursor 与本地账号状态均未改动`)
+    }
+    try {
+      new CursorRuntimeCompanionConfig(bundlePath).validate()
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      throw new Error(`切换前检查 Cursor 主程序 bundle 失败（${bundlePath}）：${detail}。Cursor 与本地账号状态均未改动`)
+    }
+    // bundle 与重新拉起的 exe 必须来自同一安装；自定义盘符/目录同样一键完成。
+    this.windowsRunningExecutable = cursorExecutableFromRuntimeBundle(bundlePath)
+    return bundlePath
   }
 
   private async waitForExit(timeoutMs: number): Promise<boolean> {
