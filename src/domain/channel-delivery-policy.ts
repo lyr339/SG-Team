@@ -151,15 +151,7 @@ export function buildStorageUnavailableMessage(input: { detail: string; retryabl
 }
 
 /** 回复同步守门拒绝文案（对齐插件 need_reply_sync 指引）。 */
-export function buildReplySyncRequiredMessage(groupChat: boolean): string {
-  if (groupChat) {
-    return [
-      '上一轮群聊消息已经处理，但你还没有把群内可见完整回复同步到 SG Team。',
-      '请先补同步，再继续调用 check_messages()。',
-      '如果确实无法走流式，请至少调用 record_reply({ content:"你刚刚已经给用户的完整回复", groupId:"当前群组" }) 兜底归档。',
-      '不要重新回答用户，不要开始新任务；只补同步上一轮已输出的完整正文。'
-    ].join('\n')
-  }
+export function buildReplySyncRequiredMessage(): string {
   return [
     '上一轮用户消息已经处理，但你还没有把刚刚写给用户的完整回复同步到 SG Team。',
     '请立即调用 record_reply({ content:"你刚刚已经输出给用户的完整回复" })，然后再调用 check_messages()。',

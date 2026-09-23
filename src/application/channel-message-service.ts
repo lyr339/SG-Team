@@ -13,8 +13,6 @@ import type { SqliteChannelMessageRepository } from '../infrastructure/channel-m
 
 export interface ChannelCheckInput {
   channelId: string
-  /** Agent 顺带提交的上轮回复（等价于先 record_reply）。 */
-  reply?: string
   /**
    * 调用方会话令牌（围栏已放行）。带「等待新会话」保持位的消息只投递给持有不同令牌的
    * 新会话；未携带令牌的旧会话取不到它们。
@@ -108,9 +106,8 @@ export class ChannelMessageService {
 
   /**
    * check_messages 长轮询：
-   * 1. 顺带提交上轮回复（reply 参数）
-   * 2. 回复同步守门：上轮已投递未同步则拒绝（宽限超时自动放行）
-   * 3. 轮询出站队列：有消息立即投递（合并同内容连发），空队列超 keepalive 周期返回 keepalive
+   * 1. 回复同步守门：上轮已投递未同步则拒绝（宽限超时自动放行）
+   * 2. 轮询出站队列：有消息立即投递（合并同内容连发），空队列超 keepalive 周期返回 keepalive
    *
    * 存储层的每一步都可能在拾光桌面端启停的瞬间撞上锁：单次失败不结束本次调用，
    * 按轮询间隔重试到 keepalive 周期末；周期内始终失败才以 storage_unavailable 收尾。
@@ -120,7 +117,6 @@ export class ChannelMessageService {
     const channelId = String(input.channelId).trim()
     const pollIntervalMs = Math.max(100, input.pollIntervalMs ?? CHANNEL_POLL_INTERVAL_MS)
     const keepaliveTimeoutMs = Math.max(1_000, input.keepaliveTimeoutMs ?? CHANNEL_KEEPALIVE_TIMEOUT_MS)
-    const inlineReply = typeof input.reply === 'string' ? input.reply.trim() : ''
     const session = input.session?.trim() || null
     const deadline = Date.now() + keepaliveTimeoutMs
 
@@ -129,7 +125,7 @@ export class ChannelMessageService {
     while (!input.signal?.aborted) {
       try {
         if (!turn) {
-          const opened = this.openTurn(channelId, inlineReply)
+          const opened = this.openTurn(channelId)
           if (opened.kind === 'gate') return opened.result
           turn = opened.turn
         }
@@ -177,16 +173,10 @@ export class ChannelMessageService {
   }
 
   /**
-   * 本次调用的开场：顺带回复、心跳与轮次、回复同步守门。可能因存储瞬断抛错，
-   * 由 checkMessages 重试；各步幂等（inline reply 有去重窗口，turnCount 以存量 +1 计）。
+   * 本次调用的开场：心跳与轮次、回复同步守门。可能因存储瞬断抛错，
+   * 由 checkMessages 重试；各步幂等（turnCount 以存量 +1 计）。
    */
-  private openTurn(
-    channelId: string,
-    inlineReply: string
-  ): { kind: 'gate'; result: ChannelCheckResult } | { kind: 'turn'; turn: OpenTurn } {
-    // 顺带提交回复：与 record_reply 同效，并清除守门
-    if (inlineReply) this.recordReply({ channelId, content: inlineReply })
-
+  private openTurn(channelId: string): { kind: 'gate'; result: ChannelCheckResult } | { kind: 'turn'; turn: OpenTurn } {
     const presence = this.repository.touchPresence(channelId, {
       lastSeenAt: Date.now(),
       waiting: true,
@@ -202,11 +192,11 @@ export class ChannelMessageService {
 
     // 回复同步守门（对齐插件 need_reply_sync 语义）
     let pendingSince = presence.pendingReplySyncSince
-    if (!inlineReply && pendingSince !== undefined && this.isSilentGateOrigin(channelId)) {
+    if (pendingSince !== undefined && this.isSilentGateOrigin(channelId)) {
       this.clearGate(channelId)
       pendingSince = undefined
     }
-    if (!inlineReply && pendingSince !== undefined) {
+    if (pendingSince !== undefined) {
       const stale = Date.now() - pendingSince > CHANNEL_REPLY_SYNC_STALE_MS
       if (!stale) {
         this.repository.touchPresence(channelId, { connectionPhase: 'need_reply_sync', waiting: true })
@@ -214,7 +204,7 @@ export class ChannelMessageService {
           kind: 'gate',
           result: {
             type: 'reply_sync_required',
-            message: buildReplySyncRequiredMessage(presence.pendingGroupChat),
+            message: buildReplySyncRequiredMessage(),
             pendingSince
           }
         }
@@ -246,9 +236,7 @@ export class ChannelMessageService {
       deliveredCount,
       keepaliveRound: 0,
       pendingReplySyncSince: silentDelivery ? null : deliveredAt,
-      pendingOutboundId: silentDelivery ? null : head.id,
-      pendingGroupChat: false,
-      pendingGroupId: null
+      pendingOutboundId: silentDelivery ? null : head.id
     } })
     turn.deliveredCount = deliveredCount
     turn.keepaliveRound = 0
@@ -274,9 +262,7 @@ export class ChannelMessageService {
   private clearGate(channelId: string): void {
     this.repository.touchPresence(channelId, {
       pendingReplySyncSince: null,
-      pendingOutboundId: null,
-      pendingGroupChat: false,
-      pendingGroupId: null
+      pendingOutboundId: null
     })
   }
 
@@ -299,9 +285,6 @@ export class ChannelMessageService {
     channelId: string
     content: string
     title?: string
-    groupId?: string
-    taskId?: string
-    files?: string[]
   }) {
     // 模型工具调用标记可能泄漏进 content（生成缺陷）；截断到泄漏点，
     // 不让标记残片进入时间线。泄漏本身由遥测侧的 interrupted 标记承载。
@@ -322,8 +305,6 @@ export class ChannelMessageService {
       connectionPhase: 'processing',
       pendingReplySyncSince: null,
       pendingOutboundId: null,
-      pendingGroupChat: false,
-      pendingGroupId: null,
       turnCount: presence?.turnCount
     })
     const contentWarning = sanitized.leaked

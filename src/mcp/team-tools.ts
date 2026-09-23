@@ -60,7 +60,7 @@ export const TEAM_TOOL_NAMES = [
 /** 所有工具必传 channel_id：单 MCP 条目下区分通道的唯一参数。 */
 const channelSchema = {
   channel_id: z.string().regex(/^\d+$/)
-    .describe('拾光分配给当前 Agent 的通道号（如 "2"），启动指令中声明，每次调用必传')
+    .describe('当前通道号（启动指令给出，如 "2"），每次必传')
 }
 
 const taskIdSchema = z.string().min(1).max(200).optional()
@@ -197,7 +197,7 @@ export function registerTeamTools(server: McpServer, deps: TeamToolsDeps): void 
     'team_check_in',
     {
       title: '登记在岗并读取团队上下文',
-      description: '确认当前 Cursor Agent 已启动并读取 TeamRun 目标与角色边界；返回完整角色简报（职责/目标/协作规范）与本轮团队上下文快照（稳定成员目录及真实 capabilities、未读消息与待回应数、本轮已确认记忆）。外置软件只有收到该回执才显示为已确认。启动、接替、权限变更后或需要刷新上下文时调用；不会把完整聊天灌入上下文。',
+      description: '登记在岗并领取角色简报（组目标、职责、协作规范）与协作组上下文（成员及真实 capabilities、未读与待回应数、已确认记忆）。入组、接替、权限变更后或需要刷新时调用。',
       inputSchema: z.object(channelSchema).extend({
         note: z.string().max(2_000).optional().describe('可选备注，展示在拾光的席位状态里')
       }),
@@ -259,7 +259,7 @@ export function registerTeamTools(server: McpServer, deps: TeamToolsDeps): void 
         output: z.string().min(1).max(50_000).optional().describe('submit 必填：完整交付结果与验证证据'),
         reason: z.string().min(1).max(4_000).optional().describe('fail 必填：明确失败原因'),
         tasks: z.array(z.object({
-          key: z.string().min(1).max(160).describe('TeamRun 内唯一'),
+          key: z.string().min(1).max(160).describe('会话池内唯一'),
           title: z.string().min(1).max(160),
           description: z.string().max(8_000).optional(),
           acceptance: z.string().max(4_000).optional(),
@@ -501,7 +501,7 @@ export function registerTeamTools(server: McpServer, deps: TeamToolsDeps): void 
     'team_memory',
     {
       title: '团队记忆',
-      description: 'search：只检索当前 TeamRun 内经过确认、未被取代的接替上下文（不读取上一次团队）；propose：记录带来源的决策/约束/事实/风险/经验，供本轮 Agent 接替使用；review（主控/质量角色）：审核提案 accept/reject，禁止自审。',
+      description: 'search：检索本组已确认、未被取代的记忆（不含上一个会话池）；propose：记录带来源的决策/约束/事实/风险/经验，供组内接替使用；review（主控/质量角色）：审核提案 accept/reject，禁止自审。',
       inputSchema: z.object(channelSchema).extend({
         action: z.enum(['search', 'propose', 'review']),
         query: z.string().max(500).optional().describe('search 可选：关键词'),

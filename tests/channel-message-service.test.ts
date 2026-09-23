@@ -243,20 +243,6 @@ describe('ChannelMessageService', () => {
     }
   })
 
-  it('accepts the inline reply parameter as a reply sync equivalent', async () => {
-    const { repository, service } = fixture()
-    try {
-      repository.enqueueOutbound('1', '第一条', 1_000)
-      await service.checkMessages({ channelId: '1' })
-      repository.enqueueOutbound('1', '第二条', 2_000)
-      const result = await service.checkMessages({ channelId: '1', reply: '顺带提交的上轮回复' })
-      expect(result.type).toBe('delivered')
-      expect(repository.listUnconsumedReplies().map((reply) => reply.content)).toEqual(['顺带提交的上轮回复'])
-    } finally {
-      repository.close()
-    }
-  })
-
   it('does not swallow the same short reply when it belongs to a newly delivered message', async () => {
     const { repository, service } = fixture()
     try {

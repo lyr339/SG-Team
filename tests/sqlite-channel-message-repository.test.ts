@@ -164,13 +164,13 @@ describe('SqliteChannelMessageRepository', () => {
     const repository = fixture()
     try {
       const first = repository.recordReply({ channelId: '1', content: '回复一', title: '标题' }, 100)
-      const second = repository.recordReply({ channelId: '2', content: '回复二', files: ['a.ts'] }, 200)
+      const second = repository.recordReply({ channelId: '2', content: '回复二' }, 200)
       expect(first.id).not.toBe(second.id)
       expect(repository.listUnconsumedReplies().map((reply) => reply.content)).toEqual(['回复一', '回复二'])
       repository.markReplyConsumed(first.id)
       expect(repository.listUnconsumedReplies().map((reply) => reply.id)).toEqual([second.id])
       const [remaining] = repository.listUnconsumedReplies()
-      expect(remaining?.files).toEqual(['a.ts'])
+      expect(remaining?.title).toBeUndefined()
       expect(() => repository.recordReply({ channelId: '1', content: '' })).toThrowError(/不能为空/)
     } finally {
       repository.close()

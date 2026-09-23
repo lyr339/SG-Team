@@ -34,13 +34,6 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value ? value : undefined
 }
 
-function stringArrayOf(value: unknown): string[] {
-  if (typeof value !== 'string' || !value) return []
-  const parsed = JSON.parse(value)
-  if (!Array.isArray(parsed)) return []
-  return parsed.map(String).filter(Boolean)
-}
-
 /** attachments_json 解析：异常/非数组一律视为无附件。 */
 function attachmentsOf(value: unknown): MessageAttachment[] | undefined {
   if (typeof value !== 'string' || !value) return undefined
@@ -98,9 +91,6 @@ function replyOf(row: SqliteRow): ChannelInboundReply {
     channelId: String(row.channel_id),
     content: String(row.content),
     title: optionalString(row.title),
-    groupId: optionalString(row.group_id),
-    taskId: optionalString(row.task_id),
-    files: stringArrayOf(row.files_json),
     visible: visible ? undefined : false,
     createdAt: numberOf(row.created_at),
     consumedAt: row.consumed_at === null ? undefined : numberOf(row.consumed_at),
@@ -126,8 +116,6 @@ function presenceOf(row: SqliteRow): ChannelPresence {
       ? undefined
       : numberOf(row.pending_reply_sync_since),
     pendingOutboundId: optionalString(row.pending_outbound_id),
-    pendingGroupChat: numberOf(row.pending_group_chat) === 1,
-    pendingGroupId: optionalString(row.pending_group_id),
     runtimeActiveAt: row.runtime_active_at === null || row.runtime_active_at === undefined
       ? undefined
       : numberOf(row.runtime_active_at),
@@ -139,9 +127,6 @@ export interface RecordReplyInput {
   channelId: string
   content: string
   title?: string
-  groupId?: string
-  taskId?: string
-  files?: string[]
   /** false 表示后台/内部同步，不进入用户可见时间线；缺省为 true。 */
   visible?: boolean
   outboundId?: string
@@ -157,8 +142,6 @@ export interface PresencePatch {
   /** 传入 number 设置守门，传入 null 清除守门；不传保持不变。 */
   pendingReplySyncSince?: number | null
   pendingOutboundId?: string | null
-  pendingGroupChat?: boolean
-  pendingGroupId?: string | null
 }
 
 /**
@@ -455,8 +438,7 @@ export class SqliteChannelMessageRepository {
       `).run(now, normalizedRunId, boundary)
       const presence = this.database.prepare(`
         UPDATE channel_presence
-        SET pending_reply_sync_since = NULL, pending_outbound_id = NULL, pending_group_chat = 0,
-            pending_group_id = NULL, updated_at = ?
+        SET pending_reply_sync_since = NULL, pending_outbound_id = NULL, updated_at = ?
         WHERE (pending_reply_sync_since IS NOT NULL AND pending_reply_sync_since < ?)
            OR pending_outbound_id IS NOT NULL
       `).run(now, boundary)
@@ -552,7 +534,6 @@ export class SqliteChannelMessageRepository {
     if (!/^\d+$/.test(channelId)) throw new Error(`通道号无效：${input.channelId}`)
     const content = String(input.content ?? '').trim()
     if (!content) throw new Error('回复内容不能为空')
-    const files = (input.files ?? []).map(String).filter(Boolean).slice(0, 32)
     const visible = input.visible !== false
 
     this.database.exec('BEGIN IMMEDIATE')
@@ -570,24 +551,20 @@ export class SqliteChannelMessageRepository {
         channelId,
         content,
         title: input.title?.trim() || undefined,
-        groupId: input.groupId?.trim() || undefined,
-        taskId: input.taskId?.trim() || undefined,
-        files,
         visible: visible ? undefined : false,
         outboundId: input.outboundId?.trim() || undefined,
         createdAt: now
       }
+      // group_id / task_id / files_json 不再写入内容（record_reply 已无这些参数）；files_json 是
+      // NOT NULL 且无默认值的旧列，共库的旧构建仍会读它。
       this.database.prepare(`
-        INSERT INTO channel_replies (id, channel_id, content, title, group_id, task_id, files_json, visible, outbound_id, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO channel_replies (id, channel_id, content, title, files_json, visible, outbound_id, created_at)
+        VALUES (?, ?, ?, ?, '[]', ?, ?, ?)
       `).run(
         reply.id,
         reply.channelId,
         reply.content,
         reply.title ?? null,
-        reply.groupId ?? null,
-        reply.taskId ?? null,
-        JSON.stringify(reply.files),
         visible ? 1 : 0,
         reply.outboundId ?? null,
         reply.createdAt
@@ -715,20 +692,16 @@ export class SqliteChannelMessageRepository {
         : patch.pendingOutboundId === null
           ? undefined
           : patch.pendingOutboundId.trim() || undefined,
-      pendingGroupChat: patch.pendingGroupChat ?? current?.pendingGroupChat ?? false,
-      pendingGroupId: patch.pendingGroupId === undefined
-        ? current?.pendingGroupId
-        : patch.pendingGroupId === null
-          ? undefined
-          : patch.pendingGroupId,
       updatedAt: now
     }
+    // pending_group_chat（NOT NULL、无默认值）/ pending_group_id 是群聊回复守门的旧列：守门早已只剩
+    // 单聊一种，新行按「非群聊」写入，已有行不再触碰；列保留给共库的旧构建。
     this.database.prepare(`
       INSERT INTO channel_presence (
         channel_id, last_seen_at, waiting, connection_phase, turn_count,
         delivered_count, keepalive_round, pending_reply_sync_since, pending_outbound_id,
         pending_group_chat, pending_group_id, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?)
       ON CONFLICT (channel_id) DO UPDATE SET
         last_seen_at = excluded.last_seen_at,
         waiting = excluded.waiting,
@@ -738,8 +711,6 @@ export class SqliteChannelMessageRepository {
         keepalive_round = excluded.keepalive_round,
         pending_reply_sync_since = excluded.pending_reply_sync_since,
         pending_outbound_id = excluded.pending_outbound_id,
-        pending_group_chat = excluded.pending_group_chat,
-        pending_group_id = excluded.pending_group_id,
         updated_at = excluded.updated_at
     `).run(
       next.channelId,
@@ -751,8 +722,6 @@ export class SqliteChannelMessageRepository {
       next.keepaliveRound,
       next.pendingReplySyncSince ?? null,
       next.pendingOutboundId ?? null,
-      next.pendingGroupChat ? 1 : 0,
-      next.pendingGroupId ?? null,
       next.updatedAt
     )
     return next

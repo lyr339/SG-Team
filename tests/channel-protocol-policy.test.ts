@@ -157,7 +157,7 @@ describe('channel protocol policy text', () => {
   })
 
   it('keeps reply-sync recovery limited to the explicit need-sync error path', () => {
-    const message = buildReplySyncRequiredMessage(false)
+    const message = buildReplySyncRequiredMessage()
 
     expect(message).toContain('上一轮用户消息已经处理')
     expect(message).toContain('请立即调用 record_reply')

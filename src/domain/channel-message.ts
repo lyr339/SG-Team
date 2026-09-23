@@ -85,9 +85,6 @@ export interface ChannelInboundReply {
   channelId: string
   content: string
   title?: string
-  groupId?: string
-  taskId?: string
-  files: string[]
   /** false 表示后台/内部同步回复：落库留痕并消费，但不进入用户可见会话时间线。 */
   visible?: boolean
   createdAt: number
@@ -120,8 +117,6 @@ export interface ChannelPresence {
   pendingReplySyncSince?: number
   /** 当前等待 record_reply 的真实出站消息 ID。 */
   pendingOutboundId?: string
-  pendingGroupChat: boolean
-  pendingGroupId?: string
   /**
    * CDP 运行时探测最近一次确认「正在生成」的时间（主进程写入）。
    * 与 lastSeenAt（MCP 工具调用心跳）是两条独立的生命证据流：
