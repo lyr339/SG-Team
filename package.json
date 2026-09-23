@@ -15,6 +15,7 @@
     "build:mcp": "vite build --config mcp.vite.config.ts",
     "smoke:mcp": "tsx scripts/verify-built-mcp.ts",
     "smoke:channel": "tsx scripts/verify-channel-mcp.ts",
+    "measure:mcp": "tsx scripts/measure-mcp-surface.ts",
     "pack:mac": "npm run build && electron-builder --dir --mac --arm64 --publish never --config.electronDist=node_modules/electron/dist",
     "dist:mac": "npm run pack:mac && node scripts/dist-mac.mjs",
     "pack:win": "npm run build && electron-builder --win --x64 --publish never --config.electronDist=node_modules/electron/dist",

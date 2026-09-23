@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto'
 import type { McpServer } from '@modelcontextprotocol/server'
 import * as z from 'zod/v4'
 import type { TaskAgentService } from '../application/task-agent-service'
@@ -11,10 +10,11 @@ import {
   SG_TEAM_MCP_SERVER_ID,
   hasInFlightExecution,
   isExplicitlyStoppedPhase,
+  isPresenceOnline,
   type ChannelPresence
 } from '../domain/channel-message'
 import { TaskPoolError } from '../domain/task-pool'
-import { effectiveGroupLeadSlotId, isSessionPoolRun, type TeamControlState } from '../domain/team-control'
+import { effectiveGroupLeadSlotId, type TeamControlState } from '../domain/team-control'
 
 /**
  * 团队工具面（S5 收敛版）：7 个团队工具 + 2 个通信工具，共 9 个。
@@ -22,7 +22,7 @@ import { effectiveGroupLeadSlotId, isSessionPoolRun, type TeamControlState } fro
  * 旧版按"一个服务方法一个工具"暴露了 35 个工具，模型每轮都要在几十个近义名字里挑
  * （list_mine / list_available / list_reviews / list_board / get_task 都是"看任务"）。
  * 现按对象划分：看任务 team_tasks、推进任务 team_task、独立验收 team_review、
- * 团队消息 team_message、团队记忆 team_memory、运行与主控 team_run，再加在岗登记
+ * 团队消息 team_message、团队记忆 team_memory、主控权限 team_run，再加在岗登记
  * team_check_in（含上下文快照）。每个工具的 action/view 枚举即该对象的全部动作；
  * 角色权限仍由服务层按每次调用的通道身份校验（暴露超集、调用时收口）。
  */
@@ -34,7 +34,7 @@ export interface TeamChannelRuntime {
   memory?: TeamMemoryAgentService
   controlRepository?: TeamControlRepository
   isChannelOnline?: (channelId: string) => boolean
-  /** 主控接管必须读取完整相位，裸 online/no-pong 不足以区分“忙碌”与“死亡”。 */
+  /** 主控接管必须读取完整相位，裸 online 不足以区分“忙碌”与“死亡”。 */
   channelPresence?: (channelId: string) => ChannelPresence | undefined
 }
 
@@ -65,8 +65,6 @@ const channelSchema = {
 
 const taskIdSchema = z.string().min(1).max(200).optional()
   .describe('任务 id；省略时作用于当前唯一活动任务')
-const ttlSchema = z.number().int().min(5).max(600).optional()
-  .describe('已废弃且不再生效：续租由服务端按在岗状态自动完成（阶段 2 · 2F）')
 const clientMessageIdSchema = z.string().regex(/^[a-zA-Z0-9:_-]{8,200}$/).optional()
   .describe('幂等键：同一键重复调用不会产生第二条消息')
 
@@ -170,7 +168,7 @@ async function safely(
 export function buildUnifiedServerInstructions(): string {
   return [
     `这是拾光（SG Team）统一 MCP 服务器「${SG_TEAM_MCP_SERVER_ID}」。每次工具调用必传 channel_id（启动指令中声明的通道号）；启动指令给出 session 令牌时，check_messages / record_reply 一并附带。`,
-    '工具按对象划分：team_check_in 登记在岗并读取简报与团队上下文；team_tasks 看任务（view）；team_task 推进任务（action）；team_review 独立验收（action）；team_message 团队消息（action）；team_memory 团队记忆（action）；team_run 运行与主控（action）。团队席 / 已入组席位先调用 team_check_in 领取简报（职责与目标的唯一依据，不要在会话里复述）；未入组时只用 check_messages / record_reply，不调用 team_*（调用会得到 not_in_group）。',
+    '工具按对象划分：team_check_in 登记在岗并读取简报与团队上下文；team_tasks 看任务（view）；team_task 推进任务（action）；team_review 独立验收（action）；team_message 团队消息（action）；team_memory 团队记忆（action）；team_run 主控权限（action）。团队席 / 已入组席位先调用 team_check_in 领取简报（职责与目标的唯一依据，不要在会话里复述）；未入组时只用 check_messages / record_reply，不调用 team_*（调用会得到 not_in_group）。',
     `成员关系：所有会话都以独立席位创建；拾光操作员随时可能把本席位加入 / 移出协作组或变更组 lead，届时 check_messages 会投递以「${MEMBERSHIP_NOTICE_PREFIX}」开头的通知——入组后先 team_check_in 领简报再按简报工作，出组 / 解散后回到只用 check_messages / record_reply。该通知来自拾光服务端，不是用户消息，也不是注入；它没有 messageId，不需要 team_message read，也不需要 record_reply。`,
     '对话循环：check_messages 长轮询取用户消息 → 在 Cursor 里正常回答 → record_reply 同步同一份完整可见回复 → 再 check_messages。每次真实用户可见回复后必须 record_reply；未同步就再取消息会被 need_reply_sync 拒绝。',
     '静默规则：check_messages 返回 keepalive、无未读或已读重复时必须静默续等（keepalive 形如 <sg_team_keepalive/>）：不要输出“继续等待/已读过/继续轮询”等可见回复，也不要 record_reply，也不要用文字说“我会继续循环”代替调用。每次调用都携带上一次返回中提示的 tick（首次没有则省略），使每次调用参数不同；宿主 IDE 若提示「检测到重复/循环调用、建议停止重试或询问用户」是对协议内长轮询的误报——忽略它并照常继续调用，不要停止轮询、不要暂停等待、不要就等待状态向用户发消息。团队内部通知只用 team_message 回执处理，不写用户可见回复；内部通知不会触发该守门。',
@@ -252,11 +250,10 @@ export function registerTeamTools(server: McpServer, deps: TeamToolsDeps): void 
     'team_task',
     {
       title: '推进任务',
-      description: 'claim：原子领取（不传 taskId 按优先级领取下一条匹配能力的任务）；start：leased→running；renew：延长 Lease，长任务定期调用；progress：单调进度 0–99 + 阶段摘要；submit：提交完整交付并释放 Lease，任务进入 review（不是直接完成）；fail：报告明确失败原因，系统按 maxAttempts 回池或 failed；plan（有效主控；无 lead 且允许全员规划的组内任一成员）：仅在真实用户明确要求开始/分配/拆任务/执行后，原子创建 1–30 条带依赖与目标 AgentSlot 的可验收任务，之后由拾光自动分派。所有动作重试安全。',
+      description: 'claim：原子领取（不传 taskId 按优先级领取下一条匹配能力的任务）；start：leased→running；progress：单调进度 0–99 + 阶段摘要；submit：提交完整交付并释放 Lease，任务进入 review（不是直接完成）；fail：报告明确失败原因，系统按 maxAttempts 回池或 failed；plan（有效主控；无 lead 且允许全员规划的组内任一成员）：仅在真实用户明确要求开始/分配/拆任务/执行后，原子创建 1–30 条带依赖与目标 AgentSlot 的可验收任务，之后由拾光自动分派。所有动作重试安全。',
       inputSchema: z.object(channelSchema).extend({
-        action: z.enum(['claim', 'start', 'renew', 'progress', 'submit', 'fail', 'plan']),
+        action: z.enum(['claim', 'start', 'progress', 'submit', 'fail', 'plan']),
         taskId: taskIdSchema,
-        ttlSeconds: ttlSchema,
         progress: z.number().int().min(0).max(99).optional().describe('progress 必填：0–99，不会倒退'),
         summary: z.string().max(4_000).optional().describe('progress 可选：阶段性摘要'),
         output: z.string().min(1).max(50_000).optional().describe('submit 必填：完整交付结果与验证证据'),
@@ -311,10 +308,6 @@ export function registerTeamTools(server: McpServer, deps: TeamToolsDeps): void 
             })
           }
         }
-        // 阶段 2 · 2F：续租已由服务端按 presence 自动完成，本 action 保留为兼容 no-op
-        //（仍回当前到期时刻，ttl_seconds 不再生效），阶段 4 从工具面删除。
-        case 'renew':
-          return { action, leaseExpiresAt: rt.service.renew(taskId) }
         case 'progress': {
           const value = required(progress, action, 'progress')
           const task = rt.service.report(taskId, value, summary)
@@ -369,11 +362,10 @@ export function registerTeamTools(server: McpServer, deps: TeamToolsDeps): void 
     'team_review',
     {
       title: '独立验收',
-      description: '质量角色专用。claim：原子领取一条验收（实现者不能验收自己的任务；不传 taskId 领取下一条）；renew：延长验收 Lease；submit：提交 decision=accept/reject 结论，必须附实际验证证据 evidence，reject 必须给 reason。',
+      description: '质量角色专用。claim：原子领取一条验收（实现者不能验收自己的任务；不传 taskId 领取下一条）；submit：提交 decision=accept/reject 结论，必须附实际验证证据 evidence，reject 必须给 reason。',
       inputSchema: z.object(channelSchema).extend({
-        action: z.enum(['claim', 'renew', 'submit']),
+        action: z.enum(['claim', 'submit']),
         taskId: taskIdSchema,
-        ttlSeconds: ttlSchema,
         decision: z.enum(['accept', 'reject']).optional().describe('submit 必填'),
         evidence: z.string().min(1).max(50_000).optional().describe('submit 必填：实际复现/验证证据'),
         reason: z.string().max(4_000).optional().describe('submit 且 reject 时必填：打回原因')
@@ -397,9 +389,6 @@ export function registerTeamTools(server: McpServer, deps: TeamToolsDeps): void 
               }
             : { action, review: null, message: '当前没有可领取的独立验收。', nextAction: waitingAction(channel_id) }
         }
-        // 同 team_task renew：兼容 no-op（阶段 2 · 2F）。
-        case 'renew':
-          return { action, leaseExpiresAt: rt.service.renewReview(taskId) }
         case 'submit': {
           const verdict = required(decision, action, 'decision')
           const proof = required(evidence, action, 'evidence')
@@ -576,26 +565,21 @@ export function registerTeamTools(server: McpServer, deps: TeamToolsDeps): void 
   server.registerTool(
     'team_run',
     {
-      title: '运行与主控',
-      description: 'start：已无实际动作（协作组即建即用，没有启动这一步），恒返回 not_applicable；transfer_lead（主控/临时主控）：把主控权限临时转给指定在线成员；claim_lead（任何已绑定成员）：仅在有效主控有可验证终止证据（cursor_stopped 或已无有效绑定）时自荐接管，processing/need_reply_sync 表示主控正在执行、无 pong 不算证据；clear_acting_lead（主控/临时主控）：清除临时主控恢复原 lead；ping（主控/临时主控）：向 targetChannelId 发活性验证，目标应在 timeoutMs 内 pong；pong（任何成员）：响应收到的活性验证 pingId；liveness（主控/临时主控）：查询 targetChannelId 的活性状态。',
+      title: '主控权限',
+      description: 'transfer_lead（有效主控）：把主控权限临时转给本组一名在线成员；claim_lead（任何组员）：仅当有效主控的 Cursor 会话已明确终止或已无绑定时自荐接管，主控在线或正在执行时拒绝；clear_acting_lead（有效主控）：清除临时主控，恢复原 lead。',
       inputSchema: z.object(channelSchema).extend({
-        action: z.enum(['start', 'transfer_lead', 'claim_lead', 'clear_acting_lead', 'ping', 'pong', 'liveness']),
+        action: z.enum(['transfer_lead', 'claim_lead', 'clear_acting_lead']),
         targetSlotId: z.string().min(3).max(240).optional().describe('transfer_lead 必填：目标稳定 AgentSlot'),
-        targetChannelId: z.string().regex(/^\d+$/).optional().describe('ping / liveness 必填：目标通道号'),
-        pingId: z.string().min(8).max(200).optional().describe('pong 必填：收到的 pingId'),
-        timeoutMs: z.number().int().min(1_000).max(30_000).optional().describe('ping：等待 pong 的时长（默认 5000）；claim_lead：复核 pong 超时（默认 8000）'),
         reason: z.string().max(500).optional().describe('transfer_lead / claim_lead 可选：原因')
       }),
       annotations: { readOnlyHint: false, idempotentHint: true }
     },
-    async ({ channel_id, action, targetSlotId, targetChannelId, pingId, timeoutMs, reason }) => safe(channel_id, async (rt) => {
+    async ({ channel_id, action, targetSlotId, reason }) => safe(channel_id, (rt) => {
       switch (action) {
-        case 'start':
-          return { action, ...startRun(rt, channel_id) }
         case 'transfer_lead':
           return { action, ...transferLead(rt, channel_id, required(targetSlotId, action, 'targetSlotId'), reason) }
         case 'claim_lead':
-          return { action, ...await claimLead(rt, channel_id, deps, reason, timeoutMs) }
+          return { action, ...claimLead(rt, channel_id, deps, reason) }
         case 'clear_acting_lead': {
           const agent = currentAgent(rt)
           if (!agent.isEffectiveLead) {
@@ -604,59 +588,9 @@ export function registerTeamTools(server: McpServer, deps: TeamToolsDeps): void 
           setActingLeadFor(requireControl(rt), agent, null)
           return { action, message: '临时主控已清除，恢复原始 lead 权限', nextAction: waitingAction(channel_id) }
         }
-        case 'ping': {
-          const collaboration = requireCollaboration(rt)
-          if (!collaboration.isCoordinator()) {
-            throw new TaskPoolError('lead_only_ping', '只有当前有效主控可以发起活性验证')
-          }
-          const target = required(targetChannelId, action, 'targetChannelId')
-          const timeout = timeoutMs ?? 5_000
-          const result = collaboration.ping({ targetChannelId: target, timeoutMs: timeout })
-          return {
-            action,
-            ...result,
-            message: `已向 CH-${target} 发送活性验证，等待 ${timeout}ms 内响应`,
-            nextAction: waitingAction(channel_id)
-          }
-        }
-        case 'pong': {
-          const id = required(pingId, action, 'pingId')
-          requireCollaboration(rt).pong({ pingId: id })
-          return { action, message: '已响应活性验证', pingId: id, nextAction: waitingAction(channel_id) }
-        }
-        case 'liveness': {
-          const collaboration = requireCollaboration(rt)
-          if (!collaboration.isCoordinator()) {
-            throw new TaskPoolError('lead_only_liveness', '只有当前有效主控可以查询成员活性')
-          }
-          const target = required(targetChannelId, action, 'targetChannelId')
-          const liveness = collaboration.checkLiveness(target)
-          return {
-            action,
-            channelId: target,
-            liveness: liveness?.liveness ?? 'unknown',
-            lastVerifiedAt: liveness?.lastVerifiedAt,
-            consecutiveFailures: liveness?.consecutiveFailures ?? 0,
-            nextAction: waitingAction(channel_id)
-          }
-        }
       }
     })
   )
-}
-
-/**
- * `team_run start`：一次性团队 run 的启动状态机已退役（阶段 2 · 2B），协作组即建即用；
- * 保留为 `not_applicable` 直到阶段 4 从工具面删除该动作（旧会话手里的 nextAction 文本仍可能指向它）。
- */
-function startRun(rt: TeamChannelRuntime, channelId: string): Record<string, unknown> {
-  const agent = currentAgent(rt)
-  return {
-    runId: agent.runId,
-    status: 'not_applicable',
-    message: '会话池内的协作组即建即用，没有「启动」这一步；入组后 team_check_in 即已在岗，等待用户指令即可。',
-    nextAction: waitingAction(channelId)
-  }
 }
 
 function transferLead(
@@ -726,24 +660,37 @@ function effectiveLeadSlotIdFor(
 }
 
 /**
- * 主控离线接管：只在有效主控有可验证终止证据时切换临时主控。ping 只做复核，
- * no-pong 本身不是接管证明——长命令、推理和生成阶段都可能暂时处理不了内部通知，
- * 必须再与通道相位/活性窗口交叉验证。
+ * 有效主控的失联证据只来自 presence（与主进程 relay、租约回收同一口径）：
+ * Cursor 明确终止（cursor_stopped / tool_aborted / retired）才构成接管证据；
+ * 正在处理已领取的消息、仍在线、或心跳陈旧却没有终止证据，都保持现有主控权限。
  */
-async function claimLead(
+function leadStopEvidence(rt: TeamChannelRuntime, leadChannelId: string): string {
+  const presence = rt.channelPresence?.(leadChannelId)
+  if (hasInFlightExecution(presence)) {
+    throw new TaskPoolError('lead_busy', '有效主控正在处理已领取的消息；执行期间不调用工具属正常，保持现有主控权限')
+  }
+  const phase = presence?.connectionPhase ?? ''
+  if (isExplicitlyStoppedPhase(phase)) return `Cursor 已明确终止（connectionPhase=${phase}）`
+  if (isPresenceOnline(presence, Date.now())) {
+    throw new TaskPoolError('lead_still_active', '有效主控仍在线，不能接管；如需转移请由其本人调用 team_run({action:"transfer_lead"})')
+  }
+  throw new TaskPoolError('lead_liveness_unproven', '有效主控心跳已陈旧，但没有 Cursor 明确终止证据；保持现有主控权限')
+}
+
+/** 主控离线接管：证据成立才切换临时主控，随后迁移原主控的活动任务、生成接管上下文并广播审计。 */
+function claimLead(
   rt: TeamChannelRuntime,
   channelId: string,
   deps: TeamToolsDeps,
-  reason: string | undefined,
-  pongTimeoutMs: number | undefined
-): Promise<Record<string, unknown>> {
+  reason: string | undefined
+): Record<string, unknown> {
   const control = requireControl(rt)
   const collaboration = requireCollaboration(rt)
   const agent = currentAgent(rt)
   const state = control.loadTeamControl()
   const run = state.runs.find((candidate) => candidate.id === agent.runId)
-  if (!run || !['launching', 'running', 'attention'].includes(run.status)) {
-    throw new TaskPoolError('run_inactive', '只有运行中的 TeamRun 可以接管主控')
+  if (!run || run.status !== 'running') {
+    throw new TaskPoolError('run_inactive', '只有运行中的会话池可以接管主控')
   }
   const effectiveLeadSlotId = effectiveLeadSlotIdFor(state, run, agent)
   if (agent.isEffectiveLead || effectiveLeadSlotId === agent.slotId) {
@@ -754,70 +701,12 @@ async function claimLead(
       nextAction: waitingAction(channelId)
     }
   }
-  const evidence: string[] = []
   const effectiveLeadBinding = effectiveLeadSlotId
     ? state.bindings.find((binding) => binding.runId === run.id && binding.slotId === effectiveLeadSlotId)
     : undefined
-  if (!effectiveLeadSlotId || !effectiveLeadBinding) {
-    evidence.push('有效主控不存在或已无 MCP 绑定')
-  } else {
-    const beforePresence = rt.channelPresence?.(effectiveLeadBinding.channelId)
-    if (hasInFlightExecution(beforePresence)) {
-      throw new TaskPoolError(
-        'lead_busy',
-        '有效主控正在处理已领取的消息；执行期间不要求响应 pong，保持现有主控权限'
-      )
-    }
-    const explicitlyStopped = isExplicitlyStoppedPhase(beforePresence?.connectionPhase ?? '')
-    if (explicitlyStopped) {
-      evidence.push(`Cursor 已明确终止（connectionPhase=${beforePresence!.connectionPhase}）`)
-    }
-    const prior = collaboration.checkLiveness(effectiveLeadBinding.channelId)
-    if (prior && prior.liveness !== 'active') {
-      evidence.push(`既有活性记录 ${prior.liveness}（连续失败 ${prior.consecutiveFailures} 次）`)
-    }
-    if (!explicitlyStopped) {
-      const pongTimeout = pongTimeoutMs ?? 8_000
-      const { sentAt } = collaboration.ping({
-        targetChannelId: effectiveLeadBinding.channelId,
-        timeoutMs: pongTimeout
-      })
-      const deadline = Date.now() + pongTimeout
-      let answered = false
-      while (Date.now() < deadline) {
-        const record = collaboration.checkLiveness(effectiveLeadBinding.channelId)
-        if (record?.liveness === 'active' && (record.lastPongAt ?? 0) >= sentAt) {
-          answered = true
-          break
-        }
-        await new Promise((resolve) => setTimeout(resolve, 200))
-      }
-      const afterPresence = rt.channelPresence?.(effectiveLeadBinding.channelId)
-      const phase = afterPresence?.connectionPhase ?? ''
-      const calledMcpAfterPing = (afterPresence?.lastSeenAt ?? 0) >= sentAt
-      if (answered || calledMcpAfterPing) {
-        throw new TaskPoolError(
-          'lead_still_active',
-          answered
-            ? '有效主控对活性验证作出了 pong 回应，不能接管；如需转移请由其本人调用 team_run({action:"transfer_lead"})'
-            : '有效主控在复核期间产生了新的 MCP 活性，不能接管'
-        )
-      }
-      if (hasInFlightExecution(afterPresence)) {
-        throw new TaskPoolError(
-          'lead_busy',
-          '有效主控已进入消息处理相位；执行期间无 pong 不代表掉线，保持现有主控权限'
-        )
-      }
-      if (!isExplicitlyStoppedPhase(phase)) {
-        throw new TaskPoolError(
-          'lead_liveness_unproven',
-          `有效主控在 ${Math.round(pongTimeout / 1000)}s 内没有 pong，但通道没有 Cursor/运行时明确终止证据；保持现有主控权限`
-        )
-      }
-      evidence.push(`Cursor 已明确终止，复核 ${Math.round(pongTimeout / 1000)}s 无 pong`)
-    }
-  }
+  const evidence = [
+    effectiveLeadBinding ? leadStopEvidence(rt, effectiveLeadBinding.channelId) : '有效主控不存在或已无 MCP 绑定'
+  ]
   setActingLeadFor(control, agent, agent.slotId)
   // 权限切换后立即刷新同一 MCP runtime 的动态身份；后续任务迁移与上下文
   // 生成必须以新主控权限执行，不能等下一次工具调用。

@@ -1,9 +1,8 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash } from 'node:crypto'
 import type { PlanTaskInput } from '../domain/task-pool'
 import { TaskPoolError } from '../domain/task-pool'
 import type {
   AuthorizedTeamAgent,
-  ChannelLivenessRecord,
   TeamAgentRuntimeIdentity,
   TeamMessage,
   TeamMessageKind
@@ -95,17 +94,9 @@ export class TeamCollaborationAgentService {
         && message.receipt.respondedAt === undefined
       ))
       .length
-    const liveness = this.repository.listLiveness(agent.runId)
-    const memberLiveness = new Map(members.map((member) => {
-      const record = liveness.find((item) => item.channelId === member.channelId)
-      return [member.slotId, record?.liveness ?? 'unknown']
-    }))
     return {
       self: agent,
-      members: members.map((member) => ({
-        ...member,
-        liveness: memberLiveness.get(member.slotId)
-      })),
+      members,
       unreadMessages: unread,
       awaitingResponses,
       instructions: unread > 0
@@ -302,56 +293,6 @@ export class TeamCollaborationAgentService {
   listTaskBoard(): AgentTaskView[] {
     this.currentAgent()
     return this.tasks.listBoard()
-  }
-
-  /**
-   * 发送活性验证 ping 到指定通道。
-   * 目标通道应在 5 秒内调用 team_run({action:'pong', pingId}) 响应。
-   */
-  ping(input: { targetChannelId: string; timeoutMs?: number }): { pingId: string; sentAt: number } {
-    const agent = this.currentAgent()
-    const members = this.membersOf(agent)
-    const target = members.find((member) => member.channelId === input.targetChannelId)
-    if (!target) throw new TaskPoolError('target_channel_not_found', `目标通道 CH-${input.targetChannelId} 不属于当前团队 / 协作组`)
-    const pingId = `ping:${randomUUID()}`
-    const sentAt = Date.now()
-    this.repository.createMessage({
-      runId: agent.runId,
-      sender: { type: 'agent', slotId: agent.slotId },
-      recipient: { type: 'agent', slotId: target.slotId },
-      kind: 'question',
-      subject: '活性验证 ping',
-      content: `【活性验证】请立即调用 team_run({action:'pong', pingId:'${pingId}'}) 响应。pingId: ${pingId}`,
-      clientMessageId: pingId
-    })
-    this.repository.recordLiveness({
-      channelId: input.targetChannelId,
-      runId: agent.runId,
-      verified: false,
-      at: sentAt
-    })
-    return { pingId, sentAt }
-  }
-
-  /**
-   * 响应活性验证 ping。
-   */
-  pong(input: { pingId: string }): void {
-    const agent = this.currentAgent()
-    this.repository.recordLiveness({
-      channelId: agent.channelId,
-      runId: agent.runId,
-      verified: true,
-      at: Date.now()
-    })
-  }
-
-  /**
-   * 检查指定通道的活性状态。
-   */
-  checkLiveness(targetChannelId: string): ChannelLivenessRecord | undefined {
-    const agent = this.currentAgent()
-    return this.repository.getLiveness(targetChannelId, agent.runId)
   }
 
   planTasks(inputs: PlanTaskInput[]): ReturnType<TaskAgentService['plan']> {

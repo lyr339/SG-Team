@@ -152,7 +152,7 @@ describe('TaskPoolAggregate', () => {
     expect(pool.snapshot().revision).toBe(revision)
   })
 
-  it('在岗持有者自己写入时顺手续租：progress / submit 不必先 renew；renew 退化为兼容 no-op', () => {
+  it('在岗持有者自己写入时顺手续租：progress / submit 之前没有续租动作', () => {
     const { pool, advance, at } = fixture(new Set(['agent-1']))
     const [task] = pool.plan('run-1', [{ key: 'self-renew', title: '自续租' }])
     const leased = pool.leaseNext({ runId: 'run-1', agentSessionId: 'agent-1', ttlMs: 5_000 })!
@@ -161,9 +161,6 @@ describe('TaskPoolAggregate', () => {
 
     expect(pool.reportProgress(leased.attempt.id, leased.leaseToken, 60, '半程').progress).toBe(60)
     expect(pool.snapshot().attempts[leased.attempt.id]?.leaseExpiresAt).toBe(at() + DEFAULT_TTL_MS)
-    // renew：不改到期时刻、不写事件，只回当前合法值。
-    const renewed = pool.renewLease(leased.attempt.id, leased.leaseToken)
-    expect(renewed).toBe(at() + DEFAULT_TTL_MS)
     expect(pool.snapshot().events.some((event) => event.type.includes('renew'))).toBe(false)
     expect(pool.submitForReview(leased.attempt.id, leased.leaseToken, '产物').status).toBe('review')
     expect(pool.snapshot().tasks[task!.id]?.status).toBe('review')
@@ -189,7 +186,7 @@ describe('TaskPoolAggregate', () => {
   })
 
   it('验收租约同一口径：在岗的 reviewer 续租，离线才把验收放回队列', () => {
-    const { pool, online, advance } = fixture(new Set(['qa-1']))
+    const { pool, online, advance, at } = fixture(new Set(['qa-1']))
     const [task] = pool.plan('run-1', [{ key: 'review-presence', title: '验收在岗' }])
     const implementation = pool.leaseNext({ runId: 'run-1', agentSessionId: 'dev-1' })!
     pool.startAttempt(implementation.attempt.id, implementation.leaseToken)
@@ -201,7 +198,7 @@ describe('TaskPoolAggregate', () => {
     advance(5_001)
     expect(pool.reclaimExpired()).toEqual([])
     expect(pool.snapshot().reviews[review.review.id]).toMatchObject({ status: 'leased', reviewerSessionId: 'qa-1' })
-    expect(pool.renewReview(review.review.id, review.leaseToken)).toBe(pool.snapshot().reviews[review.review.id]!.leaseExpiresAt)
+    expect(pool.snapshot().reviews[review.review.id]!.leaseExpiresAt).toBe(at() + DEFAULT_TTL_MS)
 
     online.delete('qa-1')
     advance(DEFAULT_TTL_MS + 1)

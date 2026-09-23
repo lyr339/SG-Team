@@ -105,30 +105,26 @@ afterEach(() => {
 })
 
 describe('team_run claim_lead（主控离线接管）', () => {
-  it('rejects the claim when the lead answers the liveness ping with a pong', async () => {
+  it('rejects the claim while the lead presence is online, without messaging the lead', async () => {
     const data = setup()
     const builder = await data.connect('builder')
     try {
-      // 模拟主控活跃：ping 发出 500ms 后 pong 回来（verified 刷新 lastPongAt）
-      const pong = setTimeout(() => {
-        data.collaboration.recordLiveness({ channelId: '1', runId: data.bundle.run.id, verified: true, at: Date.now() })
-      }, 500)
       const result = await builder.client.callTool({
         name: 'team_run',
-        arguments: { channel_id: '2', action: 'claim_lead', reason: '主控疑似掉线', timeoutMs: 2_000 }
+        arguments: { channel_id: '2', action: 'claim_lead', reason: '主控疑似掉线' }
       })
-      clearTimeout(pong)
       expect(result.isError).toBe(true)
       expect(result.structuredContent).toMatchObject({ ok: false, code: 'lead_still_active' })
       expect(data.team.loadTeamControl().runs.find((run) => run.id === data.bundle.run.id)?.actingLeadSlotId)
         .toBeUndefined()
+      expect(data.collaboration.loadRun(data.bundle.run.id).messageOrder).toEqual([])
     } finally {
       await builder.client.close()
       data.close()
     }
   })
 
-  it('lets an online member claim the lead when the ping times out with offline liveness on record', async () => {
+  it('lets a member claim the lead once the lead Cursor session is explicitly stopped', async () => {
     const data = setup()
     const builder = await data.connect('builder')
     const originalLead = await data.connect('lead')
@@ -151,14 +147,13 @@ describe('team_run claim_lead（主控离线接管）', () => {
         }
         return planned
       })
-      data.collaboration.recordLiveness({ channelId: '1', runId: data.bundle.run.id, verified: false, at: Date.now() })
       data.channels.touchPresence('1', {
         lastSeenAt: Date.now(), waiting: false, connectionPhase: 'cursor_stopped'
       })
 
       const result = await builder.client.callTool({
         name: 'team_run',
-        arguments: { channel_id: '2', action: 'claim_lead', reason: 'CH-1 已掉线，用户指定接管', timeoutMs: 2_000 }
+        arguments: { channel_id: '2', action: 'claim_lead', reason: 'CH-1 已掉线，用户指定接管' }
       })
       expect(result.isError).not.toBe(true)
       expect(result.structuredContent).toMatchObject({
@@ -175,7 +170,6 @@ describe('team_run claim_lead（主控离线接管）', () => {
         .find((message) => message.content.includes('接管审计'))!
       expect(audit.kind).toBe('notice')
       expect(audit.recipient).toMatchObject({ type: 'agent', slotId: data.slot('lead').id })
-      expect(audit.content).toContain('suspected_offline')
       expect(audit.content).toContain('Cursor 已明确终止')
       expect(audit.content).toContain('用户指定接管')
       expect(snapshot.threads.find((thread) => thread.id === audit.threadId)?.subject)
@@ -215,15 +209,11 @@ describe('team_run claim_lead（主控离线接管）', () => {
       })
       expect(oldLeadBoard.isError).toBe(true)
       expect(oldLeadBoard.structuredContent).toMatchObject({ ok: false, code: 'coordinator_only' })
-      const actingLiveness = await builder.client.callTool({
-        name: 'team_run', arguments: { channel_id: '2', action: 'liveness', targetChannelId: '1' }
+      const demotedClear = await originalLead.client.callTool({
+        name: 'team_run', arguments: { channel_id: '1', action: 'clear_acting_lead' }
       })
-      expect(actingLiveness.isError).not.toBe(true)
-      const demotedLiveness = await originalLead.client.callTool({
-        name: 'team_run', arguments: { channel_id: '1', action: 'liveness', targetChannelId: '2' }
-      })
-      expect(demotedLiveness.isError).toBe(true)
-      expect(demotedLiveness.structuredContent).toMatchObject({ code: 'lead_only_liveness' })
+      expect(demotedClear.isError).toBe(true)
+      expect(demotedClear.structuredContent).toMatchObject({ code: 'lead_only_clear' })
     } finally {
       await originalLead.client.close()
       await builder.client.close()
@@ -240,7 +230,7 @@ describe('team_run claim_lead（主控离线接管）', () => {
       })
       await builder.client.callTool({
         name: 'team_run',
-        arguments: { channel_id: '2', action: 'claim_lead', timeoutMs: 2_000 }
+        arguments: { channel_id: '2', action: 'claim_lead' }
       })
       const again = await builder.client.callTool({
         name: 'team_run',
@@ -280,24 +270,6 @@ describe('team_run claim_lead（主控离线接管）', () => {
     }
   })
 
-  it('rejects a takeover when the ping is unanswered but the lead presence is still fresh', async () => {
-    const data = setup()
-    const builder = await data.connect('builder')
-    try {
-      const result = await builder.client.callTool({
-        name: 'team_run',
-        arguments: { channel_id: '2', action: 'claim_lead', reason: '心跳超时接管', timeoutMs: 2_000 }
-      })
-      expect(result.isError).toBe(true)
-      expect(result.structuredContent).toMatchObject({ ok: false, code: 'lead_liveness_unproven' })
-      expect(data.team.loadTeamControl().runs.find((run) => run.id === data.bundle.run.id)?.actingLeadSlotId)
-        .toBeUndefined()
-    } finally {
-      await builder.client.close()
-      data.close()
-    }
-  })
-
   it('rejects immediately when the lead is processing a long-running task', async () => {
     const data = setup()
     const builder = await data.connect('builder')
@@ -309,7 +281,7 @@ describe('team_run claim_lead（主控离线接管）', () => {
       })
       const result = await builder.client.callTool({
         name: 'team_run',
-        arguments: { channel_id: '2', action: 'claim_lead', reason: '主控很久没 pong', timeoutMs: 2_000 }
+        arguments: { channel_id: '2', action: 'claim_lead', reason: '主控很久没动静' }
       })
       expect(result.isError).toBe(true)
       expect(result.structuredContent).toMatchObject({ ok: false, code: 'lead_busy' })
@@ -321,7 +293,7 @@ describe('team_run claim_lead（主控离线接管）', () => {
     }
   })
 
-  it('does not treat a stale non-processing lease plus no-pong as sufficient takeover evidence', async () => {
+  it('does not treat a stale heartbeat without explicit stop evidence as sufficient takeover evidence', async () => {
     const data = setup()
     const builder = await data.connect('builder')
     try {
@@ -332,7 +304,7 @@ describe('team_run claim_lead（主控离线接管）', () => {
       })
       const result = await builder.client.callTool({
         name: 'team_run',
-        arguments: { channel_id: '2', action: 'claim_lead', timeoutMs: 2_000 }
+        arguments: { channel_id: '2', action: 'claim_lead' }
       })
       expect(result.isError).toBe(true)
       expect(result.structuredContent).toMatchObject({ ok: false, code: 'lead_liveness_unproven' })
@@ -367,30 +339,23 @@ describe('team_run claim_lead（主控离线接管）', () => {
   })
 })
 
-describe('team_run start（阶段 2 · 2B：启动状态机已退役）', () => {
-  it('answers not_applicable for every caller and leaves the run and the bindings untouched', async () => {
+describe('team_run 工具面（阶段 4 · 4D）', () => {
+  it('offers only the three lead actions; retired start / ping / pong / liveness are rejected before any side effect', async () => {
     const data = setup()
     const lead = await data.connect('lead')
-    const builder = await data.connect('builder')
     try {
-      const before = data.team.loadTeamControl()
-      for (const [caller, channelId] of [[lead, '1'], [builder, '2']] as const) {
-        const result = await caller.client.callTool({ name: 'team_run', arguments: { channel_id: channelId, action: 'start' } })
-        expect(result.isError).toBeFalsy()
-        expect(result.structuredContent).toMatchObject({
-          runId: data.bundle.run.id,
-          status: 'not_applicable',
-          nextAction: { type: 'enter_channel_wait', channelId }
-        })
-        expect(JSON.stringify(result.structuredContent)).toContain('没有「启动」这一步')
+      const { tools } = await lead.client.listTools()
+      const teamRun = tools.find((tool) => tool.name === 'team_run')!
+      const properties = teamRun.inputSchema.properties as Record<string, { enum?: string[] }>
+      expect(properties.action?.enum).toEqual(['transfer_lead', 'claim_lead', 'clear_acting_lead'])
+      expect(Object.keys(properties).sort()).toEqual(['action', 'channel_id', 'reason', 'targetSlotId'])
+      for (const action of ['start', 'ping', 'pong', 'liveness']) {
+        const result = await lead.client.callTool({ name: 'team_run', arguments: { channel_id: '1', action } })
+        expect(result.isError).toBe(true)
       }
-      const after = data.team.loadTeamControl()
-      expect(after.runs.find((run) => run.id === data.bundle.run.id)).toMatchObject({ status: 'running' })
-      expect(after.bindings.map((binding) => [binding.slotId, binding.launchDetail, binding.composerBindingKey]))
-        .toEqual(before.bindings.map((binding) => [binding.slotId, binding.launchDetail, binding.composerBindingKey]))
+      expect(data.collaboration.loadRun(data.bundle.run.id).messageOrder).toEqual([])
     } finally {
       await lead.client.close()
-      await builder.client.close()
       data.close()
     }
   })

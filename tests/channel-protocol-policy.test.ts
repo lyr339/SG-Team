@@ -113,7 +113,7 @@ describe('channel protocol policy text', () => {
     expect(instructions).toContain('团队内部通知只用 team_message 回执处理')
     // 工具面收敛后的对象划分说明：模型据此在 7 个团队工具里选对象，再选 action/view。
     expect(instructions).toContain('team_tasks 看任务（view）')
-    expect(instructions).toContain('team_run 运行与主控（action）')
+    expect(instructions).toContain('team_run 主控权限（action）')
     expect(instructions).toContain('keepalive、无未读或已读重复时必须静默续等')
     expect(instructions).toContain('也不要 record_reply')
     expect(instructions).toContain('内部通知不会触发该守门')

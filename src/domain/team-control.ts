@@ -801,8 +801,8 @@ export function buildTeamRoleBriefing(input: {
       ? `2. 优先调用 team_tasks(${call("view:'reviews'")}) 并用 team_review(${call("action:'claim'")}) 领取独立验收；没有待验收项时再看 view:'mine' / view:'available'。`
       : `2. 调用 team_tasks(${call("view:'mine'")})；有 leased/running 任务就继续，否则看 view:'available' 并用 team_task(${call("action:'claim'")}) 按能力领取。${memberMayPlan ? `本组允许全体成员规划：${planRule}` : ''}`
   const executionWorkflow = role.templateKey === 'reviewer'
-    ? "3. 验收必须独立复现并检查验收标准；用 team_review({action:'renew'}) 续租，最后用 team_review({action:'submit', decision, evidence, reason}) 提交通过证据或明确打回原因。"
-    : "3. 领取后 team_task({action:'start'})；每个里程碑（实现完成、测试完成、遇到阻塞、返工完成）都用 team_task({action:'progress', progress, summary}) 上报，长任务定期 action:'renew' 续租；完成后 team_task({action:'submit', output}) 提交验收，不能自行宣布验收通过。"
+    ? "3. 验收必须独立复现并检查验收标准，最后用 team_review({action:'submit', decision, evidence, reason}) 提交通过证据或明确打回原因。"
+    : "3. 领取后 team_task({action:'start'})；每个里程碑（实现完成、测试完成、遇到阻塞、返工完成）都用 team_task({action:'progress', progress, summary}) 上报；完成后 team_task({action:'submit', output}) 提交验收，不能自行宣布验收通过。"
   // 阶段 2 · 2A（决策 D1）：分派、催办、派验收、打回后的重派全部由桌面编排器完成；lead 只规划、答用户、汇总真实上报，
   // 成员的上报由 team_task / team_review 动作自动生成，不再要求手写一条 team_message。
   const collaborationWorkflow = effectiveLead

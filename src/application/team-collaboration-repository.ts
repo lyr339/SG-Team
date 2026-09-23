@@ -7,8 +7,6 @@ import type {
   TeamMemberDirectoryEntry
 } from '../domain/team-collaboration'
 
-import type { ChannelLivenessRecord } from '../domain/team-collaboration'
-
 export interface TeamCollaborationRepository {
   /** 装载 run 内消息；给出 `groupId` 时只装载该协作组的线程与消息（Agent 视角）。 */
   loadRun(runId: string, groupId?: string): TeamCollaborationSnapshot
@@ -38,11 +36,5 @@ export interface TeamCollaborationRepository {
   orphanPendingReceipts(input: { runId: string; slotId: string; groupId?: string; at?: number }): string[]
   listPendingNotifications(runId?: string, limit?: number): TeamMessage[]
   recoverStaleSending(beforeAt: number): number
-  /** 记录通道活性验证结果。 */
-  recordLiveness(input: { channelId: string; runId: string; verified: boolean; at: number }): void
-  /** 获取通道活性记录。 */
-  getLiveness(channelId: string, runId: string): ChannelLivenessRecord | undefined
-  /** 列出当前 run 的所有活性记录。 */
-  listLiveness(runId: string): ChannelLivenessRecord[]
   close(): void
 }

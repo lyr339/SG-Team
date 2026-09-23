@@ -6,7 +6,6 @@ import { DatabaseSync } from 'node:sqlite'
 import type { TeamCollaborationRepository } from '../../application/team-collaboration-repository'
 import type {
   AuthorizedTeamAgent,
-  ChannelLivenessRecord,
   CreateTeamMessageInput,
   TeamAgentRuntimeIdentity,
   TeamCollaborationEvent,
@@ -315,13 +314,9 @@ export class SqliteTeamCollaborationRepository implements TeamCollaborationRepos
       const events = this.database.prepare(`
         DELETE FROM team_collaboration_events WHERE run_id = ?
       `).run(normalizedRunId)
-      const liveness = this.database.prepare(`
-        DELETE FROM channel_liveness WHERE run_id = ?
-      `).run(normalizedRunId)
       const changed = numberOf(messages.changes)
         + numberOf(threads.changes)
-        + numberOf(events.changes)
-        + numberOf(liveness.changes) > 0
+        + numberOf(events.changes) > 0
       if (changed) {
         this.database.prepare(`
           UPDATE team_collaboration_meta
@@ -644,68 +639,6 @@ export class SqliteTeamCollaborationRepository implements TeamCollaborationRepos
     return rows.length
   }
 
-  recordLiveness(input: { channelId: string; runId: string; verified: boolean; at: number }): void {
-    const existing = this.getLiveness(input.channelId, input.runId)
-    const consecutiveFailures = input.verified
-      ? 0
-      : (existing?.consecutiveFailures ?? 0) + 1
-    const liveness = input.verified
-      ? 'active'
-      : consecutiveFailures >= 3
-        ? 'confirmed_offline'
-        : 'suspected_offline'
-    this.database.prepare(`
-      INSERT INTO channel_liveness (
-        channel_id, run_id, liveness, last_verified_at, consecutive_failures,
-        last_ping_at, last_pong_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(channel_id, run_id) DO UPDATE SET
-        liveness = excluded.liveness,
-        last_verified_at = excluded.last_verified_at,
-        consecutive_failures = excluded.consecutive_failures,
-        last_ping_at = excluded.last_ping_at,
-        last_pong_at = excluded.last_pong_at,
-        updated_at = excluded.updated_at
-    `).run(
-      input.channelId,
-      input.runId,
-      liveness,
-      input.verified ? input.at : existing?.lastVerifiedAt ?? input.at,
-      consecutiveFailures,
-      input.at,
-      input.verified ? input.at : existing?.lastPongAt ?? null,
-      input.at
-    )
-  }
-
-  getLiveness(channelId: string, runId: string): ChannelLivenessRecord | undefined {
-    const row = this.database.prepare(`
-      SELECT * FROM channel_liveness WHERE channel_id = ? AND run_id = ?
-    `).get(channelId, runId) as SqliteRow | undefined
-    if (!row) return undefined
-    return {
-      channelId: String(row.channel_id),
-      liveness: String(row.liveness) as ChannelLivenessRecord['liveness'],
-      lastVerifiedAt: numberOf(row.last_verified_at),
-      consecutiveFailures: numberOf(row.consecutive_failures),
-      lastPingAt: optionalNumber(row.last_ping_at),
-      lastPongAt: optionalNumber(row.last_pong_at)
-    }
-  }
-
-  listLiveness(runId: string): ChannelLivenessRecord[] {
-    return (this.database.prepare(`
-      SELECT * FROM channel_liveness WHERE run_id = ? ORDER BY updated_at DESC
-    `).all(runId) as SqliteRow[]).map((row) => ({
-      channelId: String(row.channel_id),
-      liveness: String(row.liveness) as ChannelLivenessRecord['liveness'],
-      lastVerifiedAt: numberOf(row.last_verified_at),
-      consecutiveFailures: numberOf(row.consecutive_failures),
-      lastPingAt: optionalNumber(row.last_ping_at),
-      lastPongAt: optionalNumber(row.last_pong_at)
-    }))
-  }
-
   close(): void {
     if (this.database.isOpen) this.database.close()
   }
@@ -913,18 +846,6 @@ export class SqliteTeamCollaborationRepository implements TeamCollaborationRepos
         created_at INTEGER NOT NULL
       );
 
-      CREATE TABLE IF NOT EXISTS channel_liveness (
-        channel_id TEXT NOT NULL,
-        run_id TEXT NOT NULL REFERENCES team_runs(id) ON DELETE CASCADE,
-        liveness TEXT NOT NULL,
-        last_verified_at INTEGER NOT NULL,
-        consecutive_failures INTEGER NOT NULL DEFAULT 0,
-        last_ping_at INTEGER,
-        last_pong_at INTEGER,
-        updated_at INTEGER NOT NULL,
-        PRIMARY KEY (channel_id, run_id)
-      );
-
       CREATE INDEX IF NOT EXISTS idx_team_threads_run_updated
       ON team_message_threads(run_id, updated_at DESC);
       CREATE INDEX IF NOT EXISTS idx_team_messages_run_created
@@ -935,8 +856,6 @@ export class SqliteTeamCollaborationRepository implements TeamCollaborationRepos
       ON team_message_receipts(notification_state, read_at, updated_at);
       CREATE INDEX IF NOT EXISTS idx_team_collaboration_events_run
       ON team_collaboration_events(run_id, seq);
-      CREATE INDEX IF NOT EXISTS idx_channel_liveness_run
-      ON channel_liveness(run_id, updated_at DESC);
 
       INSERT OR IGNORE INTO team_collaboration_meta (
         id, schema_version, revision, seq, updated_at
@@ -947,31 +866,10 @@ export class SqliteTeamCollaborationRepository implements TeamCollaborationRepos
     ).get() as SqliteRow
     const version = numberOf(meta.schema_version)
     if (version === 1) {
-      this.database.exec('BEGIN IMMEDIATE')
-      try {
-        this.database.exec(`
-          CREATE TABLE IF NOT EXISTS channel_liveness (
-            channel_id TEXT NOT NULL,
-            run_id TEXT NOT NULL REFERENCES team_runs(id) ON DELETE CASCADE,
-            liveness TEXT NOT NULL,
-            last_verified_at INTEGER NOT NULL,
-            consecutive_failures INTEGER NOT NULL DEFAULT 0,
-            last_ping_at INTEGER,
-            last_pong_at INTEGER,
-            updated_at INTEGER NOT NULL,
-            PRIMARY KEY (channel_id, run_id)
-          );
-          CREATE INDEX IF NOT EXISTS idx_channel_liveness_run
-          ON channel_liveness(run_id, updated_at DESC);
-        `)
-        this.database.prepare(
-          'UPDATE team_collaboration_meta SET schema_version = ?, revision = revision + 1, updated_at = ? WHERE id = 1'
-        ).run(SCHEMA_VERSION, Date.now())
-        this.database.exec('COMMIT')
-      } catch (error) {
-        if (this.database.isTransaction) this.database.exec('ROLLBACK')
-        throw error
-      }
+      // v2 当年只新增了 channel_liveness（阶段 4 · 4D 已退役），v1 库升级只需推进版本号。
+      this.database.prepare(
+        'UPDATE team_collaboration_meta SET schema_version = ?, revision = revision + 1, updated_at = ? WHERE id = 1'
+      ).run(SCHEMA_VERSION, Date.now())
     } else if (version !== SCHEMA_VERSION) {
       throw new Error(`团队协作数据库版本不兼容：${version}，当前支持 ${SCHEMA_VERSION}`)
     }
@@ -989,5 +887,8 @@ export class SqliteTeamCollaborationRepository implements TeamCollaborationRepos
       CREATE INDEX IF NOT EXISTS idx_team_messages_run_group
       ON team_messages(run_id, group_id, created_at);
     `)
+    // 活性探测（team_run ping / pong / liveness）已退役（阶段 4 · 4D）：presence 是唯一的在岗证据。
+    // IF EXISTS 让两个进程以任意顺序打开都幂等；共库的旧构建重新打开会建回空表，下一次新构建打开再删。
+    this.database.exec('DROP TABLE IF EXISTS channel_liveness')
   }
 }

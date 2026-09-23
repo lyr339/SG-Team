@@ -125,21 +125,6 @@ export interface AuthorizedTeamAgent {
   groupId?: string
 }
 
-/** 通道活性状态。 */
-export type ChannelLiveness =
-  | 'active'           // 已验证活跃
-  | 'suspected_offline' // 疑似离线（ping 失败但未确认）
-  | 'confirmed_offline' // 已确认离线（连续多次 ping 失败）
-
-export interface ChannelLivenessRecord {
-  channelId: string
-  liveness: ChannelLiveness
-  lastVerifiedAt: number
-  consecutiveFailures: number
-  lastPingAt?: number
-  lastPongAt?: number
-}
-
 export interface TeamMemberDirectoryEntry {
   slotId: string
   roleKey: string

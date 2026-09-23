@@ -1,6 +1,7 @@
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { describe, expect, it } from 'vitest'
 import { createConfiguredTeamBundle } from '../src/domain/team-control'
 import { teamMessageReceiptStage } from '../src/domain/team-collaboration'
@@ -257,16 +258,9 @@ describe('SqliteTeamCollaborationRepository', () => {
         content: '上一轮遗留状态消息。',
         clientMessageId: 'operator-stale-status-0001'
       })
-      data.repository.recordLiveness({
-        channelId: '1',
-        runId: data.bundle.run.id,
-        verified: true,
-        at: 1_500
-      })
 
       const previousRevision = data.repository.revision()
       expect(data.repository.loadRun(data.bundle.run.id).messageOrder).toHaveLength(1)
-      expect(data.repository.listLiveness(data.bundle.run.id)).toHaveLength(1)
 
       expect(data.repository.clearRun(data.bundle.run.id, 2_000)).toBe(true)
       const snapshot = data.repository.loadRun(data.bundle.run.id)
@@ -274,10 +268,44 @@ describe('SqliteTeamCollaborationRepository', () => {
       expect(snapshot.messageOrder).toEqual([])
       expect(snapshot.threads).toEqual([])
       expect(snapshot.events).toEqual([])
-      expect(data.repository.listLiveness(data.bundle.run.id)).toEqual([])
       expect(data.repository.clearRun(data.bundle.run.id, 3_000)).toBe(false)
     } finally {
       data.repository.close()
+      data.team.close()
+    }
+  })
+
+  it('drops the retired channel_liveness table on open and stays idempotent (phase 4 · 4D)', () => {
+    const data = fixture()
+    data.repository.close()
+    const raw = new DatabaseSync(data.path)
+    raw.exec(`
+      CREATE TABLE channel_liveness (
+        channel_id TEXT NOT NULL, run_id TEXT NOT NULL, liveness TEXT NOT NULL,
+        last_verified_at INTEGER NOT NULL, consecutive_failures INTEGER NOT NULL DEFAULT 0,
+        last_ping_at INTEGER, last_pong_at INTEGER, updated_at INTEGER NOT NULL,
+        PRIMARY KEY (channel_id, run_id)
+      );
+      CREATE INDEX idx_channel_liveness_run ON channel_liveness(run_id, updated_at DESC);
+    `)
+    raw.prepare(`INSERT INTO channel_liveness VALUES ('1', ?, 'active', 1, 0, 1, 1, 1)`).run(data.bundle.run.id)
+    raw.close()
+    const retiredObjects = () => {
+      const probe = new DatabaseSync(data.path)
+      try {
+        return probe.prepare(`SELECT name FROM sqlite_master WHERE name LIKE '%channel_liveness%'`).all()
+      } finally {
+        probe.close()
+      }
+    }
+    try {
+      new SqliteTeamCollaborationRepository(data.path).close()
+      expect(retiredObjects()).toEqual([])
+      const reopened = new SqliteTeamCollaborationRepository(data.path)
+      expect(reopened.revision()).toBeGreaterThanOrEqual(0)
+      reopened.close()
+      expect(retiredObjects()).toEqual([])
+    } finally {
       data.team.close()
     }
   })

@@ -19,8 +19,8 @@ export interface TeamCollaborationSweeperOptions {
  * 协作域挂死清扫器：对照 task-pool 的租约清扫模式，补齐消息、主控心跳与成员离线三类
  * 挂死形态。原则与 P0 未待命修复一致——只提醒、不越权改消息状态。
  *
- * 主控提醒与成员 attention 都只接受 TeamControlSnapshot 的正面终止证据；被动心跳静默、
- * online=false 与 ping no-pong 都只属于 suspected，不会诱导其他 Agent 接管。
+ * 主控提醒与成员 attention 都只接受 TeamControlSnapshot 的正面终止证据；被动心跳静默
+ * 与 online=false 都只属于 suspected，不会诱导其他 Agent 接管。
  */
 export class TeamCollaborationSweeper {
   private sweepTimer?: ReturnType<typeof setInterval>
@@ -59,7 +59,7 @@ export class TeamCollaborationSweeper {
     const now = this.options.now?.() ?? Date.now()
     const control = this.controlSnapshot()
     const run = control.activeRun
-    if (!run || !['launching', 'running', 'attention'].includes(run.status)) {
+    if (!run || run.status !== 'running') {
       this.leadAlertedCycle.clear()
       this.memberAttentionCycle.clear()
       return 0
@@ -187,8 +187,6 @@ export class TeamCollaborationSweeper {
       return 0
     }
     const leadSlotId = member.slot.id
-    const channelId = member.binding?.channelId ?? member.slot.channelId
-    const liveness = channelId ? this.collaboration.getLiveness(channelId, runId) : undefined
     const evidence = leadSilenceEvidence({
       runtime: member.runtime
         ? {
@@ -200,7 +198,6 @@ export class TeamCollaborationSweeper {
             lastAgentActivityAt: member.runtime.lastAgentActivityAt
           }
         : undefined,
-      liveness,
       installedAt: member.binding?.installedAt,
       now
     })
@@ -209,7 +206,7 @@ export class TeamCollaborationSweeper {
       return 0
     }
     // 周期键纳入心跳起点：主控活性恢复（lastSeenAt 刷新/online 翻正）后自动复位，可再次报警。
-    const cycleKey = `${leadSlotId}:${member.runtime?.lastSeenAt ?? 0}:${member.runtime?.lastAgentActivityAt ?? 0}:${member.runtime?.connectionPhase ?? ''}:${member.runtime?.online ?? false}:${liveness?.liveness ?? 'unknown'}`
+    const cycleKey = `${leadSlotId}:${member.runtime?.lastSeenAt ?? 0}:${member.runtime?.lastAgentActivityAt ?? 0}:${member.runtime?.connectionPhase ?? ''}:${member.runtime?.online ?? false}`
     if (this.leadAlertedCycle.get(scopeKey) === cycleKey) return 0
     const members = this.collaboration.listRunMembers(runId, groupId)
       .filter((member) => member.channelId && member.slotId !== leadSlotId)

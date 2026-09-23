@@ -17,7 +17,7 @@ function plannedRepository() {
 }
 
 describe('TaskAgentService', () => {
-  it('runs claim, start, renew, progress and review without exposing lease tokens', () => {
+  it('runs claim, start, progress and review without exposing lease tokens', () => {
     const { repository, implementation, verification } = plannedRepository()
     const developer = new TaskAgentService(repository, {
       agentSessionId: 'workspace:composer-dev:1',
@@ -40,7 +40,6 @@ describe('TaskAgentService', () => {
 
     developer.start(implementation.id)
     expect(developer.start(implementation.id).task.status).toBe('running')
-    developer.renew(implementation.id)
     developer.report(implementation.id, 60, '核心实现完成')
     const submitted = developer.submit(implementation.id, 'diff + test evidence')
     expect(submitted.task.status).toBe('review')
@@ -54,7 +53,6 @@ describe('TaskAgentService', () => {
     const review = qa.claimReview(implementation.id)
     expect(review?.task.id).toBe(implementation.id)
     expect(JSON.stringify(review)).not.toContain('leaseToken')
-    qa.renewReview(implementation.id)
     expect(qa.submitReview(implementation.id, 'accept', '复跑测试并检查验收标准').status).toBe('done')
     expect(qa.submitReview(implementation.id, 'accept', '复跑测试并检查验收标准').status).toBe('done')
     expect(() => qa.submitReview(implementation.id, 'reject', '不同证据', '试图覆盖'))

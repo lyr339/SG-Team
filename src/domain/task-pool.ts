@@ -166,7 +166,7 @@ export interface TaskPoolDependencies {
   reviewLeaseToken?: () => string
   /**
    * 持有者是否仍在岗（阶段 2 · 2F，决策 D3=a）：租约到期只在这里回答「否」时才回收，
-   * 回答「是」就由服务端续到 now + DEFAULT_LEASE_TTL_MS，Agent 不必自己 renew。
+   * 回答「是」就由服务端续到 now + DEFAULT_LEASE_TTL_MS，Agent 没有任何续租动作。
    * 判定权威是通道 presence（`isPresenceOnline`：MCP 心跳与 CDP 运行时证据取较新者，
    * processing 分相 5 分钟宽限）——Agent 跑长命令 / 长推理时按协议不碰 MCP，那是证据缺失
    * 而不是死亡证据。主进程与 MCP 各自注入同一判定；**缺省视为不在岗**，保持 2F 之前
@@ -440,15 +440,6 @@ export class TaskPoolAggregate {
     return structuredClone(attempt)
   }
 
-  /**
-   * 兼容 no-op（阶段 2 · 2F，决策 D3=a）：续租已由服务端按 presence 完成，Agent 不需要再调。
-   * 仍校验租约归属并返回当前到期时刻（`activeLease` 在岗时已顺手续过），自定义 ttl 不再生效；
-   * 阶段 4 从 `team_task` 工具面删除。
-   */
-  renewLease(attemptId: string, leaseToken: string): number {
-    return this.activeLease(attemptId, leaseToken).attempt.leaseExpiresAt!
-  }
-
   reportProgress(attemptId: string, leaseToken: string, progress: number, summary = ''): TaskAttempt {
     const { task, attempt } = this.activeLease(attemptId, leaseToken)
     if (attempt.status !== 'running') throw new TaskPoolError('invalid_attempt_state', '只有 running attempt 可以汇报进度')
@@ -558,11 +549,6 @@ export class TaskPoolAggregate {
       leaseToken,
       leaseExpiresAt
     }
-  }
-
-  /** 兼容 no-op，同 `renewLease`（阶段 2 · 2F）：验收租约也由服务端按 presence 续。 */
-  renewReview(reviewId: string, leaseToken: string): number {
-    return this.activeReviewLease(reviewId, leaseToken).review.leaseExpiresAt!
   }
 
   submitReview(
@@ -911,7 +897,7 @@ export class TaskPoolAggregate {
     const at = this.now()
     if (!attempt.leaseExpiresAt || attempt.leaseExpiresAt <= at) {
       // 持有者正在写入本身就是在岗证据，但仍以 presence 为准（清扫器可能刚好还没跑到）：
-      // 在岗就顺手续租，progress / submit / fail 因此都不再需要 Agent 先调 renew（阶段 2 · 2F）。
+      // 在岗就顺手续租（阶段 2 · 2F）：progress / submit / fail 之前不需要任何续租动作。
       if (!this.holderOnline(attempt.agentSessionId)) {
         throw new TaskPoolError('lease_expired', 'Lease 已过期，等待调度器回收任务')
       }

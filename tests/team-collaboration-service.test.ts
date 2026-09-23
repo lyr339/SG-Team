@@ -26,9 +26,6 @@ class FakeCollaborationRepository implements TeamCollaborationRepository {
   orphanPendingReceipts(): [] { return [] }
   listPendingNotifications(): [] { return [] }
   recoverStaleSending(): number { return 0 }
-  recordLiveness(): void {}
-  getLiveness(): undefined { return undefined }
-  listLiveness(): [] { return [] }
   close(): void {}
 }
 
