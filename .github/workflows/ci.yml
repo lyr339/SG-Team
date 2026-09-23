@@ -4,9 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-  workflow_dispatch:
 
-# 同一分支的新推送取消还在跑的旧 run（打包 job 卡住时不用等它超时）。
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -18,63 +16,15 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    # 不设 ELECTRON_MIRROR：npmmirror 从 GitHub 的美区 runner 拉 Electron 二进制极慢
-    #（首次 install.js 跑了 15 分钟以上没下完），默认的 GitHub Releases 源对 runner 反而最快。
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
-
       - run: npm ci
-      - run: npm run typecheck
-      - run: npm run lint:dead
       - run: npm test
+      - run: npm run lint:dead
+      # build 自带 typecheck；主分支只验证，不生成重复安装包。
       - run: npm run build
       - run: npm run smoke:channel
-
-  # Windows 安装包：只在 Windows runner 上打（electron-builder 打 NSIS 需要 Windows 或 wine，
-  # 且 --config.electronDist 复用本机 node_modules/electron/dist，跨平台会拿错二进制）。
-  # 未签名：首次运行有 SmartScreen 提示（更多信息 → 仍要运行）。产物挂在 workflow 的 artifacts 里。
-  package-windows:
-    needs: verify
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    runs-on: windows-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
-      # npm ≥12 默认不跑依赖的 install 脚本（allowScripts 名单只是建议 / 版本匹配规则随 npm 变），
-      # electron 的 postinstall 不一定下过二进制：显式补一次（幂等），否则 electronDist 不存在。
-      - run: node node_modules/electron/install.js
-      # 失败时把日志尾部写成 annotation：公开仓库的 Actions 日志要登录才能看，annotation 匿名可读（API / 页面）。
-      - name: pack:win
-        shell: pwsh
-        run: |
-          npm run pack:win 2>&1 | Tee-Object -FilePath pack-win.log
-          if ($LASTEXITCODE -ne 0) {
-            $tail = (Get-Content pack-win.log -Tail 30 | ForEach-Object { $_ -replace '%', '%25' }) -join '%0A'
-            Write-Output "::error title=pack:win failed::$tail"
-            exit 1
-          }
-      - if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: pack-win-log
-          path: pack-win.log
-          retention-days: 7
-      - uses: actions/upload-artifact@v4
-        with:
-          name: shiguang-windows-x64
-          path: |
-            release/*.exe
-            release/*.exe.blockmap
-            release/latest.yml
-          if-no-files-found: error
-          retention-days: 14
