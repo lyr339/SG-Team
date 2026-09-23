@@ -8,6 +8,9 @@ process.env.TZ = 'Asia/Shanghai'
 export default defineConfig({
   test: {
     include: ['tests/**/*.test.{ts,tsx}'],
+    // Windows runner 上大量 SQLite 临时库与文件扫描同时争用磁盘会让无关用例一起超时；
+    // 限制并行文件数而不放宽断言/时限。macOS 和本地保持原并发。
+    maxWorkers: process.env.CI && process.platform === 'win32' ? 2 : undefined,
     // windows-latest runner 的磁盘 / node:sqlite 建库偶尔慢到让默认 5s 超时（同一提交前两次绿、
     // 第三次 5 个用例超时全在建临时库的文件里）。本地 1758 个用例 25s 跑完，放宽只影响 CI 的慢盘。
     testTimeout: 20_000,
