@@ -8,8 +8,6 @@ export interface InspectorTabSpec {
   icon: ReactNode
   /** 计数徽章：该面板顶层列出的条目数；0 / undefined 不显示。 */
   badge?: number
-  /** 有实时活动（正在运行的步骤）：徽章旁独立的状态点，不与数字重叠。 */
-  live?: boolean
   title?: string
 }
 
@@ -164,7 +162,7 @@ export function InspectorShell({ tabs, activeTab, onTabChange, onClose, children
                     else tabRefs.current.delete(tab.id)
                   }}
                   id={`${baseId}-tab-${tab.id}`}
-                  className={`inspector-tab${selected ? ' is-active' : ''}${tab.live ? ' is-live' : ''}`}
+                  className={`inspector-tab${selected ? ' is-active' : ''}`}
                   role="tab"
                   type="button"
                   aria-selected={selected}
@@ -175,7 +173,6 @@ export function InspectorShell({ tabs, activeTab, onTabChange, onClose, children
                 >
                   <span className="inspector-tab__icon">
                     {tab.icon}
-                    {tab.live ? <i className="inspector-tab__dot" aria-hidden="true" /> : null}
                   </span>
                   <span className="inspector-tab__reveal">
                     <span className="inspector-tab__text">

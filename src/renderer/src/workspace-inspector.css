@@ -1,7 +1,7 @@
 /* ============================================================
    会话右侧工作区（Codex 式右栏）：变更 / 计划 / 活动 / 产物
    平整停靠面板；层级由标签、hairline 与语义色承担，不用重阴影。
-   动效预算：标签胶囊展开 220ms、面板进场 160ms、折叠 200ms、只允许状态点脉冲。
+   动效预算：标签胶囊展开 220ms、面板进场 160ms、折叠 200ms。
    ============================================================ */
 
 .workspace-inspector {
@@ -45,7 +45,7 @@
   color: var(--text); background: var(--surface-solid);
   border-color: var(--color-border-secondary); box-shadow: var(--shadow-hairline);
 }
-.inspector-tab__icon { position: relative; width: 16px; height: 16px; flex: 0 0 16px; display: grid; place-items: center; color: var(--text-soft); }
+.inspector-tab__icon { width: 16px; height: 16px; flex: 0 0 16px; display: grid; place-items: center; color: var(--text-soft); }
 .inspector-tab__icon svg { width: 15px; height: 15px; }
 .inspector-tab.is-active .inspector-tab__icon { color: var(--text); }
 /* 展开区：grid 轨道 0fr → 1fr 决定宽度，文字随之从图标背后滑出；收起时宽度为 0，DOM 与可访问名称不变。 */
@@ -66,25 +66,22 @@
   padding: 0 5px; color: var(--text); background: color-mix(in srgb, var(--canvas-solid) 70%, transparent);
   border-radius: var(--border-radius-full); font: 650 var(--fs-10)/1 var(--font-numeric);
 }
-/* 实时状态点挂在图标右上角：收起与展开两种形态里位置一致；描边用底板色把它从图标笔画里托出来。
-   静态呈现：常亮点本身已表达“实时”，闪烁只添噪（用户反馈 2026-09-13）。 */
-.inspector-tab__dot {
-  position: absolute; top: -3px; right: -3px; width: 6px; height: 6px; border-radius: 50%;
-  background: var(--color-text-info); box-shadow: 0 0 0 1.5px var(--surface);
-}
-.inspector-tab.is-active .inspector-tab__dot { box-shadow: 0 0 0 1.5px var(--surface-solid); }
-.inspector-tab.is-live .inspector-tab__badge { color: var(--color-text-info); background: var(--color-background-info); }
 @keyframes inspector-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
 /* 面板收窄时（容器查询，与外层布局解耦）：
-   变更页元信息行去掉与顶栏重复的工程名、「实时」只留状态点，把宽度让给分支与文件数；
+   变更页元信息行去掉与顶栏重复的工程名，把宽度让给分支与文件数；
    文件行的暂存状态 chip 收起（title 里仍有），「本轮」保留。标签本身已是图标胶囊，无需再收。 */
 @container inspector (max-width: 360px) {
   .inspector-section__header span { display: none; }
   .inspector-section__header { min-height: 46px; }
   .inspector-review__workspace { display: none; }
-  .inspector-review__live b { display: none; }
   .review-file__path em.review-file__state { display: none; }
+}
+
+/* 拉宽后的空间用于直接读标签，不再留下大片空白图标行。 */
+@container inspector (min-width: 520px) {
+  .inspector-tab__reveal { grid-template-columns: 1fr; }
+  .inspector-tab__text { opacity: 1; transform: none; padding-left: 7px; }
 }
 
 .workspace-inspector__close {
@@ -263,9 +260,6 @@
 }
 .inspector-review__workspace { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--text-soft); }
 .inspector-review__branch { min-width: 0; overflow: hidden; padding: 1px 6px; background: var(--surface-soft); border-radius: 6px; font: 500 var(--fs-10)/1.5 var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
-.inspector-review__live { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; color: var(--color-text-success); font-weight: 600; }
-.inspector-review__live i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: inspector-pulse 1.8s ease-in-out infinite; }
-.inspector-review__live b { font-weight: inherit; }
 .inspector-review__count { flex: 0 0 auto; margin-left: auto; display: inline-flex; align-items: center; gap: 4px; font-family: var(--font-numeric); }
 .inspector-review__count > button { width: 24px; height: 24px; }
 .inspector-review__note { flex: 0 0 auto; margin: 0; padding: 7px 14px; color: var(--color-text-warning); background: var(--color-background-warning); font-size: var(--fs-11); line-height: 1.4; }
@@ -576,7 +570,7 @@ html:is([data-card-transparency="clear"], [data-card-transparency="light"]) .wor
   .inspector-plan__list li, .inspector-plan__list li.is-just-started .todo-spinner { animation: none; }
   /* 画勾动画关闭时必须同步复位描边，否则勾会停在不可见的初始态。 */
   .inspector-plan__list li.is-just-completed .todo-indicator path { animation: none; stroke-dasharray: none; stroke-dashoffset: 0; }
-  .inspector-review__live i, .activity-turn__pulse, .activity-row__meta em.is-running i, .review-edit__head > em.is-running::before { animation: none; }
+  .activity-turn__pulse, .activity-row__meta em.is-running i, .review-edit__head > em.is-running::before { animation: none; }
   .inspector-panel, .artifact-card, .inspector-toast, .inspector-confirm, .inspector-skeleton > i { animation: none; }
   .inspector-tab, .inspector-tab__reveal, .inspector-tab__text, .inspector-collapsible, .inspector-collapsible__inner, .review-file__head > svg, .activity-turn__meta svg, .activity-row__meta svg, .artifact-card__actions { transition: none; }
   .inspector-review__scope-thumb, .review-file, .review-file__actions { transition: none; }

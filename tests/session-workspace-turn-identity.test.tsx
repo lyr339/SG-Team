@@ -113,6 +113,9 @@ describe('Agent 回合行身份贯穿 responding → sealed（阶段 F/G，§8.5
     expect(sealedRow).toBe(liveRow)
     expect(container.querySelector('.cursor-native-process')).toBe(processCard)
     expect(sealedRow?.className).not.toContain('live-process-row')
+    const flow = sealedRow?.querySelector<HTMLElement>('.cursor-native-process__flow')
+    expect(flow?.hidden).toBe(true)
+    expect(sealedRow?.querySelector('.cursor-native-process__summary')?.getAttribute('aria-expanded')).toBe('false')
     // Thinking 正文不因 live 翻 false 跳全文：播放模式在挂载时已锁定，尾部继续播完。
     const thoughtAtSeal = thoughtBody()
     expect(thoughtAtSeal.length).toBeGreaterThanOrEqual(thoughtMidway.length)
@@ -131,6 +134,11 @@ describe('Agent 回合行身份贯穿 responding → sealed（阶段 F/G，§8.5
     }
     expect(responseText()).toBe(finalText)
     expect(thoughtBody()).toBe(thoughtText)
+    // 完成后的过程已收束；手动打开仍是同一个过程 DOM，回复始终保持可见。
+    act(() => sealedRow?.querySelector<HTMLButtonElement>('.cursor-native-process__summary')?.click())
+    expect(sealedRow?.querySelector('.cursor-native-process__flow')).toBe(flow)
+    expect(flow?.hidden).toBe(false)
+    expect(responseText()).toBe(finalText)
     // 播完后进入静止：无光标、无「实时」标记；操作栏（复制/引用）已出现。
     expect(container.querySelector('.live-agent-response__caret')).toBeNull()
     expect(container.textContent).toContain('复制')

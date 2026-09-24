@@ -71,7 +71,8 @@ describe('SessionRailCard（名册行）', () => {
 
     expect(html).toContain('session-row is-offline')
     expect(html).toContain('已离线')
-    expect(html).toContain('排队 2')
+    expect(html).toContain('class="session-row__queue"')
+    expect(html).toContain('排队 <b>2</b>')
     expect(html).not.toContain('42 分钟前')
     expect(html).toContain('开始 —')
     expect(html).toContain('结束 —')

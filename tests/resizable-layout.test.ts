@@ -60,4 +60,18 @@ describe('desktop session width budget', () => {
       expect(rightSize).toBeGreaterThanOrEqual(right.minSize)
     }
   })
+
+  it('lets each sidebar claim useful reading width without squeezing the conversation below its floor', async () => {
+    const { SESSION_CONTENT_MIN_WIDTH: min, SESSION_SIDEBAR_SPEC: left, SESSION_INSPECTOR_SPEC: right, WINDOW_MIN_WIDTH } = await import('../src/shared/window-layout')
+    const shellWidth = WINDOW_MIN_WIDTH - 28
+    const dockWidth = shellWidth - left.defaultSize - 10
+    const expandedRight = resizePane([right.defaultSize], [right], 0, 9999, dockWidth, min)[0]!
+    expect(expandedRight).toBeGreaterThanOrEqual(540)
+    expect(dockWidth - expandedRight - 10).toBeGreaterThanOrEqual(min)
+    expect(resizePane([right.defaultSize], [right], 0, 9999, 1920 - 28 - left.defaultSize - 10, min)[0]).toBeGreaterThan(900)
+
+    const expandedLeft = resizePane([left.defaultSize], [left], 0, 9999, shellWidth, min + right.minSize + 10)[0]!
+    expect(expandedLeft).toBeGreaterThanOrEqual(520)
+    expect(shellWidth - expandedLeft - right.minSize - 20).toBeGreaterThanOrEqual(min)
+  })
 })

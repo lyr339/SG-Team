@@ -63,8 +63,8 @@ describe('WorkspaceInspector shell', () => {
     const tabs = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="tab"]'))
     expect(tabs.map((tab) => tab.textContent)).toEqual(['变更1', '计划1', '活动2', '产物1'])
     expect(tabs[0]!.getAttribute('aria-selected')).toBe('true')
-    // 计划标签有进行中的 todo：实时状态点。
-    expect(tabs[1]!.classList.contains('is-live')).toBe(true)
+    // 运行状态留在清单内容中；标签只保留计数，不叠加装饰点。
+    expect(container.querySelector('.inspector-tab__dot')).toBeNull()
 
     await act(async () => {
       tabs[0]!.focus()

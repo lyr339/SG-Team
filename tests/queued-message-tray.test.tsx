@@ -42,6 +42,7 @@ describe('QueuedMessageTray（待投递托盘）', () => {
     expect(html).toContain('另有 1 条系统内部消息在队列中')
     expect(html).toContain('queue-tray is-busy is-open')
     expect(html).toContain('Agent 正在处理当前任务：新消息按顺序等待')
+    expect(html).not.toMatch(/class="queue-tray__state"[^>]*><i/)
     expect(html).toContain('先把队列托盘收尾')
     expect(html).toContain('1 个附件')
     expect(html).toContain('queue-tray__item is-held')

@@ -431,7 +431,7 @@ export const TEAM_ROLE_TEMPLATES: TeamRoleTemplate[] = [
     capabilities: ['code', 'backend', 'database'],
     recommendedSkills: ['mcp-builder', 'claude-api', 'security-best-practices', 'review-security', 'webapp-testing'],
     accent: 'periwinkle',
-    avatarId: 'architect'
+    avatarId: 'backend'
   },
   {
     key: 'devops',
@@ -464,7 +464,7 @@ export const TEAM_ROLE_TEMPLATES: TeamRoleTemplate[] = [
     capabilities: ['product', 'requirements', 'documentation'],
     recommendedSkills: ['notion-spec-to-implementation', 'doc-coauthoring', 'internal-comms', 'writing-guidelines', 'brand-guidelines'],
     accent: 'apricot',
-    avatarId: 'researcher'
+    avatarId: 'product'
   },
   {
     key: 'specialist',
@@ -490,7 +490,7 @@ export const TEAM_ROLE_TEMPLATES: TeamRoleTemplate[] = [
   }
 ]
 
-export const AGENT_AVATAR_IDS = ['lead', 'architect', 'reviewer', 'frontend', 'devops', 'researcher'] as const
+export const AGENT_AVATAR_IDS = ['lead', 'architect', 'reviewer', 'frontend', 'devops', 'researcher', 'backend', 'product'] as const
 /** 主控模板能力：有效 lead（含临时主控）在授权时叠加，持 lead 模板但被替代的成员则被摘除。 */
 export const LEAD_ROLE_CAPABILITIES: readonly string[] = TEAM_ROLE_TEMPLATES.find((template) => template.key === 'lead')!.capabilities
 

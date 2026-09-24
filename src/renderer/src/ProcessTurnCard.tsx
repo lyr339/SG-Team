@@ -18,6 +18,8 @@ interface ProcessTurnCardProps {
   updatedAt?: number
   defaultOpen?: boolean
   compact?: boolean
+  /** 会话时间线的回合状态；独立过程卡不传，保留原有展开行为。 */
+  turnState?: 'working' | 'worked'
   title?: string
   live?: boolean
   truncatedItemCount?: number
@@ -38,6 +40,28 @@ function formatDuration(milliseconds?: number): string {
   const minutes = Math.floor(milliseconds / 60_000)
   const seconds = Math.round((milliseconds % 60_000) / 1_000)
   return seconds ? `${minutes} 分 ${seconds} 秒` : `${minutes} 分`
+}
+
+function formatWorkDuration(milliseconds?: number): string {
+  if (milliseconds === undefined || !Number.isFinite(milliseconds) || milliseconds <= 0) return ''
+  const total = milliseconds < 1_000 ? 1 : Math.floor(milliseconds / 1_000)
+  const hours = Math.floor(total / 3_600)
+  const minutes = Math.floor(total % 3_600 / 60)
+  const seconds = total % 60
+  return hours ? `${hours}h ${minutes}m ${seconds}s` : minutes ? `${minutes}m ${seconds}s` : `${seconds}s`
+}
+
+/** 只有标题每秒更新；长过程卡的步骤、diff 与流式正文不随时钟重渲染。 */
+function WorkingDuration({ startedAt, observedMs }: { startedAt?: number; observedMs?: number }): React.JSX.Element {
+  const [now, setNow] = useState(() => Date.now())
+  const liveClock = startedAt !== undefined && startedAt > 1_000_000_000_000
+  useEffect(() => {
+    if (!liveClock) return
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000)
+    return () => window.clearInterval(timer)
+  }, [liveClock])
+  const duration = formatWorkDuration(liveClock ? now - startedAt : observedMs)
+  return <span>{`Working${duration ? ` for ${duration}` : ''}`}</span>
 }
 
 /** 组头图标：按组语义取与成员工具同一套图标（探索=搜索、命令=终端、编辑=笔、思考=灯泡、浏览器、等待=时钟）。 */
@@ -361,6 +385,7 @@ function ProcessTurnCardImpl({
   updatedAt,
   defaultOpen = true,
   compact = false,
+  turnState,
   title = '过程记录',
   live = false,
   truncatedItemCount = 0,
@@ -384,6 +409,9 @@ function ProcessTurnCardImpl({
     return map
   }, [items])
   const [open, setOpen] = useState(defaultOpen)
+  const [expandedAfterComplete, setExpandedAfterComplete] = useState(false)
+  const pendingQuestion = model.steps.some((step) => step.question?.status === 'pending')
+  const workStartedAt = startedAt ?? model.startedAt
   /**
    * 挂载时的默认展开（2026-09-18 审查项 2「历史轻量」）：只有仍在生成中的思考
    * 首帧即展开（正在发生的必须可见，静态渲染 / 水合同样成立）；已完成的思考一律
@@ -463,10 +491,8 @@ function ProcessTurnCardImpl({
       return next
     })
   }, [live, model.steps])
-  // 刻意不在 live 翻 false（封口）时收起自动展开的最后一段思考：RC-8 的封口不跳变
-  // 纪律要求尾部继续匀速播完（session-workspace-turn-identity 锁定），观看者正读着的
-  // 内容也不该在落库瞬间消失。历史轻量由「挂载即折叠 + 直播中上一段随新步骤收起」达成：
-  // 重新进入会话时这段思考就是一行「思考 N 秒」。
+  // 封口时保留内部展开/播放器状态：外层工作过程收束，但用户再展开时仍是同一组 DOM，
+  // 不会从头播放；回合内的自动折叠只在新步骤开始时发生。
   // 右栏「定位」到本卡的某一步：先把整卡与该步（及所在组）展开，定位方随后滚动到已展开的节点。
   // 只做准备（返回 undefined），是否找到由定位方判定。
   useEffect(() => subscribeReveal((target) => {
@@ -475,6 +501,7 @@ function ProcessTurnCardImpl({
     const step = model.steps.find((candidate) => candidate.id === wanted || candidate.id.startsWith(`${wanted}:`))
     if (!step) return
     setOpen(true)
+    setExpandedAfterComplete(true)
     revealStep(step.id)
   }), [model.steps, groupOfStep])
   if (!model.steps.length) return null
@@ -495,6 +522,9 @@ function ProcessTurnCardImpl({
   }
 
   if (compact) {
+    const flowOpen = turnState !== 'worked' || pendingQuestion || expandedAfterComplete
+    const workDuration = formatWorkDuration(workStartedAt !== undefined && updatedAt !== undefined
+      ? updatedAt - workStartedAt : model.elapsedMs)
     const chevron = (isOpen: boolean): React.JSX.Element => (
       <svg viewBox="0 0 16 16" aria-hidden="true"><path d={isOpen ? 'm4 10 4-4 4 4' : 'm4 6 4 4 4-4'} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.4"/></svg>
     )
@@ -682,7 +712,22 @@ function ProcessTurnCardImpl({
     // Thinking / 工具行自身的文字流光表达，`is-live` 类仍留给样式与测试判定直播态。
     return (
       <section className={`process-turn cursor-native-process ${live ? 'is-live' : ''} is-${model.status}`} aria-label={`${title}，${summary}`}>
-        <div className="cursor-native-process__flow">
+        {turnState ? (
+          <button
+            className="cursor-native-process__summary"
+            type="button"
+            disabled={turnState === 'working' || pendingQuestion}
+            aria-expanded={turnState === 'worked' && !pendingQuestion ? flowOpen : undefined}
+            aria-label={turnState === 'worked' && !pendingQuestion ? `${flowOpen ? '收起' : '展开'}工作过程，${workDuration || '时长未知'}` : undefined}
+            onClick={() => setExpandedAfterComplete((value) => !value)}
+          >
+            {pendingQuestion ? <span>Awaiting answer</span> : turnState === 'worked'
+              ? <span>{`Worked${workDuration ? ` for ${workDuration}` : ''}`}</span>
+              : <WorkingDuration startedAt={workStartedAt} observedMs={model.elapsedMs} />}
+            {turnState === 'worked' && !pendingQuestion ? <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg> : null}
+          </button>
+        ) : null}
+        <div className="cursor-native-process__flow" hidden={!flowOpen}>
           {truncatedItemCount > 0 ? (
             <div className="cursor-native-process__truncated" role="note">原生回合过长，较早的 {truncatedItemCount} 个步骤已折叠</div>
           ) : null}

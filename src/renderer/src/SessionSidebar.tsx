@@ -540,7 +540,6 @@ export function SessionSidebar({
       <InspectorSectionHeader
         title="会话"
         hint={summary || (connecting ? '正在连接通道…' : '还没有会话')}
-        aside={snapshot.sessions.length ? <b className="session-pane__count">{snapshot.sessions.length}</b> : null}
       />
       <nav
         ref={listRef}
@@ -670,7 +669,7 @@ export function SessionSidebar({
                         className={`session-list__slot${dragging ? ' is-dragging' : ''}${dropBefore ? ' is-drop-before' : ''}${dropAfter ? ' is-drop-after' : ''}${isPicked ? ' is-picked' : ''}`}
                       >
                         {multiSelect ? (
-                          // 复选框盖在头像位上：悬停 / 多选中 / 窄名册时可见，不改变行的布局；键盘走行上的 ⌘/Ctrl+空格。
+                          // 复选框仅在悬停、键盘焦点或本行已选时盖住头像；未选中的头像在窄栏与多选中仍可见。
                           <label className="session-row__pick" title={isPicked ? '取消选择' : '选择此会话（Shift 选到此行）'}>
                             <input
                               type="checkbox"

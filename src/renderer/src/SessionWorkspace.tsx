@@ -53,7 +53,7 @@ interface SessionWorkspaceProps {
   onReviewTurnFiles?: (request: ReviewFocusRequest) => void
 }
 
-/** 同角色且间隔小于该值的连续消息合并成一组（只显示一次头像与名称）。 */
+/** 同角色且间隔小于该值的连续消息合并为紧邻气泡；头像与姓名已从时间线移除。 */
 const GROUP_WINDOW_MS = 5 * 60_000
 /** 消息间隔超过该值时插入居中的时间分隔线。 */
 const DIVIDER_WINDOW_MS = 10 * 60_000
@@ -391,16 +391,7 @@ export function SessionWorkspace({
           <div className="chat-divider"><span>{dividerLabel(entry.timestamp)}</span></div>
         )}
         <div className={`chat-row chat-row--mine ${grouped ? 'is-grouped' : ''}`} data-entry-id={entry.id}>
-          <span className="chat-gutter" aria-hidden={grouped}>
-            {!grouped && <i className="chat-face chat-face--mine">你</i>}
-          </span>
           <div className="chat-col">
-            {!grouped && (
-              <div className="chat-name">
-                <strong>{entry.source === 'desktop' ? '你' : '用户'}</strong>
-                <time>{formatClock(entry.timestamp)}</time>
-              </div>
-            )}
             <div className="chat-bubble">
               {entry.text
                 ? <ClampedMessage text={entry.text} />
@@ -429,9 +420,6 @@ export function SessionWorkspace({
     const isError = entry.role === 'error'
     return (
       <div key={`reply:${entry.id}`} className={`chat-row chat-row--${isError ? 'error' : 'agent'}`}>
-        <span className="chat-gutter">
-          {isError ? <i className="chat-face chat-face--error">!</i> : null}
-        </span>
         <div className="chat-col">
           <div className="chat-name">
             <strong>{isError ? '错误' : '系统'}</strong>
@@ -494,35 +482,22 @@ export function SessionWorkspace({
       || Boolean(process?.blocks.some((block) => block.status === 'running'))
     )
     const suggestions = reply?.status === 'complete' ? suggestedActionsFromText(reply.text) : []
-    const at = reply?.timestamp ?? process?.startedAt ?? response?.startedAt ?? Date.now()
     const defaultOpen = continuation
       ? liveActive || continuation.anchorReplyId === latestAssistantId
       : responding || reply?.id === latestAssistantId
-    // 宽度在回合开始时就定下（responding 恒用宽列）：首个过程块到达时不再把整行
-    // 从 82% 拉宽到 94%。
+    // 回合全程占同一宽列：首帧过程与最终回复不会改变横向几何。
     const className = [
       'chat-row chat-row--agent',
       responding ? 'live-process-row' : '',
       detached ? 'live-process-row--detached' : '',
       responding || hasProcess ? 'chat-row--process' : '',
       continuation ? 'chat-row--continuation' : '',
-      grouped ? 'is-grouped' : ''
+      grouped ? 'is-grouped' : '',
+      'chat-row--turn'
     ].filter(Boolean).join(' ')
     return (
       <div key={continuation ? `${turnKey}:continuation` : `${turnKey}:agent`} className={className} data-entry-id={reply?.id} data-continuation-of={continuation?.anchorReplyId}>
-        <span className="chat-gutter" aria-hidden={grouped}>
-          {!grouped
-            ? <span className="chat-face-avatar"><AgentAvatar avatarId={session.avatarId} name={session.displayName} crowned={session.isEffectiveLead ?? session.roleTemplateKey === 'lead'} size="sm" /></span>
-            : null}
-        </span>
         <div className="chat-col">
-          {!grouped && (
-            <div className="chat-name">
-              <strong>Agent</strong>
-              {/* 过程卡本身就是"进行中"的表达，无需再挂"正在处理"徽章（用户反馈 2026-09-13）。 */}
-              <time>{formatClock(at)}</time>
-            </div>
-          )}
           <div className={`chat-bubble${idle ? ' live-process-idle' : ''}`}>
             {continuation ? (
               // 直播态由过程卡内 Thinking / 工具行的文字流光表达，这里只说明这一段是什么。
@@ -555,6 +530,7 @@ export function SessionWorkspace({
                 defaultOpen={defaultOpen}
                 compact
                 live={liveActive}
+                turnState={reply?.status === 'complete' || reply?.status === 'failed' ? 'worked' : 'working'}
                 hydratedBlockIds={hydratedBlockIds.current ?? undefined}
                 questionActions={questionActions}
               />

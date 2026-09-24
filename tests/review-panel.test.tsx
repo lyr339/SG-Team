@@ -80,7 +80,7 @@ describe('ReviewPanel', () => {
     expect(container.textContent).toContain('login.tsx')
     expect(container.textContent).toContain('theme.ts')
     expect(container.textContent).toContain('feature/dark → main')
-    expect(container.textContent).toContain('实时')
+    expect(container.querySelector('.inspector-review__live')).toBeNull()
     expect(container.textContent).toContain('2 个文件')
     // 首个文件默认展开并读取差异；字级高亮只标出变化的 token。
     expect(api.getWorkspaceReviewFile).toHaveBeenCalledWith({ path: 'src/login.tsx', scope: 'uncommitted' })

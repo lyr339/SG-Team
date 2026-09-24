@@ -161,7 +161,7 @@ function SessionRailCardView({
               </span>
             ) : null}
             {session.queueDepth > 0 ? (
-              <span className="session-row__queue" title="排队等待 Agent 处理的消息">排队 {session.queueDepth}</span>
+              <span className="session-row__queue" title="排队等待 Agent 处理的消息">排队 <b>{session.queueDepth}</b></span>
             ) : null}
           </span>
           <span className="session-row__time">

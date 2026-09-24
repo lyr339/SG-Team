@@ -104,7 +104,7 @@ export function QueuedMessageTray({ session, entries, onWithdraw, onRelease }: Q
       >
         <span className="queue-tray__icon"><QueueIcon /></span>
         <strong className="queue-tray__title">待投递 <b>{depth}</b></strong>
-        <span className="queue-tray__state" title={stateText}><i aria-hidden="true" />{stateText}</span>
+        <span className="queue-tray__state" title={stateText}>{stateText}</span>
         {heldCount > 0 ? <em className="queue-tray__held" title={`${heldCount} 条等待新会话`}>{heldCount} 条等待新会话</em> : null}
         {expandable ? <span className="queue-tray__chevron"><ChevronIcon /></span> : null}
       </button>

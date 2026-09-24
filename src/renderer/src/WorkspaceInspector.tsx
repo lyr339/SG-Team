@@ -14,7 +14,6 @@ import { ReviewPanel } from './inspector/ReviewPanel'
 import { subscribeReviewFocus } from './inspector/review-focus-bus'
 import { turnMutatedPaths } from './inspector/review-scope'
 import { turnReviewEditsByPath } from './inspector/turn-review-view'
-import { todoTone } from './TodoIndicator'
 import type { TurnFilesView } from './turn-files-view'
 
 export type { CursorTodoItem } from './inspector/PlanPanel'
@@ -45,7 +44,7 @@ interface WorkspaceInspectorProps {
  * 会话右侧工作区（Codex 式右栏）：变更 / 计划 / 活动 / 产物 四个面板共用一个壳。
  * 变更是工作区级（切会话不换），其余三个随会话切换；所有数据都是快照的纯投影，
  * 面板不推进任何工作流状态，Git 动作由用户显式发起并经主进程校验。
- * 徽章统一表示「该面板顶层列出的条目数」，实时活动另以状态点表示。
+ * 徽章统一表示「该面板顶层列出的条目数」；运行状态只在内容中呈现，不装饰标签。
  */
 export function WorkspaceInspector({
   session,
@@ -83,13 +82,11 @@ export function WorkspaceInspector({
   // 消费这份摘要的增删行数，它有可见的消费者，不能停在旧数字上。
   const reviewPaused = hidden && turnPaths.length === 0
 
-  const liveActivity = Boolean(liveProcess?.generating || liveProcess?.blocks.some((block) => block.status === 'running'))
-  const runningTodos = todos.items.some((todo) => todoTone(todo.status) === 'in_progress')
   const activityItems = activity.totals.files + activity.totals.commands + activity.totals.sources + activity.totals.tools
   const tabs: InspectorTabSpec[] = [
     { id: 'review', label: '变更', icon: <DiffIcon />, badge: reviewSummary?.state === 'ready' ? reviewSummary.files.length : turnFiles?.files.length || undefined, title: '审查改动：本轮看 Agent 编辑流，未提交 / 分支看 Git' },
-    { id: 'plan', label: '计划', icon: <PlanIcon />, badge: todos.items.length || undefined, live: runningTodos, title: 'Cursor 原生任务清单' },
-    { id: 'activity', label: '活动', icon: <ActivityIcon />, badge: activityItems || undefined, live: liveActivity, title: '本会话的文件、命令、来源与工具调用' },
+    { id: 'plan', label: '计划', icon: <PlanIcon />, badge: todos.items.length || undefined, title: 'Cursor 原生任务清单' },
+    { id: 'activity', label: '活动', icon: <ActivityIcon />, badge: activityItems || undefined, title: '本会话的文件、命令、来源与工具调用' },
     { id: 'artifacts', label: '产物', icon: <ArtifactIcon />, badge: artifacts.images.length + artifacts.files.length || undefined, title: '截图、图片与新增文件' }
   ]
 

@@ -108,6 +108,18 @@ describe('SessionWorkspace', () => {
     expect(html).not.toContain('live-response-row')
   })
 
+  it('keeps the process expanded while a persisted assistant entry is still streaming', () => {
+    const html = renderWorkspace({
+      entries: [
+        entry({ id: 'u1', role: 'user', source: 'desktop', text: '继续', deliveredAt: 1_050 }),
+        entry({ id: 'a1', role: 'assistant', source: 'cursor', text: '正在写回复', status: 'streaming', replyToEntryId: 'u1',
+          processBlocks: [{ kind: 'thinking', id: 'th1', text: '分析中', status: 'done', startedAt: 1_100 }] })
+      ]
+    })
+    expect(html).toContain('>Working')
+    expect(html).not.toContain('cursor-native-process__flow" hidden')
+  })
+
   it('keeps a long-running turn process beside its final response without a timestamp guess', () => {
     const html = renderWorkspace({
       liveProcess: {
@@ -600,7 +612,7 @@ describe('SessionWorkspace', () => {
     expect(html).toContain('长文')
   })
 
-  it('渲染用户与 Agent 会话条目：角色标签与已发送时间', () => {
+  it('以无头像的左右气泡渲染用户与 Agent，会话身份留在页头', () => {
     const html = renderWorkspace({
       entries: [
         entry({ id: 'u1', role: 'user', source: 'desktop', text: '请 review', timestamp: 1_000_000 }),
@@ -609,8 +621,9 @@ describe('SessionWorkspace', () => {
     })
     expect(html).toContain('请 review')
     expect(html).toContain('收到，开始检查')
-    expect(html).toContain('<strong>你</strong>')
-    expect(html).toContain('<strong>Agent</strong>')
+    expect(html).not.toContain('chat-gutter')
+    expect(html).not.toContain('chat-face-avatar')
+    expect(html).toContain('chat-row--turn')
     expect(html).toContain('已发送')
     expect(html).toContain('chat-row--mine')
   })
@@ -773,6 +786,8 @@ describe('统一回合时间线（阶段 F：RC-8 turn identity）', () => {
     })
     expect(sealed).toContain('统一身份验证')
     expect(sealed).toContain('最终回答')
+    expect(sealed).toContain('Worked for')
+    expect(sealed).toContain('cursor-native-process__flow" hidden')
     // 历史轻量（2026-09-18 审查项 2）：封口后的思考折叠成一行「Thought」头，正文点开再看。
     expect(sealed).toContain('<strong>Thought</strong>')
     expect(sealed).not.toContain('思考完成')
@@ -792,9 +807,9 @@ describe('统一回合时间线（阶段 F：RC-8 turn identity）', () => {
         blocks: [{ kind: 'thinking', id: 'th1', text: '回答生成中', status: 'done', startedAt: 1_000_200 }]
       }
     })
-    // 图片消息不被误分组：身份头（你 + 头像）必须显示；live 过程行夹在
+    // 图片消息不被误分组：附件保持在独立用户气泡；live 过程行夹在
     // 两条用户消息之间，不参与用户分组链。
-    expect(html).toContain('<strong>你</strong>')
+    expect(html).toContain('data-entry-id="u2"')
     expect(html).toContain('chat-attachment-image')
     expect(html.match(/is-grouped/g) ?? []).toHaveLength(0)
   })
@@ -820,7 +835,7 @@ describe('统一回合时间线（阶段 F：RC-8 turn identity）', () => {
     const grouped = renderWorkspace({ session, entries: [first, second] })
     expect(grouped.match(/is-grouped/g)).toHaveLength(1)
 
-    // u1 回合内出现 Agent 实时过程：分组被打断，u2 独立显示身份头。
+    // u1 回合内出现 Agent 实时过程：分组被打断，u2 保持独立气泡。
     const broken = renderWorkspace({
       session,
       entries: [first, second],
@@ -830,7 +845,7 @@ describe('统一回合时间线（阶段 F：RC-8 turn identity）', () => {
       }
     })
     expect(broken.match(/is-grouped/g)).toBe(null)
-    expect(broken.match(/<strong>你<\/strong>/g)).toHaveLength(2)
+    expect(broken.match(/chat-row chat-row--mine/g)).toHaveLength(2)
   })
 
   it('breaks the user group when a persisted agent reply sits between two user messages', () => {
@@ -841,8 +856,8 @@ describe('统一回合时间线（阶段 F：RC-8 turn identity）', () => {
         entry({ id: 'u2', role: 'user', source: 'desktop', text: '第二问', timestamp: 1_060_000, deliveredAt: 1_060_050 })
       ]
     })
-    // Agent 回复打断用户组：两条用户消息各自显示身份头。
-    expect(html.match(/<strong>你<\/strong>/g)).toHaveLength(2)
+    // Agent 回复打断用户组：两条用户消息各自保留独立气泡。
+    expect(html.match(/chat-row chat-row--mine/g)).toHaveLength(2)
     expect(html.match(/is-grouped/g)).toBe(null)
   })
 

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { ProcessBlock } from '../src/domain/conversation-entry'
 import { ProcessBlocks } from '../src/renderer/src/ProcessBlocks'
 import { ProcessTurnCard } from '../src/renderer/src/ProcessTurnCard'
+import { requestReveal } from '../src/renderer/src/inspector/reveal-bus'
 
 describe('ProcessBlocks', () => {
   let container: HTMLDivElement
@@ -437,6 +438,36 @@ describe('ProcessBlocks', () => {
       root.render(<ProcessTurnCard id="turn-live" compact live blocks={[{ ...first, status: 'done', durationMs: 900 }, { ...second, text: '第二段直播思考继续增长' }]} />)
     })
     expect(container.textContent).toContain('第一段直播思考')
+  })
+
+  it('keeps the process DOM through live → sealed, folds by default, and reopens for the right-pane locator', async () => {
+    const block: ProcessBlock = { kind: 'tool', id: 'read-1', toolName: 'read_file', toolKind: 'read', summary: 'src/App.tsx', status: 'done', startedAt: 1_000 }
+    await act(async () => root.render(<ProcessTurnCard id="turn" compact live turnState="working" blocks={[block]} startedAt={1_000} updatedAt={5_000} />))
+    const flow = container.querySelector<HTMLElement>('.cursor-native-process__flow')!
+    expect(flow.hidden).toBe(false)
+    expect(container.textContent).toContain('Working for 4s')
+
+    await act(async () => root.render(<ProcessTurnCard id="turn" compact turnState="worked" blocks={[block]} startedAt={1_000} updatedAt={10_000} />))
+    expect(container.querySelector('.cursor-native-process__flow')).toBe(flow)
+    expect(flow.hidden).toBe(true)
+    expect(container.querySelector('.cursor-native-process__summary')?.getAttribute('aria-expanded')).toBe('false')
+    expect(container.textContent).toContain('Worked for 9s')
+    await act(async () => { container.querySelector<HTMLButtonElement>('.cursor-native-process__summary')!.click() })
+    expect(flow.hidden).toBe(false)
+    await act(async () => { container.querySelector<HTMLButtonElement>('.cursor-native-process__summary')!.click() })
+    expect(flow.hidden).toBe(true)
+    await act(async () => { await requestReveal({ blockId: 'read-1' }) })
+    expect(flow.hidden).toBe(false)
+  })
+
+  it('keeps a pending question visible even if the reply is already sealed', () => {
+    const html = renderToStaticMarkup(<ProcessTurnCard id="question" compact turnState="worked" updatedAt={10_000} blocks={[{
+      kind: 'tool', id: 'q1', toolName: 'ask_question', toolKind: 'question', status: 'running', startedAt: 1_000,
+      question: { toolCallId: 'tc', status: 'pending', questions: [] }
+    }]} />)
+    expect(html).toContain('class="cursor-native-process__flow"')
+    expect(html).not.toContain('cursor-native-process__flow" hidden')
+    expect(html).toContain('Awaiting answer')
   })
 
   it('returns null for an empty block list', () => {

@@ -656,7 +656,6 @@ export function ReviewPanel({ workspaceKey, turnPaths, turnFiles, turnEdits, onQ
       <div className="inspector-review__meta">
         <span className="inspector-review__workspace" title={summary?.workspaceName}>{summary?.workspaceName || '等待识别工程'}</span>
         {branchLabel ? <code className="inspector-review__branch" title={branch?.base ? `基线分支：${branch.base}` : '当前分支'}>{branchLabel}</code> : null}
-        {liveUpdates ? <span className="inspector-review__live" title="主进程正在监听文件系统变化，改动会即时出现"><i /><b>实时</b></span> : null}
         {(turnActive ? turnList.length > 0 : visible?.state === 'ready') ? (
           <span className="inspector-review__count">
             {listPaths.length} 个文件

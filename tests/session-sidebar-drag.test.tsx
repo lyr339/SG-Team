@@ -215,11 +215,11 @@ describe('SessionSidebar 拖拽重排', () => {
     expect(Array.from(container.querySelectorAll('.session-group')).map((node) => node.className)).toEqual([
       'session-group is-group is-active', 'session-group is-group is-offline', 'session-group is-independent is-attention'
     ])
-    // 头部：标题 + 摘要 + 总数。
+    // 头部：标题与摘要同一行；摘要已有会话总数，不再重复一枚大数字。
     const header = container.querySelector('.session-pane > .inspector-section__header')!
     expect(header.querySelector('strong')?.textContent).toBe('会话')
     expect(header.querySelector('span')?.textContent).toBe('2 组 · 4 会话 · 1 需关注 · 排队 3')
-    expect(header.querySelector('.session-pane__count')?.textContent).toBe('4')
+    expect(header.querySelector('.session-pane__count')).toBeNull()
 
     // 组条是一枚书签：组名 + 计数在旗上，旗尾一条 hairline 横到右缘，chevron 落在线末；徽标带文字与 aria-label。
     const refactorHeader = headerOf('g-refactor')

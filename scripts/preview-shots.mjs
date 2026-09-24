@@ -50,7 +50,7 @@ function baseStorage({ tab = 'review', width = 420, cardOpacity = 0.9, colorMode
 
 const SESSION_RAIL_WIDTH_KEY = 'sg-team.layout:v1:shell.sessions.v2'
 
-/** 会话侧栏走查：右栏收起、选中 CH-2、侧栏宽度可指定（默认 326，下限 286）。 */
+/** 会话侧栏走查：右栏收起、选中 CH-2、侧栏宽度可指定（默认 326，下限 300）。 */
 function railStorage({ cardOpacity = 0.94, colorMode = 'light', railWidth = 326 } = {}) {
   return {
     ...baseStorage({ cardOpacity, colorMode }),
@@ -705,6 +705,25 @@ const scenes = [
   { name: 'sessions-rail-clear', rail: true, query: 'sessions=many', colorScheme: 'light', storage: railStorage({ cardOpacity: 0 }) },
   { name: 'sessions-rail-clear-dark', rail: true, query: 'sessions=many', colorScheme: 'dark', storage: railStorage({ cardOpacity: 0, colorMode: 'dark' }) },
   { name: 'sessions-rail-narrow', rail: true, width: 1180, height: 760, query: 'sessions=many', colorScheme: 'light', storage: railStorage({ railWidth: 286 }) },
+  {
+    name: 'sessions-rail-picks-narrow', rail: true, width: 1440, height: 900, query: 'sessions=many',
+    colorScheme: 'dark', storage: railStorage({ colorMode: 'dark', railWidth: 300 }),
+    actions: [
+      { label: '300px 名册静止时头像无遮挡', probe: `(() => {
+        const picks = [...document.querySelectorAll('.session-row__pick')]
+        const visible = () => picks.filter(el => Number(getComputedStyle(el).opacity) > .9)
+        if (!picks.length || visible().length) throw new Error('静止态复选框覆盖头像')
+        return { rows: picks.length, visible: 0 }
+      })()` },
+      { eval: `document.querySelector('.session-row__pick input').click()` }, { wait: 160 },
+      { label: '多选只覆盖已选行，其他头像保留', probe: `(() => {
+        const picked = document.querySelectorAll('.session-list__slot.is-picked').length
+        const visible = [...document.querySelectorAll('.session-row__pick')].filter(el => Number(getComputedStyle(el).opacity) > .9).length
+        if (picked !== 1 || visible !== 1) throw new Error('多选覆盖了未选中的头像')
+        return { picked, visible }
+      })()` }
+    ]
+  },
   { name: 'sessions-rail-hover-row', rail: true, query: 'sessions=many', colorScheme: 'light', storage: railStorage(), actions: [{ hover: '.session-group[data-section="team-group:many:review"] .session-list__slot:first-child .session-row' }] },
   { name: 'sessions-rail-keyboard', rail: true, query: 'sessions=many', colorScheme: 'light', storage: railStorage(), actions: [{ eval: `document.querySelector('.session-row.is-selected').focus()` }, { key: 'ArrowDown', code: 'ArrowDown' }, { key: 'ArrowDown', code: 'ArrowDown' }] },
   { name: 'sessions-rail-collapsed', rail: true, query: 'sessions=many', colorScheme: 'light', storage: railStorage(), actions: [{ click: '.session-group[data-section="team-group:many:review"] .session-group__header' }, { wait: 300 }] },
@@ -815,6 +834,39 @@ const scenes = [
     storage: railStorage({ colorMode }), clip: '.chat-row--process:has(.cursor-native-tool.is-question)',
     actions: [{ eval: `document.querySelector('.chat-row--process:has(.cursor-native-tool.is-question)').scrollIntoView({ block: 'start' })` }, { wait: 200 }]
   })),
+  {
+    name: 'session-turn-working-light', width: 1440, height: 900, colorScheme: 'light', query: 'turnfiles=1',
+    storage: railStorage(), clip: '.chat-row--turn:has(.cursor-native-process__summary:disabled)',
+    actions: [{ label: '运行中过程直接展开、对话头像槽已移除', probe: `(() => {
+      const row = document.querySelector('.chat-row--turn:has(.cursor-native-process__summary:disabled)')
+      const summary = row?.querySelector('.cursor-native-process__summary')
+      if (!summary?.textContent.startsWith('Working for ') || row.querySelector('.cursor-native-process__flow')?.hidden) throw new Error('运行中过程没有展开')
+      if (document.querySelector('.chat-gutter')) throw new Error('对话仍留有头像槽')
+      return { heading: summary.textContent, steps: row.querySelectorAll('[data-step-id]').length }
+    })()` }]
+  },
+  {
+    name: 'session-turn-worked-dark', width: 1440, height: 900, colorScheme: 'dark',
+    storage: railStorage({ colorMode: 'dark' }), clip: '.chat-row--turn:has(.cursor-native-process__summary[aria-expanded="false"])',
+    actions: [
+      { eval: `(() => {
+        const viewport = document.querySelector('.workspace-timeline')
+        viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: -1, bubbles: true }))
+        document.querySelector('.chat-row--turn:has(.cursor-native-process__summary[aria-expanded="false"])').scrollIntoView({ block: 'center' })
+      })()` },
+      { wait: 180 },
+      { label: '完成后过程折叠、结果仍显示', probe: `(() => {
+        const row = document.querySelector('.chat-row--turn:has(.cursor-native-process__summary[aria-expanded="false"])')
+        const summary = row?.querySelector('.cursor-native-process__summary')
+        const viewport = document.querySelector('.workspace-timeline').getBoundingClientRect()
+        const box = row?.getBoundingClientRect()
+        if (!box || box.bottom <= viewport.top || box.top >= viewport.bottom) throw new Error('完成回合未进入可视区，截图会假绿')
+        if (!summary?.textContent.startsWith('Worked') || !row.querySelector('.cursor-native-process__flow')?.hidden) throw new Error('已完成过程没有收束')
+        if (!row.querySelector('.message-content')?.textContent.trim()) throw new Error('最终回复不可见')
+        return { heading: summary.textContent, reply: row.querySelector('.message-content')?.textContent.slice(0, 30) }
+      })()` }
+    ]
+  },
   // 步骤分组（Cursor detailed 同款）：折叠的「Explored 3 files, 1 search」/「Ran 2 browser actions」组头、
   // 独立 shell 卡、展开后的组内轻行；深浅色各一张，另有一张展开首组。
   ...['light', 'dark'].map((colorMode) => ({
