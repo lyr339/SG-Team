@@ -217,6 +217,18 @@ function applyRuntimeEvidence(
 }
 
 /**
+ * 模型目录是否同一份：遥测层在 applicationUser 原文未变时返回同一数组引用，引用相等即未变；
+ * 两份空目录（目录尚未写入 / 刚被冷切换摘除）每拍都是新数组，也视为未变，免得逐拍推送空目录。
+ */
+function sameModelCatalog(
+  previous: readonly CursorModelOption[] | undefined,
+  next: readonly CursorModelOption[] | undefined
+): boolean {
+  if (previous === next) return true
+  return previous?.length === 0 && next?.length === 0
+}
+
+/**
  * 选定值一一对应投影：创建团队/批量发起会话时选定的模型/思考/上下文
  * 直接生成执行画像，会话卡显示与「所选」严格对应；
  * 无选定值时调用方回退 Cursor 读回（逐会话 → 全局）。
@@ -1111,15 +1123,24 @@ export class DesktopSessionService implements DesktopSessionBridge {
     return ['draft', 'ready', 'completed'].includes(run.status)
   }
 
+  /** 没有工作区遥测可搭时，把全局模型目录单独挂到空快照上（遥测源不提供该能力则原样返回）。 */
+  private withGlobalModelCatalog(snapshot: CursorTelemetrySnapshot): CursorTelemetrySnapshot {
+    const cursorModels = this.telemetrySource.readModelCatalog?.()
+    return cursorModels ? { ...snapshot, cursorModels } : snapshot
+  }
+
   refreshTelemetry(): void {
     if (this.refreshing) return
     this.refreshing = true
     try {
       let teamSnapshot = this.team.getSnapshot()
       const workspace = activeWorkspaceOf(teamSnapshot)
+      // 活动工作区第一次出现是在第一个会话池建成那一刻；之前（全新安装的首次发起）
+      // 工作区遥测整段不跑，但模型目录是 Cursor 全局偏好，与工作区无关——
+      // 单独读出来，否则首次发起时批次配置与每个席位都选不了模型，只能用默认模型发起。
       const local = workspace
         ? this.telemetrySource.readWorkspace(workspace.path, teamSnapshot.bindings)
-        : emptyCursorTelemetrySnapshot('unavailable', '尚未选择团队工作区')
+        : this.withGlobalModelCatalog(emptyCursorTelemetrySnapshot('unavailable', '尚未选择团队工作区'))
       const next = applyRuntimeEvidence(local, this.runtimeEvidence)
 
       // Cursor 转录是耐久事实源：即使 record_reply 被身份门禁拒绝、CDP 完成态随后离线，
@@ -1207,9 +1228,12 @@ export class DesktopSessionService implements DesktopSessionBridge {
         ])
       })
       const changed = fingerprint !== this.telemetryFingerprint
+      // 目录不进指纹（80KB 逐拍序列化不值），按引用判变：原文未变时遥测层复用同一数组；
+      // 变了就得推——Cursor 登录后首次写入目录、冷切换后重写目录，都可能发生在其余遥测静止时。
+      const catalogChanged = !sameModelCatalog(this.telemetry.cursorModels, next.cursorModels)
       this.telemetry = next
       this.telemetryFingerprint = fingerprint
-      if (changed || transcriptResponseChanged) this.emit()
+      if (changed || catalogChanged || transcriptResponseChanged) this.emit()
       // 用量采样不依赖 changed 分支（记账语义独立于快照推送），也不进 getSnapshot()：
       // 每次成功刷新都把已绑定 Composer 的落盘上下文读数交给聚合器，同值由
       // applyRequestSample 去重，零额外轮询。

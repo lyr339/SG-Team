@@ -1404,3 +1404,32 @@ describe('global composer hydration for context and binding', () => {
     })
   })
 })
+
+describe('全局模型目录单独读取（首次发起前没有活动工作区，readWorkspace 不会被调用）', () => {
+  it('无数据库为 undefined；原文未变复用同一数组引用，与 readWorkspace 顺带返回的是同一份', () => {
+    const data = fixture()
+    expect(data.reader.readModelCatalog()).toBeUndefined()
+    writeHeaders(data.globalStateDatabase, [])
+    writeApplicationUser(data.globalStateDatabase, composerApplicationUser())
+    const first = data.reader.readModelCatalog()
+    expect(first?.map((model) => model.modelId)).toEqual(['composer-2.5'])
+    // 同一原文 → 同一引用：服务层据此判断目录未变、不重复推送。
+    expect(data.reader.readModelCatalog()).toBe(first)
+    expect(data.reader.readWorkspace(data.workspace, []).cursorModels).toBe(first)
+    data.reader.dispose()
+  })
+
+  it('冷切换摘除账号痕迹后、Cursor 重写之前，目录为空数组而不是 undefined（数据库在，只是目录还没写回）', () => {
+    const data = fixture()
+    writeHeaders(data.globalStateDatabase, [])
+    writeApplicationUser(data.globalStateDatabase, composerApplicationUser())
+    expect(data.reader.readModelCatalog()).toHaveLength(1)
+    // 与 cursor-account-switcher 的 APPLICATION_USER_ACCOUNT_TRACE_FIELDS 一致：目录和当前选择一起被摘掉。
+    const stripped = { ...(composerApplicationUser() as Record<string, unknown>) }
+    delete stripped.availableDefaultModels2
+    delete stripped.aiSettings
+    writeApplicationUser(data.globalStateDatabase, stripped)
+    expect(data.reader.readModelCatalog()).toEqual([])
+    data.reader.dispose()
+  })
+})

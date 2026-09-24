@@ -152,10 +152,10 @@ describe('会话配置行 · RunBatchConfig', () => {
     await act(async () => document.querySelector<HTMLButtonElement>('button[aria-label="关闭会话配置"]')!.click())
   })
 
-  it('is inert until the model catalog has loaded, and disabled while launching or with no seats', async () => {
+  it('is inert while Cursor has not written its model catalog (says so instead of pretending to load), and disabled while launching or with no seats', async () => {
     await act(async () => root.render(<RunBatchConfig models={[]} seatCount={3} onSave={() => {}} />))
     expect(container.querySelector('.run-batch-config__value strong')?.textContent).toBe('Cursor 当前模型')
-    expect(container.querySelector('.run-batch-config__value > small')?.textContent).toContain('模型目录加载后')
+    expect(container.querySelector('.run-batch-config__value > small')?.textContent).toContain('Cursor 尚未写入模型列表')
     expect(container.querySelector('.run-batch-config.is-spread')).toBeNull()
     expect(action().textContent).toBe('修改')
     expect(action().disabled).toBe(true)

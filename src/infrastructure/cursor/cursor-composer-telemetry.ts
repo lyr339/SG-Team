@@ -112,6 +112,13 @@ export interface CursorComposerTelemetryReaderOptions extends Partial<CursorComp
 
 export interface CursorComposerTelemetrySource {
   readWorkspace(workspacePath: string, bindings: RuntimeBinding[]): CursorTelemetrySnapshot
+  /**
+   * 全局模型目录（Cursor 偏好，与工作区无关）。`readWorkspace` 顺带返回同一份目录，
+   * 但它只在有活动工作区时被调用；首次发起前还没有工作区，配置批次要选模型只能走这里。
+   * 读不到 Cursor 数据库时返回 undefined（与 readWorkspace 的「找不到数据库」同义）。
+   * 可选：只提供工作区遥测的来源（测试替身）不必实现，服务层退回「无工作区即无目录」。
+   */
+  readModelCatalog?(): CursorModelOption[] | undefined
 }
 
 /** 环境变量覆盖只用于测试与排障；生产按平台默认的 Cursor 用户数据根目录。 */
@@ -1363,6 +1370,20 @@ export class CursorComposerTelemetryReader implements CursorComposerTelemetrySou
       // 关闭失败不影响进程退出语义
     }
     this.sharedDatabase = undefined
+  }
+
+  /**
+   * 只读全局模型目录，不碰会话索引与转录。applicationUser 原文未变时 readComposerModelState
+   * 直接复用上次解析（同一数组引用），调用方据此判断目录是否变化；数据库缺失或打不开
+   *（Cursor 刚被结束、WAL 尚待恢复）返回 undefined，等下一拍。
+   */
+  readModelCatalog(): CursorModelOption[] | undefined {
+    if (!existsSync(this.paths.globalStateDatabase)) return undefined
+    try {
+      return readComposerModelState(this.acquireDatabase()).models
+    } catch {
+      return undefined
+    }
   }
 
   readWorkspace(workspacePath: string, bindings: RuntimeBinding[]): CursorTelemetrySnapshot {

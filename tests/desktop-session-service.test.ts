@@ -10,6 +10,7 @@ import {
   type DesktopSessionTeamSource
 } from '../src/application/desktop-session-service'
 import { emptyCursorTelemetrySnapshot, type CursorTelemetrySnapshot } from '../src/domain/cursor-telemetry'
+import type { CursorModelOption } from '../src/domain/cursor-model'
 import { emptyTeamControlSnapshot, type TeamControlSnapshot } from '../src/domain/team-control'
 import type { DesktopSnapshot } from '../src/shared/desktop-api'
 import type { CursorComposerTelemetrySource } from '../src/infrastructure/cursor/cursor-composer-telemetry'
@@ -1823,6 +1824,90 @@ describe('desktop Cursor session enrichment', () => {
       }
     } finally {
       vi.useRealTimers()
+    }
+  })
+})
+
+describe('全局模型目录：第一个会话池建成之前没有活动工作区，目录仍要进快照（首次发起选不了模型的根因）', () => {
+  function catalog(...modelIds: string[]): CursorModelOption[] {
+    return modelIds.map((modelId, index) => ({
+      modelId, displayName: modelId, parameters: [], selected: index === 0, optionLabels: [], parameterDefinitions: []
+    }))
+  }
+
+  it('没有工作区时单独读目录挂到空快照上，readWorkspace 一次不调；目录本身换了才推送，同引用 / 空对空不推', async () => {
+    let models: CursorModelOption[] | undefined = catalog('composer-2.5')
+    const readWorkspace = vi.fn(() => telemetry())
+    const readModelCatalog = vi.fn(() => models)
+    const service = new DesktopSessionService(
+      new FakeBridge(), new FakeTeam(emptyTeamControlSnapshot()), { readWorkspace, readModelCatalog }
+    )
+    try {
+      const pushes: DesktopSnapshot[] = []
+      service.subscribe((snapshot) => pushes.push(snapshot))
+      expect(pushes).toHaveLength(1)
+      expect(pushes[0]?.cursorModels).toBeUndefined()
+
+      service.refreshTelemetry()
+      await Promise.resolve()
+      expect(readWorkspace).not.toHaveBeenCalled()
+      expect(readModelCatalog).toHaveBeenCalledTimes(1)
+      expect(pushes).toHaveLength(2)
+      expect(pushes[1]?.cursorModels?.map((model) => model.modelId)).toEqual(['composer-2.5'])
+      // 工作区语义不变：仍是「选择团队工作区后接入 Cursor 遥测」，只是目录先到了。
+      expect(pushes[1]?.sessions[0]?.telemetry?.state).toBe('unavailable')
+
+      // applicationUser 原文未变 → 遥测层返回同一引用 → 其余遥测也静止：不推。
+      service.refreshTelemetry()
+      await Promise.resolve()
+      expect(pushes).toHaveLength(2)
+
+      // 目录换了一份（Cursor 登录后首次写入 / 冷切换后重写）：其余遥测静止也要推。
+      models = catalog('composer-2.5', 'claude-fable-5')
+      service.refreshTelemetry()
+      await Promise.resolve()
+      expect(pushes).toHaveLength(3)
+      expect(pushes[2]?.cursorModels).toHaveLength(2)
+
+      // 冷切换把目录摘空：推一次；之后每拍都是新的空数组，视为未变。
+      models = []
+      service.refreshTelemetry()
+      await Promise.resolve()
+      expect(pushes).toHaveLength(4)
+      expect(pushes[3]?.cursorModels).toEqual([])
+      models = []
+      service.refreshTelemetry()
+      await Promise.resolve()
+      expect(pushes).toHaveLength(4)
+    } finally {
+      service.dispose()
+    }
+  })
+
+  it('有活动工作区时目录仍随 readWorkspace 顺带返回，不再单独读一次', () => {
+    const readModelCatalog = vi.fn(() => catalog('composer-2.5'))
+    const service = new DesktopSessionService(new FakeBridge(), new FakeTeam(), {
+      readWorkspace: () => ({ ...telemetry(), cursorModels: catalog('kimi-k3') }),
+      readModelCatalog
+    })
+    try {
+      service.refreshTelemetry()
+      expect(readModelCatalog).not.toHaveBeenCalled()
+      expect(service.getSnapshot().cursorModels?.map((model) => model.modelId)).toEqual(['kimi-k3'])
+    } finally {
+      service.dispose()
+    }
+  })
+
+  it('遥测源不提供 readModelCatalog（只有工作区遥测的替身）时行为不变：无工作区即无目录', () => {
+    const service = new DesktopSessionService(new FakeBridge(), new FakeTeam(emptyTeamControlSnapshot()), {
+      readWorkspace: () => telemetry()
+    })
+    try {
+      expect(() => service.refreshTelemetry()).not.toThrow()
+      expect(service.getSnapshot().cursorModels).toBeUndefined()
+    } finally {
+      service.dispose()
     }
   })
 })

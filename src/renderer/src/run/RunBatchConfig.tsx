@@ -67,9 +67,11 @@ export function RunBatchConfig({
       <span className="run-field__label">会话配置</span>
       <div key={stamp} className={`run-field__value run-batch-config__value${stamp > 0 ? ' is-swapped' : ''}`}>
         {!ready ? (
+          // 目录不是「正在加载」——主进程每一拍都在读 Cursor 的 state.vscdb。读不到只有两种情形：
+          // Cursor 还没把模型列表写回（刚登录 / 冷切换账号后要等它几十秒），或 Cursor 根本没启动、没登录。
           <>
             <strong><span>Cursor 当前模型</span></strong>
-            <small>模型目录加载后即可为全部席位统一设置</small>
+            <small>Cursor 尚未写入模型列表：登录或切换账号后需等几十秒；持续如此请确认 Cursor 已启动并登录</small>
           </>
         ) : uniform ? (
           <>
