@@ -2167,9 +2167,9 @@ button.workspace-group-chip:focus-visible { outline: 2px solid var(--accent-bord
 .process-turn-step__details dd { min-width: 0; margin: 0; }
 .process-turn-step__details pre, .process-turn-step__details dd > code { display: block; max-height: 220px; margin: 0; padding: 7px 9px; overflow: auto; color: var(--color-text-tertiary); background: var(--color-background-secondary); border: var(--border-width-regular) solid var(--color-border-tertiary); border-radius: 6px; font: 400 var(--fs-10)/1.55 var(--mono); white-space: pre-wrap; word-break: break-word; }
 /* Todo 清单：对齐 Cursor 原生设计（workbench.desktop.main.css 实测规范）——
-   严格单色 + 透明度阶梯（in_progress 1 / completed .5 划线 / pending 整行 .4）+
-   标志性「12px 实心圆 + 9px 反色旋转弧」进行中指示器；
+   严格单色 + 透明度阶梯（in_progress 1 / completed .5 划线 / pending 整行 .4）；
    14×16 指示器槽 / 12px 文本 140% 行高 / 10px 行距 / 新条目淡入。
+   进行中指示器不沿用 Cursor 的「实心圆 + 反色旋转弧」：与待办同一枚细环，环心一粒呼吸核（见 .todo-live）。
    唯一彩色例外是顶部进度条（拾光主题的 success 完成语义）。 */
 .todo-sheet { display: grid; gap: 8px; min-width: 0; }
 /* 进度线按任务分段（每段一个 todo）：完成实色、进行中流光箭头、取消灰、待办底色；
@@ -2195,15 +2195,17 @@ button.workspace-group-chip:focus-visible { outline: 2px solid var(--accent-bord
 .process-turn-step__todos li { display: flex; align-items: flex-start; gap: 8px; color: var(--text-soft); font-size: var(--fs-12); line-height: 1.4; user-select: text; cursor: text; animation: todo-fade-in .2s ease-out both; }
 .todo-indicator { flex: none; width: 14px; height: 16px; display: grid; place-items: center; color: var(--muted); }
 .todo-indicator svg { width: 14px; height: 14px; }
-.todo-spinner { width: 12px; height: 12px; display: grid; place-items: center; color: var(--color-background-primary); background: var(--text); border-radius: 50%; }
-/* 旋转弧必须与实心圆同心：任何 margin 偏移都会让弧绕偏心点转，看起来在圆里“晃”。 */
-.todo-spinner svg { width: 9px; height: 9px; display: block; animation: todo-spin .9s linear infinite; }
+/* 进行中：与待办 / 取消同一枚 1.4px 细环，环心一粒实心核缓慢明暗（1.6s 一个呼吸，两端停顿）。
+   不旋转、不实心底——转圈是「加载中」的语汇，这里要说的是「正在做这一项」；
+   核的缩放以自身几何中心为原点（fill-box），否则会绕 viewBox 左上角摆。 */
+.todo-live__core { transform-box: fill-box; transform-origin: center; animation: todo-breathe 1.6s cubic-bezier(.45, 0, .55, 1) infinite; }
 .process-turn-step__todos li.is-in_progress { color: var(--text); }
+.process-turn-step__todos li.is-in_progress .todo-indicator { color: var(--text); }
 .process-turn-step__todos li.is-completed { opacity: .5; text-decoration: line-through; }
 .process-turn-step__todos li.is-cancelled { opacity: .5; text-decoration: line-through; }
 .process-turn-step__todos li.is-pending { opacity: .4; }
 @keyframes todo-fade-in { from { opacity: 0; } }
-@keyframes todo-spin { to { transform: rotate(360deg); } }
+@keyframes todo-breathe { 0%, 100% { transform: scale(.68); opacity: .38; } 50% { transform: scale(1); opacity: 1; } }
 .process-turn__collapse { width: calc(100% + 28px); min-height: 34px; margin: 6px -14px 0; display: flex; justify-content: center; align-items: center; gap: 5px; color: var(--muted); background: var(--surface-warm-layer); border: 0; border-top: var(--border-width-regular) solid var(--color-border-tertiary); font-size: var(--fs-10); }
 .process-turn__collapse:hover { color: var(--accent); }
 .process-turn__collapse svg { width: 14px; height: 14px; }
@@ -2492,7 +2494,7 @@ button.workspace-group-chip:focus-visible { outline: 2px solid var(--accent-bord
 }
 
 @media (prefers-reduced-motion: reduce) {
-  /* 进行中标题的流光回到静态实色；todo 的 spinner、新条目淡入与进度段流光箭头同样属于可减 motion */
+  /* 进行中标题的流光回到静态实色；todo 的呼吸核、新条目淡入与进度段流光箭头同样属于可减 motion */
   .live-process-planning,
   .cursor-native-thought.is-running .cursor-native-thought__head strong,
   .cursor-native-tool.is-running .cursor-native-tool__label > strong,
@@ -2503,7 +2505,7 @@ button.workspace-group-chip:focus-visible { outline: 2px solid var(--accent-bord
   .process-turn-step.is-running .process-turn-step__head > strong {
     animation: none; background-image: none; -webkit-text-fill-color: currentColor;
   }
-  .todo-spinner svg,
+  .todo-live__core,
   .process-turn-step__todos li { animation: none; }
   .todo-progress i, .todo-progress i.is-in_progress::after { transition: none; animation: none; }
 }

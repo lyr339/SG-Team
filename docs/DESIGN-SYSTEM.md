@@ -43,4 +43,5 @@ Surfaces use white, warm gray and pale tints of the accent (`--accent-wash` / `-
 - Main text remains charcoal, never pure black.
 - Disabled future features are visibly labeled and never pretend to work.
 - Every status shown in color also has text and an accessible label.
-- Motion is budgeted per surface (hover 120 ms, selection 220 ms, group fold 200 ms, ring arc 400 ms) and fully off under `prefers-reduced-motion`.
+- Motion is budgeted per surface (hover 120 ms, selection 220 ms, group fold 200 ms, ring arc 400 ms, "happening now" pulses 1.4–1.6 s ease-in-out) and fully off under `prefers-reduced-motion`.
+- Spinners are for *loading* (a fetch, a probe), not for *being worked on*. The todo list's current item is the same 1.4 px ring as a pending item with a breathing core dot (`TodoIndicator`, `.todo-live`): monochrome in the timeline, review-green (`--review-green`) in the inspector where it sits next to the green current-row inset and the panel's other running marks.

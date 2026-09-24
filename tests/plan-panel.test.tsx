@@ -88,9 +88,10 @@ describe('PlanPanel', () => {
 
     const rows = Array.from(container.querySelectorAll('.inspector-plan__list li'))
     expect(rows.map((row) => row.className)).toEqual(['is-completed', 'is-in_progress', 'is-pending', 'is-cancelled'])
-    // 图元与时间线同源：描边勾 / 实心圆 spinner / 空心圆 / 斜杠圈
+    // 图元与时间线同源：描边勾 / 细环 + 呼吸核 / 空心圆 / 斜杠圈
     expect(rows[0]!.querySelector('.todo-indicator svg path')).toBeTruthy()
-    expect(rows[1]!.querySelector('.todo-spinner')).toBeTruthy()
+    expect(rows[1]!.querySelector('.todo-indicator svg.todo-live circle.todo-live__core')).toBeTruthy()
+    expect(rows[1]!.querySelector('.todo-spinner')).toBeNull()
     expect(rows[3]!.querySelector('.todo-indicator svg path')).toBeTruthy()
     // 当前项标注一次：aria-current 在行上，不再有「进行中」文字标签
     expect(rows[1]!.getAttribute('aria-current')).toBe('step')

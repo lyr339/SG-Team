@@ -242,12 +242,13 @@ describe('theme surface contracts', () => {
     for (const kind of ['read', 'search', 'edit', 'write', 'command', 'browser', 'mcp', 'todo']) {
       expect(styles).toMatch(new RegExp(`\\.cursor-native-tool\\.is-${kind}, \\.process-turn-step\\.is-${kind}, \\.session-row__activity\\.is-${kind} \\{[^}]*--tool-hue:\\s*light-dark\\(`))
     }
-    // Cursor 原生 todo：实心圆反色 spinner + 透明度阶梯（单色纪律）
-    expect(styles).toMatch(/\.todo-spinner\s*\{[^}]*background:\s*var\(--text\)[^}]*border-radius:\s*50%/)
-    expect(styles).toContain('@keyframes todo-spin')
+    // todo 进行中：细环 + 环心呼吸核（不旋转、不实心底），核以自身中心缩放；透明度阶梯（单色纪律）不变
+    expect(styles).toMatch(/\.todo-live__core\s*\{[^}]*transform-box:\s*fill-box[^}]*transform-origin:\s*center[^}]*animation:\s*todo-breathe/)
+    expect(styles).toContain('@keyframes todo-breathe')
+    expect(styles).not.toMatch(/\btodo-spin(ner)?\b/)
     expect(styles).toMatch(/\.process-turn-step__todos li\.is-completed\s*\{[^}]*opacity:\s*\.5[^}]*line-through/)
     expect(styles).toMatch(/\.process-turn-step__todos li\.is-pending\s*\{[^}]*opacity:\s*\.4/)
-    // reduced-motion 必须豁免 todo 的 spinner 与淡入动画
-    expect(styles).toMatch(/@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\.todo-spinner svg,\s*\n\s*\.process-turn-step__todos li\s*\{[^}]*animation:\s*none/)
+    // reduced-motion 必须豁免 todo 的呼吸核与淡入动画（核停在满态：实心环心，仍与空心待办可辨）
+    expect(styles).toMatch(/@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\.todo-live__core,\s*\n\s*\.process-turn-step__todos li\s*\{[^}]*animation:\s*none/)
   })
 })

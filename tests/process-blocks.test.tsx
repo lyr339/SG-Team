@@ -535,11 +535,11 @@ describe('ProcessBlocks', () => {
     expect(html).toContain('role="progressbar"')
     expect(html).toContain('aria-valuenow="2"')
     expect(html).toContain('aria-valuemax="4"')
-    // Cursor 原生指示器：完成=描边勾，进行=实心圆旋转弧（spinner），待办=空心圆
+    // 指示器：完成=描边勾，进行=细环 + 环心呼吸核（.todo-live，不是旋转 spinner），待办=空心圆
     expect(html).toContain('todo-indicator')
     expect(html).toMatch(/is-completed[^>]*>\s*<span class="todo-indicator"[^>]*>\s*<svg/)
-    expect(html).toMatch(/is-in_progress[^>]*>\s*<span class="todo-indicator"[^>]*>\s*<span class="todo-spinner"/)
-    expect(html).toContain('stroke-dasharray')
+    expect(html).toMatch(/is-in_progress[^>]*>\s*<span class="todo-indicator"[^>]*>\s*<svg class="todo-live"[^>]*>\s*<circle[^>]*fill="none"[^>]*><\/circle>\s*<circle class="todo-live__core"/)
+    expect(html).not.toContain('todo-spinner')
     expect(html).toContain('is-pending')
   })
 
