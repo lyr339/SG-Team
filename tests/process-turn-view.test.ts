@@ -41,9 +41,9 @@ describe('ProcessTurnViewModel', () => {
       ]
     })
     expect(model.steps.map((step) => [step.kind, step.action, step.target])).toEqual([
-      ['image', '已生成图片', 'board-v1.png'],
-      ['image', '生成图片中', 'board-v2.png'],
-      ['image', '已生成图片', 'board-v0.png']
+      ['image', 'Generated image', 'board-v1.png'],
+      ['image', 'Generating image', 'board-v2.png'],
+      ['image', 'Generated image', 'board-v0.png']
     ])
     expect(model.steps[0]?.image).toEqual({ path: '/tmp/assets/board-v1.png' })
     expect(model.steps[0]?.details.map((detail) => detail.label)).toEqual(['输入'])
@@ -118,7 +118,7 @@ describe('ProcessTurnViewModel · tool presentation (Cursor 同口径)', () => {
     })
     const step = model.steps[0]!
     expect(step.action).toBe('查看新消息提交时对待答问卷的处理逻辑')
-    expect(step.verb).toBe('已运行')
+    expect(step.verb).toBe('Ran')
     expect(step.target).toBeUndefined()
     expect(step.hint).toBe('cd, python3')
     expect(step.stateText).toBe('完成')
@@ -132,7 +132,8 @@ describe('ProcessTurnViewModel · tool presentation (Cursor 同口径)', () => {
       id: 'turn',
       blocks: [{ kind: 'tool', id: `read-${status}`, toolName: 'read_file_v2', toolKind: 'read', summary: '/a.ts', hint: 'L1-120', status }]
     }).steps[0]!)
-    expect(actions.map((step) => step.action)).toEqual(['读取中', '已读取', '读取失败'])
+    // Cursor `zJv` 三态：loading / completed / error（错误态是原形动词，失败由红色承担）。
+    expect(actions.map((step) => step.action)).toEqual(['Reading', 'Read', 'Read'])
     expect(actions.map((step) => step.stateText)).toEqual(['进行中', '完成', '失败'])
     expect(actions[1]).toMatchObject({ target: '/a.ts', hint: 'L1-120', verb: undefined })
   })
@@ -148,10 +149,22 @@ describe('ProcessTurnViewModel · tool presentation (Cursor 同口径)', () => {
         { kind: 'tool', id: 'legacy', toolName: 'read_file_v2', toolKind: 'read', summary: '/a.ts', status: 'done' }
       ]
     }).steps
-    expect(steps.map((step) => step.action)).toEqual(['已列出', '搜索文件中', '已抓取', '后台命令已结束', '已读取'])
+    expect(steps.map((step) => step.action)).toEqual(['Listed', 'Searching files', 'Fetched', 'Waited', 'Read'])
     // await 属 command 类但不是可执行命令行：不生成 shell 卡数据。
     expect(steps[3]).toMatchObject({ kind: 'command', target: '837682', hint: '12s' })
     expect(steps[3]?.shell).toBeUndefined()
+  })
+
+  it('keeps supported Cursor cases on their native verbs', () => {
+    const steps = buildProcessTurnView({
+      id: 'turn',
+      blocks: [
+        { kind: 'tool', id: 'page', toolName: 'web_fetch', toolKind: 'browser', toolCase: 'webFetchToolCall', status: 'running' },
+        { kind: 'tool', id: 'diff', toolName: 'apply_diff', toolKind: 'edit', toolCase: 'applyAgentDiffToolCall', status: 'done' },
+        { kind: 'tool', id: 'mode', toolName: 'switch_mode', toolKind: 'other', toolCase: 'switchModeToolCall', status: 'failed' }
+      ]
+    }).steps
+    expect(steps.map((step) => step.action)).toEqual(['Fetching page', 'Applied diff', 'Switch mode'])
   })
 
   it('normalizes the shell description like Cursor (drop leading “run”, capitalize) and exposes shell card data', () => {
@@ -182,9 +195,9 @@ describe('ProcessTurnViewModel · tool presentation (Cursor 同口径)', () => {
         { kind: 'tool', id: 'plan', toolName: 'planUpdate', toolKind: 'todo', summary: '执行计划', status: 'done' }
       ]
     })
-    expect(model.steps[0]).toMatchObject({ action: '已调用 team_task', hint: 'SG Team' })
-    expect(model.steps[1]).toMatchObject({ action: '调用中 browser_navigate', hint: 'cursor-ide-browser', target: 'http://localhost' })
-    expect(model.steps[2]).toMatchObject({ action: '已更新计划', target: '执行计划' })
+    expect(model.steps[0]).toMatchObject({ action: 'Ran MCP team_task', hint: 'SG Team' })
+    expect(model.steps[1]).toMatchObject({ action: 'Running MCP browser_navigate', hint: 'cursor-ide-browser', target: 'http://localhost' })
+    expect(model.steps[2]).toMatchObject({ action: 'Updated plan', target: '执行计划' })
   })
 
   it('exposes ask_question as a question step whose state text follows the questionnaire, not the tool status', () => {
@@ -205,7 +218,7 @@ describe('ProcessTurnViewModel · tool presentation (Cursor 同口径)', () => {
       id: 'turn',
       blocks: [{ kind: 'tool', id: 'q', toolName: 'ask_question', toolKind: 'question', summary: '', status: 'done', question: { ...question, status: 'submitted' } }]
     }).steps[0]!
-    expect(submitted).toMatchObject({ action: '已回答', stateText: '已回答' })
+    expect(submitted).toMatchObject({ action: 'Asked question', stateText: '已回答' })
     const timedOut = buildProcessTurnView({
       id: 'turn',
       blocks: [{ kind: 'tool', id: 'q', toolName: 'ask_question', toolKind: 'question', summary: '', status: 'done', question: { ...question, status: 'cancelled', skipReason: 'timeout' } }]

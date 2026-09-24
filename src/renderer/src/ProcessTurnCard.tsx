@@ -3,7 +3,7 @@ import type { ProcessBlock } from '../../domain/conversation-entry'
 import { MessageImage } from './AttachmentImageViewer'
 import { stepDomId, subscribeReveal } from './inspector/reveal-bus'
 import { MessageContent } from './MessageContent'
-import { groupProcessSteps, parseFileChangeStats, type ProcessGroupVariant, type ProcessTurnGroup } from './process-step-groups'
+import { groupProcessSteps, parseFileChangeStats, thoughtDurationDetails, type ProcessGroupVariant, type ProcessTurnGroup } from './process-step-groups'
 import { StepIcon } from './process-step-icon'
 import { buildProcessTurnView, type ProcessTurnStep } from './process-turn-view'
 import { QuestionCard, type QuestionActions } from './QuestionCard'
@@ -59,6 +59,18 @@ function stepDuration(step: ProcessTurnStep): string {
     ? step.completedAt - step.startedAt
     : undefined)
   return observed && step.timingEstimated ? `~${observed}` : observed
+}
+
+/**
+ * Thought 头部时长（Cursor 原文 `Thought for 3s` / `Thought briefly`）：原生时长优先，
+ * 否则按 CDP 观测的起止估算并在数字前标 `~`；一无所知时不显示。
+ */
+function thoughtDuration(step: ProcessTurnStep): string {
+  const observed = step.startedAt !== undefined && step.completedAt !== undefined ? step.completedAt - step.startedAt : undefined
+  const durationMs = step.durationMs ?? observed
+  if (durationMs === undefined || !Number.isFinite(durationMs)) return ''
+  const details = thoughtDurationDetails(durationMs)
+  return step.durationMs === undefined && step.timingEstimated ? details.replace(/^for /, 'for ~') : details
 }
 
 const CODE_KEYWORDS = new Set([
@@ -495,16 +507,16 @@ function ProcessTurnCardImpl({
       const pendingQuestion = step.question?.status === 'pending'
       const hasDetails = Boolean(step.details.length || step.todos?.length || step.diff?.lines.length || (step.question && !pendingQuestion))
       // 工具行不显示耗时（Cursor 同款；采样估算的 ~0.1s 只是噪音），Thought 仍显示原生 / 估算时长。
-      const duration = step.kind === 'thinking' ? stepDuration(step) : ''
+      const duration = step.kind === 'thinking' ? thoughtDuration(step) : ''
       const stateText = compactStateText(step)
       if (step.kind === 'thinking') {
         return (
           <article key={step.id} className={`cursor-native-thought is-${step.status} ${stepOpen ? 'is-open' : ''} ${nested ? 'is-nested' : ''}`} data-step-id={step.id}>
             <button className="cursor-native-thought__head" onClick={() => toggleExpanded(step.id)} aria-expanded={stepOpen}>
-              {/* 与 Cursor 的 Thinking / Thought for Ns 同构，文案中文：进行中「思考中」文字流光，结束后「思考 N 秒」。 */}
+              {/* Cursor 原文：进行中「Thinking」文字流光，结束后「Thought for Ns」/「Thought briefly」。 */}
               {step.status === 'running'
-                ? <strong>思考中</strong>
-                : <><strong>思考</strong>{duration ? <time>{duration}</time> : null}</>}
+                ? <strong>Thinking</strong>
+                : <><strong>Thought</strong>{duration ? <time>{duration}</time> : null}</>}
               {chevron(stepOpen)}
             </button>
             {stepOpen && step.body ? <StreamingTextBody step={step} live={live} hydrate={hydrated(step)} className="cursor-native-thought__body" /> : null}
@@ -643,10 +655,7 @@ function ProcessTurnCardImpl({
                 </span>
               ) : null}
             </span>
-            <span className="cursor-native-group__meta">
-              <span className="cursor-native-group__count">{group.steps.length} 步</span>
-              {chevron(groupOpen)}
-            </span>
+            <span className="cursor-native-group__meta">{chevron(groupOpen)}</span>
           </button>
           {groupOpen ? (
             <div className="cursor-native-group__body">
@@ -669,11 +678,10 @@ function ProcessTurnCardImpl({
         </section>
       )
     }
+    // 直播态不再单独挂「Cursor 实时过程」标记行（2026-09-22 用户拍板去掉）：进行中由
+    // Thinking / 工具行自身的文字流光表达，`is-live` 类仍留给样式与测试判定直播态。
     return (
       <section className={`process-turn cursor-native-process ${live ? 'is-live' : ''} is-${model.status}`} aria-label={`${title}，${summary}`}>
-        {live ? (
-          <div className="cursor-native-process__live" role="status"><i />Cursor 实时过程</div>
-        ) : null}
         <div className="cursor-native-process__flow">
           {truncatedItemCount > 0 ? (
             <div className="cursor-native-process__truncated" role="note">原生回合过长，较早的 {truncatedItemCount} 个步骤已折叠</div>

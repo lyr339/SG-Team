@@ -334,25 +334,30 @@ function summarize(steps: IndexedStep[]): { summary: GroupSummary; thinkingDurat
   return { summary, thinkingDurationMs, hasText }
 }
 
-/** `UAh`：探索计数明细。组头文案本地化为中文（2026-09-18 过程流审查）：
- *  分组算法保持 Cursor 移植，但界面语言全中文——组头不再照搬英文原词。 */
+/** 英文计数（Cursor 组头原文：`1 file` / `3 files` / `2 directories` / `1 search` / `2 searches`）。 */
+function plural(count: number, singular: string, pluralForm = `${singular}s`): string {
+  return `${count} ${count === 1 ? singular : pluralForm}`
+}
+
+/** `UAh`：探索计数明细。组头文案沿用 Cursor 原文英文（2026-09-22 用户拍板：过程流要
+ *  Cursor 原生那种英文，撤回 09-18 的中文本地化）；分组算法本身仍是 Cursor 移植。 */
 function explorationParts(summary: GroupSummary, exploredPrefix: boolean): string[] {
   const parts: string[] = []
-  if (summary.directories.length) parts.push(`${summary.directories.length} 个目录`)
-  if (summary.files.length) parts.push(`${summary.files.length} 个文件`)
-  if (summary.searches) parts.push(`${summary.searches} 次搜索`)
-  if (summary.fetches) parts.push(`${summary.fetches} 次抓取`)
-  if (summary.lints) parts.push('诊断')
-  if (exploredPrefix && parts.length) parts[0] = `探索了 ${parts[0]}`
+  if (summary.directories.length) parts.push(plural(summary.directories.length, 'directory', 'directories'))
+  if (summary.files.length) parts.push(plural(summary.files.length, 'file'))
+  if (summary.searches) parts.push(plural(summary.searches, 'search', 'searches'))
+  if (summary.fetches) parts.push(plural(summary.fetches, 'fetch', 'fetches'))
+  if (summary.lints) parts.push('lints')
+  if (exploredPrefix && parts.length) parts[0] = `explored ${parts[0]}`
   return parts
 }
 
-/** `$md`：Thought 时长明细（Cursor 先四舍五入到秒：0.8s → 1 秒）。 */
+/** `$md`：Thought 时长明细（`for 3s` / `for 0.8s` / `briefly`；Cursor 先四舍五入到秒：0.8s → 1s）。 */
 export function thoughtDurationDetails(durationMs?: number): string {
-  if (durationMs !== undefined && durationMs > 0 && durationMs < 500) return '片刻'
+  if (durationMs !== undefined && durationMs > 0 && durationMs < 500) return 'briefly'
   const seconds = durationMs !== undefined ? Math.round(durationMs / 1_000) : 0
-  if (durationMs !== undefined && durationMs > 0 && seconds === 0) return `${(durationMs / 1_000).toFixed(1)} 秒`
-  return seconds > 0 ? `${seconds} 秒` : '片刻'
+  if (durationMs !== undefined && durationMs > 0 && seconds === 0) return `for ${(durationMs / 1_000).toFixed(1)}s`
+  return seconds > 0 ? `for ${seconds}s` : 'briefly'
 }
 
 interface GroupHeader {
@@ -362,15 +367,15 @@ interface GroupHeader {
   details?: string
 }
 
-/** `HAh`（= `ltv ?? ctv ?? utv ?? ptv`）：组头动词与明细（中文文案，语义与 Cursor 一一对应）。 */
+/** `HAh`（= `ltv ?? ctv ?? utv ?? ptv`）：组头动词与明细（Cursor 原文英文，逐条对应）。 */
 function headerOf(steps: IndexedStep[], summary: GroupSummary, thinkingDurationMs: number | undefined): GroupHeader {
   const toolSteps = steps.filter(({ facts }) => facts.type === 'tool-call')
   if (!toolSteps.length) {
-    return { variant: 'thought', loading: '思考中', completed: '思考', details: thoughtDurationDetails(thinkingDurationMs) }
+    return { variant: 'thought', loading: 'Thinking', completed: 'Thought', details: thoughtDurationDetails(thinkingDurationMs) }
   }
   if (steps.some(({ facts }) => isBrowserMcp(facts))) {
     const count = summary.browserActions || toolSteps.length
-    return { variant: 'browser', loading: '正在操作浏览器', completed: '已操作浏览器', details: `${count} 次操作` }
+    return { variant: 'browser', loading: 'Running', completed: 'Ran', details: plural(count, 'browser action') }
   }
   if (summary.waitingActions > 0) {
     const jobs = new Map<string, 'complete' | 'active'>()
@@ -381,38 +386,39 @@ function headerOf(steps: IndexedStep[], summary: GroupSummary, thinkingDurationM
     }
     const complete = [...jobs.values()].filter((state) => state === 'complete').length
     const active = jobs.size - complete
-    const parts = [complete ? `${complete} 已完成` : '', active ? `${active} 进行中` : ''].filter(Boolean)
+    const parts = [complete ? `${complete} complete` : '', active ? `${active} active` : ''].filter(Boolean)
+    const noun = jobs.size === 1 ? 'task' : 'tasks'
     return {
       variant: 'waiting',
-      loading: '监控后台任务',
-      completed: '已监控后台任务',
-      details: parts.length ? parts.join('、') : undefined
+      loading: `Monitoring background ${noun}`,
+      completed: `Monitored background ${noun}`,
+      details: parts.length ? parts.join(', ') : undefined
     }
   }
   if (summary.commands > 0 && summary.commands === toolSteps.length) {
-    return { variant: 'commands', loading: '运行中', completed: '已运行', details: `${summary.commands} 条命令` }
+    return { variant: 'commands', loading: 'Running', completed: 'Ran', details: plural(summary.commands, 'command') }
   }
   const change = summary.edits > 0
-    ? { loading: '编辑中', completed: '已编辑', fileCount: summary.edits + summary.deletes }
+    ? { loading: 'Editing', completed: 'Edited', fileCount: summary.edits + summary.deletes }
     : summary.deletes > 0
-      ? { loading: '删除中', completed: '已删除', fileCount: summary.deletes }
+      ? { loading: 'Deleting', completed: 'Deleted', fileCount: summary.deletes }
       : undefined
   if (toolSteps.length && toolSteps.every(({ facts }) => isEditLike(facts)) && !change) {
-    return { variant: 'edits', loading: '删除中', completed: '尝试删除', details: '未生效' }
+    return { variant: 'edits', loading: 'Deleting', completed: 'Delete', details: 'attempted' }
   }
   const parts: string[] = []
   if (change) {
     const single = change.fileCount === 1 ? summary.fileChangeFiles[0] : undefined
-    parts.push(single && single.length <= SINGLE_FILE_NAME_MAX ? single : `${change.fileCount} 个文件`)
+    parts.push(single && single.length <= SINGLE_FILE_NAME_MAX ? single : plural(change.fileCount, 'file'))
   }
   parts.push(...explorationParts(summary, change !== undefined))
-  if (summary.commands) parts.push(`运行了 ${summary.commands} 条命令`)
-  if (summary.taskCalls) parts.push(`${summary.taskCalls} 个子任务`)
+  if (summary.commands) parts.push(`ran ${plural(summary.commands, 'command')}`)
+  if (summary.taskCalls) parts.push(plural(summary.taskCalls, 'agent'))
   return {
     variant: change ? 'edits' : 'explore',
-    loading: change?.loading ?? '探索中',
-    completed: change?.completed ?? '已探索',
-    details: parts.length ? parts.join('、') : undefined
+    loading: change?.loading ?? 'Exploring',
+    completed: change?.completed ?? 'Explored',
+    details: parts.length ? parts.join(', ') : undefined
   }
 }
 
