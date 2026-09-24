@@ -472,7 +472,7 @@ describe('ReviewPanel', () => {
       const totals = container.querySelector('.inspector-review__totals')!
       expect(totals.textContent).not.toContain('≈')
       expect(totals.textContent).toContain('+21')
-      expect(totals.getAttribute('title')).toContain('Cursor 统计的本会话累计净增删')
+      expect(totals.getAttribute('title')).toContain('Cursor 统计的净增删：本轮开始到现在的增量')
       await act(async () => root.unmount())
     })
 

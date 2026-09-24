@@ -17,7 +17,7 @@ import {
   type ChannelOutboundMessage,
   type ChannelPresence
 } from '../../domain/channel-message'
-import type { MessageAttachment, ProcessBlock } from '../../domain/conversation-entry'
+import type { ConversationChangesBaseline, MessageAttachment, ProcessBlock } from '../../domain/conversation-entry'
 
 const OUTBOUND_KINDS = new Set<ChannelOutboundKind>(['user', 'internal', 'membership'])
 
@@ -55,6 +55,26 @@ function processBlocksOf(value: unknown): ProcessBlock[] | undefined {
   }
 }
 
+/** changes_baseline_json 解析：形态不对（缺 composerId / 非有限数）一律视为没盖过刻度。 */
+function changesBaselineOf(value: unknown): ConversationChangesBaseline | undefined {
+  if (typeof value !== 'string' || !value) return undefined
+  try {
+    const parsed = JSON.parse(value) as Partial<ConversationChangesBaseline> | null
+    if (!parsed || typeof parsed !== 'object') return undefined
+    const { composerId, additions, deletions, files } = parsed
+    if (typeof composerId !== 'string' || !composerId) return undefined
+    if (!Number.isFinite(additions) || !Number.isFinite(deletions)) return undefined
+    return {
+      composerId,
+      additions: Math.max(0, Math.round(additions as number)),
+      deletions: Math.max(0, Math.round(deletions as number)),
+      ...(Number.isFinite(files) ? { files: Math.max(0, Math.round(files as number)) } : {})
+    }
+  } catch {
+    return undefined
+  }
+}
+
 function canonicalReplyContent(value: string): string {
   return value
     .replace(/\r\n?/g, '\n')
@@ -73,6 +93,7 @@ function outboundOf(row: SqliteRow): ChannelOutboundMessage {
     attachments: attachmentsOf(row.attachments_json),
     createdAt: numberOf(row.created_at),
     deliveredAt: row.delivered_at === null ? undefined : numberOf(row.delivered_at),
+    changesBaseline: changesBaselineOf(row.changes_baseline_json),
     silent: numberOf(row.silent) === 1 ? true : undefined,
     kind: resolveOutboundKind(String(row.text), outboundKindOf(row.kind), numberOf(row.silent) === 1),
     holdSessionToken: optionalString(row.hold_session_token),
@@ -342,6 +363,25 @@ export class SqliteChannelMessageRepository {
       if (this.database.isTransaction) this.database.exec('ROLLBACK')
       throw error
     }
+  }
+
+  /**
+   * 主进程侧：给已投递消息盖上取走那一刻的 Cursor 累计净增删刻度（见 ConversationChangesBaseline）。
+   * 只盖一次——刻度的意义是「投递时刻的读数」，之后再写只会把本轮的编辑混进去；未投递的行不盖。
+   * 返回是否写入（行不存在 / 已有刻度 / 尚未投递均为 false）。
+   */
+  stampOutboundChangesBaseline(id: string, baseline: ConversationChangesBaseline): boolean {
+    const normalizedId = String(id).trim()
+    if (!normalizedId || !baseline.composerId.trim()) return false
+    const result = this.database.prepare(
+      'UPDATE channel_outbox SET changes_baseline_json = ? WHERE id = ? AND delivered_at IS NOT NULL AND changes_baseline_json IS NULL'
+    ).run(JSON.stringify({
+      composerId: baseline.composerId.trim(),
+      additions: Math.max(0, Math.round(baseline.additions)),
+      deletions: Math.max(0, Math.round(baseline.deletions)),
+      ...(baseline.files === undefined ? {} : { files: Math.max(0, Math.round(baseline.files)) })
+    }), normalizedId)
+    return numberOf(result.changes) === 1
   }
 
   /** 读取通道最后一次已投递消息，用于恢复旧版本错误留下的 reply-sync 守门。 */
@@ -978,6 +1018,7 @@ export class SqliteChannelMessageRepository {
     this.migrateReplyProcessColumns()
     this.migrateReplyOutboundColumn()
     this.migrateOutboundHoldColumns()
+    this.migrateOutboundChangesBaselineColumn()
     // 旧版过程事件来自 Agent 主动上报，与 Cursor 原生过程重复且失真；迁移时彻底清除。
     this.database.exec('DROP TABLE IF EXISTS channel_process_events')
   }
@@ -988,6 +1029,14 @@ export class SqliteChannelMessageRepository {
     this.migrateColumn('channel_outbox', 'withdrawn_at', 'INTEGER')
     // 会话池 · 协作组：投递类型（user / internal / membership）；旧行为 NULL，读出时按正文前缀推断。
     this.migrateColumn('channel_outbox', 'kind', 'TEXT')
+  }
+
+  /**
+   * 老库增量迁移：出站消息补「投递时刻的 Cursor 累计净增删刻度」列（本轮文件栏据此差分出本轮精确合计）。
+   * 加列有存在性守卫，桌面端与 MCP 进程各自迁移、先后无关；旧行为 NULL = 没盖过刻度。
+   */
+  private migrateOutboundChangesBaselineColumn(): void {
+    this.migrateColumn('channel_outbox', 'changes_baseline_json', 'TEXT')
   }
 
   /** 老库增量迁移：channel_replies 补 visible 列，用于隐藏后台 record_reply。 */

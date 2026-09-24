@@ -1443,13 +1443,14 @@ button.workspace-group-chip:focus-visible { outline: 2px solid var(--accent-bord
 .turn-files__chevron svg { width: 14px; height: 14px; }
 .turn-files.is-collapsed .turn-files__chevron { transform: rotate(-90deg); }
 .turn-files__title { flex: 0 0 auto; display: inline-flex; align-items: baseline; gap: 4px; color: var(--text); font-size: var(--fs-11); font-weight: 600; white-space: nowrap; }
-.turn-files__title b { font: 700 var(--fs-11)/1 var(--mono); }
+.turn-files__title b { font: 700 var(--fs-11)/1 var(--font-numeric); font-variant-numeric: lining-nums tabular-nums; }
 /* 「上一轮」保持态：头部挂标签、整栏降色——它是上一轮的事实，不是这一轮正在发生的。 */
 .turn-files__scope { flex: 0 0 auto; padding: 2px 6px; color: var(--muted); background: var(--surface-soft); border-radius: 999px; font-size: var(--fs-9, 10px); font-style: normal; font-weight: 600; line-height: 1; white-space: nowrap; }
 .turn-files.is-previous .turn-files__title { color: var(--text-soft); }
 .turn-files.is-previous .turn-files__list { opacity: .78; }
-/* 合计与行内增删同一写法：绿 + / 红 −，等宽数字；估算值前置 ≈。 */
-.turn-files__totals, .turn-files__counts { flex: 0 0 auto; display: inline-flex; align-items: baseline; gap: 6px; font: 600 var(--fs-10)/1 var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* 合计与行内增删同一写法：绿 + / 红 −，估算值前置 ≈。字体与名册行的 `+N −M`（.session-row__changes）
+   同一枚数字字族（--font-numeric，600，tabular）——同一个数在两处长得不一样，读者会以为是两个数。 */
+.turn-files__totals, .turn-files__counts { flex: 0 0 auto; display: inline-flex; align-items: baseline; gap: 6px; font: 600 var(--fs-11)/1 var(--font-numeric); font-variant-numeric: lining-nums tabular-nums; white-space: nowrap; }
 .turn-files__totals b, .turn-files__counts b { color: var(--color-text-success); font-weight: 600; }
 .turn-files__totals em, .turn-files__counts em { color: var(--red); font-style: normal; }
 .turn-files__totals small, .turn-files__counts small { color: var(--muted); font-size: var(--fs-10); }

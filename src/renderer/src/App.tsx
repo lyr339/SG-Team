@@ -966,13 +966,14 @@ export function App(): React.JSX.Element {
       summary: workspaceReviewSummary,
       workspacePath: activeWorkspace?.path,
       working: workspaceWorking,
-      // 名册行显示的 Cursor 累计净值：本轮是会话唯一改动区间时，栏的合计与它同源（见 turn-files-view）。
-      sessionChanges: selectedSession?.changes
+      // 名册行显示的 Cursor 累计净值 + 它所属的 Composer：栏的合计由它与消息上的回合起点刻度差分得出（见 turn-files-view）。
+      sessionChanges: selectedSession?.changes,
+      sessionComposerId: selectedSession?.composerId
     })
     const reused = sameTurnFilesView(turnFilesRef.current, next) ? turnFilesRef.current! : next
     turnFilesRef.current = reused
     return reused
-  }, [activeWorkspace?.path, selectedSession?.changes, workspaceEntries, workspaceLiveProcess, workspaceReviewSummary, workspaceWorking])
+  }, [activeWorkspace?.path, selectedSession?.changes, selectedSession?.composerId, workspaceEntries, workspaceLiveProcess, workspaceReviewSummary, workspaceWorking])
   const handleReviewTurnFiles = useCallback((request: ReviewFocusRequest): void => requestReviewFocus(request), [])
   // 「交接」三态：离线入组席位 → 成员身份迁移（可附带上下文）；其余在运行中的席位（独立或入组、
   // 在线或离线）→ 上下文交接；运行已结束 / 非本轮席位 → 禁用并说明原因。

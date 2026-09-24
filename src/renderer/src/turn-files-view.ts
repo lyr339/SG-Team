@@ -3,7 +3,7 @@ import type { ConversationEntry, ProcessBlock } from '../../domain/conversation-
 import type { WorkspaceReviewFileStatus, WorkspaceReviewSummary } from '../../domain/workspace-review'
 import type { LiveProcessState } from '../../shared/desktop-api'
 import { fileIconKind, type FileIconKind } from './file-type'
-import { fileTouchedBy, normalizeReviewPath, preTurnMutationsExist, previousTurnMutationBlocks, processBlockPath, turnMutationBlocks } from './inspector/review-scope'
+import { fileTouchedBy, latestDeliveredUserIndex, normalizeReviewPath, preTurnMutationsExist, previousTurnMutationBlocks, processBlockPath, turnMutationBlocks } from './inspector/review-scope'
 
 /**
  * 输入区上方「本轮文件栏」的视图模型（Cursor 原生输入框上方的 “N Files” 栏）。
@@ -49,8 +49,8 @@ export interface TurnFilesView {
   /** 合计是估算（估算行求和，且没有可用的 Cursor 累计兜底）。逐文件是否估算看 `file.source`。 */
   estimated: boolean
   /**
-   * 合计的来源：sum = 逐文件相加（git 精确值与过程估算的混合）；composer = Cursor 持久化的
-   * Composer 累计净值（与名册行同一个数）。见 `TurnFilesInput.sessionChanges`。
+   * 合计的来源：sum = 逐文件相加（git 精确值与过程估算的混合）；composer = 由 Cursor 持久化的
+   * Composer 累计净值差分出的本轮 / 上一轮增量（与名册行同一份读数）。见 `TurnFilesInput.sessionChanges`。
    */
   totalsSource: 'sum' | 'composer'
   /** turn = 本轮的文件；previous = 新回合尚无编辑，保住的是上一轮的文件（见文件头注释）。 */
@@ -74,7 +74,8 @@ export function describeLineCounts(additions: number, deletions: number, binary 
  */
 export function turnTotalsTitle(view: TurnFilesView): string {
   if (view.totalsSource === 'composer') {
-    return '合计取 Cursor 统计的本会话累计净增删（与左侧名册行同一个数）；逐文件是过程估算，同一文件多次编辑会重复计入，相加可能大于合计'
+    const span = view.scope === 'previous' ? '上一轮开始到本轮开始之间' : '本轮开始到现在'
+    return `合计取 Cursor 统计的净增删：${span}的增量，与左侧名册行（本会话累计）同一来源；逐文件是过程估算，同一文件多次编辑会重复计入，相加可能大于合计`
   }
   if (view.estimated) return '含按编辑逐次累计的估算值'
   return `${view.scope === 'previous' ? '上一轮' : '本轮'}文件的增删行数合计（工作树相对 HEAD）`
@@ -124,11 +125,52 @@ export interface TurnFilesInput {
   working: boolean
   /**
    * 名册行同款：Cursor 持久化的 Composer 累计净增删（`totalLinesAdded/Removed`）。
-   * 逐笔 hint 求和会把同一文件的反复编辑重复计入（估算必然偏大，甚至出现「本轮 > 会话累计」的倒挂），
-   * 而当本轮就是会话迄今唯一的改动区间时，两个口径衡量的是同一件事——此时合计直接用 Cursor 的净值，
-   * 名册行与本栏显示同一个数。更早回合有过改动（含旧 Composer 的历史）时区间不同，不能互换，保持估算。
+   * 逐笔 hint 求和会把同一文件的反复编辑重复计入（估算必然偏大，甚至出现「本轮 > 会话累计」的倒挂）；
+   * 合计改由这份读数差分：每条用户消息被取走时主进程盖一枚刻度（`ConversationEntry.changesBaseline`），
+   * 本轮 = 现在的累计 − 本轮起点刻度，上一轮 = 本轮起点刻度 − 上一轮起点刻度——与名册行同一来源，
+   * 本栏不可能再大于名册。刻度缺失（旧数据 / 投递时桌面端不在）时只剩一种可差分的情形：本轮是会话
+   * 迄今唯一的改动区间，起点即零；其余退回逐笔估算并标 ≈。
    */
   sessionChanges?: ChangeSummary
+  /** 名册行所属 Composer（`session.composerId`）：刻度只对同一 Composer 有效，席位重建后计数从零重来。 */
+  sessionComposerId?: string
+}
+
+function clampedDelta(end: { additions: number; deletions: number }, start: { additions: number; deletions: number }): ChangeSummary {
+  // 净值可以回落（后一轮删掉了前一轮加的行）：差为负按 0 计，不把别的回合的账记到这一轮头上。
+  return { additions: Math.max(0, end.additions - start.additions), deletions: Math.max(0, end.deletions - start.deletions) }
+}
+
+const ZERO_CHANGES = { additions: 0, deletions: 0 }
+
+/**
+ * 用回合起点刻度差分出本轮 / 上一轮的精确增删（见 `TurnFilesInput.sessionChanges`）。
+ * 返回 undefined 表示没有可信的刻度对：调用方退回逐笔估算。
+ */
+function exactTurnTotals(input: TurnFilesInput, scope: TurnFilesView['scope']): ChangeSummary | undefined {
+  const entries = input.entries
+  const endIndex = latestDeliveredUserIndex(entries)
+  if (endIndex < 0) return undefined
+  const end = entries[endIndex]!
+  if (scope === 'turn') {
+    const current = input.sessionChanges
+    if (!current) return undefined
+    const baseline = end.changesBaseline
+    // 起点按零：会话迄今唯一的改动区间（旧数据没有刻度时仍能同源），或席位重建后新 Composer 从零计数。
+    if (!baseline) return preTurnMutationsExist(entries) ? undefined : clampedDelta(current, ZERO_CHANGES)
+    if (input.sessionComposerId && baseline.composerId !== input.sessionComposerId) return clampedDelta(current, ZERO_CHANGES)
+    return clampedDelta(current, baseline)
+  }
+  // 上一轮：终点是本轮起点刻度，起点是上一轮自己的刻度（回合之间的续作编辑也算在上一轮里，与块集合边界一致）。
+  const endBaseline = end.changesBaseline
+  if (!endBaseline) return undefined
+  const before = entries.slice(0, endIndex)
+  const startIndex = latestDeliveredUserIndex(before)
+  const startBaseline = startIndex >= 0 ? before[startIndex]!.changesBaseline : undefined
+  if (!startBaseline) return preTurnMutationsExist(before) ? undefined : clampedDelta(endBaseline, ZERO_CHANGES)
+  // 两枚刻度分属不同 Composer（上一轮里发生过席位重建）：那一轮的账跨了两个计数器，差分不成立。
+  if (startBaseline.composerId !== endBaseline.composerId) return undefined
+  return clampedDelta(endBaseline, startBaseline)
 }
 
 /** 一组改动块 → 首次出现顺序的路径表 + 每个路径的过程块累计增删。 */
@@ -193,15 +235,11 @@ export function buildTurnFilesView(input: TurnFilesInput): TurnFilesView {
     return { ...identity, additions: estimate.additions, deletions: estimate.deletions, source: 'process' }
   })
   const estimated = files.some((file) => file.source === 'process')
-  // 合计与名册同源的条件：逐文件含估算、这是本轮（不是保住的上一轮）、更早回合没有改动块、
-  // Cursor 的累计已经跟上（回合刚开始它可能尚未写盘——非零之前先用估算顶住，避免「有文件合计却是 0」）。
-  const composerTotals = estimated
-    && scope === 'turn'
-    && input.sessionChanges
-    && (input.sessionChanges.additions > 0 || input.sessionChanges.deletions > 0)
-    && !preTurnMutationsExist(input.entries)
-    ? input.sessionChanges
-    : undefined
+  // 合计与名册同源的条件：逐文件含估算（全部走 Git 精确口径时合计就是文件级 diff 相加，与审查页一致）、
+  // 刻度能差分出这一轮（本轮或保住的上一轮）、且差出来不是全零——Cursor 的累计在编辑后才写盘，
+  // 回合刚开始那几拍先用估算顶住，避免「有文件合计却是 0」。
+  const exact = estimated ? exactTurnTotals(input, scope) : undefined
+  const composerTotals = exact && (exact.additions > 0 || exact.deletions > 0) ? exact : undefined
   return {
     files,
     additions: composerTotals?.additions ?? files.reduce((total, file) => total + file.additions, 0),

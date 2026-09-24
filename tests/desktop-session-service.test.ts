@@ -275,6 +275,48 @@ describe('desktop Cursor session enrichment', () => {
     }
   })
 
+  it('gives the relay the bound composer\'s Cursor line counts as the turn baseline when a message is taken, and nothing for an unbound seat', () => {
+    const active = teamSnapshot('composer-alpha-123')
+    active.runs = [{
+      id: 'run-a', workspaceId: 'workspace-a', name: 'run', goal: 'goal', templateId: 'default',
+      status: 'running', createdAt: 1, updatedAt: 1
+    }]
+    active.activeRun = active.runs[0]
+    const repository = new SqliteChannelMessageRepository(
+      join(mkdtempSync(join(tmpdir(), 'sg-changes-baseline-')), 'channel.sqlite3')
+    )
+    const relay = new ChannelMessageRelay(repository)
+    try {
+      repository.markChannelEmbedded('1', 'workspace-a', '/workspace/alpha')
+      repository.markChannelEmbedded('2', 'workspace-a', '/workspace/alpha')
+      relay.resetScope('run-a', 1)
+      const service = new DesktopSessionService(
+        new FakeBridge(relay), new FakeTeam(active), { readWorkspace: () => telemetry() }, relay
+      )
+      try {
+        service.refreshTelemetry()
+        relay.sendMessage({ channelId: '1', text: '第二轮' })
+        relay.sendMessage({ channelId: '2', text: '未绑定席位' })
+        for (const channelId of ['1', '2']) {
+          const [queued] = repository.listPendingOutbound(channelId)
+          repository.markOutboundDelivered([queued!.id], 5_000)
+        }
+        expect(relay['refreshOutboundDeliveries']()).toBe(true)
+        const snapshot = service.getSnapshot()
+        // CH-1 绑定 composer-alpha-123：刻度 = 遥测里它的累计净增删（名册行同一个数）。
+        expect(snapshot.conversations['1']?.[0]?.changesBaseline).toEqual({ composerId: 'composer-alpha-123', additions: 12, deletions: 4, files: 3 })
+        expect(snapshot.sessions.find((session) => session.channelId === '1')?.changes).toEqual({ additions: 12, deletions: 4, files: 3 })
+        // CH-2 没有绑定：不盖刻度（不拿猜的数当起点）。
+        expect(snapshot.conversations['2']?.[0]?.deliveredAt).toBe(5_000)
+        expect(snapshot.conversations['2']?.[0]?.changesBaseline).toBeUndefined()
+      } finally {
+        service.dispose()
+      }
+    } finally {
+      repository.close()
+    }
+  })
+
   it('拾光重启回放：CDP 完成态正文与最新落库回复同文即被接管，最终正文不重复出现（会话不断）', async () => {
     const active = teamSnapshot('composer-alpha-123')
     active.runs = [{

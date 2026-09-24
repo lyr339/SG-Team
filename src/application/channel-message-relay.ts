@@ -20,6 +20,7 @@ import {
   conversationTextIdentity,
   normalizeEscapedNewlines,
   sniffedAttachmentMimeType,
+  type ConversationChangesBaseline,
   type ConversationEntry,
   type MessageAttachment,
   type ProcessBlock
@@ -43,6 +44,13 @@ const CONVERSATION_SCOPE_CLOCK_SKEW_MS = 5_000
 const CONVERSATION_DUPLICATE_ENTRY_WINDOW_MS = 5 * 60_000
 
 type RelayListener = () => void
+
+/**
+ * 「此刻该通道 Composer 的 Cursor 累计净增删」的提供方（由 DesktopSessionService 从遥测 + 绑定接上）：
+ * 中继在观察到一条用户消息被取走的那一拍向它要一枚读数，盖成该消息的回合起点刻度。
+ * 返回 undefined（席位未绑定 Composer / 遥测尚无读数）就不盖，栏退回估算。
+ */
+export type ChangesBaselineSource = (channelId: string) => ConversationChangesBaseline | undefined
 
 /** 同一消息内附件落盘文件名去重：同名追加 -2/-3…（保留扩展名），避免互相覆盖丢文件。 */
 function uniqueAttachmentName(name: string, used: Set<string>): string {
@@ -133,6 +141,7 @@ export class ChannelMessageRelay {
   private polling = false
   private scopeStartedAt?: number
   private scopeRunId?: string
+  private changesBaselineSource?: ChangesBaselineSource
 
   constructor(
     private readonly repository: SqliteChannelMessageRepository,
@@ -141,6 +150,11 @@ export class ChannelMessageRelay {
 
   handlesChannel(channelId: string): boolean {
     return this.repository.isChannelEmbedded(channelId)
+  }
+
+  /** 接上回合起点刻度的读数来源（见 ChangesBaselineSource）；未接上时投递照常同步，只是不盖刻度。 */
+  setChangesBaselineSource(source: ChangesBaselineSource | undefined): void {
+    this.changesBaselineSource = source
   }
 
   embeddedChannels(): string[] {
@@ -437,6 +451,7 @@ export class ChannelMessageRelay {
       text: message.text,
       timestamp: message.createdAt,
       deliveredAt: message.deliveredAt,
+      changesBaseline: message.changesBaseline,
       heldForNextSession: message.deliveredAt === undefined && message.holdSessionToken ? true : undefined,
       status: 'complete',
       source: 'desktop',
@@ -559,7 +574,8 @@ export class ChannelMessageRelay {
           continue
         }
         next ??= entries.slice(0, index)
-        if (change !== 'drop') next.push(change)
+        // 刚观察到被取走：这一拍就是回合的起点，盖上 Cursor 累计净增删的刻度（写入 SQLite，重启后随行水合）。
+        if (change !== 'drop') next.push(this.stampChangesBaseline(channelId, change))
       }
       if (next) {
         // 投递改变了排序时刻（排队 → 进入对话），重排一次让它落到前一回合的回复之后。
@@ -568,6 +584,30 @@ export class ChannelMessageRelay {
       }
     }
     return changed
+  }
+
+  /**
+   * 给刚被取走的用户消息盖回合起点刻度：向来源要此刻的读数，先落 SQLite（只盖一次），成功再挂到条目上。
+   * 来源给不出读数（未绑定 Composer / 遥测尚无）或行已有刻度时原样返回——不猜、不补盖。
+   */
+  private stampChangesBaseline(channelId: string, entry: ConversationEntry): ConversationEntry {
+    if (entry.deliveredAt === undefined || entry.changesBaseline || !this.changesBaselineSource) return entry
+    const outboundId = this.outboundIdOf(entry.id)
+    if (!outboundId) return entry
+    let baseline: ConversationChangesBaseline | undefined
+    try {
+      baseline = this.changesBaselineSource(channelId)
+    } catch {
+      return entry
+    }
+    if (!baseline) return entry
+    let stamped = false
+    try {
+      stamped = this.repository.stampOutboundChangesBaseline(outboundId, baseline)
+    } catch {
+      return entry
+    }
+    return stamped ? { ...entry, changesBaseline: baseline } : entry
   }
 
   private compactPendingOutbound(): void {

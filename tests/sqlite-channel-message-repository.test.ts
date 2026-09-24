@@ -121,6 +121,35 @@ describe('SqliteChannelMessageRepository', () => {
     }
   })
 
+  it('stamps the line-count baseline on a delivered message once and reads it back; undelivered rows and malformed JSON stay unstamped', () => {
+    const repository = fixture()
+    try {
+      const queued = repository.enqueueOutbound('1', '还在排队', 100)
+      const delivered = repository.enqueueOutbound('1', '已取走', 110)
+      repository.markOutboundDelivered([delivered.id], 200)
+      // 未投递的行不盖：刻度的意义是「取走那一刻的读数」。
+      expect(repository.stampOutboundChangesBaseline(queued.id, { composerId: 'c1', additions: 1, deletions: 1 })).toBe(false)
+      expect(repository.stampOutboundChangesBaseline(delivered.id, { composerId: 'c1', additions: 105.4, deletions: 8, files: 7 })).toBe(true)
+      // 只盖一次：第二次写入被拒绝，读回的仍是第一枚。
+      expect(repository.stampOutboundChangesBaseline(delivered.id, { composerId: 'c1', additions: 999, deletions: 999 })).toBe(false)
+      expect(repository.stampOutboundChangesBaseline('missing', { composerId: 'c1', additions: 1, deletions: 1 })).toBe(false)
+      const history = repository.listOutboundSince(0)
+      expect(history.find((message) => message.id === queued.id)?.changesBaseline).toBeUndefined()
+      expect(history.find((message) => message.id === delivered.id)?.changesBaseline).toEqual({ composerId: 'c1', additions: 105, deletions: 8, files: 7 })
+      expect(repository.latestDeliveredOutbound('1')?.changesBaseline).toMatchObject({ additions: 105 })
+      // 列里的脏数据（别的构建 / 手改）按没盖过处理，不让一枚坏刻度把栏的合计带偏。
+      const raw = new DatabaseSync(repository.path)
+      try {
+        raw.prepare('UPDATE channel_outbox SET changes_baseline_json = ? WHERE id = ?').run('{"additions":"many"}', delivered.id)
+      } finally {
+        raw.close()
+      }
+      expect(repository.listOutboundSince(0).find((message) => message.id === delivered.id)?.changesBaseline).toBeUndefined()
+    } finally {
+      repository.close()
+    }
+  })
+
   it('lists outbound history including delivered messages and silent metadata', () => {
     const repository = fixture()
     try {

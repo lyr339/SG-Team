@@ -7,7 +7,8 @@ import {
   describeLineCounts,
   parseEditHint,
   sameTurnFilesView,
-  splitTurnFilePath
+  splitTurnFilePath,
+  turnTotalsTitle
 } from '../src/renderer/src/turn-files-view'
 
 function edit(id: string, path: string, hint?: string, extra: Partial<Extract<ProcessBlock, { kind: 'tool' }>> = {}): ProcessBlock {
@@ -288,7 +289,7 @@ describe('turn-files-view · 合计与名册同源（Cursor Composer 累计净�
     expect(view.estimated).toBe(false)
   })
 
-  it('保住上一轮（scope=previous）时不接管：Cursor 累计描述的不是被保住的那一轮', () => {
+  it('没有刻度时保住上一轮（scope=previous）不接管：Cursor 累计描述的不是被保住的那一轮', () => {
     const next: ConversationEntry[] = [
       entry({ id: 'u0', role: 'user', source: 'desktop', timestamp: 1, deliveredAt: 2, text: '上一轮' }),
       entry({ id: 'r0', role: 'assistant', timestamp: 3, replyToEntryId: 'u0', processBlocks: [edit('old', 'src/old-turn.ts', '+5 −5')] }),
@@ -298,5 +299,104 @@ describe('turn-files-view · 合计与名册同源（Cursor Composer 累计净�
     expect(held.scope).toBe('previous')
     expect(held.files.map((file) => file.path)).toEqual(['src/old-turn.ts'])
     expect(held.totalsSource).toBe('sum')
+  })
+})
+
+describe('turn-files-view · 回合起点刻度差分（多回合也与名册同源，不再倒挂）', () => {
+  const composerId = 'composer-c1'
+  // 第 1 轮改了 105/8（Cursor 净值），第 2 轮的消息被取走时盖上刻度 105/8；第 2 轮直播里逐笔估算已经堆到 ≈145/22。
+  const turnOne: ConversationEntry[] = [
+    entry({ id: 'u0', role: 'user', source: 'desktop', timestamp: 1, deliveredAt: 2, text: '第一轮', changesBaseline: { composerId, additions: 0, deletions: 0 } }),
+    entry({ id: 'r0', role: 'assistant', timestamp: 3, replyToEntryId: 'u0', processBlocks: [
+      edit('a', 'tests/desktop-session-service.test.ts', '+86 −0'),
+      edit('b', 'tests/cursor-composer-telemetry.test.ts', '+29 −9'),
+      edit('c', 'tests/cursor-composer-telemetry.test.ts', '+30 −13')
+    ] })
+  ]
+  const turnTwoMessage = entry({ id: 'u1', role: 'user', source: 'desktop', timestamp: 10, deliveredAt: 11, text: '第二轮', changesBaseline: { composerId, additions: 105, deletions: 8 } })
+  const turnTwoLive: LiveProcessState = {
+    turn: 'live', startedAt: 12, updatedAt: 13, generating: true,
+    blocks: [
+      edit('d', 'src/renderer/src/TodoIndicator.tsx', '+40 −36'),
+      edit('e', 'src/renderer/src/styles.css', '+10 −8'),
+      edit('f', 'src/renderer/src/styles.css', '+1 −1')
+    ]
+  }
+
+  it('本轮：现在的累计 − 本轮起点刻度；更早回合有过改动也照样同源（这正是名册 +105 −8 对栏 ≈+145 −22 的倒挂根因）', () => {
+    const view = buildTurnFilesView({
+      entries: [...turnOne, turnTwoMessage], liveProcess: turnTwoLive, working: true,
+      sessionChanges: { additions: 105 + 22, deletions: 8 + 15, files: 9 }, sessionComposerId: composerId
+    })
+    expect(view.scope).toBe('turn')
+    expect(view.totalsSource).toBe('composer')
+    expect(view.estimated).toBe(false)
+    expect(view.additions).toBe(22)
+    expect(view.deletions).toBe(15)
+    // 逐文件仍是过程估算（行内淡显、悬停说明），相加可以大于合计。
+    expect(view.files.map((file) => [file.path, file.additions, file.deletions, file.source])).toEqual([
+      ['src/renderer/src/TodoIndicator.tsx', 40, 36, 'process'],
+      ['src/renderer/src/styles.css', 11, 9, 'process']
+    ])
+    expect(turnTotalsTitle(view)).toContain('本轮开始到现在')
+  })
+
+  it('保住上一轮：本轮起点刻度 − 上一轮起点刻度；上一轮是会话第一段改动时起点按零（截图场景：栏与名册同为 +105 −8）', () => {
+    const twoStamps = buildTurnFilesView({
+      entries: [...turnOne, turnTwoMessage], working: true,
+      sessionChanges: { additions: 105, deletions: 8 }, sessionComposerId: composerId
+    })
+    expect(twoStamps.scope).toBe('previous')
+    expect(twoStamps.totalsSource).toBe('composer')
+    expect(twoStamps.additions).toBe(105)
+    expect(twoStamps.deletions).toBe(8)
+    expect(turnTotalsTitle(twoStamps)).toContain('上一轮开始到本轮开始之间')
+    // 第一条消息没有刻度（旧数据 / 投递时桌面端不在），但它之前没有任何改动：起点按零，同样能差分。
+    const firstUnstamped: ConversationEntry[] = [{ ...turnOne[0]!, changesBaseline: undefined }, turnOne[1]!, turnTwoMessage]
+    const held = buildTurnFilesView({ entries: firstUnstamped, working: true, sessionChanges: { additions: 105, deletions: 8 }, sessionComposerId: composerId })
+    expect(held.totalsSource).toBe('composer')
+    expect(held.additions).toBe(105)
+    // 再往前还有改动、而上一轮又没刻度：区间起点不可知，退回估算。
+    const older: ConversationEntry[] = [
+      entry({ id: 'z', role: 'user', source: 'desktop', timestamp: 0, deliveredAt: 0, text: '更早' }),
+      entry({ id: 'rz', role: 'assistant', timestamp: 0, replyToEntryId: 'z', processBlocks: [edit('z1', 'src/z.ts', '+1 −1')] }),
+      ...firstUnstamped
+    ]
+    expect(buildTurnFilesView({ entries: older, working: true, sessionChanges: { additions: 105, deletions: 8 }, sessionComposerId: composerId }).totalsSource).toBe('sum')
+  })
+
+  it('刻度属于别的 Composer（席位重建）：本轮从零计数；上一轮跨了两个计数器则差分不成立，退回估算', () => {
+    const rebuilt = buildTurnFilesView({
+      entries: [...turnOne, turnTwoMessage], liveProcess: turnTwoLive, working: true,
+      sessionChanges: { additions: 30, deletions: 4 }, sessionComposerId: 'composer-c2'
+    })
+    expect(rebuilt.totalsSource).toBe('composer')
+    expect(rebuilt.additions).toBe(30)
+    expect(rebuilt.deletions).toBe(4)
+    const crossComposer: ConversationEntry[] = [
+      ...turnOne,
+      { ...turnTwoMessage, changesBaseline: { composerId: 'composer-c2', additions: 3, deletions: 0 } }
+    ]
+    const held = buildTurnFilesView({ entries: crossComposer, working: true, sessionChanges: { additions: 3, deletions: 0 }, sessionComposerId: 'composer-c2' })
+    expect(held.scope).toBe('previous')
+    expect(held.totalsSource).toBe('sum')
+  })
+
+  it('差分为全零（Cursor 尚未写盘）时先用估算顶住；净值回落的一侧按 0 计而不是负数', () => {
+    const notFlushed = buildTurnFilesView({
+      entries: [...turnOne, turnTwoMessage], liveProcess: turnTwoLive, working: true,
+      sessionChanges: { additions: 105, deletions: 8 }, sessionComposerId: composerId
+    })
+    expect(notFlushed.totalsSource).toBe('sum')
+    expect(notFlushed.estimated).toBe(true)
+    expect(notFlushed.additions).toBe(51)
+    // 本轮删掉了上一轮加的行：累计新增回落到 100，删除涨到 20 → 本轮 +0 −12。
+    const fell = buildTurnFilesView({
+      entries: [...turnOne, turnTwoMessage], liveProcess: turnTwoLive, working: true,
+      sessionChanges: { additions: 100, deletions: 20 }, sessionComposerId: composerId
+    })
+    expect(fell.totalsSource).toBe('composer')
+    expect(fell.additions).toBe(0)
+    expect(fell.deletions).toBe(12)
   })
 })

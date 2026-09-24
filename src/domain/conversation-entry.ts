@@ -242,6 +242,19 @@ export interface MessageAttachment {
   previewUrl?: string
 }
 
+/**
+ * 用户消息被取走那一刻，Cursor 对该席位 Composer 累计净增删（`totalLinesAdded / Removed`，
+ * 名册行显示的同一个数）的快照。它是回合的「起点刻度」：本轮的精确增删 = 现在的累计 − 这枚快照，
+ * 上一轮的 = 下一条消息的快照 − 这一条的。composerId 标明刻度属于哪个 Composer——席位重建后
+ * 计数从零重来，旧刻度对新 Composer 无效。
+ */
+export interface ConversationChangesBaseline {
+  composerId: string
+  additions: number
+  deletions: number
+  files?: number
+}
+
 export interface ConversationEntry {
   id: string
   channelId: string
@@ -252,6 +265,8 @@ export interface ConversationEntry {
   source: 'desktop' | 'cursor' | 'recovery'
   /** 出站消息被 check_messages 实际取走的时间；缺失表示仍在队列中。 */
   deliveredAt?: number
+  /** 取走那一刻的 Cursor 累计净增删刻度（主进程观察到投递时盖上，只盖一次；缺失 = 投递时桌面端不在或 Composer 未绑定）。 */
+  changesBaseline?: ConversationChangesBaseline
   /** 排队中的用户消息带「等待新会话」保持位：当前会话取不到，留给该席位重建后的新会话。 */
   heldForNextSession?: boolean
   /** 助手回复对应的用户时间线条目（outbox:<id>）。 */

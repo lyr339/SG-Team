@@ -20,6 +20,7 @@ import type {
 import {
   conversationEntryProcessBlocks,
   conversationTextIdentity,
+  type ConversationChangesBaseline,
   type ConversationEntry,
   type ProcessBlock,
   type ProcessQuestion,
@@ -484,6 +485,8 @@ export class DesktopSessionService implements DesktopSessionBridge {
       if (runCompleted) this.embeddedRelay?.completeScope(snapshot.activeRun?.updatedAt ?? Date.now())
       this.emit()
     })
+    // 用户消息被取走那一拍，中继向这里要一枚 Cursor 累计净增删读数盖成回合起点刻度（见 ChangesBaselineSource）。
+    this.embeddedRelay?.setChangesBaselineSource((channelId) => this.changesBaselineFor(channelId))
   }
 
   getSnapshot(): DesktopSnapshot {
@@ -2063,7 +2066,26 @@ export class DesktopSessionService implements DesktopSessionBridge {
     this.pendingRuntimeSignals.clear()
     this.unsubscribeBridge()
     this.unsubscribeTeam()
+    this.embeddedRelay?.setChangesBaselineSource(undefined)
     this.listeners.clear()
+  }
+
+  /**
+   * 回合起点刻度的读数（中继在观察到用户消息被取走那一拍来要）：该通道当前绑定 Composer 的
+   * Cursor 累计净增删——与名册行 `+N −M` 同一份遥测。席位未绑定 Composer、或遥测还没读到该
+   * Composer 时给 undefined：中继不盖刻度，本轮文件栏对这一轮退回估算，不拿猜的数当刻度。
+   */
+  private changesBaselineFor(channelId: string): ConversationChangesBaseline | undefined {
+    const composerId = bindingByChannel(this.team.getSnapshot()).get(channelId)?.composerId
+    if (!composerId) return undefined
+    const changes = this.telemetry.composers.find((composer) => composer.composerId === composerId)?.changes
+    if (!changes) return undefined
+    return {
+      composerId,
+      additions: changes.additions,
+      deletions: changes.deletions,
+      ...(changes.files === undefined ? {} : { files: changes.files })
+    }
   }
 
   /**

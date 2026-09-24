@@ -1051,6 +1051,70 @@ describe('ChannelMessageRelay', () => {
     }
   })
 
+  it('stamps the Cursor line-count baseline on the message the moment its delivery is observed, once, and rehydrates it after a restart', () => {
+    const { repository, relay } = fixture()
+    try {
+      repository.markChannelEmbedded('1', 'workspace-a', '/workspace/a')
+      relay.resetScope('run-a', 1_000)
+      // 读数来源：席位绑定的 Composer 此刻的累计净增删（名册行同源）；每次调用返回的读数都不同，
+      // 用来证明刻度只在观察到投递的那一拍盖一次、之后不随读数漂移。
+      let reading = { composerId: 'composer-a', additions: 105, deletions: 8, files: 7 }
+      const source = vi.fn(() => reading)
+      relay.setChangesBaselineSource(source)
+      relay.sendMessage({ channelId: '1', text: '第二轮' })
+      const [queued] = repository.listPendingOutbound('1')
+      // 仍在排队：不问来源、不盖刻度。
+      expect(relay['refreshOutboundDeliveries']()).toBe(false)
+      expect(source).not.toHaveBeenCalled()
+      expect(relay.applyTo(baseSnapshot()).conversations['1']?.[0]?.changesBaseline).toBeUndefined()
+
+      repository.markOutboundDelivered([queued!.id], 5_000)
+      expect(relay['refreshOutboundDeliveries']()).toBe(true)
+      expect(source).toHaveBeenCalledWith('1')
+      const delivered = relay.applyTo(baseSnapshot()).conversations['1']?.[0]
+      expect(delivered).toMatchObject({ deliveredAt: 5_000, changesBaseline: { composerId: 'composer-a', additions: 105, deletions: 8, files: 7 } })
+      // 读数继续涨（本轮开始编辑）：刻度不动。
+      reading = { ...reading, additions: 160, deletions: 20 }
+      relay['refreshOutboundDeliveries']()
+      expect(relay.applyTo(baseSnapshot()).conversations['1']?.[0]?.changesBaseline).toMatchObject({ additions: 105, deletions: 8 })
+      expect(repository.stampOutboundChangesBaseline(queued!.id, reading)).toBe(false)
+
+      // 重启：刻度随出站行水合回来。
+      const again = new ChannelMessageRelay(repository, () => 20_000)
+      again.start()
+      try {
+        expect(again.applyTo(baseSnapshot()).conversations['1']?.[0]?.changesBaseline).toEqual({ composerId: 'composer-a', additions: 105, deletions: 8, files: 7 })
+      } finally {
+        again.stop()
+      }
+    } finally {
+      repository.close()
+    }
+  })
+
+  it('leaves the baseline off when no source is wired or the source has no reading (unbound seat / telemetry not ready)', () => {
+    const { repository, relay } = fixture()
+    try {
+      repository.markChannelEmbedded('1', 'workspace-a', '/workspace/a')
+      relay.resetScope('run-a', 1_000)
+      relay.sendMessage({ channelId: '1', text: '没有来源' })
+      const [first] = repository.listPendingOutbound('1')
+      repository.markOutboundDelivered([first!.id], 5_000)
+      expect(relay['refreshOutboundDeliveries']()).toBe(true)
+      relay.setChangesBaselineSource(() => undefined)
+      relay.sendMessage({ channelId: '1', text: '来源没读数' })
+      const [second] = repository.listPendingOutbound('1')
+      repository.markOutboundDelivered([second!.id], 6_000)
+      expect(relay['refreshOutboundDeliveries']()).toBe(true)
+      const entries = relay.applyTo(baseSnapshot()).conversations['1'] ?? []
+      expect(entries.map((entry) => [entry.deliveredAt, entry.changesBaseline])).toEqual([[5_000, undefined], [6_000, undefined]])
+      // 没盖过的行以后也不补盖：刻度只能是投递那一刻的读数。
+      expect(repository.listOutboundSince(0).every((message) => message.changesBaseline === undefined)).toBe(true)
+    } finally {
+      repository.close()
+    }
+  })
+
   it('dedupes same-name attachments so both payloads survive on disk', () => {
     const { repository, relay } = fixture()
     try {

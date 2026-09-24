@@ -18,6 +18,8 @@ export interface ChannelOutboundMessage {
   attachments?: import('./conversation-entry').MessageAttachment[]
   createdAt: number
   deliveredAt?: number
+  /** 投递被主进程观察到那一刻的 Cursor 累计净增删刻度（见 ConversationChangesBaseline）；只盖一次。 */
+  changesBaseline?: import('./conversation-entry').ConversationChangesBaseline
   /** 内部投递消息只用于 Agent 调度/对账，不进入用户可见会话时间线。 */
   silent?: boolean
   /**
