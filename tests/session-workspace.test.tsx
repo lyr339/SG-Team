@@ -136,7 +136,8 @@ describe('SessionWorkspace', () => {
     expect(html).toContain('data-step-id="block:thought-long"')
     expect(html).not.toContain('长任务完整过程')
     expect(html).toContain('长任务最终回答')
-    expect(html.match(/chat-row chat-row--agent live-process-row[" ]/g)).toHaveLength(1)
+    expect(html).toContain('>Worked</span>')
+    expect(html.match(/chat-row chat-row--agent live-process-row[" ]/g)).toBe(null)
   })
   it('queues offline solo seats without framing them as team collaboration', () => {
     const solo = renderWorkspace({
@@ -428,6 +429,7 @@ describe('SessionWorkspace', () => {
     })
     expect(html).toContain('chat-row--continuation')
     expect(html).toContain('回复后继续工作中')
+    expect(html).toContain('>Working')
     // 顺序：回复过程卡（transcript.jsonl）→ 回复正文 → 续作行（follow 块）
     expect(html.indexOf('transcript.jsonl')).toBeLessThan(html.indexOf('已接手 CH-1 的上下文。'))
     expect(html.indexOf('已接手 CH-1 的上下文。')).toBeLessThan(html.indexOf('chat-row--continuation'))
@@ -455,8 +457,35 @@ describe('SessionWorkspace', () => {
     expect(html).toContain('chat-row--continuation')
     expect(html).toContain('回复后继续工作')
     expect(html).not.toContain('回复后继续工作中')
+    const continuation = html.slice(html.indexOf('chat-row--continuation'))
+    expect(continuation).toContain('>Worked')
+    expect(continuation).toContain('cursor-native-process__flow" hidden')
+    expect(continuation).not.toContain('live-process-row')
     expect(html).toContain('src/a.ts')
     expect(html.indexOf('已接手。')).toBeLessThan(html.indexOf('src/a.ts'))
+  })
+
+  it('stops an unsealed process when the seat is offline and all native blocks have settled', () => {
+    const html = renderWorkspace({
+      session: { online: false, status: 'offline', waiting: false },
+      entries: [entry({ id: 'u1', role: 'user', text: '开始', source: 'desktop', deliveredAt: 1_050 })],
+      liveProcess: { turn: 'stale-turn', startedAt: 1_100, updatedAt: 2_000, generating: false,
+        blocks: [{ kind: 'thinking', id: 'stale-thought', text: '已经处理', status: 'done', startedAt: 1_100, completedAt: 2_000 }] }
+    })
+    expect(html).toContain('Worked for 1s')
+    expect(html).toContain('cursor-native-process__flow" hidden')
+    expect(html.match(/chat-row chat-row--agent live-process-row[" ]/g)).toBe(null)
+  })
+
+  it('does not let a stale running block restart the clock after the seat returned to waiting', () => {
+    const html = renderWorkspace({
+      session: { online: true, status: 'waiting', waiting: true },
+      entries: [entry({ id: 'u1', role: 'user', text: '开始', source: 'desktop', deliveredAt: 1_050 })],
+      liveProcess: { turn: 'stale-turn', startedAt: 1_100, updatedAt: 2_000, generating: false,
+        blocks: [{ kind: 'thinking', id: 'stale-thought', text: '旧帧', status: 'running', startedAt: 1_100 }] }
+    })
+    expect(html).toContain('>Worked for 1s</span>')
+    expect(html).toContain('cursor-native-process__flow" hidden')
   })
 
   it('没有续作时不渲染续作行（回复落库后 Agent 回到待命）', () => {

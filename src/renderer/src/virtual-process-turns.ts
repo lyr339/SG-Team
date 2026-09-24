@@ -6,6 +6,8 @@ import type { LiveAgentResponseState, LiveProcessState } from '../../shared/desk
 export interface VirtualProcessContinuation {
   process?: LiveProcessState
   response?: LiveAgentResponseState
+  /** 历史回放与当前直播续作的边界；只有当前来源才能延续 running 状态。 */
+  hasLiveSource?: boolean
 }
 
 export interface VirtualProcessTurn {

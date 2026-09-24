@@ -444,6 +444,24 @@ if (previewParameters.get('continuation') === '1') {
     ? { ...session, status: 'running', connectionPhase: 'processing', waiting: true, online: true, deliveryMode: 'queued' }
     : session)
 }
+// 已结束续作的重启回放：历史块有确切结束时刻，当前席位待命，标题必须静止。
+if (previewParameters.get('continuation') === 'archived') {
+  const replyAt = previewNow - 2 * 60 * 60_000
+  const startedAt = previewNow - 90 * 60_000
+  state.desktop.conversations = { ...state.desktop.conversations, '2': [
+    { id: 'outbox:archived-cont', channelId: '2', role: 'user', source: 'desktop', status: 'complete',
+      timestamp: replyAt - 60_000, deliveredAt: replyAt - 59_000, text: '继续完成上一轮任务。' },
+    { id: 'reply:archived-cont', channelId: '2', role: 'assistant', source: 'cursor', status: 'complete',
+      timestamp: replyAt, replyToEntryId: 'outbox:archived-cont', text: '已接手，后续工作已完成。',
+      continuationBlocks: [{ kind: 'tool', id: 'archived-read', toolName: 'Read', toolKind: 'read',
+        summary: 'src/renderer/src/timeline-view.ts', status: 'done', startedAt, completedAt: startedAt + 60_000 }] }
+  ] }
+  state.desktop.liveProcess = undefined
+  state.desktop.liveAgentResponses = undefined
+  state.desktop.sessions = state.desktop.sessions.map((session) => session.channelId === '2'
+    ? { ...session, status: 'waiting', waiting: true, connectionPhase: 'waiting', online: true }
+    : session)
+}
 // 待投递托盘走查：?queued=1 —— Agent 正在处理上一条消息（过程流直播中），用户又发了两条：
 // 它们不进时间线，停在输入区上方的托盘里（一条带「等待新会话」保持位；另有 1 条内部静默消息只计数）。
 if (previewParameters.get('queued') === '1') {

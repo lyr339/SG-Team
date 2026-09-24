@@ -112,23 +112,31 @@ function continuationOf(
   reply: ConversationEntry,
   live: VirtualProcessContinuation | undefined
 ): VirtualProcessContinuation | undefined {
-  const persisted = reply.continuationBlocks ?? []
+  // 旧版库可能残留 running 块；它已是持久化历史，展示层收口而不改原始记录。
+  const persisted = (reply.continuationBlocks ?? []).map((block) => (
+    block.status === 'running' ? { ...block, status: 'done' as const } : block
+  ))
   const liveProcess = live?.process
   if (!persisted.length && !liveProcess && !live?.response) return undefined
   const blocks = liveProcess ? [...persisted, ...liveProcess.blocks] : persisted
+  // 只有每一步都有结束时间才报整段时长；旧记录缺尾步时间时不把半截时长冒充总耗时。
+  const completedAt = persisted.map((block) => block.completedAt)
+  const settledAt = completedAt.length && completedAt.every((at): at is number => at !== undefined && Number.isFinite(at))
+    ? Math.max(...completedAt) : undefined
   const process: LiveProcessState | undefined = blocks.length
     ? {
         turn: liveProcess?.turn ?? `${reply.turn ?? reply.id}:continuation`,
         blocks,
         startedAt: blocks[0]?.startedAt ?? liveProcess?.startedAt ?? reply.timestamp,
-        updatedAt: liveProcess?.updatedAt ?? reply.timestamp,
+        updatedAt: Math.max(reply.timestamp, liveProcess?.updatedAt ?? 0, settledAt ?? 0),
         generating: liveProcess?.generating === true,
         ...(liveProcess?.truncatedItemCount !== undefined ? { truncatedItemCount: liveProcess.truncatedItemCount } : {})
       }
     : undefined
   return {
     ...(process ? { process } : {}),
-    ...(live?.response ? { response: live.response } : {})
+    ...(live?.response ? { response: live.response } : {}),
+    hasLiveSource: Boolean(liveProcess || live?.response)
   }
 }
 

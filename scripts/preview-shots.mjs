@@ -867,6 +867,17 @@ const scenes = [
       })()` }
     ]
   },
+  {
+    name: 'session-continuation-archived-dark', width: 1440, height: 900, colorScheme: 'dark', query: 'continuation=archived',
+    storage: railStorage({ colorMode: 'dark' }), clip: '.chat-row--continuation',
+    actions: [{ wait: 1_500 }, { label: '重启回放的历史续作已收束且时长冻结', probe: `(() => {
+      const row = document.querySelector('.chat-row--continuation')
+      const heading = row?.querySelector('.cursor-native-process__summary')
+      if (!heading || heading.textContent !== 'Worked for 1m 0s') throw new Error('历史续作仍在计时: ' + heading?.textContent)
+      if (!row.querySelector('.cursor-native-process__flow')?.hidden || row.classList.contains('live-process-row')) throw new Error('历史续作仍呈现为直播态')
+      return { heading: heading.textContent, folded: true }
+    })()` }]
+  },
   // 步骤分组（Cursor detailed 同款）：折叠的「Explored 3 files, 1 search」/「Ran 2 browser actions」组头、
   // 独立 shell 卡、展开后的组内轻行；深浅色各一张，另有一张展开首组。
   ...['light', 'dark'].map((colorMode) => ({

@@ -158,4 +158,77 @@ describe('Agent 回合行身份贯穿 responding → sealed（阶段 F/G，§8.5
     expect(agentRow()?.querySelector('.clamped-message')?.textContent).toBe(finalText)
     expect(container.querySelector('.live-agent-response')).toBeNull()
   })
+
+  it('freezes a persisted continuation after restart instead of counting from its old start time', () => {
+    const now = Date.parse('2026-09-24T20:00:00+08:00')
+    vi.setSystemTime(now)
+    render(root, {
+      entries: [user, {
+        id: 'reply:r1', channelId: '1', role: 'assistant', source: 'cursor', text: '已接手',
+        timestamp: now - 2 * 60 * 60_000, status: 'complete', replyToEntryId: user.id,
+        continuationBlocks: [{ kind: 'tool', id: 'follow-read', toolName: 'Read', toolKind: 'read', summary: 'notes.md',
+          status: 'done', startedAt: now - 60 * 60_000, completedAt: now - 30 * 60_000 }]
+      }],
+      session: { status: 'waiting', waiting: true, connectionPhase: 'waiting' }
+    })
+    const row = container.querySelector<HTMLElement>('.chat-row--continuation')!
+    const heading = row.querySelector<HTMLElement>('.cursor-native-process__summary')!
+    expect(row.className).not.toContain('live-process-row')
+    expect(heading.textContent).toBe('Worked for 30m 0s')
+    expect(row.querySelector<HTMLElement>('.cursor-native-process__flow')?.hidden).toBe(true)
+    act(() => { vi.advanceTimersByTime(2 * 60 * 60_000) })
+    expect(heading.textContent).toBe('Worked for 30m 0s')
+  })
+
+  it('does not revive a legacy running continuation when the seat is busy with a different turn', () => {
+    const now = Date.parse('2026-09-24T20:00:00+08:00')
+    vi.setSystemTime(now)
+    render(root, {
+      entries: [user, {
+        id: 'reply:r1', channelId: '1', role: 'assistant', source: 'cursor', text: '已接手',
+        timestamp: now - 2 * 60 * 60_000, status: 'complete', replyToEntryId: user.id,
+        continuationBlocks: [{ kind: 'tool', id: 'legacy-read', toolName: 'Read', toolKind: 'read', summary: 'notes.md',
+          status: 'running', startedAt: now - 60 * 60_000 }]
+      }],
+      session: { online: true, status: 'running', waiting: false }
+    })
+    const row = container.querySelector<HTMLElement>('.chat-row--continuation')!
+    expect(row.querySelector('.cursor-native-process__summary')?.textContent).toBe('Worked')
+    expect(row.querySelector('.cursor-native-process')?.className).toContain('is-done')
+    expect(row.querySelector<HTMLElement>('.cursor-native-process__flow')?.hidden).toBe(true)
+    act(() => { vi.advanceTimersByTime(2 * 60 * 60_000) })
+    expect(row.querySelector('.cursor-native-process__summary')?.textContent).toBe('Worked')
+  })
+
+  it('keeps the continuation row when live work settles into persisted blocks', () => {
+    const now = Date.parse('2026-09-24T20:00:00+08:00')
+    vi.setSystemTime(now)
+    const reply: ConversationEntry = {
+      id: 'reply:r1', channelId: '1', role: 'assistant', source: 'cursor', text: '已接手',
+      timestamp: now - 2 * 60_000, status: 'complete', replyToEntryId: user.id,
+      turn: 'cursor:native:virtual:outbox:u1'
+    }
+    const startedAt = now - 60_000
+    render(root, {
+      entries: [user, reply],
+      liveProcess: { turn: 'cursor:native', startedAt, updatedAt: now, generating: true,
+        blocks: [{ kind: 'tool', id: 'follow-read', toolName: 'Read', toolKind: 'read', summary: 'notes.md', status: 'running', startedAt }] }
+    })
+    const liveRow = container.querySelector<HTMLElement>('.chat-row--continuation')!
+    const flow = liveRow.querySelector<HTMLElement>('.cursor-native-process__flow')!
+    expect(liveRow.querySelector('.cursor-native-process__summary')?.textContent).toContain('Working for')
+    expect(flow.hidden).toBe(false)
+
+    render(root, {
+      entries: [user, { ...reply, continuationBlocks: [
+        { kind: 'tool', id: 'follow-read', toolName: 'Read', toolKind: 'read', summary: 'notes.md', status: 'done', startedAt, completedAt: now }
+      ] }],
+      session: { status: 'waiting', waiting: true, connectionPhase: 'waiting' }
+    })
+    const settledRow = container.querySelector<HTMLElement>('.chat-row--continuation')!
+    expect(settledRow).toBe(liveRow)
+    expect(settledRow.querySelector('.cursor-native-process__flow')).toBe(flow)
+    expect(flow.hidden).toBe(true)
+    expect(settledRow.querySelector('.cursor-native-process__summary')?.textContent).toBe('Worked for 1m 0s')
+  })
 })

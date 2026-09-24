@@ -466,21 +466,26 @@ export function SessionWorkspace({
      * 续作行：回复封口之后 Agent 继续工作的过程，紧贴在该回复之下（同一回合 DOM 身份）。
      * anchorReplyId 用于判定默认展开（只有最新一条回复的续作默认展开，与回复过程卡一致）。
      */
-    continuation?: { anchorReplyId: string }
+    continuation?: { anchorReplyId: string; hasLiveSource: boolean }
   }): React.JSX.Element => {
     const { turnKey, process, response, reply, grouped, detached, idle, continuation } = input
-    const responding = reply === undefined
+    const hasLiveWork = process?.generating === true
+      || response?.status === 'streaming'
+      || Boolean(session.online && !session.waiting && session.status === 'running'
+        && continuation?.hasLiveSource !== false
+        && process?.blocks.some((block) => block.status === 'running'))
+    // 续作即使没有自己的 reply，也可能只是历史块；主过程没有回复时，则以席位
+    // 已离线/待命且无运行证据为结束边界。不能把「reply 缺失」等同于还在工作。
+    const settledWithoutReply = !reply && !hasLiveWork
+      && (Boolean(continuation) || !session.online || session.waiting || session.status !== 'running')
+    const responding = reply === undefined && !settledWithoutReply
     // 落库回复优先用持久化过程；封口帧尚未到达时用仍锚定在本回合的实时过程兜底。
     const replyBlocks = reply ? replyProcessBlocks(reply) : undefined
     const blocks = replyBlocks?.length ? replyBlocks : process?.blocks
     const hasProcess = Boolean(blocks?.length)
     // live 信号（RC-9）：服务端 generating 为权威——Cursor 常把生成中的 Thinking
     // 块标记为 done，仅靠「某块 running」会把直播过程误判为历史而跳过打字机。
-    const liveActive = responding && (
-      process?.generating === true
-      || response?.status === 'streaming'
-      || Boolean(process?.blocks.some((block) => block.status === 'running'))
-    )
+    const liveActive = responding && hasLiveWork
     const suggestions = reply?.status === 'complete' ? suggestedActionsFromText(reply.text) : []
     const defaultOpen = continuation
       ? liveActive || continuation.anchorReplyId === latestAssistantId
@@ -530,7 +535,7 @@ export function SessionWorkspace({
                 defaultOpen={defaultOpen}
                 compact
                 live={liveActive}
-                turnState={reply?.status === 'complete' || reply?.status === 'failed' ? 'worked' : 'working'}
+                turnState={settledWithoutReply || reply?.status === 'complete' || reply?.status === 'failed' ? 'worked' : 'working'}
                 hydratedBlockIds={hydratedBlockIds.current ?? undefined}
                 questionActions={questionActions}
               />
@@ -672,7 +677,7 @@ export function SessionWorkspace({
             grouped: true,
             detached: false,
             idle: false,
-            continuation: { anchorReplyId: assistantReply.id }
+            continuation: { anchorReplyId: assistantReply.id, hasLiveSource: continuation.hasLiveSource === true }
           }))
         }
         // Agent 活动/回复打断用户消息组（RC-12）：u1 与 u2 之间出现过过程/回复，

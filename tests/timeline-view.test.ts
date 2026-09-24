@@ -178,15 +178,17 @@ describe('projectTurnTimeline（阶段 F：统一回合身份）', () => {
       const reply: ConversationEntry = {
         ...assistant('a1', 1_500, 'u1'),
         turn: 'cursor:native-long-turn:virtual:u1',
-        continuationBlocks: [{ kind: 'tool', id: 'persisted-1', toolName: 'Read', toolKind: 'read', summary: 'a.ts', status: 'done', startedAt: 1_600 }]
+        continuationBlocks: [{ kind: 'tool', id: 'persisted-1', toolName: 'Read', toolKind: 'read', summary: 'a.ts', status: 'done', startedAt: 1_600, completedAt: 1_800 }]
       }
       const historical = projectTurnTimeline({ entries: [user('u1', 1_000, 1_100), reply] })
       expect(historical[0]?.continuation?.process).toMatchObject({
         turn: 'cursor:native-long-turn:virtual:u1:continuation',
         generating: false,
-        startedAt: 1_600
+        startedAt: 1_600,
+        updatedAt: 1_800
       })
       expect(historical[0]?.continuation?.process?.blocks.map((block) => block.id)).toEqual(['persisted-1'])
+      expect(historical[0]?.continuation?.hasLiveSource).toBe(false)
 
       const withLive = projectTurnTimeline({
         entries: [user('u1', 1_000, 1_100), reply],
@@ -195,6 +197,16 @@ describe('projectTurnTimeline（阶段 F：统一回合身份）', () => {
       })
       expect(withLive[0]?.continuation?.process?.blocks.map((block) => block.id)).toEqual(['persisted-1', 'live-2'])
       expect(withLive[0]?.continuation?.process?.generating).toBe(true)
+      expect(withLive[0]?.continuation?.hasLiveSource).toBe(true)
+
+      const incomplete = projectTurnTimeline({ entries: [user('u1', 1_000, 1_100), {
+        ...reply, continuationBlocks: [
+          reply.continuationBlocks![0]!,
+          { kind: 'tool', id: 'old-2', toolName: 'Read', toolKind: 'read', summary: 'b.ts', status: 'done', startedAt: 1_900 }
+        ]
+      }] })
+      // 尾步时间缺失：保留历史过程，但不展示仅涵盖第一步的伪总时长。
+      expect(incomplete[0]?.continuation?.process?.updatedAt).toBe(reply.timestamp)
     })
 
     it('never attaches a continuation to an unsealed turn or to a legacy reply without a precise link', () => {
