@@ -21,9 +21,9 @@ export interface ChannelOutboundMessage {
   /** 内部投递消息只用于 Agent 调度/对账，不进入用户可见会话时间线。 */
   silent?: boolean
   /**
-   * 投递类型：`user` 真实用户消息（开回复守门）；`internal` 团队内部协作通知（team_message 回执后缀）；
-   * `membership` 拾光服务端的成员关系通知（入组 / 出组 / 解散 / lead 变更——无 messageId、不要求
-   * record_reply，独立后缀）。后两者都是 silent。缺省按正文前缀推断（旧行 / 旧构建）。
+   * 投递类型：`user` 真实用户消息（开回复守门）；`membership` 拾光服务端的成员关系通知（入组 / 出组 /
+   * 解散 / lead 变更——无 messageId、不要求 record_reply，独立后缀，silent）；`internal` 只出现在
+   * 阶段 4 之前遗留的团队消息信封行上，check_messages 遇到即退役。缺省按正文前缀推断（旧行 / 旧构建）。
    */
   kind?: ChannelOutboundKind
   /**
@@ -48,11 +48,18 @@ export function isOutboundDeliverableTo(message: Pick<ChannelOutboundMessage, 'h
   return Boolean(session) && session !== message.holdSessionToken
 }
 
+/**
+ * 阶段 4 之前桌面调度器写进 outbox 的团队消息信封标题。现在团队消息随 check_messages 内联投递
+ *（`TEAM_MESSAGES_DELIVERY_PREFIX`），这个前缀只用来识别库里遗留的旧信封行。
+ */
 export const INTERNAL_COLLABORATION_NOTIFICATION_PREFIX = '【拾光内部协作通知】'
 
 export function isInternalCollaborationNotificationText(text: string): boolean {
   return text.trimStart().startsWith(INTERNAL_COLLABORATION_NOTIFICATION_PREFIX)
 }
+
+/** 团队消息批次投递正文的标题（阶段 4 · 4C）。 */
+export const TEAM_MESSAGES_DELIVERY_PREFIX = '【拾光团队消息】'
 
 /**
  * 成员关系通知标题（会话池 · 协作组）。阶段 0 实机发现：内部协作后缀写死「按 messageId 调用

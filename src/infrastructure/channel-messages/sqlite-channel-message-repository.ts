@@ -300,6 +300,24 @@ export class SqliteChannelMessageRepository {
     return numberOf(result.changes) > 0
   }
 
+  /** 退役仍待投递的行：不再计数、不再投递，行保留审计（阶段 4 之前遗留的团队消息信封）。 */
+  retireOutbound(ids: string[], now = Date.now()): number {
+    if (!ids.length) return 0
+    const statement = this.database.prepare(
+      `UPDATE channel_outbox SET retired_at = ? WHERE id = ? AND ${PENDING_OUTBOUND_WHERE}`
+    )
+    let retired = 0
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      for (const id of ids) retired += numberOf(statement.run(now, id).changes)
+      this.database.exec('COMMIT')
+    } catch (error) {
+      if (this.database.isTransaction) this.database.exec('ROLLBACK')
+      throw error
+    }
+    return retired
+  }
+
   /** 解除「等待新会话」保持位：消息回到普通排队，当前会话下一次轮询即可取走。 */
   releaseOutboundHold(id: string): boolean {
     const result = this.database.prepare(

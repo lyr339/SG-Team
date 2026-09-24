@@ -938,7 +938,7 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
   resolveChannelSessionOwner(channelId: string): ChannelSessionOwnership | undefined {
     const normalizedChannelId = String(channelId).trim()
     const row = this.database.prepare(`
-      SELECT tr.id AS run_id, tr.status AS run_status, b.slot_id, b.session_token, s.is_solo
+      SELECT tr.id AS run_id, tr.status AS run_status, b.slot_id, b.session_token, s.is_solo, s.group_id
       FROM team_control_meta meta
       JOIN team_runs tr ON tr.workspace_id = meta.active_workspace_id
       LEFT JOIN runtime_bindings b ON b.run_id = tr.id AND b.channel_id = ?
@@ -949,13 +949,16 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
     `).get(normalizedChannelId) as SqliteRow | undefined
     const runId = row ? optionalString(row.run_id) : undefined
     if (!row || !runId) return undefined
-    const bound = optionalString(row.slot_id) !== undefined
+    const slotId = optionalString(row.slot_id)
+    const bound = slotId !== undefined
     return {
       runId,
       runStatus: String(row.run_status) as TeamRunStatus,
       bound,
       sessionToken: bound ? optionalString(row.session_token) : undefined,
-      solo: bound && numberOf(row.is_solo) === 1
+      solo: bound && numberOf(row.is_solo) === 1,
+      ...(slotId ? { slotId } : {}),
+      ...(bound && optionalString(row.group_id) ? { groupId: optionalString(row.group_id) } : {})
     }
   }
 

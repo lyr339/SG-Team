@@ -9,6 +9,7 @@ import { SqliteTeamMemoryRepository } from '../infrastructure/team-memory/sqlite
 import { TeamMemoryAgentService } from '../application/team-memory-agent-service'
 import { SqliteChannelMessageRepository } from '../infrastructure/channel-messages/sqlite-channel-message-repository'
 import { ChannelMessageService } from '../application/channel-message-service'
+import { createChannelTeamInbox } from '../application/channel-team-inbox'
 import { buildTeamRoleBriefing, effectiveGroupLeadSlotId, groupMembersMayPlan } from '../domain/team-control'
 import { TaskPoolError } from '../domain/task-pool'
 import { isPresenceOnline, resolveKeepaliveTimeoutMs } from '../domain/channel-message'
@@ -136,10 +137,17 @@ async function serveUnified(databasePath: string): Promise<void> {
     })
   }
 
+  // 团队消息随 check_messages 内联投递（阶段 4 · 4C）：MCP 进程直接从 SQLite 取本席位的未读消息，
+  // 不再依赖桌面端把信封写进 outbox——桌面端关着时团队消息照样送达。
+  const teamInbox = createChannelTeamInbox({
+    ownershipFor: (channelId) => teamRepository.resolveChannelSessionOwner(channelId),
+    collaboration: collaborationRepository
+  })
+
   const channelServiceFor = (channelId: string): ChannelMessageService => {
     const cached = channelServices.get(channelId)
     if (cached) return cached
-    const service = new ChannelMessageService(channelRepository)
+    const service = new ChannelMessageService(channelRepository, teamInbox)
     channelServices.set(channelId, service)
     return service
   }

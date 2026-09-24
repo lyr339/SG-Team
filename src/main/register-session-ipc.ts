@@ -63,8 +63,7 @@ function sendInputOf(value: unknown): SendMessageInput {
   return {
     channelId: raw.channelId,
     text: raw.text,
-    attachments: attachmentOf(raw.attachments),
-    ...(raw.silent === true ? { silent: true } : {})
+    attachments: attachmentOf(raw.attachments)
   }
 }
 
@@ -75,7 +74,7 @@ function sendInputOf(value: unknown): SendMessageInput {
  *
  * 推送与拉取的分工：拉取（`getSnapshot`）永远返回完整快照；推送按版本号剔除渲染进程
  * 已持有的时间线与模型目录（`stripKnownSections`），渲染层按版本合并、缺口补拉。
- * 进程内的其他订阅者（调度器、团队服务）仍从 DesktopSessionService 拿完整快照，瘦身只发生在这条 IPC 边界。
+ * 进程内的其他订阅者（团队服务等）仍从 DesktopSessionService 拿完整快照，瘦身只发生在这条 IPC 边界。
  */
 export function registerSessionIpc(
   bridge: DesktopSessionBridge,

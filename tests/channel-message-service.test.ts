@@ -131,39 +131,41 @@ describe('ChannelMessageService', () => {
     }
   })
 
-  it('does not open the reply-sync gate after a silent internal notification', async () => {
+  it('retires pre-phase-4 envelope rows instead of delivering them and never opens the reply-sync gate for them', async () => {
     const { repository, service } = fixture()
     try {
+      // 桌面调度器写入的信封（显式 silent）与旧构建只凭标题识别的信封（NULL kind）一视同仁。
       repository.enqueueOutbound('1', '【拾光内部协作通知】消息 ID：m1', 1_000, undefined, true)
-      const first = await service.checkMessages({ channelId: '1' })
-      expect(first).toMatchObject({ type: 'delivered' })
-      expect(first.type === 'delivered' && first.message.silent).toBe(true)
+      repository.enqueueOutbound('1', '【拾光内部协作通知】消息 ID：m2', 2_000)
+      const result = await service.checkMessages({ channelId: '1', keepaliveTimeoutMs: 1_000, pollIntervalMs: 50 })
+      expect(result).toMatchObject({ type: 'keepalive', round: 1 })
+      expect(repository.countPendingOutbound('1')).toBe(0)
+      expect(repository.listOutboundSince(0).map((message) => [message.kind, message.retiredAt !== undefined, message.deliveredAt]))
+        .toEqual([['internal', true, undefined], ['internal', true, undefined]])
       expect(repository.getPresence('1')?.pendingReplySyncSince).toBeUndefined()
 
-      repository.enqueueOutbound('1', '【拾光内部协作通知】消息 ID：m2', 2_000, undefined, true)
-      const second = await service.checkMessages({ channelId: '1' })
-      expect(second).toMatchObject({ type: 'delivered' })
-      expect(second.type === 'delivered' && second.message.text).toContain('m2')
+      // 信封退役不挡住后面的用户消息。
+      repository.enqueueOutbound('1', '【拾光内部协作通知】消息 ID：m3', 3_000, undefined, true)
+      repository.enqueueOutbound('1', '真实用户消息', 4_000)
+      const next = await service.checkMessages({ channelId: '1' })
+      expect(next).toMatchObject({ type: 'delivered', remainingQueue: 0 })
+      expect(next.type === 'delivered' && next.message.text).toBe('真实用户消息')
     } finally {
       repository.close()
     }
   })
 
-  it('treats legacy internal notification rows as silent and self-heals their stale sync gate', async () => {
+  it('self-heals a stale sync gate that a legacy build opened for a delivered internal envelope', async () => {
     const { repository, service } = fixture()
     try {
-      repository.enqueueOutbound('1', '【拾光内部协作通知】消息 ID：legacy', 1_000)
-      const deliveredLegacy = await service.checkMessages({ channelId: '1' })
-      expect(deliveredLegacy).toMatchObject({ type: 'delivered' })
-      expect(deliveredLegacy.type === 'delivered' && deliveredLegacy.message.silent).toBe(true)
-      expect(repository.getPresence('1')?.pendingReplySyncSince).toBeUndefined()
-
-      // 模拟旧版本已经把这条内部通知错误地变成 reply-sync 守门。
-      repository.touchPresence('1', {
-        pendingReplySyncSince: repository.latestDeliveredOutbound('1')?.deliveredAt ?? Date.now(),
+      // 旧构建把信封当普通消息投递并错误地开了守门。
+      const envelope = repository.enqueueOutbound('1', '【拾光内部协作通知】消息 ID：legacy', 1_000)
+      repository.markOutboundDelivered([envelope.id], 1_500, { channelId: '1', patch: {
+        pendingReplySyncSince: 1_500,
+        pendingOutboundId: envelope.id,
         connectionPhase: 'need_reply_sync',
         waiting: true
-      })
+      } })
       repository.enqueueOutbound('1', '真实用户下一条', 2_000)
       const next = await service.checkMessages({ channelId: '1' })
       expect(next).toMatchObject({ type: 'delivered' })

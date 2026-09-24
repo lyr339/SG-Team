@@ -97,17 +97,9 @@ describe('SqliteTeamCollaborationRepository', () => {
       expect(data.repository.loadRun(data.bundle.run.id).messageOrder).toEqual([first.id])
       expect(teamMessageReceiptStage(first.receipt)).toBe('queued')
 
-      data.repository.markNotificationSending(first.id, 'command-1')
-      let message = data.repository.markNotificationResult(first.id, 'notified', '晴天已确认投递')
-      expect(teamMessageReceiptStage(message.receipt)).toBe('notified')
-      message = data.repository.markNotificationResult(first.id, 'failed', '迟到的失败回执')
-      expect(message.receipt.notificationState).toBe('notified')
-      message = data.repository.markRead(first.id, { type: 'agent', slotId: builder.slotId })
+      let message = data.repository.markRead(first.id, { type: 'agent', slotId: builder.slotId })
       expect(teamMessageReceiptStage(message.receipt)).toBe('read')
       message = data.repository.acknowledge(first.id, { type: 'agent', slotId: builder.slotId })
-      expect(teamMessageReceiptStage(message.receipt)).toBe('acknowledged')
-
-      message = data.repository.markNotificationResult(first.id, 'failed', '迟到的失败回执')
       expect(teamMessageReceiptStage(message.receipt)).toBe('acknowledged')
       expect(data.repository.loadRun(data.bundle.run.id).events.map((event) => event.type)).toContain('message.acknowledged')
     } finally {
@@ -116,30 +108,7 @@ describe('SqliteTeamCollaborationRepository', () => {
     }
   })
 
-  it('recovers an orphaned sending receipt as uncertain without retrying it', () => {
-    const data = fixture()
-    try {
-      const message = data.repository.createMessage({
-        runId: data.bundle.run.id,
-        sender: { type: 'agent', slotId: data.slot('lead').id },
-        recipient: { type: 'agent', slotId: data.slot('builder').id },
-        kind: 'directive',
-        content: '模拟应用在投递中崩溃。',
-        clientMessageId: 'orphaned-sending-0001'
-      })
-      data.repository.markNotificationSending(message.id, 'orphan-command', 'sending', 1_000)
-      expect(data.repository.recoverStaleSending(2_000)).toBe(1)
-      expect(data.repository.loadRun(data.bundle.run.id).messages[message.id]?.receipt)
-        .toMatchObject({ notificationState: 'uncertain' })
-      expect(data.repository.recoverStaleSending(Date.now())).toBe(0)
-      expect(data.repository.listPendingNotifications(data.bundle.run.id)).toEqual([])
-    } finally {
-      data.repository.close()
-      data.team.close()
-    }
-  })
-
-  it('correlates a response to the original message and wakes the original sender', () => {
+  it('correlates a response to the original message and leaves it unread for the original sender', () => {
     const data = fixture()
     try {
       const leadSlot = data.slot('lead')
@@ -166,8 +135,7 @@ describe('SqliteTeamCollaborationRepository', () => {
       const snapshot = data.repository.loadRun(data.bundle.run.id)
       expect(teamMessageReceiptStage(snapshot.messages[directive.id]!.receipt)).toBe('responded')
       expect(snapshot.messages[directive.id]!.receipt.responseMessageId).toBe(response.id)
-      expect(data.repository.listPendingNotifications(data.bundle.run.id).map((message) => message.id))
-        .toContain(response.id)
+      expect(teamMessageReceiptStage(snapshot.messages[response.id]!.receipt)).toBe('queued')
 
       expect(() => data.repository.createMessage({
         runId: data.bundle.run.id,
@@ -196,8 +164,7 @@ describe('SqliteTeamCollaborationRepository', () => {
         content: '当前实现还需要我确认什么？',
         clientMessageId: 'operator-question-01'
       })
-      expect(data.repository.listPendingNotifications(data.bundle.run.id).map((message) => message.id))
-        .toEqual([question.id])
+      expect(teamMessageReceiptStage(question.receipt)).toBe('queued')
       const response = data.repository.createMessage({
         runId: data.bundle.run.id,
         sender: { type: 'agent', slotId: builderSlot.id },
@@ -210,8 +177,6 @@ describe('SqliteTeamCollaborationRepository', () => {
 
       expect(response.receipt.notificationState).toBe('not_required')
       expect(teamMessageReceiptStage(response.receipt)).toBe('notified')
-      expect(data.repository.listPendingNotifications(data.bundle.run.id).map((message) => message.id))
-        .toEqual([])
     } finally {
       data.repository.close()
       data.team.close()

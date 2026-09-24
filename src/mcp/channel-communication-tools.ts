@@ -9,8 +9,8 @@ import {
   buildKeepaliveText,
   buildMembershipNoticeSuffix,
   buildMergedNote,
-  buildSilentDeliverySuffix,
   buildStorageUnavailableMessage,
+  buildTeamMessagesDelivery,
   buildTurnNote
 } from '../domain/channel-delivery-policy'
 import type { MessageAttachment } from '../domain/conversation-entry'
@@ -266,13 +266,11 @@ export function registerChannelCommunicationTools(
       case 'retired':
         return { content: [{ type: 'text' as const, text: buildSessionRetiredText({ channelId, reason: result.reason }) }] }
       case 'delivered': {
-        // 后缀按投递类型分流：成员关系通知没有 messageId，不能套内部协作后缀的 team_message read 指引。
+        // 出站队列只剩用户消息与成员关系通知两种；后者没有 messageId、不开守门，用独立后缀。
         const kind = resolveOutboundKind(result.message.text, result.message.kind, result.message.silent)
         const suffix = kind === 'membership'
           ? buildMembershipNoticeSuffix({ channelId, tick: result.turnCount })
-          : kind === 'internal'
-            ? buildSilentDeliverySuffix({ channelId, tick: result.turnCount })
-            : buildDeliverySuffix({ channelId, tick: result.turnCount })
+          : buildDeliverySuffix({ channelId, tick: result.turnCount })
         const imageBlocks = inlineImageContentBlocks(result.message.attachments)
         const fileText = inlineFileText(result.message.attachments)
         return {
@@ -288,6 +286,13 @@ export function registerChannelCommunicationTools(
           })
         }
       }
+      case 'team':
+        return {
+          content: [{
+            type: 'text' as const,
+            text: buildTeamMessagesDelivery({ channelId, tick: result.turnCount, messages: result.batch.messages })
+          }]
+        }
       case 'keepalive':
         return {
           content: [{

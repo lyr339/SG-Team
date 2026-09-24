@@ -2,7 +2,8 @@
  * 一体化 S3-1 统一通道 MCP 冒烟（真实 stdio + 构建产物）：
  * - unified 角色（SG Team 单条目）：两项通信工具 + 团队工具同服，
  *   投递/守门/同步/再投递全链路，身份按 channelId 实时解析；
- * - 活性钩子：团队工具调用同样刷新通道 presence（S2 红利保留）。
+ * - 活性钩子：团队工具调用同样刷新通道 presence（S2 红利保留）；
+ * - 团队消息随 check_messages 内联送达、投递即已读（阶段 4 · 4C）。
  *
  * 运行：npm run build:mcp 之后 npx tsx scripts/verify-channel-mcp.ts
  */
@@ -13,6 +14,7 @@ import { Client } from '@modelcontextprotocol/client'
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 import { SqliteChannelMessageRepository } from '../src/infrastructure/channel-messages/sqlite-channel-message-repository'
 import { SqliteTaskPoolRepository } from '../src/infrastructure/task-pool/sqlite-task-pool-repository'
+import { SqliteTeamCollaborationRepository } from '../src/infrastructure/team-collaboration/sqlite-team-collaboration-repository'
 import { SqliteTeamControlRepository } from '../src/infrastructure/team-control/sqlite-team-control-repository'
 import { createConfiguredTeamBundle } from '../src/domain/team-control'
 
@@ -159,6 +161,38 @@ const groupedCheckIn = await team.client.callTool({ name: 'team_check_in', argum
 if (groupedCheckIn.isError) throw new Error(`入组后 team_check_in 失败：${textOf(groupedCheckIn)}`)
 const briefing = (groupedCheckIn.structuredContent as { briefing?: string })?.briefing ?? ''
 if (!briefing.includes(`协作组「${groupName}」`)) throw new Error(`入组简报缺少组名：${briefing.slice(0, 200)}`)
+
+// ── 团队消息随 check_messages 内联送达（阶段 4 · 4C）：MCP 进程直接读协作库，投递即已读，不开守门 ──
+const collaboration = new SqliteTeamCollaborationRepository(databasePath)
+const teamMessage = collaboration.createMessage({
+  runId: bundle.run.id,
+  sender: { type: 'operator' },
+  recipient: { type: 'agent', slotId: bundle.slots[0]!.id },
+  kind: 'directive',
+  subject: '冒烟调度',
+  content: '【冒烟】请按组目标开始。',
+  clientMessageId: 'smoke:inline-team-message'
+})
+// 上面「第二条消息」投递后守门仍开着：团队消息排在用户回复同步之后，先按协议补同步。
+const synced = await team.client.callTool({
+  name: 'record_reply',
+  arguments: { channel_id: '1', content: '冒烟回复：第二条已处理。' }
+}, { timeout: 10_000 })
+if (synced.isError) throw new Error(`record_reply 失败：${textOf(synced)}`)
+const inline = await team.client.callTool({ name: 'check_messages', arguments: { channel_id: '1' } }, { timeout: 10_000 })
+if (inline.isError) throw new Error(`团队消息内联投递失败：${textOf(inline)}`)
+const inlineText = textOf(inline)
+if (!inlineText.startsWith('【拾光团队消息】CH-1 · 1 条')) throw new Error(`团队消息标题缺失：${inlineText.slice(0, 120)}`)
+if (!inlineText.includes('【冒烟】请按组目标开始。') || !inlineText.includes(`messageId: ${teamMessage.id}`)) {
+  throw new Error(`团队消息正文缺失：${inlineText.slice(0, 300)}`)
+}
+if (inlineText.includes('【真实用户消息处理完后进入 check_messages 待命】')) throw new Error('团队消息不得套用用户消息协议')
+const receipt = collaboration.loadRun(bundle.run.id).messages[teamMessage.id]?.receipt
+if (receipt?.readAt === undefined || receipt.notificationState !== 'notified') {
+  throw new Error(`投递后回执应为 notified + read：${JSON.stringify(receipt)}`)
+}
+if (repository.getPresence('1')?.pendingReplySyncSince !== undefined) throw new Error('团队消息不得打开回复守门')
+collaboration.close()
 await team.close()
 teamRepository.close()
 repository.close()
@@ -174,5 +208,6 @@ process.stdout.write(JSON.stringify({
   presenceHeartbeatFresh: true,
   soloTeamToolFenced: true,
   teamToolCallRefreshesPresence: true,
-  groupedCheckInBriefed: true
+  groupedCheckInBriefed: true,
+  teamMessageDeliveredInline: true
 }, null, 2) + '\n')

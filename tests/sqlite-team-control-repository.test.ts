@@ -833,9 +833,11 @@ describe('SqliteTeamControlRepository 会话围栏令牌', () => {
       expect(new Set(bindings.map((binding) => binding.sessionToken)).size).toBe(2)
 
       const lead = repository.resolveChannelSessionOwner('1')
+      // 席位随归属一起返回（团队消息按它收件）；这个 legacy 夹具没有协作组，所以没有 groupId。
       expect(lead).toEqual({
         runId: team.run.id, runStatus: 'running', bound: true,
-        sessionToken: bindings.find((binding) => binding.channelId === '1')!.sessionToken, solo: false
+        sessionToken: bindings.find((binding) => binding.channelId === '1')!.sessionToken, solo: false,
+        slotId: bindings.find((binding) => binding.channelId === '1')!.slotId
       })
       expect(repository.resolveChannelSessionOwner('2')).toMatchObject({ bound: true, solo: true })
       expect(repository.resolveChannelSessionOwner(' 2 ')).toEqual(repository.resolveChannelSessionOwner('2'))

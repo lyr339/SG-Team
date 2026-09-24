@@ -2,14 +2,18 @@ import {
   CHANNEL_KEEPALIVE_TIMEOUT_MS,
   CHANNEL_POLL_INTERVAL_MS,
   CHANNEL_REPLY_SYNC_STALE_MS,
-  isInternalCollaborationNotificationText,
   mergeConsecutiveDuplicates,
   type ChannelOutboundMessage
 } from '../domain/channel-message'
 import { buildReplySyncRequiredMessage } from '../domain/channel-delivery-policy'
 import { sanitizeModelGeneratedText } from '../domain/model-output-sanitizer'
 import type { SessionFenceRetiredReason, SessionFenceVerdict } from '../domain/session-fence'
+import type { TeamInboxBatch } from '../domain/team-collaboration'
 import type { SqliteChannelMessageRepository } from '../infrastructure/channel-messages/sqlite-channel-message-repository'
+import type { ChannelTeamInbox } from './channel-team-inbox'
+
+/** 一次投递最多带多少条团队消息；更多的留到下一轮（按时间升序，不会饿死）。 */
+const TEAM_MESSAGES_PER_DELIVERY = 10
 
 export interface ChannelCheckInput {
   channelId: string
@@ -39,6 +43,8 @@ export type ChannelCheckResult =
       turnCount: number
       deliveredCount: number
     }
+  /** 团队消息批次（阶段 4 · 4C）：正文随本次返回交给 Agent，已记为已读；不是用户消息，不开回复守门。 */
+  | { type: 'team'; batch: TeamInboxBatch; turnCount: number }
   | { type: 'keepalive'; round: number; turnCount: number }
   | { type: 'reply_sync_required'; message: string; pendingSince?: number }
   | { type: 'stopped'; reason: string }
@@ -102,12 +108,16 @@ export class ChannelMessageService {
   /** 按通道记录连续以 storage_unavailable 收尾的次数；任何一次成功即清零。 */
   private readonly storageFailureStreak = new Map<string, number>()
 
-  constructor(private readonly repository: SqliteChannelMessageRepository) {}
+  constructor(
+    private readonly repository: SqliteChannelMessageRepository,
+    private readonly teamInbox?: ChannelTeamInbox
+  ) {}
 
   /**
    * check_messages 长轮询：
    * 1. 回复同步守门：上轮已投递未同步则拒绝（宽限超时自动放行）
-   * 2. 轮询出站队列：有消息立即投递（合并同内容连发），空队列超 keepalive 周期返回 keepalive
+   * 2. 每轮先看出站队列（用户消息、成员关系通知），有就立即投递（合并同内容连发）；
+   *    队列空时再看本席位的未读团队消息，有就整批投递；都没有且超 keepalive 周期返回 keepalive
    *
    * 存储层的每一步都可能在拾光桌面端启停的瞬间撞上锁：单次失败不结束本次调用，
    * 按轮询间隔重试到 keepalive 周期末；周期内始终失败才以 storage_unavailable 收尾。
@@ -215,21 +225,36 @@ export class ChannelMessageService {
     return { kind: 'turn', turn }
   }
 
-  /** 一次轮询：刷新心跳、取队首并投递；队列为空返回 undefined。任何一步抛错都由调用方重试。 */
+  /** 一次轮询：刷新心跳，投递队首或团队消息批次；都没有返回 undefined。任何一步抛错都由调用方重试。 */
   private deliverPending(channelId: string, session: string | null, turn: OpenTurn): ChannelCheckResult | undefined {
     this.repository.touchPresence(channelId, { lastSeenAt: Date.now(), waiting: true })
     this.repository.dedupePendingOutbound(channelId)
+    const pending = this.deliverableOutbound(channelId, session)
+    return pending.length ? this.deliverOutbound(channelId, pending, turn) : this.deliverTeamMessages(channelId, turn)
+  }
+
+  /**
+   * 待投递的出站行。阶段 4 之前的团队消息信封（kind = internal，桌面调度器写入）不再投递：
+   * 它指向的消息本身仍是未读，会随团队消息批次送达；信封遇到即退役，不占队列。
+   */
+  private deliverableOutbound(channelId: string, session: string | null): ChannelOutboundMessage[] {
     const pending = this.repository.listPendingOutbound(channelId, { forSession: session })
-    if (!pending.length) return undefined
+    const envelopes = pending.filter((message) => message.kind === 'internal')
+    if (!envelopes.length) return pending
+    this.repository.retireOutbound(envelopes.map((message) => message.id))
+    return pending.filter((message) => message.kind !== 'internal')
+  }
+
+  private deliverOutbound(channelId: string, pending: ChannelOutboundMessage[], turn: OpenTurn): ChannelCheckResult | undefined {
     const { head, mergedCount } = mergeConsecutiveDuplicates(pending)
     if (!head) return undefined
-    const silentDelivery = head.silent === true || isInternalCollaborationNotificationText(head.text)
+    const silentDelivery = head.silent === true
     const deliveredIds = pending.slice(0, mergedCount).map((message) => message.id)
     const remainingQueue = pending.length - mergedCount
     const deliveredAt = Date.now()
     const deliveredCount = turn.deliveredCount + 1
-    // 只有用户可见消息需要 record_reply 守门。内部协作通知走 team_* 回执，
-    // 若也打开守门，会把静默待命错误地逼成可见 record_reply。
+    // 只有用户可见消息需要 record_reply 守门；成员关系通知是 silent，若也打开守门，
+    // 会把静默待命错误地逼成可见 record_reply。
     this.repository.markOutboundDelivered(deliveredIds, deliveredAt, { channelId, patch: {
       waiting: false,
       connectionPhase: 'processing',
@@ -242,12 +267,33 @@ export class ChannelMessageService {
     turn.keepaliveRound = 0
     return {
       type: 'delivered',
-      message: silentDelivery ? { ...head, silent: true } : head,
+      message: head,
       mergedCount,
       remainingQueue,
       turnCount: turn.turnCount,
       deliveredCount: turn.deliveredCount
     }
+  }
+
+  /**
+   * 队列空时投递本席位的团队消息批次（阶段 4 · 4C）。回执写入是唯一必须成功的一步：失败即抛出、
+   * 由外层按轮询间隔重试，消息仍是未读，下一轮原样再取，不会丢；presence 只是相位投影，尽力写入。
+   * 团队消息不是用户消息，不开回复守门。
+   */
+  private deliverTeamMessages(channelId: string, turn: OpenTurn): ChannelCheckResult | undefined {
+    if (!this.teamInbox) return undefined
+    const batch = this.teamInbox.unread(channelId, TEAM_MESSAGES_PER_DELIVERY)
+    if (!batch) return undefined
+    this.teamInbox.markDelivered(batch, Date.now())
+    turn.deliveredCount += 1
+    turn.keepaliveRound = 0
+    this.touchQuietly(channelId, {
+      waiting: false,
+      connectionPhase: 'processing',
+      deliveredCount: turn.deliveredCount,
+      keepaliveRound: 0
+    })
+    return { type: 'team', batch, turnCount: turn.turnCount }
   }
 
   /** 围栏复核只在证据确凿时拒绝：判定本身出错（库锁等）视为放行，与工具层同一原则。 */
@@ -277,7 +323,7 @@ export class ChannelMessageService {
 
   private isSilentGateOrigin(channelId: string): boolean {
     const origin = this.repository.latestDeliveredOutbound(channelId)
-    return Boolean(origin && (origin.silent || isInternalCollaborationNotificationText(origin.text)))
+    return Boolean(origin && (origin.silent || origin.kind !== 'user'))
   }
 
   /** 归档 Agent 完整可见回复；过程流只来自 Cursor 原生事件。 */

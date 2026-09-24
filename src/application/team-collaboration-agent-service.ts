@@ -100,7 +100,7 @@ export class TeamCollaborationAgentService {
       unreadMessages: unread,
       awaitingResponses,
       instructions: unread > 0
-        ? '先调用 team_message({action:\'inbox\'})，再对需要处理的消息调用 team_message({action:\'read\', messageId})。'
+        ? `有 ${unread} 条未读团队消息，会随下一次 check_messages 送达。`
         : '当前没有未读团队消息。'
     }
   }
@@ -110,7 +110,7 @@ export class TeamCollaborationAgentService {
     return agent.isEffectiveLead === true
   }
 
-  listInbox(unreadOnly = true, limit = 30): TeamInboxEntry[] {
+  listInbox(unreadOnly = false, limit = 30): TeamInboxEntry[] {
     const agent = this.currentAgent()
     const self = { type: 'agent' as const, slotId: agent.slotId }
     const snapshot = this.snapshotOf(agent)
@@ -364,7 +364,7 @@ export class TeamCollaborationAgentService {
       kind: 'notice',
       subject: '主控接管上下文',
       content: [
-        '【主控接管上下文】你已成为当前 TeamRun 的唯一有效主控。',
+        '【主控接管上下文】你已成为唯一有效主控。',
         input.evidence.length ? `失联证据：${input.evidence.join('；')}` : '',
         input.recoveredTaskIds.length ? `已迁移/重排任务：${input.recoveredTaskIds.join('、')}` : '原主控没有活动任务需要迁移。',
         '',
@@ -378,7 +378,7 @@ export class TeamCollaborationAgentService {
           ? pending.map((message) => `- ${message.id}｜${message.kind}｜${message.content.slice(0, 500)}`).join('\n')
           : '- 无',
         '',
-        '先调用 team_message({action:\'read\', messageId}) 阅读本消息，再用 team_tasks({view:\'board\'}) 核对任务；需要重新领取的任务按正常 team_task claim 流程处理。'
+        '用 team_tasks({view:\'board\'}) 核对任务；需要重新领取的任务按正常 team_task claim 流程处理。'
       ].filter((line, index, values) => line !== '' || values[index - 1] !== '').join('\n'),
       clientMessageId: generatedClientMessageId('lead-takeover-context', [
         agent.runId,

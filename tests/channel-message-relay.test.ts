@@ -35,7 +35,7 @@ function baseSnapshot(): DesktopSnapshot {
 
 describe('ChannelMessageRelay', () => {
 
-  it('rejects a delayed dispatcher write from the previous TeamRun after scope switch', () => {
+  it('rejects a delayed write from the previous TeamRun after scope switch', () => {
     const { repository, relay, setNow } = fixture(1_000)
     try {
       repository.markChannelEmbedded('1', 'workspace-a', '/workspace/a')
@@ -44,7 +44,7 @@ describe('ChannelMessageRelay', () => {
       relay.resetScope('run-new', 10_000)
 
       expect(() => relay.sendMessage({
-        channelId: '1', text: '旧调度器迟到通知', silent: true, scopeRunId: 'run-old'
+        channelId: '1', text: '上一轮的迟到通知', kind: 'membership', scopeRunId: 'run-old'
       })).toThrowError(/已结束的 TeamRun/)
       expect(repository.countPendingOutbound('1')).toBe(0)
       expect(repository.currentScopeRunId()).toBe('run-new')
@@ -754,27 +754,19 @@ describe('ChannelMessageRelay', () => {
     }
   })
 
-  it('delivers silent messages to the queue without entering the conversation timeline', () => {
+  it('keeps legacy envelope text silent and out of the conversation timeline', () => {
     const { repository, relay } = fixture()
     try {
       repository.markChannelEmbedded('1', 'workspace-a', '/workspace/a')
-      // 系统内部协作通知：即使调用方漏传 silent，也必须静默投递。
-      const accepted = relay.sendMessage({ channelId: '1', text: '【拾光内部协作通知】消息 ID：x' })
+      // 阶段 4 之前的团队消息信封标题：仍按前缀识别为 internal（静默），check_messages 遇到即退役。
+      relay.sendMessage({ channelId: '1', text: '【拾光内部协作通知】消息 ID：x' })
       relay.sendMessage({ channelId: '1', text: '用户真实消息' })
-      // 两条都进待投递队列（Agent 都能收到）
       expect(repository.listPendingOutbound('1')).toHaveLength(2)
-      // 时间线只显示用户真实消息，协作通知不可见
       const snapshot = relay.applyTo(baseSnapshot())
       expect(snapshot.conversations['1']).toMatchObject([{ role: 'user', text: '用户真实消息' }])
       expect(snapshot.conversations['1']).toHaveLength(1)
-      expect(snapshot.commandReceipts?.[accepted.commandId]).toMatchObject({
-        role: 'user',
-        text: '【拾光内部协作通知】消息 ID：x',
-        status: 'complete',
-        silent: true
-      })
       const [queued] = repository.listPendingOutbound('1')
-      expect(queued?.silent).toBe(true)
+      expect(queued).toMatchObject({ kind: 'internal', silent: true })
     } finally {
       repository.close()
     }
@@ -785,18 +777,17 @@ describe('ChannelMessageRelay', () => {
     try {
       repository.markChannelEmbedded('3', 'workspace-a', '/workspace/a')
       // 显式 kind：服务层建组后投递；没有显式 kind 时按标题前缀推断，两条都必须是 membership + silent。
-      const explicit = relay.sendMessage({ channelId: '3', text: '【拾光成员关系通知】你（CH-3）已加入协作组「验收组」', kind: 'membership' })
+      relay.sendMessage({ channelId: '3', text: '【拾光成员关系通知】你（CH-3）已加入协作组「验收组」', kind: 'membership' })
       relay.sendMessage({ channelId: '3', text: '【拾光成员关系通知】协作组「验收组」已解散' })
-      relay.sendMessage({ channelId: '3', text: '【拾光内部协作通知】消息 ID：x', silent: true })
+      relay.sendMessage({ channelId: '3', text: '【拾光内部协作通知】消息 ID：x' })
       relay.sendMessage({ channelId: '3', text: '用户真实消息' })
       const pending = repository.listPendingOutbound('3')
       expect(pending.map((message) => [message.kind, message.silent])).toEqual([
         ['membership', true], ['membership', true], ['internal', true], ['user', undefined]
       ])
-      // 时间线只见用户真实消息；成员关系通知只有命令回执。
+      // 时间线只见用户真实消息；成员关系通知只进出站队列。
       const snapshot = relay.applyTo(baseSnapshot())
       expect(snapshot.conversations['3']).toHaveLength(1)
-      expect(snapshot.commandReceipts?.[explicit.commandId]).toMatchObject({ silent: true })
       // 投递成员关系通知不开回复守门：取走后 pendingReplySyncSince 为空。
       const service = new ChannelMessageService(repository)
       const first = await service.checkMessages({ channelId: '3', keepaliveTimeoutMs: 1_000, pollIntervalMs: 50 })
@@ -806,13 +797,13 @@ describe('ChannelMessageRelay', () => {
         expect(first.message.silent).toBe(true)
       }
       expect(repository.getPresence('3')?.pendingReplySyncSince).toBeUndefined()
-      // 重开仓储：kind 列持久化，旧行（NULL）按正文前缀推断。
+      // 重开仓储：kind 列持久化，旧行（NULL）按正文前缀推断。上面那次 check_messages 已把遗留信封退役。
       const reopened = new SqliteChannelMessageRepository(repository.path)
       try {
         const database = new DatabaseSync(repository.path)
         database.exec("UPDATE channel_outbox SET kind = NULL WHERE text LIKE '%已解散%'")
         database.close()
-        expect(reopened.listPendingOutbound('3').map((message) => message.kind)).toEqual(['membership', 'internal', 'user'])
+        expect(reopened.listPendingOutbound('3').map((message) => message.kind)).toEqual(['membership', 'user'])
       } finally {
         reopened.close()
       }

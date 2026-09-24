@@ -177,6 +177,34 @@ export function teamMessageRequiresResponse(kind: TeamMessageKind): boolean {
 }
 
 /**
+ * 收件 Agent 是否要用 team_message respond 回应：只有成员发来的 directive / question。
+ * 拾光系统（operator）发的调度、催办、提醒按正文执行即是回应——领取任务、汇报进度、提交审核都会留下
+ * 自己的回执，再补一条 respond 只多一次工具调用，没有任何消费方。
+ */
+export function teamMessageNeedsAgentResponse(message: Pick<TeamMessage, 'kind' | 'sender'>): boolean {
+  return message.sender.type === 'agent' && teamMessageRequiresResponse(message.kind)
+}
+
+/** 随 check_messages 内联投递的一条团队消息（阶段 4 · 4C）：正文直接交给 Agent，投递即已读。 */
+export interface TeamInboxMessage {
+  id: string
+  kind: TeamMessageKind
+  /** `拾光系统`，或发送席位的 `角色名 · CH-N`。 */
+  senderLabel: string
+  subject: string
+  content: string
+  needsResponse: boolean
+  replyToMessageId?: string
+}
+
+/** 一次内联投递的批次：收件席位与按时间升序的消息。 */
+export interface TeamInboxBatch {
+  runId: string
+  slotId: string
+  messages: TeamInboxMessage[]
+}
+
+/**
  * 成员出组 / 组解散时，其名下仍待回应的 directive / question 的回执标记（任务书 §7 规则 2）。
  * 写进 `notificationDetail`（stage 不变），清扫器据此不再把它当「未回应」催办——它永远不会有回应了。
  */

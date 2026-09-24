@@ -1,6 +1,6 @@
 # 交接任务书：会话池 + 动态分组 · 阶段 4 MCP 工具面收敛
 
-> **状态（2026-09-13）：待动工；依赖阶段 1（分组状态）与阶段 2（编排边界 D1、lease 决策 D3）。** 路线图见 `DYNAMIC-GROUPS-ROADMAP.md`。
+> **状态（2026-09-24）：进行中。4D、4B、4C 已在分支 `feat/dynamic-groups-phase4` 提交（进度见第 9 节）；4A 待做；D5 按建议取 (a)，4E 不做。** 路线图见 `DYNAMIC-GROUPS-ROADMAP.md`。
 >
 > 项目：拾光 / SG Team（`shiguang-team`） · 工作区：仓库根目录（macOS / Windows 均可）
 >
@@ -180,3 +180,6 @@ team_check_in（可并入首次 check_messages；保留为显式刷新入口）
 | 时间 | 模块 | 完成内容 | 验证 |
 |---|---|---|---|
 | 09-13 | 文档 | 建立本任务书；度量基线入档；SDK v2 `enable/disable/list_changed` 能力已核对源码；Cursor 是否响应 `list_changed` 待实机 | 只读，无代码改动 |
+| 09-23 | 4D | 分支 `feat/dynamic-groups-phase4`（worktree `E:\SG-phase4`，从 `09b3cf7` 起）。删 `team_run` 的 `start / ping / pong / liveness`，只剩 `transfer_lead / claim_lead / clear_acting_lead`；`claim_lead` 只看 lead 的 presence（in-flight → `lead_busy`；Cursor 明确终止 → 接管；在线 → `lead_still_active`；静默无终止 → `lead_liveness_unproven`），不再发探测消息、不等 8 s；删 `team_task / team_review` 的 `renew` 与 `ttlSeconds`（D3=a，服务端按 presence 自动续）；`channel_liveness` 表与 `recordLiveness / checkLiveness` 删除（打开仓储时幂等 drop）；简报删 renew 句。新增 `scripts/measure-mcp-surface.ts`（`npm run measure:mcp`）。提交 `cd5438e` | 全量测试绿；两个 smoke 通过；度量：动作路径 33 → 27，参数槽 65 → 60，工具定义 ≈ 3625 → 3317 tokens |
+| 09-23 | 4B | 删 `check_messages.reply`（含服务端 `inlineReply` 分支）与 `record_reply.groupId / taskId / files`；删恒为 `false / null` 的 presence 字段 `pendingGroupChat / pendingGroupId`（列保留，旧构建共库）；工具描述里的「TeamRun / 上一个团队」措辞改为组。**判别联合有意不做**：zod 会把 `discriminatedUnion` 输出成顶层 `oneOf / anyOf`，Anthropic API 拒收这种工具 schema，一个坏工具会让整轮请求 400——改用 `tests/mcp-tool-surface.test.ts` 锁住每个工具的扁平 object 形态、参数集合、动作枚举与定义总体积预算（9 700 字符）。提交 `31277b8` | 全量测试绿；两个 smoke 通过；度量：参数槽 60 → 56，工具定义 ≈ 3317 → 3057 tokens |
+| 09-24 | 4C | 团队消息随 `check_messages` 内联投递：`ChannelMessageService` 每轮先看出站队列（用户消息 / 成员关系通知），队列空时查本席位在当前组内的未读团队消息（`listUnreadForRecipient`，≤ 10 条，按插入顺序），整批返回新结果类型 `team`（正文内联、标出「需回应」、单条 > 4 000 字截断并指向 `team_message read`），并在同一事务里 `markDelivered`（`notified + read`，事件 `message.read` / `delivered_by_check_messages`）；不开回复守门。**与任务书 §4.2 的两处偏离**：(1) `TeamMessageDispatcher` 整个删除而非保留为唤醒信号——长轮询本来每 1 s 查一次 SQLite，MCP 进程直接读协作库即可，桌面端关着团队消息也照样送达，不需要 `wake_requested_at` 列；(2) 用户消息与团队消息同时到达时不合并进一次返回，而是用户消息先投、团队批次在 record_reply 之后的下一轮送达——一次返回只承载一种协议，守门语义不变。阶段 4 之前的信封行（`kind = internal`）遇到即 `retireOutbound`，不再投递；`buildSilentDeliverySuffix`、`commandReceipts`、`SendMessageInput.silent` 与 `kind = internal` 的生产路径一并删除。`teamMessageNeedsAgentResponse`：只有成员发来的 directive / question 需要 `respond`，拾光系统（operator）的调度按正文执行即是回应（`TaskDispatcher` / `MemoryReviewCoordinator` 指令文本同步改写，成员拿到派单直接 `claim`）。`resolveChannelSessionOwner` 增返回 `slotId / groupId`（团队消息按它收件）。`team_message` 描述改写并缩短；`inbox` 的 `unreadOnly` 默认改为 `false`（投递即已读后「只列未读」几乎恒空）。新增 `tests/channel-team-inbox.test.ts`；`team-three-channel.e2e.test.ts` 重写为会话池协作组全程（全程无信封行、无 `team_message` 调用）；`verify-channel-mcp.ts` 增内联投递段 | 全量测试绿（213 文件 / 2197 用例）；两个 smoke 通过；度量：工具定义 ≈ 3057 → 3044 tokens，每轮固定预付 ≈ 3853；`list_changed` 与工具可见性（4A）仍待做 |

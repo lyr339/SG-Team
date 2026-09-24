@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import type { TeamCollaborationRepository } from '../../application/team-collaboration-repository'
+import type { TeamCollaborationRepository, TeamInboxRow } from '../../application/team-collaboration-repository'
 import type {
   AuthorizedTeamAgent,
   CreateTeamMessageInput,
@@ -30,11 +30,6 @@ const MESSAGE_KINDS = new Set<TeamMessageKind>([
   'response',
   'status',
   'notice'
-])
-const NOTIFICATION_RESULTS = new Set<TeamMessageNotificationState>([
-  'notified',
-  'uncertain',
-  'failed'
 ])
 const CLIENT_MESSAGE_ID = /^[a-zA-Z0-9:_-]{8,200}$/
 
@@ -459,72 +454,78 @@ export class SqliteTeamCollaborationRepository implements TeamCollaborationRepos
     return this.messageById(messageId)!
   }
 
-  markNotificationSending(messageId: string, commandId: string, detail = '正在通知目标 Agent', at = Date.now()): TeamMessage {
-    const message = this.requireMessage(messageId)
-    if (message.recipient.type !== 'agent') return message
-    this.database.exec('BEGIN IMMEDIATE')
-    try {
-      const result = this.database.prepare(`
-        UPDATE team_message_receipts
-        SET notification_state = 'sending', notification_command_id = ?,
-            notification_detail = ?, updated_at = ?
-        WHERE message_id = ? AND notification_state = 'queued' AND read_at IS NULL
-      `).run(commandId.trim(), detail.trim().slice(0, 2_000), at, message.id)
-      if (numberOf(result.changes) > 0) {
-        this.appendEvent({
-          type: 'message.notification_sending',
-          runId: message.runId,
-          threadId: message.threadId,
-          messageId: message.id,
-          actor: { type: 'operator' },
-          detail: commandId,
-          at
-        })
-      }
-      this.database.exec('COMMIT')
-    } catch (error) {
-      if (this.database.isTransaction) this.database.exec('ROLLBACK')
-      throw error
-    }
-    return this.requireMessage(message.id)
+  listUnreadForRecipient(input: { runId: string; slotId: string; groupId: string; limit: number }): TeamInboxRow[] {
+    const rows = this.database.prepare(`
+      SELECT m.*, t.subject, r.notification_state, r.notification_command_id,
+        r.notification_detail, r.notified_at, r.read_at, r.acknowledged_at,
+        r.responded_at, r.response_message_id, r.updated_at AS receipt_updated_at
+      FROM team_messages m
+      JOIN team_message_receipts r ON r.message_id = m.id
+      JOIN team_message_threads t ON t.id = m.thread_id
+      WHERE m.run_id = ? AND m.recipient_key = ? AND m.group_id = ? AND r.read_at IS NULL
+        AND r.notification_detail NOT LIKE ?
+      ORDER BY m.created_at ASC, m.rowid ASC
+      LIMIT ?
+    `).all(
+      input.runId.trim(),
+      actorKey({ type: 'agent', slotId: input.slotId.trim() }),
+      input.groupId.trim(),
+      `%${ORPHANED_RECEIPT_DETAIL}%`,
+      Math.min(100, Math.max(1, Math.floor(input.limit)))
+    ) as SqliteRow[]
+    return rows.map((row) => ({
+      ...messageFromRows(row, {
+        notification_state: row.notification_state,
+        notification_command_id: row.notification_command_id,
+        notification_detail: row.notification_detail,
+        notified_at: row.notified_at,
+        read_at: row.read_at,
+        acknowledged_at: row.acknowledged_at,
+        responded_at: row.responded_at,
+        response_message_id: row.response_message_id,
+        updated_at: row.receipt_updated_at
+      }),
+      subject: String(row.subject)
+    }))
   }
 
-  markNotificationResult(
-    messageId: string,
-    result: 'notified' | 'uncertain' | 'failed',
-    detail: string,
-    at = Date.now()
-  ): TeamMessage {
-    if (!NOTIFICATION_RESULTS.has(result)) throw new Error('通知结果无效')
-    const message = this.requireMessage(messageId)
-    if (message.recipient.type !== 'agent') return message
-    if (message.receipt.notificationState === 'notified' && result !== 'notified') return message
+  markDelivered(messageIds: string[], recipient: TeamMessageActor, at = Date.now()): string[] {
+    const ids = [...new Set(messageIds.map((id) => id.trim()).filter(Boolean))]
+    if (!ids.length) return []
+    const select = this.database.prepare(`
+      SELECT m.id, m.run_id, m.thread_id FROM team_messages m
+      JOIN team_message_receipts r ON r.message_id = m.id
+      WHERE m.id = ? AND m.recipient_key = ? AND r.read_at IS NULL
+    `)
+    const update = this.database.prepare(`
+      UPDATE team_message_receipts
+      SET notification_state = CASE WHEN notification_state = 'not_required' THEN notification_state ELSE 'notified' END,
+          notified_at = COALESCE(notified_at, ?), read_at = ?, updated_at = ?
+      WHERE message_id = ? AND read_at IS NULL
+    `)
+    const delivered: string[] = []
     this.database.exec('BEGIN IMMEDIATE')
     try {
-      const updated = this.database.prepare(`
-        UPDATE team_message_receipts
-        SET notification_state = ?, notification_detail = ?,
-            notified_at = CASE WHEN ? = 'notified' THEN COALESCE(notified_at, ?) ELSE notified_at END,
-            updated_at = ?
-        WHERE message_id = ?
-      `).run(result, detail.trim().slice(0, 2_000), result, at, at, message.id)
-      if (numberOf(updated.changes) > 0) {
+      for (const id of ids) {
+        const row = select.get(id, actorKey(recipient)) as SqliteRow | undefined
+        if (!row || numberOf(update.run(at, at, at, id).changes) === 0) continue
         this.appendEvent({
-          type: `message.notification_${result}`,
-          runId: message.runId,
-          threadId: message.threadId,
-          messageId: message.id,
-          actor: { type: 'operator' },
-          detail,
+          type: 'message.read',
+          runId: String(row.run_id),
+          threadId: String(row.thread_id),
+          messageId: id,
+          actor: recipient,
+          detail: 'delivered_by_check_messages',
           at
         })
+        delivered.push(id)
       }
       this.database.exec('COMMIT')
     } catch (error) {
       if (this.database.isTransaction) this.database.exec('ROLLBACK')
       throw error
     }
-    return this.requireMessage(message.id)
+    return delivered
   }
 
   markRead(messageId: string, recipient: TeamMessageActor, at = Date.now()): TeamMessage {
@@ -579,64 +580,6 @@ export class SqliteTeamCollaborationRepository implements TeamCollaborationRepos
       throw error
     }
     return rows.map((row) => String(row.id))
-  }
-
-  listPendingNotifications(runId?: string, limit = 25): TeamMessage[] {
-    const normalizedLimit = Math.min(100, Math.max(1, Math.floor(limit)))
-    const rows = runId?.trim()
-      ? this.database.prepare(`
-          SELECT m.id FROM team_messages m
-          JOIN team_message_receipts r ON r.message_id = m.id
-          WHERE m.run_id = ? AND m.recipient_key LIKE 'agent:%'
-            AND r.notification_state = 'queued' AND r.read_at IS NULL
-          ORDER BY m.created_at ASC, m.id ASC LIMIT ?
-        `).all(runId.trim(), normalizedLimit) as SqliteRow[]
-      : this.database.prepare(`
-          SELECT m.id FROM team_messages m
-          JOIN team_message_receipts r ON r.message_id = m.id
-          WHERE m.recipient_key LIKE 'agent:%'
-            AND r.notification_state = 'queued' AND r.read_at IS NULL
-          ORDER BY m.created_at ASC, m.id ASC LIMIT ?
-        `).all(normalizedLimit) as SqliteRow[]
-    return rows.map((row) => this.requireMessage(String(row.id)))
-  }
-
-  recoverStaleSending(beforeAt: number): number {
-    const rows = this.database.prepare(`
-      SELECT m.id FROM team_messages m
-      JOIN team_message_receipts r ON r.message_id = m.id
-      WHERE r.notification_state = 'sending' AND r.updated_at <= ?
-      ORDER BY r.updated_at ASC
-    `).all(beforeAt) as SqliteRow[]
-    if (!rows.length) return 0
-    const recoveredAt = Date.now()
-    this.database.exec('BEGIN IMMEDIATE')
-    try {
-      for (const row of rows) {
-        const message = this.requireMessage(String(row.id))
-        this.database.prepare(`
-          UPDATE team_message_receipts
-          SET notification_state = 'uncertain',
-              notification_detail = '外置软件重启前未收到最终投递回执；未自动重发',
-              updated_at = ?
-          WHERE message_id = ? AND notification_state = 'sending'
-        `).run(recoveredAt, message.id)
-        this.appendEvent({
-          type: 'message.notification_uncertain',
-          runId: message.runId,
-          threadId: message.threadId,
-          messageId: message.id,
-          actor: { type: 'operator' },
-          detail: 'recovered_stale_sending',
-          at: recoveredAt
-        })
-      }
-      this.database.exec('COMMIT')
-    } catch (error) {
-      if (this.database.isTransaction) this.database.exec('ROLLBACK')
-      throw error
-    }
-    return rows.length
   }
 
   close(): void {

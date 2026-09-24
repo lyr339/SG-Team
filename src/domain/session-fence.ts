@@ -20,6 +20,10 @@ export interface ChannelSessionOwnership {
   /** 当前席位签发的令牌；缺失 = 未签发（旧会话 / 备用接替）。 */
   sessionToken?: string
   solo: boolean
+  /** 绑定的席位；团队消息按它收件（阶段 4 · 4C）。 */
+  slotId?: string
+  /** 席位当前所在协作组；未入组为空。 */
+  groupId?: string
 }
 
 export type SessionFenceRetiredReason = 'no_run' | 'run_completed' | 'channel_unbound' | 'token_mismatch'

@@ -201,7 +201,7 @@ describe('TeamGroupService · 移出', () => {
       const [targeted] = lead.plan([{ key: 'impl', title: '实现', requiredCapabilities: ['code'], targetSlotId: data.slotIdOf('2') }])
       builder.claim(targeted!.id)
       builder.start(targeted!.id)
-      // lead 给 builder 的两条指令：一条尚未投递（queued），一条已投递（notified）。
+      // lead 给 builder 的两条指令：一条尚未投递（queued），一条已随 check_messages 送达（notified + read）。
       const queued = data.collaboration.createMessage({
         runId: data.runId, sender: { type: 'agent', slotId: data.slotIdOf('1') }, recipient: { type: 'agent', slotId: data.slotIdOf('2') },
         kind: 'directive', content: '请先补测试', clientMessageId: 'lead-directive-0001'
@@ -210,7 +210,7 @@ describe('TeamGroupService · 移出', () => {
         runId: data.runId, sender: { type: 'agent', slotId: data.slotIdOf('1') }, recipient: { type: 'agent', slotId: data.slotIdOf('2') },
         kind: 'question', content: '接口版本定了吗', clientMessageId: 'lead-question-0001'
       })
-      data.collaboration.markNotificationResult(notified.id, 'notified', '已通知')
+      data.collaboration.markDelivered([notified.id], { type: 'agent', slotId: data.slotIdOf('2') })
       // 给 reviewer 的指令不受影响（对照组）。
       const untouched = data.collaboration.createMessage({
         runId: data.runId, sender: { type: 'agent', slotId: data.slotIdOf('1') }, recipient: { type: 'agent', slotId: data.slotIdOf('3') },
@@ -235,13 +235,15 @@ describe('TeamGroupService · 移出', () => {
       expect(run.messages[queued.id]!.receipt).toMatchObject({ notificationState: 'not_required', notificationCommandId: undefined })
       expect(run.messages[queued.id]!.receipt.notificationDetail).toBe(`等待通知目标 Agent；${ORPHANED_RECEIPT_DETAIL}`)
       expect(run.messages[notified.id]!.receipt.notificationState).toBe('notified')
-      expect(run.messages[notified.id]!.receipt.notificationDetail).toBe(`已通知；${ORPHANED_RECEIPT_DETAIL}`)
+      expect(run.messages[notified.id]!.receipt.notificationDetail).toBe(`等待通知目标 Agent；${ORPHANED_RECEIPT_DETAIL}`)
       expect(isOrphanedReceipt(run.messages[untouched.id]!.receipt)).toBe(false)
-      // 待投递队列：出组者的指令已不在其中；剩下 reviewer 的指令 + 刚给 lead 的移出通知。
-      const pending = data.collaboration.listPendingNotifications(data.runId)
-      expect(pending.map((message) => message.id)).not.toContain(queued.id)
-      expect(pending.map((message) => message.kind)).toEqual(['directive', 'notice'])
-      expect(pending[0]!.id).toBe(untouched.id)
+      // 内联投递：出组者名下的孤儿消息不再投递（按原组查也没有）；reviewer 的指令、刚给 lead 的移出通知照常待投。
+      const unreadOf = (channelId: string) => data.collaboration.listUnreadForRecipient({
+        runId: data.runId, slotId: data.slotIdOf(channelId), groupId, limit: 10
+      })
+      expect(unreadOf('2')).toEqual([])
+      expect(unreadOf('3').map((message) => message.id)).toEqual([untouched.id])
+      expect(unreadOf('1').map((message) => message.kind)).toEqual(['notice'])
       expect(findUnansweredDirectives(run, Date.now() + 60 * 60_000).map((item) => item.id)).toEqual([untouched.id])
       expect(run.events.filter((event) => event.type === 'message.orphaned')).toHaveLength(2)
       // 幂等：再标一次没有新的受影响消息。
