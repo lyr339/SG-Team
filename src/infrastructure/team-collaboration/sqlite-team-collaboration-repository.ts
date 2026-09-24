@@ -463,7 +463,7 @@ export class SqliteTeamCollaborationRepository implements TeamCollaborationRepos
       JOIN team_message_receipts r ON r.message_id = m.id
       JOIN team_message_threads t ON t.id = m.thread_id
       WHERE m.run_id = ? AND m.recipient_key = ? AND m.group_id = ? AND r.read_at IS NULL
-        AND r.notification_detail NOT LIKE ?
+        AND COALESCE(r.notification_detail, '') NOT LIKE ?
       ORDER BY m.created_at ASC, m.rowid ASC
       LIMIT ?
     `).all(

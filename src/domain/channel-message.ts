@@ -212,9 +212,8 @@ export function isPresenceOnline(presence: ChannelPresence | undefined, now: num
  * 已取走真实消息的执行租约。
  *
  * processing / need_reply_sync 期间 Agent 正在推理、跑命令或生成回复，协议上本来
- * 就不会持续调用 check_messages，也可能暂时处理不了活性验证 ping。只要没有
- * cursor_stopped/tool_aborted 这类正面终止证据，这个相位就必须受保护，不能仅凭
- * lastSeenAt 超时触发主控接管、角色交接或整轮结束。
+ * 就不会持续调用 check_messages。只要没有 cursor_stopped/tool_aborted 这类正面终止
+ * 证据，这个相位就必须受保护，不能仅凭 lastSeenAt 超时触发主控接管、角色交接或整轮结束。
  */
 export function hasInFlightExecution(session: { connectionPhase?: string } | undefined): boolean {
   const phase = session?.connectionPhase ?? ''
