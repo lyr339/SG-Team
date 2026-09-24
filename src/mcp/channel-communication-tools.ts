@@ -32,6 +32,11 @@ export interface ChannelCommunicationDeps {
   keepaliveTimeoutMs?: number
   /** record_reply 撞上存储瞬断时的重试间隔；测试可注入短值。 */
   recordReplyRetryDelayMs?: number
+  /**
+   * 工具面刷新（阶段 4 · 4A）：每次 check_messages 长轮询返回前调用一次。建组 / 解散与成员关系通知
+   * 同源，先切工具面再交付通知，模型读到通知的下一轮就看到（或看不到）团队工具。
+   */
+  refreshToolSurface?: () => void
 }
 
 /** record_reply 对 SQLITE_BUSY/LOCKED 的进程内重试次数：覆盖拾光桌面端启停的锁窗口，不与 Agent 侧重试叠成风暴。 */
@@ -262,6 +267,8 @@ export function registerChannelCommunicationTools(
       signal,
       keepaliveTimeoutMs: deps.keepaliveTimeoutMs
     })
+    // 工具面先于返回体：list_changed 与本次结果走同一条有序流，Cursor 先重拉工具再把结果交给模型。
+    deps.refreshToolSurface?.()
     switch (result.type) {
       case 'retired':
         return { content: [{ type: 'text' as const, text: buildSessionRetiredText({ channelId, reason: result.reason }) }] }

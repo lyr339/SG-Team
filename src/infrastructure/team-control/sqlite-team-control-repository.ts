@@ -962,6 +962,27 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
     }
   }
 
+  /**
+   * 工具面探针（阶段 4 · 4A）：当前活动 run（与 `resolveChannelSessionOwner` 同一口径——活动工作区最新的 run）
+   * 是否正在运行且至少有一个活动协作组。MCP 进程据此决定是否向 Cursor 暴露团队工具；
+   * 每次 check_messages 返回前问一次，必须是一条轻量 SQL。
+   */
+  hasActiveGroup(): boolean {
+    const row = this.database.prepare(`
+      SELECT COUNT(*) AS count
+      FROM team_control_meta meta
+      JOIN team_runs tr ON tr.workspace_id = meta.active_workspace_id
+      JOIN team_groups g ON g.run_id = tr.id AND g.status = 'active'
+      WHERE meta.id = 1 AND tr.status = 'running'
+        AND tr.id = (
+          SELECT newest.id FROM team_runs newest
+          WHERE newest.workspace_id = meta.active_workspace_id
+          ORDER BY newest.created_at DESC LIMIT 1
+        )
+    `).get() as SqliteRow
+    return numberOf(row.count) > 0
+  }
+
   listAgentRegistrations(runId: string): AgentRegistration[] {
     return (this.database.prepare(`
       SELECT agent_session_id, runtime_id, workspace_id, channel_id, generation, run_id, capabilities_json

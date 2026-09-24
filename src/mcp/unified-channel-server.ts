@@ -5,6 +5,7 @@ import type { ChannelSessionOwnership } from '../domain/session-fence'
 import {
   registerChannelCommunicationTools
 } from './channel-communication-tools'
+import { createTeamToolVisibility } from './team-tool-visibility'
 import {
   buildUnifiedServerInstructions,
   registerTeamTools,
@@ -25,28 +26,40 @@ export interface UnifiedChannelServerOptions {
   keepaliveTimeoutMs?: number
   /** record_reply 存储瞬断重试间隔；测试可注入短值。 */
   recordReplyRetryDelayMs?: number
+  /**
+   * 工具面探针（阶段 4 · 4A）：当前工作区是否有活动协作组。给出时 7 个团队工具随它整体启停
+   *（构造时探测一次，之后每次 check_messages 返回前一次）；缺省恒暴露全部工具（测试与全貌度量）。
+   */
+  teamToolsVisible?: () => boolean
+  /** 探针抛错时的上报（工具面保持现状）。 */
+  onError?: (error: unknown) => void
 }
 
 /**
  * 拾光单一 MCP 服务器：Cursor 面板只出现一条原生条目「SG Team」，
  * 7 个团队工具 + 2 个通信工具同服，全部以 channel_id 参数区分通道；
  * 角色权限按每次调用的通道身份围栏校验（暴露超集、调用时收口）。
+ * 团队工具只在工作区有活动协作组时出现在 tools/list 里（阶段 4 · 4A）。
  */
 export function createUnifiedChannelServer(options: UnifiedChannelServerOptions): McpServer {
   const server = new McpServer(
     { name: SG_TEAM_MCP_DISPLAY_NAME, version: '1.0.0' },
     { instructions: buildUnifiedServerInstructions() }
   )
-  registerTeamTools(server, {
+  const teamTools = registerTeamTools(server, {
     runtimeFor: options.runtimeFor,
     refreshIdentity: options.refreshIdentity,
     briefingFor: options.briefingFor
   })
+  const visibility = options.teamToolsVisible
+    ? createTeamToolVisibility(server, teamTools, options.teamToolsVisible, options.onError)
+    : undefined
   registerChannelCommunicationTools(server, {
     serviceFor: options.channelServiceFor,
     ownershipFor: options.ownershipFor,
     keepaliveTimeoutMs: options.keepaliveTimeoutMs,
-    recordReplyRetryDelayMs: options.recordReplyRetryDelayMs
+    recordReplyRetryDelayMs: options.recordReplyRetryDelayMs,
+    refreshToolSurface: visibility ? () => visibility.refresh() : undefined
   })
   return server
 }

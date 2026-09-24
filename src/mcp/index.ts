@@ -161,6 +161,9 @@ async function serveUnified(databasePath: string): Promise<void> {
     keepaliveTimeoutMs,
     // 会话围栏：通道在当前活动 run 内的席位归属；查询异常由工具层按「无法判定」放行。
     ownershipFor: (channelId) => teamRepository.resolveChannelSessionOwner(channelId),
+    // 工具面（阶段 4 · 4A）：工作区没有活动协作组时 Cursor 只看到两项通信工具。
+    teamToolsVisible: () => teamRepository.hasActiveGroup(),
+    onError: (error) => process.stderr.write(`[sg-team-mcp] 工具面探测失败，保持现状：${error instanceof Error ? error.message : String(error)}\n`),
     refreshIdentity: (channelId) => {
       try {
         refreshIdentity(channelId)

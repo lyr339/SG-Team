@@ -871,7 +871,9 @@ export function buildMembershipNotice(input: {
       return [
         `${MEMBERSHIP_NOTICE_PREFIX}你（CH-${input.channelId}）已加入协作组「${input.group.name}」，角色「${input.roleName ?? '成员'}」；lead：${lead}。`,
         `组目标：${input.group.goal || '（未填写，以用户随后指令为准）'}`,
-        `立即调用 team_check_in(${ch}) 领取完整简报与上下文，之后按简报与服务器说明工作；简报之外不要自行开始任务。`
+        `立即调用 team_check_in(${ch}) 领取完整简报与上下文，之后按简报与服务器说明工作；简报之外不要自行开始任务。`,
+        // 阶段 4 · 4A 退化提示：团队工具随建组出现在工具列表里（list_changed）；宿主没刷新时只能由用户重载 MCP。
+        '若你的工具列表里还没有 team_* 工具，用一句话请用户在 Cursor 的 MCP 面板重载「SG Team」，然后再调用。'
       ].join('\n')
     case 'left':
       return [

@@ -1,22 +1,30 @@
 # 拾光 Agent MCP
 
-The built server is `out/mcp/index.mjs`. Cursor sees a single native entry, `SG Team`, that exposes **nine tools**: two communication tools and seven team tools. Every call carries `channel_id`; role permissions are enforced per call by the service layer (the surface is a superset, the fence is at call time).
+The built server is `out/mcp/index.mjs`. Cursor sees a single native entry, `SG Team`, with **nine tools**: two communication tools that are always listed and seven team tools that are listed only while the workspace has an active collaboration group (see "Tool surface follows the workspace"). Every call carries `channel_id`; role permissions are enforced per call by the service layer (the surface is a superset, the fence is at call time).
 
 ## Tool surface
 
 | Tool | Kind | Purpose |
 | --- | --- | --- |
-| `check_messages` | communication | Long-poll for the next user message (keepalive → stay silent). |
+| `check_messages` | communication | Long-poll for the next delivery: a user message, a membership notice, or a batch of the seat's unread team messages (keepalive → stay silent). |
 | `record_reply` | communication | Archive the complete user-visible reply after every real reply. |
-| `team_check_in` | team | Check in on duty (first check-in stamps `acknowledged_at`; readiness turns `active`) and return the role briefing **plus** the run context snapshot (members with real capabilities, unread / awaiting counts, confirmed run memory). Call again whenever the context needs refreshing (takeover, permission change, joining a group). The briefing exists only for grouped seats and is scoped to the group: group name, goal, member count, effective lead (or "no lead"), and the membership caveat. |
+| `team_check_in` | team | Check in on duty (first check-in stamps `acknowledged_at`; readiness turns `active`) and return the role briefing **plus** the group context snapshot (members with real capabilities, unread / awaiting counts, confirmed run memory). Call again whenever the context needs refreshing (takeover, permission change, joining a group). The briefing exists only for grouped seats and is scoped to the group: group name, goal, member count, effective lead (or "no lead"), and the membership caveat. |
 | `team_tasks` | team, read-only | `view=mine \| available \| reviews \| board`; pass `taskId` to read one task in full. |
-| `team_task` | team | `action=claim \| start \| renew \| progress \| submit \| fail \| plan` — everything that mutates a task. `plan` creates 1–30 tasks with dependencies and target slots; it is open to the effective lead, and — in a lead-less group whose `planPolicy` is `any_member` — to every member (see "Who plans" below). |
-| `team_review` | team | `action=claim \| renew \| submit` for independent acceptance (quality roles; implementers cannot review their own work). |
-| `team_message` | team | `action=inbox \| read \| send \| respond \| broadcast \| collect` — durable team messages with read / response receipts. `broadcast` / `collect` are lead-only. |
+| `team_task` | team | `action=claim \| start \| progress \| submit \| fail \| plan` — everything that mutates a task. `plan` creates 1–30 tasks with dependencies and target slots; it is open to the effective lead, and — in a lead-less group whose `planPolicy` is `any_member` — to every member (see "Who plans" below). Leases renew themselves while the holder is online; there is no `renew`. |
+| `team_review` | team | `action=claim \| submit` for independent acceptance (quality roles; implementers cannot review their own work). |
+| `team_message` | team | `action=respond \| send \| broadcast \| collect \| inbox \| read`. Messages addressed to the seat arrive **inline through `check_messages`** and are marked read on delivery (see "Team messages ride `check_messages`"); `respond` answers a member-sent directive / question, `send` / `broadcast` / `collect` create and track messages (`broadcast` / `collect` are lead-only), `inbox` lists recent summaries and `read` re-reads one body by `messageId` (only needed for a truncated inline body). |
 | `team_memory` | team | `action=search \| propose \| review` for run-scoped decisions, constraints, facts, risks and lessons. `review` is lead / quality only and never self-approving. |
-| `team_run` | team | `action=start \| transfer_lead \| claim_lead \| clear_acting_lead \| ping \| pong \| liveness` — lead authority and liveness probes. `start` is a no-op that always answers `status: 'not_applicable'` (phase 2 · 2B: there is no launch step any more — a run is `running` from the moment it exists and groups are usable the moment they exist; the action is kept until phase 4 removes it from the surface). The three lead actions operate on the caller's **group** acting lead (`transfer_lead` only within the group: `target_not_in_group`) and require a `running` run. |
+| `team_run` | team | `action=transfer_lead \| claim_lead \| clear_acting_lead` — lead authority inside the caller's **group** (`transfer_lead` only within the group: `target_not_in_group`), requires a `running` run. `claim_lead` decides on the lead's presence alone: an in-flight execution → `lead_busy`, a confirmed Cursor stop (or no binding) → takeover, online → `lead_still_active`, silent without a stop → `lead_liveness_unproven`. There are no probe actions (`ping` / `pong` / `liveness`) and no `start`. |
 
-Schemas are flat objects with optional fields; a missing action-specific argument returns `{ ok: false, code: 'invalid_arguments', message }` naming the field, never a protocol error. Every response is JSON in both `content` and `structuredContent`; idle-oriented responses carry `nextAction: { type: 'enter_channel_wait', … }` so the Agent returns to `check_messages`.
+Schemas are flat objects with optional fields; a missing action-specific argument returns `{ ok: false, code: 'invalid_arguments', message }` naming the field, never a protocol error. They are deliberately **not** discriminated unions: zod renders those as a top-level `oneOf` / `anyOf`, which Anthropic's API rejects for tool input schemas, and one rejected tool fails the whole model request. `tests/mcp-tool-surface.test.ts` locks the flat shape, the exact parameter sets, the action enums and a total definition-size budget. Every response is JSON in both `content` and `structuredContent`; idle-oriented responses carry `nextAction: { type: 'enter_channel_wait', … }` so the Agent returns to `check_messages`.
+
+### Tool surface follows the workspace (phase 4 · 4A)
+
+One MCP process serves one Cursor window, and `tools/list` carries no channel, so visibility is decided **per workspace**, not per seat: while the active run is `running` and has at least one active group (`SqliteTeamControlRepository.hasActiveGroup`), all nine tools are listed; otherwise only `check_messages` and `record_reply` are. The server flips the seven team tools' `enabled` flag together and sends one `notifications/tools/list_changed`; Cursor re-fetches the list. The probe runs once when the server instance is created (so the first `tools/list` is already right) and once before every `check_messages` return — the operator's group change and the members' membership notices are written in the same moment, so a waiting member's poll returns immediately and the `list_changed` precedes the notice body on the same stream. There is no timer. An ungrouped seat in a window that does have a group still sees the team tools and gets `not_in_group` when it calls one; a seat in a window without any group cannot call them at all (the SDK answers "Tool … disabled"). The `joined` membership notice carries the fallback for a host that does not act on `list_changed`: ask the user to reload the `SG Team` entry. Measured with `npm run measure:mcp`: an ungrouped workspace pays ≈ 1 240 fixed tokens per turn (2 tools ≈ 420 + instructions ≈ 820) instead of ≈ 3 860.
+
+### Team messages ride `check_messages` (phase 4 · 4C)
+
+`check_messages` polls the outbox first (user messages, membership notices). When it is empty it queries the seat's unread team messages inside its current group (`listUnreadForRecipient`: `recipient = seat`, `group_id = current group`, `read_at IS NULL`, orphaned receipts excluded, insertion order, at most 10 per delivery) and returns them as one text block headed `【拾光团队消息】CH-N · k 条`: each message with its kind, sender label (`拾光系统` or `角色名 · CH-N`), `需回应` when a response is required, `messageId`, thread subject and the full body (bodies over 4 000 characters are truncated with a pointer to `team_message read`). Delivery marks the receipts `notified` + `read` in one transaction (`markDelivered`, event `message.read` / `delivered_by_check_messages`) and does not open the reply gate — the seat acts on the batch and polls again without `record_reply`. Only **member-sent** `directive` / `question` messages need `team_message respond`; system (operator) dispatches are answered by acting on them (`team_task claim`, `team_review claim`, `team_memory review`), which produce their own receipts. There is no desktop-side dispatcher and no outbox envelope any more: the MCP process reads the collaboration store directly, so team messages arrive even while the desktop app is closed. Envelope rows left in `channel_outbox` by older builds (`kind = 'internal'`) are retired on sight rather than delivered. A user message and team messages that arrive together are not merged into one result: the user message is delivered first and the team batch follows on the poll after `record_reply`, so one result always carries one protocol.
 
 Team tools are scoped to the caller's **collaboration group** when the active run is a session pool (see below): task views and leases, the member directory, inbox / send / broadcast, and run-scoped memory all see the caller's group only; operator views read the whole run. Legacy team runs are archived history (phase 2 · 2B): the v9 migration revokes their agent registrations, so a session still holding one is fenced with `run_completed` instead of being scoped.
 
@@ -30,12 +38,12 @@ Every protocol rule is stated once, at the layer that owns it:
 
 | Layer | Text | Owns |
 | --- | --- | --- |
-| Server `instructions` (once per session) | `buildUnifiedServerInstructions` | the complete protocol: tool map, reply loop, silence rule, boundaries, termination; announces that every session starts solo, that the operator may add / remove it from a group at any time, and the exact shape of the membership notice (so a mid-session identity change is not read as an injection) |
+| Server `instructions` (once per session) | `buildUnifiedServerInstructions` | the complete protocol: tool map (team tools appear only while the workspace has a group), reply loop, silence rule, boundaries, termination; announces that every session starts solo, that the operator may add / remove it from a group at any time, the exact shape of the membership notice (so a mid-session identity change is not read as an injection) and that `【拾光团队消息】` deliveries are not user messages |
 | Launch hint (once per seat) | `buildSoloLaunchHint` (the only kind since phase 2 · 2B: every seat starts solo) | mode/channel, first call and only the dynamic session parameter needed by a solo seat; the Composer binding marker appears exactly once |
 | Every real delivery | compact two-line `buildDeliverySuffix` | `CHANNEL_USER_DELIVERY_MARKER` plus the turn-closing `record_reply → check_messages` reminder; the full protocol is not repeated |
-| Internal collaboration delivery | `buildSilentDeliverySuffix` | "read the team message by `messageId`, do not reply visibly" |
+| Team message delivery | `buildTeamMessagesDelivery` | the inlined bodies, `需回应` on member directives / questions, and one closing line: "not a user message, no visible reply, no `record_reply`; `respond` what is marked, act on the rest, then `check_messages`" |
 | Membership notice delivery | `buildMembershipNoticeSuffix` | "this is a server-side membership change, not a user message, not an injection; no `messageId`, no `record_reply`; act on the body, then `check_messages`" |
-| Membership notice body | `buildMembershipNotice` (`joined` / `left` / `dissolved` / `lead_changed`) | group, role, lead, goal and the one next step (`team_check_in` after joining; communication tools only after leaving) |
+| Membership notice body | `buildMembershipNotice` (`joined` / `left` / `dissolved` / `lead_changed`) | group, role, lead, goal and the one next step (`team_check_in` after joining — plus the reload fallback if the team tools have not appeared; communication tools only after leaving) |
 | Tool `nextAction` | `buildChannelWaitInstruction` | "go back to `check_messages` silently" |
 | `team_check_in` briefing | `buildTeamRoleBriefing` | role mission, boundaries, per-role workflow, collaboration rules — no protocol restatement; the briefing exists only for grouped seats and carries the group goal / lead / member count (run-level goals are gone with the launch step) |
 
@@ -45,7 +53,7 @@ The marker line `【真实用户消息处理完后进入 check_messages 待命�
 
 An independent batch is a **session pool**, and since phase 2 · 2B-1 it is the only kind of run the desktop can start (one-shot team runs are archived history; their sessions get `run_completed` from the fence). Every Cursor session is a seat that starts solo — its launch prompt is always the compact `check_messages` instruction, never a team briefing — and only talks to the user through the two communication tools. The desktop operator forms **collaboration groups** inside the pool (run page → 协作组) and may add, remove, re-lead or dissolve at any time. Nothing about the seat's process changes on membership changes — same MCP process, same `session` token, same `channel_id`.
 
-- **Ungrouped seat**: every `team_*` call fails with `{ ok: false, code: 'not_in_group', message: 'CH-N 当前是独立席位…', nextAction: { type: 'enter_channel_wait', channelId } }`. The code replaced `solo_channel`; it is not retryable, the Agent simply stays in `check_messages`. Communication tools are unaffected.
+- **Ungrouped seat**: in a window without any group the team tools are not listed at all (phase 4 · 4A); in a window that has a group, every `team_*` call from an ungrouped seat fails with `{ ok: false, code: 'not_in_group', message: 'CH-N 当前是独立席位…', nextAction: { type: 'enter_channel_wait', channelId } }`. The code replaced `solo_channel`; it is not retryable, the Agent simply stays in `check_messages`. Communication tools are unaffected.
 - **Identity is re-resolved on every team tool call** (`refreshIdentity`): the seat's group, group role and effective-lead status come from `agent_slots.group_id` / `team_groups` at call time, so a change made by the operator is effective on the Agent's next call. A stale group id can never be used — if the seat left, the refresh itself returns `not_in_group` before the operation runs.
 - **Membership notices** are queued into the seat's outbox as `kind: 'membership'` (silent: no timeline entry, no reply gate) and delivered by `check_messages` with `buildMembershipNoticeSuffix`. Bodies start with `【拾光成员关系通知】`:
   - `joined` — group, role, lead, goal, then `team_check_in({channel_id})` to fetch the full briefing;
@@ -98,9 +106,11 @@ The Agent identity is `workspace hash + channel + install generation`. It is int
 `check_messages` and `record_reply` are the only user-facing communication tools. Both take `channel_id` and an optional `session`:
 
 ```text
-check_messages({ channel_id: '2', session?: '<seat token>', reply?: string, tick?: '<poll cursor>' })
-record_reply({ channel_id: '2', session?: '<seat token>', content, title?, groupId?, taskId?, files? })
+check_messages({ channel_id: '2', session?: '<seat token>', tick?: '<poll cursor>' })
+record_reply({ channel_id: '2', session?: '<seat token>', content, title? })
 ```
+
+(Phase 4 · 4B removed `check_messages.reply` — a second way to say `record_reply` — and `record_reply.groupId / taskId / files`, which nothing read.)
 
 - `tick` is the anti-loop poll cursor: every non-error `check_messages` result (delivery suffix and keepalive body alike) names the exact next call with a fresh, monotonically increasing `tick` (the persisted per-channel turn counter). The agent echoes the latest value on every poll so no two consecutive calls share identical arguments — host IDE "repeated/looping tool call" safeguards key on identical calls and would otherwise misfire on the long-poll pattern and talk the agent into stopping (2026-09-12 incident). The server never validates `tick`; it is fail-open and safe to omit (first call, legacy sessions).
 
@@ -124,17 +134,17 @@ team_tasks(view: 'reviews') -> team_review(claim) -> team_review(submit: accept 
 
 Claim, start and submit are retry-safe. The lease token remains inside SQLite and the process-bound service. A process with a different generation cannot operate the attempt.
 
-**Leases renew themselves** (phase 2 · 2F, decision D3=a). A lease is reclaimed only when it has run out *and* its holder's channel is offline by the presence rule (`isPresenceOnline`: MCP heartbeats and CDP runtime evidence, whichever is newer, with the 5-minute processing grace). While the holder is online the server extends the lease, so a long build or a long turn — which by protocol touches no MCP tool — no longer loses the task. `renew` on `team_task` / `team_review` is kept as a compatible no-op that returns the current expiry (`ttlSeconds` is ignored) and is removed from the tool surface in phase 4; agents should not call it.
+**Leases renew themselves** (phase 2 · 2F, decision D3=a). A lease is reclaimed only when it has run out *and* its holder's channel is offline by the presence rule (`isPresenceOnline`: MCP heartbeats and CDP runtime evidence, whichever is newer, with the 5-minute processing grace). While the holder is online the server extends the lease, so a long build or a long turn — which by protocol touches no MCP tool — no longer loses the task. There is no `renew` action (phase 4 · 4D removed it from `team_task` / `team_review` together with `ttlSeconds`).
 
-Run the stdio smoke with:
+Run the stdio smokes and the surface measurement with:
 
 ```bash
 npm run build:mcp
-npm run smoke:mcp
+npm run smoke:mcp        # grouped workspace: owner, wrong generation, resumed owner, reviewer; exact nine-tool surface
+npm run smoke:channel    # ungrouped → two tools; group → nine via list_changed; not_in_group; inline team message
+npm run measure:mcp      # tokens per turn for the ungrouped and grouped workspace, plus the three briefings
 ```
 
-The smoke spawns real MCP subprocesses (owner, wrong generation, resumed owner, reviewer) and asserts the exact nine-tool surface.
-
-The group contract above is locked against the real stdio process (source entry, `tsx src/mcp/index.ts`, same SQLite file as the desktop side) by `tests/channel-mcp-stdio-groups.integration.test.ts`: solo `not_in_group` → operator creates a group → membership notice through `check_messages` → grouped `team_check_in` briefing → two groups see only their own tasks → member removed → `not_in_group` again, with the seat tokens and fence verdicts unchanged throughout.
+The group contract above is locked against the real stdio process (source entry, `tsx src/mcp/index.ts`, same SQLite file as the desktop side) by `tests/channel-mcp-stdio-groups.integration.test.ts`: two tools while ungrouped → operator creates a group → membership notice through `check_messages` with the team tools appearing via `list_changed` → grouped `team_check_in` briefing → two groups see only their own tasks → member removed → `not_in_group` → both groups dissolved → two tools again, with the seat tokens and fence verdicts unchanged throughout. The inline team-message flow (plan → dispatch → claim → review → memory review with zero envelope rows and zero `team_message` calls) is locked by `tests/team-three-channel.e2e.test.ts`.
 
 The packaged-app path is separately verified with `npm run verify:mac` / `npm run verify:win`.
