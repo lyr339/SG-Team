@@ -1,3 +1,18 @@
+## v0.5.0 更新
+
+**MCP 工具面收敛（会话池阶段 4 全部合入）：Agent 每轮只为用得上的工具付费，团队消息直接随 check_messages 送达。**
+
+- **团队工具按工作区出现**：工作区没有协作组时，Cursor 里的「SG Team」只有 `check_messages` / `record_reply` 两个工具；建组后 7 个团队工具随 `tools/list_changed` 自动出现，最后一个组解散后收回，不需要重载 MCP。独立席位每轮固定开销从 ≈ 4750 tokens 降到 ≈ 1240，团队席位 ≈ 3860。
+- **团队消息随 check_messages 内联送达**：不再经出站队列的「内部协作通知」信封转投，也不再需要 `team_message read`——正文直接出现在 `check_messages` 的返回里，投递即已读，不开回复守门；拾光桌面端关闭时团队消息照样送达。成员拿到系统派单直接 `claim`，只有成员之间的 directive / question 才需要 `respond`，一次派单从 8–9 次工具调用降到 2 次。
+- **删掉无用动作与参数**：`team_run` 只剩 transfer_lead / claim_lead / clear_acting_lead（ping / pong / liveness / start 退役，claim_lead 只看主控的 presence）；`team_task` / `team_review` 删除 renew 与 ttlSeconds；`check_messages` 删除 reply，`record_reply` 删除 groupId / taskId / files。工具描述整体缩短，schema 保持扁平对象并由测试锁定体积预算。
+- 新增 `npm run measure:mcp` 度量脚本；`smoke:channel` 覆盖工具面切换、not_in_group 与内联投递。
+
+验证：2204 项测试通过（2 项跳过），类型检查、dead-code、构建、两个 MCP 冒烟与度量脚本通过。
+
+**迁移**：无运行库迁移（沿用 v9）。协作库打开时幂等删除已退役的 `channel_liveness` 表；出站队列里旧版本遗留的内部通知信封行会在下一次 `check_messages` 时退役，不再投递。升级后拾光首次启动会改写 `mcp.json` 让 Cursor 重载 SG Team；若席位没有恢复，请在 Cursor 的 MCP 设置里刷新一次——旧服务器进程看不到新工具面，也不会内联投递团队消息。
+
+**尚未真机验收**：Cursor 收到 `tools/list_changed` 后模型是否立刻看到团队工具尚未在真机确认；若入组后工具列表里没有 team_*，Agent 会提示你重载 SG Team。会话池阶段 1–4 的真机验收按计划在本版之后一次进行。
+
 ## v0.4.6 更新
 
 - 会话过程流去掉重复的“实时过程”标题；规划、思考、探索与工具动作使用 Cursor 原生英文。
