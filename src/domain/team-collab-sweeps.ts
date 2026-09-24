@@ -1,6 +1,5 @@
 import {
   isOrphanedReceipt,
-  type ChannelLivenessRecord,
   type TeamCollaborationSnapshot,
   type TeamMessage
 } from './team-collaboration'
@@ -87,16 +86,14 @@ export interface LeadSilenceInput {
     lastSeenAt?: number
     lastAgentActivityAt?: number
   }
-  /** ping 记录只供审计；no-pong 不单独构成接管证据。 */
-  liveness?: ChannelLivenessRecord
   /** 绑定安装时间只供审计，不作失联判定。 */
   installedAt?: number
   now: number
 }
 
 /**
- * 有效主控失联证据。只接受 Cursor/运行时正面终止；被动静默、online=false、
- * ping no-pong 与历史 suspected 记录均属于证据不足，不生成会诱导接管的广播。
+ * 有效主控失联证据。只接受 Cursor/运行时正面终止；被动静默、online=false
+ * 与 suspected 记录均属于证据不足，不生成会诱导接管的广播。
  */
 export function leadSilenceEvidence(input: LeadSilenceInput): string | null {
   const runtime = input.runtime
@@ -104,10 +101,10 @@ export function leadSilenceEvidence(input: LeadSilenceInput): string | null {
   if (runtime?.runtimeEvidence === 'stopped' || isExplicitlyStoppedPhase(phase)) {
     return `Cursor 已明确终止（connectionPhase=${phase}）`
   }
-  // 执行中的 Agent 按协议不会持续轮询，也可能暂时无法 pong。此时 lastSeenAt
-  // 陈旧只是正常执行现象，不能作为主控失联证据；正面终止相位已在上方处理。
+  // 执行中的 Agent 按协议不会持续轮询。此时 lastSeenAt 陈旧只是正常执行现象，
+  // 不能作为主控失联证据；正面终止相位已在上方处理。
   if (hasInFlightExecution(runtime)) return null
-  // active 与 suspected 都不广播。suspected 只表示被动租约陈旧/证据不足；即使
-  // ping 多次未响应，也可能只是 Agent 正在跑长命令。接管提醒必须等 stopped。
+  // active 与 suspected 都不广播。suspected 只表示被动租约陈旧/证据不足，
+  // 也可能只是 Agent 正在跑长命令。接管提醒必须等 stopped。
   return null
 }

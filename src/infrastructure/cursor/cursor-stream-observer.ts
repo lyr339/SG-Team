@@ -556,7 +556,7 @@ export const CURSOR_STREAM_HOOK_EXPRESSION = `(() => {
     }
   }
   // 「本次 check_messages 投递了真实用户消息」：结果文本含投递协议标题（正面证据）。
-  // keepalive 返回体、内部协作通知、need_reply_sync、会话围栏文本都不含它。结果一旦到齐
+  // keepalive 返回体、团队消息批次、need_reply_sync、会话围栏文本都不含它。结果一旦到齐
   // 不再变化——按 bubbleId 记忆，长会话里不重复解析同一结果。
   const USER_DELIVERY_MARKER = ${JSON.stringify(CHANNEL_USER_DELIVERY_MARKER)}
   const deliveryByBubble = new Map()

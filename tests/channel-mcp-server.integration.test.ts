@@ -4,14 +4,19 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { ChannelMessageService } from '../src/application/channel-message-service'
+import type { ChannelTeamInbox } from '../src/application/channel-team-inbox'
 import type { ChannelSessionOwnership } from '../src/domain/session-fence'
+import type { TeamInboxBatch } from '../src/domain/team-collaboration'
 import { SqliteChannelMessageRepository } from '../src/infrastructure/channel-messages/sqlite-channel-message-repository'
 import { createUnifiedChannelServer } from '../src/mcp/unified-channel-server'
 
-async function fixture(options: { ownershipFor?: (channelId: string) => ChannelSessionOwnership | undefined } = {}) {
+async function fixture(options: {
+  ownershipFor?: (channelId: string) => ChannelSessionOwnership | undefined
+  teamInbox?: ChannelTeamInbox
+} = {}) {
   const path = join(mkdtempSync(join(tmpdir(), 'sg-channel-mcp-')), 'channel.sqlite3')
   const repository = new SqliteChannelMessageRepository(path)
-  const service = new ChannelMessageService(repository)
+  const service = new ChannelMessageService(repository, options.teamInbox)
   const server = createUnifiedChannelServer({
     runtimeFor: () => { throw new Error('通道测试不应触达团队运行时') },
     channelServiceFor: () => service,
@@ -93,22 +98,63 @@ describe('SG Team unified MCP (两项通信工具契约)', () => {
     }
   })
 
-  it('delivers silent internal notifications without user-reply protocol or sync gate', async () => {
-    const { repository, client, close } = await fixture()
+  it('delivers a team message batch inline with its own protocol, off the user-reply protocol and the sync gate', async () => {
+    const batch: TeamInboxBatch = {
+      runId: 'run-1',
+      slotId: 'agent-slot:1',
+      messages: [{
+        id: 'team-message:1',
+        kind: 'question',
+        senderLabel: '主控协调 · CH-2',
+        subject: '接口约定',
+        content: '字段用 camelCase 吗？',
+        needsResponse: true
+      }]
+    }
+    let unread: TeamInboxBatch | undefined = batch
+    const delivered: string[][] = []
+    const { repository, client, close } = await fixture({
+      teamInbox: {
+        unread: () => unread,
+        markDelivered: (delivering) => {
+          delivered.push(delivering.messages.map((message) => message.id))
+          unread = undefined
+        }
+      }
+    })
     try {
-      repository.enqueueOutbound('1', '【拾光内部协作通知】消息 ID：team-message:1', 1_000, undefined, true)
       const first = await client.callTool({ name: 'check_messages', arguments: { ...ch } })
       expect(first.isError).not.toBe(true)
       const text = textOf(first)
-      expect(text).toContain('内部协作通知协议')
-      expect(text).toContain("team_message({action:'read', messageId})")
-      expect(text).not.toContain('持续对话协议')
+      expect(text.startsWith('【拾光团队消息】CH-1 · 1 条')).toBe(true)
+      expect(text).toContain('[1] 提问 · 来自 主控协调 · CH-2 · 需回应 · messageId: team-message:1')
+      expect(text).toContain('字段用 camelCase 吗？')
+      expect(text).toContain("team_message({channel_id:'1', action:'respond', messageId, content})")
+      expect(text).toContain("check_messages（带 tick:'1'）")
+      expect(text).not.toContain('【真实用户消息处理完后进入 check_messages 待命】')
+      expect(delivered).toEqual([['team-message:1']])
+      expect(repository.getPresence('1')).toMatchObject({ connectionPhase: 'processing', deliveredCount: 1 })
       expect(repository.getPresence('1')?.pendingReplySyncSince).toBeUndefined()
 
-      repository.enqueueOutbound('1', '【拾光内部协作通知】消息 ID：team-message:2', 2_000, undefined, true)
+      // 团队消息不开守门：不必 record_reply 就能继续轮询，已送达的批次不再出现。
       const second = await client.callTool({ name: 'check_messages', arguments: { ...ch } })
       expect(second.isError).not.toBe(true)
-      expect(textOf(second)).toContain('team-message:2')
+      expect(textOf(second)).toContain('<sg_team_keepalive n="1"/>')
+    } finally {
+      await close()
+    }
+  })
+
+  it('retires pre-phase-4 envelope rows instead of delivering them', async () => {
+    const { repository, client, close } = await fixture()
+    try {
+      repository.enqueueOutbound('1', '【拾光内部协作通知】消息 ID：team-message:1', 1_000, undefined, true)
+      const result = await client.callTool({ name: 'check_messages', arguments: { ...ch } })
+      expect(result.isError).not.toBe(true)
+      expect(textOf(result)).toContain('<sg_team_keepalive n="1"/>')
+      expect(repository.listPendingOutbound('1')).toEqual([])
+      expect(repository.listOutboundSince(0)[0]).toMatchObject({ kind: 'internal', retiredAt: expect.any(Number), deliveredAt: undefined })
+      expect(repository.getPresence('1')?.pendingReplySyncSince).toBeUndefined()
     } finally {
       await close()
     }

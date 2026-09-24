@@ -199,15 +199,6 @@ export class TaskAgentService {
     })
   }
 
-  /** 兼容 no-op（阶段 2 · 2F）：续租已由服务端按 presence 完成；仍回当前到期时刻，ttl 不再生效。 */
-  renew(taskId?: string): number {
-    this.ensureAuthorized()
-    return this.transact((pool) => {
-      const active = this.ownedActiveAttempt(pool.snapshot(), taskId, ['leased', 'running'])
-      return pool.renewLease(active.id, active.leaseToken!)
-    })
-  }
-
   report(taskId: string | undefined, progress: number, summary = ''): AgentTaskView {
     this.ensureAuthorized()
     return this.transact((pool) => {
@@ -268,15 +259,6 @@ export class TaskAgentService {
       review: sanitizedReview(leased.review),
       leaseExpiresAt: leased.leaseExpiresAt
     }
-  }
-
-  /** 兼容 no-op，同 `renew`（阶段 2 · 2F）。 */
-  renewReview(taskId?: string): number {
-    this.ensureReviewer()
-    return this.transact((pool) => {
-      const review = this.ownedActiveReview(pool.snapshot(), taskId)
-      return pool.renewReview(review.id, review.leaseToken!)
-    })
   }
 
   submitReview(

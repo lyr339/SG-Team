@@ -274,7 +274,10 @@ export interface ConversationEntry {
   continuationBlocks?: ProcessBlock[]
   /** 用户消息携带的附件 */
   attachments?: MessageAttachment[]
-  /** 静默条目：系统内部协作通知不进入用户时间线，仅通过 DesktopSnapshot.commandReceipts 保留投递回执 */
+  /**
+   * 静默条目：不进入用户时间线。阶段 4 起主进程不再产生这种条目（成员关系通知只进出站队列），
+   * 渲染层 / 会话交接的过滤保留为防御。
+   */
   silent?: boolean
 }
 

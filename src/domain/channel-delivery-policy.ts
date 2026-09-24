@@ -1,5 +1,7 @@
 import { formatFileSize } from '../shared/format-file-size'
+import { TEAM_MESSAGES_DELIVERY_PREFIX } from './channel-message'
 import type { MessageAttachment } from './conversation-entry'
+import type { TeamInboxMessage, TeamMessageKind } from './team-collaboration'
 
 /**
  * 通道投递协议文本（一体化 S1）。
@@ -23,7 +25,7 @@ export interface ChannelDeliveryContext {
 /**
  * 真实用户消息投递后缀的标题行。除了给 Agent 的协议提醒，它还是 Cursor 过程观察器
  * 判定「这次 check_messages 投递了用户可见消息」的正面证据：其后的 thinking 是
- * 业务思考而非轮询余波（keepalive 返回体、内部协作通知、need_reply_sync 都不含它）。
+ * 业务思考而非轮询余波（keepalive 返回体、团队消息、need_reply_sync 都不含它）。
  */
 export const CHANNEL_USER_DELIVERY_MARKER = '【真实用户消息处理完后进入 check_messages 待命】'
 
@@ -42,15 +44,47 @@ export function buildDeliverySuffix(context: ChannelDeliveryContext): string {
   ].join('\n')
 }
 
-/** 内部协作通知投递后缀：只驱动 team_message 回执，不进入用户可见回复协议。 */
-export function buildSilentDeliverySuffix(context: Pick<ChannelDeliveryContext, 'channelId' | 'tick'>): string {
-  const next = context.tick !== undefined ? `（带 tick:'${context.tick}'）` : ''
+/** 团队消息单条正文的内联上限：更长的截断，完整内容按 messageId 用 team_message read 重读。 */
+const TEAM_MESSAGE_INLINE_MAX_CHARS = 4_000
+
+const TEAM_MESSAGE_KIND_LABELS: Record<TeamMessageKind, string> = {
+  directive: '指令',
+  question: '提问',
+  status: '状态',
+  notice: '通知',
+  response: '回应'
+}
+
+/**
+ * 团队消息批次的投递正文（阶段 4 · 4C）：正文直接内联，Agent 不再按 messageId 逐条 read；
+ * 每条标出是否需要 respond，协议只在末尾说一次。不含用户消息标记，不开回复守门。
+ */
+export function buildTeamMessagesDelivery(input: {
+  channelId: string
+  tick?: number
+  messages: TeamInboxMessage[]
+}): string {
+  const next = input.tick !== undefined ? `（带 tick:'${input.tick}'）` : ''
+  const blocks = input.messages.map((message, index) => {
+    const head = [
+      `[${index + 1}] ${TEAM_MESSAGE_KIND_LABELS[message.kind]}`,
+      `来自 ${message.senderLabel}`,
+      message.needsResponse ? '需回应' : '',
+      message.replyToMessageId ? `回应 ${message.replyToMessageId}` : '',
+      `messageId: ${message.id}`
+    ].filter(Boolean).join(' · ')
+    const content = message.content.length > TEAM_MESSAGE_INLINE_MAX_CHARS
+      ? `${message.content.slice(0, TEAM_MESSAGE_INLINE_MAX_CHARS)}…（正文过长已截断，完整内容用 team_message({action:'read', messageId}) 读取）`
+      : message.content
+    return [head, `主题：${message.subject}`, content].join('\n')
+  })
   return [
+    `${TEAM_MESSAGES_DELIVERY_PREFIX}CH-${input.channelId} · ${input.messages.length} 条（团队内部消息，不是用户消息）`,
+    '',
+    blocks.join('\n\n'),
     '',
     '---',
-    `【内部协作通知协议】这是 CH-${context.channelId} 的团队内部调度通知，不是用户可见对话。`,
-    '按通知里的 messageId 调用 team_message({action:\'read\', messageId})；directive/question 处理后用 team_message({action:\'respond\', messageId, content}) 建立关联回应。',
-    `不要向用户输出可见文字，不要调用 record_reply；处理完直接 check_messages${next} 静默待命。`
+    `【团队消息协议】不要向用户输出可见文字，不要调用 record_reply。标「需回应」的用 team_message({channel_id:'${input.channelId}', action:'respond', messageId, content}) 回应；其余按正文执行或纳入工作上下文。处理完直接 check_messages${next} 静默待命。`
   ].join('\n')
 }
 
@@ -151,15 +185,7 @@ export function buildStorageUnavailableMessage(input: { detail: string; retryabl
 }
 
 /** 回复同步守门拒绝文案（对齐插件 need_reply_sync 指引）。 */
-export function buildReplySyncRequiredMessage(groupChat: boolean): string {
-  if (groupChat) {
-    return [
-      '上一轮群聊消息已经处理，但你还没有把群内可见完整回复同步到 SG Team。',
-      '请先补同步，再继续调用 check_messages()。',
-      '如果确实无法走流式，请至少调用 record_reply({ content:"你刚刚已经给用户的完整回复", groupId:"当前群组" }) 兜底归档。',
-      '不要重新回答用户，不要开始新任务；只补同步上一轮已输出的完整正文。'
-    ].join('\n')
-  }
+export function buildReplySyncRequiredMessage(): string {
   return [
     '上一轮用户消息已经处理，但你还没有把刚刚写给用户的完整回复同步到 SG Team。',
     '请立即调用 record_reply({ content:"你刚刚已经输出给用户的完整回复" })，然后再调用 check_messages()。',

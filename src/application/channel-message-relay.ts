@@ -127,7 +127,6 @@ function isRecentDuplicateEntry(left: ConversationEntry, right: ConversationEntr
 export class ChannelMessageRelay {
   private readonly listeners = new Set<RelayListener>()
   private readonly conversations = new Map<string, ConversationEntry[]>()
-  private readonly commandReceipts = new Map<string, ConversationEntry>()
   /** sessions 增量缓存：fingerprint 命中即复用引用（结构共享，渲染层 memo 红利）。 */
   private readonly sessionCache = new Map<string, { fingerprint: string; session: AgentSession }>()
   private timer?: ReturnType<typeof setInterval>
@@ -207,9 +206,9 @@ export class ChannelMessageRelay {
     const attachments = this.prepareAttachments(messageId, input.attachments)
     // 纯附件消息合法（对齐前端输入框「文本或附件至少其一」）
     if (!text && !attachments?.length) throw new Error('消息不能为空')
-    // 投递类型：显式 kind 优先，否则按正文标题推断；internal / membership 都是 silent
-    //（只进出站队列、不进时间线、不开回复守门），区别只在 check_messages 投递时的协议后缀。
-    const kind = resolveOutboundKind(text, input.kind, input.silent === true)
+    // 投递类型：显式 kind 优先，否则按正文标题推断。成员关系通知是 silent
+    //（只进出站队列、不进时间线、不开回复守门），投递时用它自己的协议后缀。
+    const kind = resolveOutboundKind(text, input.kind)
     const silent = kind !== 'user'
     this.repository.dedupePendingOutbound(channelId, this.now())
     const runId = input.scopeRunId?.trim() || this.scopeRunId
@@ -218,22 +217,21 @@ export class ChannelMessageRelay {
       channelId, text, this.now(), attachments, silent, runId, { holdSessionToken, kind }
     )
     const commandId = randomUUID()
-    const entry: ConversationEntry = {
-      id: `outbox:${message.id}`,
-      channelId,
-      role: 'user',
-      text: message.text,
-      timestamp: message.createdAt,
-      deliveredAt: message.deliveredAt,
-      heldForNextSession: message.holdSessionToken ? true : undefined,
-      status: 'complete',
-      source: 'desktop',
-      commandId,
-      attachments: message.attachments,
-      silent: silent ? true : undefined
+    if (!silent) {
+      this.appendEntry({
+        id: `outbox:${message.id}`,
+        channelId,
+        role: 'user',
+        text: message.text,
+        timestamp: message.createdAt,
+        deliveredAt: message.deliveredAt,
+        heldForNextSession: message.holdSessionToken ? true : undefined,
+        status: 'complete',
+        source: 'desktop',
+        commandId,
+        attachments: message.attachments
+      })
     }
-    if (silent) this.storeCommandReceipt(entry)
-    else this.appendEntry(entry)
     return { commandId }
   }
 
@@ -351,7 +349,6 @@ export class ChannelMessageRelay {
     this.scopeStartedAt = startedAt
     this.repository.beginScope(this.scopeRunId, startedAt, this.now())
     this.conversations.clear()
-    this.commandReceipts.clear()
     this.sessionCache.clear()
     for (const reply of this.repository.listUnconsumedReplies()) {
       if (reply.createdAt + CONVERSATION_SCOPE_CLOCK_SKEW_MS < startedAt) {
@@ -373,7 +370,6 @@ export class ChannelMessageRelay {
     // 刚被退役的未投递消息立刻离开内存时间线（与 SQLite 一致，不等下一次轮询）：
     // 结束确认已告知用户「尚未取走的排队消息将归档」，它们不再是待投递。
     this.refreshOutboundDeliveries()
-    this.commandReceipts.clear()
     this.sessionCache.clear()
     this.emit()
   }
@@ -625,15 +621,7 @@ export class ChannelMessageRelay {
    */
   applyTo(snapshot: DesktopSnapshot): DesktopSnapshot {
     const embedded = this.embeddedChannels()
-    const commandReceipts = this.commandReceiptsSnapshot(snapshot.commandReceipts)
-    const commandReceiptsChanged = commandReceipts !== snapshot.commandReceipts
-    if (!embedded.length) {
-      if (!commandReceiptsChanged) return snapshot
-      return {
-        ...snapshot,
-        ...(commandReceipts ? { commandReceipts } : {})
-      }
-    }
+    if (!embedded.length) return snapshot
     const now = this.now()
     const conversations = { ...snapshot.conversations }
     const sessionByChannel = new Map(snapshot.sessions.map((session) => [session.channelId, session]))
@@ -654,20 +642,13 @@ export class ChannelMessageRelay {
       sessionByChannel.set(channelId, session)
       changed = true
     }
-    if (!changed && !commandReceiptsChanged) return snapshot
+    if (!changed) return snapshot
     return {
       ...snapshot,
       sessions: [...sessionByChannel.values()]
         .sort((left, right) => Number(left.channelId) - Number(right.channelId) || left.channelId.localeCompare(right.channelId)),
-      conversations,
-      ...(commandReceipts ? { commandReceipts } : {})
+      conversations
     }
-  }
-
-  /** 静默消息的投递回执快照：只给调度器对账，不展示给用户。 */
-  private commandReceiptsSnapshot(base?: Record<string, ConversationEntry>): Record<string, ConversationEntry> | undefined {
-    if (!this.commandReceipts.size) return base
-    return { ...(base ?? {}), ...Object.fromEntries(this.commandReceipts) }
   }
 
   /**
@@ -765,17 +746,6 @@ export class ChannelMessageRelay {
     if (current.some((candidate) => isRecentDuplicateEntry(candidate, entry))) return
     const entries = sortConversationEntries([...current, entry]).slice(-MAX_ENTRIES_PER_CHANNEL)
     this.conversations.set(entry.channelId, entries)
-    this.emit()
-  }
-
-  private storeCommandReceipt(entry: ConversationEntry): void {
-    if (!entry.commandId) return
-    this.commandReceipts.set(entry.commandId, entry)
-    while (this.commandReceipts.size > MAX_ENTRIES_PER_CHANNEL) {
-      const oldest = this.commandReceipts.keys().next().value
-      if (!oldest) break
-      this.commandReceipts.delete(oldest)
-    }
     this.emit()
   }
 

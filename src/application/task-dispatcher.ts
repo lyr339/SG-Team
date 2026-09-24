@@ -159,8 +159,8 @@ export class TaskDispatcher {
         task.description ? `目标与边界：${task.description}` : '',
         task.acceptance ? `验收标准：${task.acceptance}` : '',
         retry && task.failureReason ? `上次未通过原因：${task.failureReason}` : '',
-        `请调用 team_tasks({ taskId: "${task.id}" }) 核对详情，再调用 team_task({ action: "claim", taskId: "${task.id}" }) 原子领取。`,
-        '领取成功后开始执行并按 Team 流程汇报；不要只回复“收到”。'
+        `直接调用 team_task({ action: "claim", taskId: "${task.id}" }) 原子领取（需要依赖、当前 Attempt 等完整详情时再 team_tasks({ taskId: "${task.id}" })）。`,
+        '领取后开始执行；领取、进度、提交会随 team_task 动作自动上报，不需要另发团队消息。'
       ].filter(Boolean).join('\n'),
       clientMessageId: orchestratorMessageId('task', task.id, task.attemptCount)
     })

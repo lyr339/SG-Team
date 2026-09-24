@@ -125,21 +125,6 @@ export interface AuthorizedTeamAgent {
   groupId?: string
 }
 
-/** 通道活性状态。 */
-export type ChannelLiveness =
-  | 'active'           // 已验证活跃
-  | 'suspected_offline' // 疑似离线（ping 失败但未确认）
-  | 'confirmed_offline' // 已确认离线（连续多次 ping 失败）
-
-export interface ChannelLivenessRecord {
-  channelId: string
-  liveness: ChannelLiveness
-  lastVerifiedAt: number
-  consecutiveFailures: number
-  lastPingAt?: number
-  lastPongAt?: number
-}
-
 export interface TeamMemberDirectoryEntry {
   slotId: string
   roleKey: string
@@ -189,6 +174,34 @@ export function teamMessageReceiptStage(receipt: TeamMessageReceipt): TeamMessag
 
 export function teamMessageRequiresResponse(kind: TeamMessageKind): boolean {
   return kind === 'directive' || kind === 'question'
+}
+
+/**
+ * 收件 Agent 是否要用 team_message respond 回应：只有成员发来的 directive / question。
+ * 拾光系统（operator）发的调度、催办、提醒按正文执行即是回应——领取任务、汇报进度、提交审核都会留下
+ * 自己的回执，再补一条 respond 只多一次工具调用，没有任何消费方。
+ */
+export function teamMessageNeedsAgentResponse(message: Pick<TeamMessage, 'kind' | 'sender'>): boolean {
+  return message.sender.type === 'agent' && teamMessageRequiresResponse(message.kind)
+}
+
+/** 随 check_messages 内联投递的一条团队消息（阶段 4 · 4C）：正文直接交给 Agent，投递即已读。 */
+export interface TeamInboxMessage {
+  id: string
+  kind: TeamMessageKind
+  /** `拾光系统`，或发送席位的 `角色名 · CH-N`。 */
+  senderLabel: string
+  subject: string
+  content: string
+  needsResponse: boolean
+  replyToMessageId?: string
+}
+
+/** 一次内联投递的批次：收件席位与按时间升序的消息。 */
+export interface TeamInboxBatch {
+  runId: string
+  slotId: string
+  messages: TeamInboxMessage[]
 }
 
 /**

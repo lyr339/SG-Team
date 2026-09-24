@@ -938,7 +938,7 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
   resolveChannelSessionOwner(channelId: string): ChannelSessionOwnership | undefined {
     const normalizedChannelId = String(channelId).trim()
     const row = this.database.prepare(`
-      SELECT tr.id AS run_id, tr.status AS run_status, b.slot_id, b.session_token, s.is_solo
+      SELECT tr.id AS run_id, tr.status AS run_status, b.slot_id, b.session_token, s.is_solo, s.group_id
       FROM team_control_meta meta
       JOIN team_runs tr ON tr.workspace_id = meta.active_workspace_id
       LEFT JOIN runtime_bindings b ON b.run_id = tr.id AND b.channel_id = ?
@@ -949,14 +949,38 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
     `).get(normalizedChannelId) as SqliteRow | undefined
     const runId = row ? optionalString(row.run_id) : undefined
     if (!row || !runId) return undefined
-    const bound = optionalString(row.slot_id) !== undefined
+    const slotId = optionalString(row.slot_id)
+    const bound = slotId !== undefined
     return {
       runId,
       runStatus: String(row.run_status) as TeamRunStatus,
       bound,
       sessionToken: bound ? optionalString(row.session_token) : undefined,
-      solo: bound && numberOf(row.is_solo) === 1
+      solo: bound && numberOf(row.is_solo) === 1,
+      ...(slotId ? { slotId } : {}),
+      ...(bound && optionalString(row.group_id) ? { groupId: optionalString(row.group_id) } : {})
     }
+  }
+
+  /**
+   * 工具面探针（阶段 4 · 4A）：当前活动 run（与 `resolveChannelSessionOwner` 同一口径——活动工作区最新的 run）
+   * 是否正在运行且至少有一个活动协作组。MCP 进程据此决定是否向 Cursor 暴露团队工具；
+   * 每次 check_messages 返回前问一次，必须是一条轻量 SQL。
+   */
+  hasActiveGroup(): boolean {
+    const row = this.database.prepare(`
+      SELECT COUNT(*) AS count
+      FROM team_control_meta meta
+      JOIN team_runs tr ON tr.workspace_id = meta.active_workspace_id
+      JOIN team_groups g ON g.run_id = tr.id AND g.status = 'active'
+      WHERE meta.id = 1 AND tr.status = 'running'
+        AND tr.id = (
+          SELECT newest.id FROM team_runs newest
+          WHERE newest.workspace_id = meta.active_workspace_id
+          ORDER BY newest.created_at DESC LIMIT 1
+        )
+    `).get() as SqliteRow
+    return numberOf(row.count) > 0
   }
 
   listAgentRegistrations(runId: string): AgentRegistration[] {

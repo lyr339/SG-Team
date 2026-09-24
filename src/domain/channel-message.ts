@@ -21,9 +21,9 @@ export interface ChannelOutboundMessage {
   /** 内部投递消息只用于 Agent 调度/对账，不进入用户可见会话时间线。 */
   silent?: boolean
   /**
-   * 投递类型：`user` 真实用户消息（开回复守门）；`internal` 团队内部协作通知（team_message 回执后缀）；
-   * `membership` 拾光服务端的成员关系通知（入组 / 出组 / 解散 / lead 变更——无 messageId、不要求
-   * record_reply，独立后缀）。后两者都是 silent。缺省按正文前缀推断（旧行 / 旧构建）。
+   * 投递类型：`user` 真实用户消息（开回复守门）；`membership` 拾光服务端的成员关系通知（入组 / 出组 /
+   * 解散 / lead 变更——无 messageId、不要求 record_reply，独立后缀，silent）；`internal` 只出现在
+   * 阶段 4 之前遗留的团队消息信封行上，check_messages 遇到即退役。缺省按正文前缀推断（旧行 / 旧构建）。
    */
   kind?: ChannelOutboundKind
   /**
@@ -48,11 +48,18 @@ export function isOutboundDeliverableTo(message: Pick<ChannelOutboundMessage, 'h
   return Boolean(session) && session !== message.holdSessionToken
 }
 
+/**
+ * 阶段 4 之前桌面调度器写进 outbox 的团队消息信封标题。现在团队消息随 check_messages 内联投递
+ *（`TEAM_MESSAGES_DELIVERY_PREFIX`），这个前缀只用来识别库里遗留的旧信封行。
+ */
 export const INTERNAL_COLLABORATION_NOTIFICATION_PREFIX = '【拾光内部协作通知】'
 
 export function isInternalCollaborationNotificationText(text: string): boolean {
   return text.trimStart().startsWith(INTERNAL_COLLABORATION_NOTIFICATION_PREFIX)
 }
+
+/** 团队消息批次投递正文的标题（阶段 4 · 4C）。 */
+export const TEAM_MESSAGES_DELIVERY_PREFIX = '【拾光团队消息】'
 
 /**
  * 成员关系通知标题（会话池 · 协作组）。阶段 0 实机发现：内部协作后缀写死「按 messageId 调用
@@ -85,9 +92,6 @@ export interface ChannelInboundReply {
   channelId: string
   content: string
   title?: string
-  groupId?: string
-  taskId?: string
-  files: string[]
   /** false 表示后台/内部同步回复：落库留痕并消费，但不进入用户可见会话时间线。 */
   visible?: boolean
   createdAt: number
@@ -120,8 +124,6 @@ export interface ChannelPresence {
   pendingReplySyncSince?: number
   /** 当前等待 record_reply 的真实出站消息 ID。 */
   pendingOutboundId?: string
-  pendingGroupChat: boolean
-  pendingGroupId?: string
   /**
    * CDP 运行时探测最近一次确认「正在生成」的时间（主进程写入）。
    * 与 lastSeenAt（MCP 工具调用心跳）是两条独立的生命证据流：
@@ -210,9 +212,8 @@ export function isPresenceOnline(presence: ChannelPresence | undefined, now: num
  * 已取走真实消息的执行租约。
  *
  * processing / need_reply_sync 期间 Agent 正在推理、跑命令或生成回复，协议上本来
- * 就不会持续调用 check_messages，也可能暂时处理不了活性验证 ping。只要没有
- * cursor_stopped/tool_aborted 这类正面终止证据，这个相位就必须受保护，不能仅凭
- * lastSeenAt 超时触发主控接管、角色交接或整轮结束。
+ * 就不会持续调用 check_messages。只要没有 cursor_stopped/tool_aborted 这类正面终止
+ * 证据，这个相位就必须受保护，不能仅凭 lastSeenAt 超时触发主控接管、角色交接或整轮结束。
  */
 export function hasInFlightExecution(session: { connectionPhase?: string } | undefined): boolean {
   const phase = session?.connectionPhase ?? ''

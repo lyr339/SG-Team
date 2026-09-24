@@ -1,6 +1,7 @@
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { describe, expect, it } from 'vitest'
 import { createConfiguredTeamBundle } from '../src/domain/team-control'
 import { teamMessageReceiptStage } from '../src/domain/team-collaboration'
@@ -96,17 +97,9 @@ describe('SqliteTeamCollaborationRepository', () => {
       expect(data.repository.loadRun(data.bundle.run.id).messageOrder).toEqual([first.id])
       expect(teamMessageReceiptStage(first.receipt)).toBe('queued')
 
-      data.repository.markNotificationSending(first.id, 'command-1')
-      let message = data.repository.markNotificationResult(first.id, 'notified', '晴天已确认投递')
-      expect(teamMessageReceiptStage(message.receipt)).toBe('notified')
-      message = data.repository.markNotificationResult(first.id, 'failed', '迟到的失败回执')
-      expect(message.receipt.notificationState).toBe('notified')
-      message = data.repository.markRead(first.id, { type: 'agent', slotId: builder.slotId })
+      let message = data.repository.markRead(first.id, { type: 'agent', slotId: builder.slotId })
       expect(teamMessageReceiptStage(message.receipt)).toBe('read')
       message = data.repository.acknowledge(first.id, { type: 'agent', slotId: builder.slotId })
-      expect(teamMessageReceiptStage(message.receipt)).toBe('acknowledged')
-
-      message = data.repository.markNotificationResult(first.id, 'failed', '迟到的失败回执')
       expect(teamMessageReceiptStage(message.receipt)).toBe('acknowledged')
       expect(data.repository.loadRun(data.bundle.run.id).events.map((event) => event.type)).toContain('message.acknowledged')
     } finally {
@@ -115,30 +108,7 @@ describe('SqliteTeamCollaborationRepository', () => {
     }
   })
 
-  it('recovers an orphaned sending receipt as uncertain without retrying it', () => {
-    const data = fixture()
-    try {
-      const message = data.repository.createMessage({
-        runId: data.bundle.run.id,
-        sender: { type: 'agent', slotId: data.slot('lead').id },
-        recipient: { type: 'agent', slotId: data.slot('builder').id },
-        kind: 'directive',
-        content: '模拟应用在投递中崩溃。',
-        clientMessageId: 'orphaned-sending-0001'
-      })
-      data.repository.markNotificationSending(message.id, 'orphan-command', 'sending', 1_000)
-      expect(data.repository.recoverStaleSending(2_000)).toBe(1)
-      expect(data.repository.loadRun(data.bundle.run.id).messages[message.id]?.receipt)
-        .toMatchObject({ notificationState: 'uncertain' })
-      expect(data.repository.recoverStaleSending(Date.now())).toBe(0)
-      expect(data.repository.listPendingNotifications(data.bundle.run.id)).toEqual([])
-    } finally {
-      data.repository.close()
-      data.team.close()
-    }
-  })
-
-  it('correlates a response to the original message and wakes the original sender', () => {
+  it('correlates a response to the original message and leaves it unread for the original sender', () => {
     const data = fixture()
     try {
       const leadSlot = data.slot('lead')
@@ -165,8 +135,7 @@ describe('SqliteTeamCollaborationRepository', () => {
       const snapshot = data.repository.loadRun(data.bundle.run.id)
       expect(teamMessageReceiptStage(snapshot.messages[directive.id]!.receipt)).toBe('responded')
       expect(snapshot.messages[directive.id]!.receipt.responseMessageId).toBe(response.id)
-      expect(data.repository.listPendingNotifications(data.bundle.run.id).map((message) => message.id))
-        .toContain(response.id)
+      expect(teamMessageReceiptStage(snapshot.messages[response.id]!.receipt)).toBe('queued')
 
       expect(() => data.repository.createMessage({
         runId: data.bundle.run.id,
@@ -195,8 +164,7 @@ describe('SqliteTeamCollaborationRepository', () => {
         content: '当前实现还需要我确认什么？',
         clientMessageId: 'operator-question-01'
       })
-      expect(data.repository.listPendingNotifications(data.bundle.run.id).map((message) => message.id))
-        .toEqual([question.id])
+      expect(teamMessageReceiptStage(question.receipt)).toBe('queued')
       const response = data.repository.createMessage({
         runId: data.bundle.run.id,
         sender: { type: 'agent', slotId: builderSlot.id },
@@ -209,8 +177,6 @@ describe('SqliteTeamCollaborationRepository', () => {
 
       expect(response.receipt.notificationState).toBe('not_required')
       expect(teamMessageReceiptStage(response.receipt)).toBe('notified')
-      expect(data.repository.listPendingNotifications(data.bundle.run.id).map((message) => message.id))
-        .toEqual([])
     } finally {
       data.repository.close()
       data.team.close()
@@ -257,16 +223,9 @@ describe('SqliteTeamCollaborationRepository', () => {
         content: '上一轮遗留状态消息。',
         clientMessageId: 'operator-stale-status-0001'
       })
-      data.repository.recordLiveness({
-        channelId: '1',
-        runId: data.bundle.run.id,
-        verified: true,
-        at: 1_500
-      })
 
       const previousRevision = data.repository.revision()
       expect(data.repository.loadRun(data.bundle.run.id).messageOrder).toHaveLength(1)
-      expect(data.repository.listLiveness(data.bundle.run.id)).toHaveLength(1)
 
       expect(data.repository.clearRun(data.bundle.run.id, 2_000)).toBe(true)
       const snapshot = data.repository.loadRun(data.bundle.run.id)
@@ -274,10 +233,44 @@ describe('SqliteTeamCollaborationRepository', () => {
       expect(snapshot.messageOrder).toEqual([])
       expect(snapshot.threads).toEqual([])
       expect(snapshot.events).toEqual([])
-      expect(data.repository.listLiveness(data.bundle.run.id)).toEqual([])
       expect(data.repository.clearRun(data.bundle.run.id, 3_000)).toBe(false)
     } finally {
       data.repository.close()
+      data.team.close()
+    }
+  })
+
+  it('drops the retired channel_liveness table on open and stays idempotent (phase 4 · 4D)', () => {
+    const data = fixture()
+    data.repository.close()
+    const raw = new DatabaseSync(data.path)
+    raw.exec(`
+      CREATE TABLE channel_liveness (
+        channel_id TEXT NOT NULL, run_id TEXT NOT NULL, liveness TEXT NOT NULL,
+        last_verified_at INTEGER NOT NULL, consecutive_failures INTEGER NOT NULL DEFAULT 0,
+        last_ping_at INTEGER, last_pong_at INTEGER, updated_at INTEGER NOT NULL,
+        PRIMARY KEY (channel_id, run_id)
+      );
+      CREATE INDEX idx_channel_liveness_run ON channel_liveness(run_id, updated_at DESC);
+    `)
+    raw.prepare(`INSERT INTO channel_liveness VALUES ('1', ?, 'active', 1, 0, 1, 1, 1)`).run(data.bundle.run.id)
+    raw.close()
+    const retiredObjects = () => {
+      const probe = new DatabaseSync(data.path)
+      try {
+        return probe.prepare(`SELECT name FROM sqlite_master WHERE name LIKE '%channel_liveness%'`).all()
+      } finally {
+        probe.close()
+      }
+    }
+    try {
+      new SqliteTeamCollaborationRepository(data.path).close()
+      expect(retiredObjects()).toEqual([])
+      const reopened = new SqliteTeamCollaborationRepository(data.path)
+      expect(reopened.revision()).toBeGreaterThanOrEqual(0)
+      reopened.close()
+      expect(retiredObjects()).toEqual([])
+    } finally {
       data.team.close()
     }
   })

@@ -1,9 +1,8 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash } from 'node:crypto'
 import type { PlanTaskInput } from '../domain/task-pool'
 import { TaskPoolError } from '../domain/task-pool'
 import type {
   AuthorizedTeamAgent,
-  ChannelLivenessRecord,
   TeamAgentRuntimeIdentity,
   TeamMessage,
   TeamMessageKind
@@ -95,21 +94,13 @@ export class TeamCollaborationAgentService {
         && message.receipt.respondedAt === undefined
       ))
       .length
-    const liveness = this.repository.listLiveness(agent.runId)
-    const memberLiveness = new Map(members.map((member) => {
-      const record = liveness.find((item) => item.channelId === member.channelId)
-      return [member.slotId, record?.liveness ?? 'unknown']
-    }))
     return {
       self: agent,
-      members: members.map((member) => ({
-        ...member,
-        liveness: memberLiveness.get(member.slotId)
-      })),
+      members,
       unreadMessages: unread,
       awaitingResponses,
       instructions: unread > 0
-        ? '先调用 team_message({action:\'inbox\'})，再对需要处理的消息调用 team_message({action:\'read\', messageId})。'
+        ? `有 ${unread} 条未读团队消息，会随下一次 check_messages 送达。`
         : '当前没有未读团队消息。'
     }
   }
@@ -119,7 +110,7 @@ export class TeamCollaborationAgentService {
     return agent.isEffectiveLead === true
   }
 
-  listInbox(unreadOnly = true, limit = 30): TeamInboxEntry[] {
+  listInbox(unreadOnly = false, limit = 30): TeamInboxEntry[] {
     const agent = this.currentAgent()
     const self = { type: 'agent' as const, slotId: agent.slotId }
     const snapshot = this.snapshotOf(agent)
@@ -304,56 +295,6 @@ export class TeamCollaborationAgentService {
     return this.tasks.listBoard()
   }
 
-  /**
-   * 发送活性验证 ping 到指定通道。
-   * 目标通道应在 5 秒内调用 team_run({action:'pong', pingId}) 响应。
-   */
-  ping(input: { targetChannelId: string; timeoutMs?: number }): { pingId: string; sentAt: number } {
-    const agent = this.currentAgent()
-    const members = this.membersOf(agent)
-    const target = members.find((member) => member.channelId === input.targetChannelId)
-    if (!target) throw new TaskPoolError('target_channel_not_found', `目标通道 CH-${input.targetChannelId} 不属于当前团队 / 协作组`)
-    const pingId = `ping:${randomUUID()}`
-    const sentAt = Date.now()
-    this.repository.createMessage({
-      runId: agent.runId,
-      sender: { type: 'agent', slotId: agent.slotId },
-      recipient: { type: 'agent', slotId: target.slotId },
-      kind: 'question',
-      subject: '活性验证 ping',
-      content: `【活性验证】请立即调用 team_run({action:'pong', pingId:'${pingId}'}) 响应。pingId: ${pingId}`,
-      clientMessageId: pingId
-    })
-    this.repository.recordLiveness({
-      channelId: input.targetChannelId,
-      runId: agent.runId,
-      verified: false,
-      at: sentAt
-    })
-    return { pingId, sentAt }
-  }
-
-  /**
-   * 响应活性验证 ping。
-   */
-  pong(input: { pingId: string }): void {
-    const agent = this.currentAgent()
-    this.repository.recordLiveness({
-      channelId: agent.channelId,
-      runId: agent.runId,
-      verified: true,
-      at: Date.now()
-    })
-  }
-
-  /**
-   * 检查指定通道的活性状态。
-   */
-  checkLiveness(targetChannelId: string): ChannelLivenessRecord | undefined {
-    const agent = this.currentAgent()
-    return this.repository.getLiveness(targetChannelId, agent.runId)
-  }
-
   planTasks(inputs: PlanTaskInput[]): ReturnType<TaskAgentService['plan']> {
     const agent = this.currentAgent()
     const members = this.membersOf(agent)
@@ -423,7 +364,7 @@ export class TeamCollaborationAgentService {
       kind: 'notice',
       subject: '主控接管上下文',
       content: [
-        '【主控接管上下文】你已成为当前 TeamRun 的唯一有效主控。',
+        '【主控接管上下文】你已成为唯一有效主控。',
         input.evidence.length ? `失联证据：${input.evidence.join('；')}` : '',
         input.recoveredTaskIds.length ? `已迁移/重排任务：${input.recoveredTaskIds.join('、')}` : '原主控没有活动任务需要迁移。',
         '',
@@ -437,7 +378,7 @@ export class TeamCollaborationAgentService {
           ? pending.map((message) => `- ${message.id}｜${message.kind}｜${message.content.slice(0, 500)}`).join('\n')
           : '- 无',
         '',
-        '先调用 team_message({action:\'read\', messageId}) 阅读本消息，再用 team_tasks({view:\'board\'}) 核对任务；需要重新领取的任务按正常 team_task claim 流程处理。'
+        '用 team_tasks({view:\'board\'}) 核对任务；需要重新领取的任务按正常 team_task claim 流程处理。'
       ].filter((line, index, values) => line !== '' || values[index - 1] !== '').join('\n'),
       clientMessageId: generatedClientMessageId('lead-takeover-context', [
         agent.runId,

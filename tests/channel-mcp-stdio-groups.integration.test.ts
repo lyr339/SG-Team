@@ -17,12 +17,14 @@ import { SqliteTaskPoolRepository } from '../src/infrastructure/task-pool/sqlite
 import { SqliteTeamCollaborationRepository } from '../src/infrastructure/team-collaboration/sqlite-team-collaboration-repository'
 import { SqliteTeamControlRepository } from '../src/infrastructure/team-control/sqlite-team-control-repository'
 import { SqliteTeamMemoryRepository } from '../src/infrastructure/team-memory/sqlite-team-memory-repository'
+import { TEAM_TOOL_NAMES } from '../src/mcp/team-tools'
 
 /**
  * 会话池 + 协作组 · 真实 stdio 集成（任务书 §10.4）：拉起真实的 `src/mcp/index.ts` 子进程
  *（与 Cursor 托管的进程同一入口、同一库文件），本进程扮演拾光桌面端（TeamGroupService 直写同一 SQLite）。
  * 锁定的是跨进程事实：入组 / 出组不重启 MCP 进程、不换令牌，身份在下一次工具调用时即生效；
- * 成员关系通知经 check_messages 以独立后缀投递、不开回复守门；任务视图按组隔离。
+ * 成员关系通知经 check_messages 以独立后缀投递、不开回复守门；任务视图按组隔离；
+ * 团队工具只在工作区有活动协作组时出现在 tools/list 里，切换经 list_changed 通知客户端（阶段 4 · 4A）。
  */
 
 const CHANNELS = ['1', '2', '3'] as const
@@ -83,11 +85,29 @@ async function spawnUnifiedServer(databasePath: string, workspacePath: string) {
   })
   let stderr = ''
   transport.stderr?.on('data', (chunk) => { stderr += chunk.toString() })
-  const client = new Client({ name: 'sg-team-stdio-groups', version: '1.0.0' })
+  // 与 Cursor 一样订阅 tools/list_changed：服务器切换工具面后客户端重拉，这里记下每次重拉到的工具名。
+  const refreshedSurfaces: string[][] = []
+  const client = new Client({ name: 'sg-team-stdio-groups', version: '1.0.0' }, {
+    listChanged: {
+      tools: {
+        onChanged: (error, tools) => {
+          if (!error && tools) refreshedSurfaces.push(tools.map((tool) => tool.name).sort())
+        }
+      }
+    }
+  })
   await client.connect(transport)
   return {
     client,
     stderr: () => stderr,
+    refreshedSurfaces,
+    toolNames: async () => (await client.listTools()).tools.map((tool) => tool.name).sort(),
+    waitForSurfaces: async (count: number) => {
+      for (let attempt = 0; attempt < 300 && refreshedSurfaces.length < count; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+      return refreshedSurfaces
+    },
     call: (name: string, args: Record<string, unknown>) => client.callTool({ name, arguments: args }, { timeout: 15_000 }),
     close: async () => {
       await client.close()
@@ -95,6 +115,9 @@ async function spawnUnifiedServer(databasePath: string, workspacePath: string) {
     }
   }
 }
+
+const COMMUNICATION_TOOLS = ['check_messages', 'record_reply']
+const ALL_TOOLS = [...COMMUNICATION_TOOLS, ...TEAM_TOOL_NAMES].sort()
 
 describe('会话池协作组 · 真实 stdio MCP 进程', () => {
   it('solo → not_in_group；建组通知经 check_messages 投递 → team_check_in 见组简报；任务按组隔离；出组回 not_in_group；令牌与围栏全程不变', async () => {
@@ -160,17 +183,11 @@ describe('会话池协作组 · 真实 stdio MCP 进程', () => {
     }
 
     try {
-      const toolNames = (await server.client.listTools()).tools.map((tool) => tool.name)
-      expect(toolNames).toEqual(expect.arrayContaining(['check_messages', 'record_reply', 'team_check_in', 'team_tasks', 'team_task', 'team_message']))
+      // ── 0. 无协作组的工作区：tools/list 只有两项通信工具，团队工具连名字都不出现 ──
+      expect(await server.toolNames()).toEqual(COMMUNICATION_TOOLS)
 
-      // ── 1. 独立席位：team_* 一律 not_in_group + 指回通信待命；通信工具不受影响 ──
-      const soloCheckIn = await call('team_check_in', { channel_id: '1' })
-      expect(soloCheckIn.isError).toBe(true)
-      expect(payloadOf(soloCheckIn)).toMatchObject({
-        ok: false, code: 'not_in_group', nextAction: { type: 'enter_channel_wait', channelId: '1' }
-      })
-      expect(String(payloadOf(soloCheckIn).message)).toContain('CH-1 当前是独立席位')
-      expect(payloadOf(await call('team_tasks', { channel_id: '3', view: 'available' }))).toMatchObject({ code: 'not_in_group' })
+      // ── 1. 独立席位：团队工具被隐藏（按名字硬调也被 SDK 拒绝）；通信工具不受影响 ──
+      await expect(call('team_check_in', { channel_id: '1' })).rejects.toThrow(/team_check_in/)
       await deliverUser('1', '基线：独立席位请待命')
       // 围栏确实在岗：错误令牌被退役，正确令牌放行（后续「围栏不变」的断言才有意义）
       const retired = await call('check_messages', { channel_id: '1', session: 'stale-token-0001' })
@@ -189,6 +206,9 @@ describe('会话池协作组 · 真实 stdio MCP 进程', () => {
       expect(joinedLead).toContain('你（CH-1）已加入协作组「验收组」，角色「主控协调」；lead：主控协调 · CH-1。')
       expect(joinedLead).toContain('组目标：把接口重构收尾')
       expect(joinedLead).toContain("team_check_in({channel_id:'1'})")
+      // 工具面在通知返回前切换：客户端已收到 list_changed 并重拉到全部 9 个工具。
+      expect(await server.waitForSurfaces(1)).toEqual([ALL_TOOLS])
+      expect(await server.toolNames()).toEqual(ALL_TOOLS)
       const joinedMember = await membershipNotice('2')
       expect(joinedMember).toContain('你（CH-2）已加入协作组「验收组」，角色「专项实现 1」；lead：主控协调 · CH-1。')
       // 成员关系通知是 silent：不开回复守门，下一条用户消息直接投递
@@ -277,6 +297,19 @@ describe('会话池协作组 · 真实 stdio MCP 进程', () => {
       expect(eventsA).toContain('lead_changed')
       expect(control.getSnapshot().activeRun?.status).toBe('running')
       expect(server.stderr()).toContain('[sg-team-mcp] ready unified')
+
+      // ── 8. 解散：只要还有一个活动组，团队工具留在工具面；最后一个组解散后随通知收回 ──
+      groups.dissolveGroup({ groupId: groupA.id })
+      expect(groupErrors).toEqual([])
+      expect(await membershipNotice('1')).toContain('协作组「验收组」已解散')
+      expect(await server.toolNames()).toEqual(ALL_TOOLS)
+      groups.dissolveGroup({ groupId: groupB.id })
+      expect(groupErrors).toEqual([])
+      expect(await membershipNotice('3')).toContain('协作组「调研组」已解散')
+      expect(await server.waitForSurfaces(2)).toEqual([ALL_TOOLS, COMMUNICATION_TOOLS])
+      expect(await server.toolNames()).toEqual(COMMUNICATION_TOOLS)
+      await expect(call('team_check_in', { channel_id: '1' })).rejects.toThrow(/team_check_in/)
+      expect(bindingsNow()).toEqual(fenceBaseline)
     } finally {
       await server.close()
       control.dispose()

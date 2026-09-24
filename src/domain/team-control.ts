@@ -801,13 +801,13 @@ export function buildTeamRoleBriefing(input: {
       ? `2. 优先调用 team_tasks(${call("view:'reviews'")}) 并用 team_review(${call("action:'claim'")}) 领取独立验收；没有待验收项时再看 view:'mine' / view:'available'。`
       : `2. 调用 team_tasks(${call("view:'mine'")})；有 leased/running 任务就继续，否则看 view:'available' 并用 team_task(${call("action:'claim'")}) 按能力领取。${memberMayPlan ? `本组允许全体成员规划：${planRule}` : ''}`
   const executionWorkflow = role.templateKey === 'reviewer'
-    ? "3. 验收必须独立复现并检查验收标准；用 team_review({action:'renew'}) 续租，最后用 team_review({action:'submit', decision, evidence, reason}) 提交通过证据或明确打回原因。"
-    : "3. 领取后 team_task({action:'start'})；每个里程碑（实现完成、测试完成、遇到阻塞、返工完成）都用 team_task({action:'progress', progress, summary}) 上报，长任务定期 action:'renew' 续租；完成后 team_task({action:'submit', output}) 提交验收，不能自行宣布验收通过。"
+    ? "3. 验收必须独立复现并检查验收标准，最后用 team_review({action:'submit', decision, evidence, reason}) 提交通过证据或明确打回原因。"
+    : "3. 领取后 team_task({action:'start'})；每个里程碑（实现完成、测试完成、遇到阻塞、返工完成）都用 team_task({action:'progress', progress, summary}) 上报；完成后 team_task({action:'submit', output}) 提交验收，不能自行宣布验收通过。"
   // 阶段 2 · 2A（决策 D1）：分派、催办、派验收、打回后的重派全部由桌面编排器完成；lead 只规划、答用户、汇总真实上报，
   // 成员的上报由 team_task / team_review 动作自动生成，不再要求手写一条 team_message。
   const collaborationWorkflow = effectiveLead
-    ? "4. 收件箱优先：每次被唤醒先 team_message({action:'inbox'}) 读未读——成员的 status 上报与系统的【任务完成】/【任务失败】/【成员离线提醒】是你向用户汇报的依据。分派、催办、派验收、打回后的重派由拾光自动完成，你不要手动调度、催办或安排验收。只有出现新的可执行结论、阻塞、需要用户决策或用户明确询问时，才用 record_reply 向用户同步 1—3 句；无未读、已读重复、纯 keepalive 一律静默续等，禁止制造可见消息堵塞队列。用户要求“全体/各角色/多人”回答时必须 team_message broadcast + collect 收真实回应，禁止代答。"
-    : "4. 每轮先处理未读：team_message({action:'inbox'}) / team_message({action:'read', messageId})；directive 或 question 必须用 team_message({action:'respond', messageId, content}) 回应原 messageId。领取、进度、提交、失败与验收结论会随 team_task / team_review 的动作自动上报主控，不要再另发 team_message 复述；只有遇到需要主控或用户决策的阻塞时才 team_message send。"
+    ? "4. 团队消息随 check_messages 送达（【拾光团队消息】，已读无需 read）：成员的 status 上报与系统的【任务完成】/【任务失败】/【成员离线提醒】是你向用户汇报的依据。分派、催办、派验收、打回后的重派由拾光自动完成，你不要手动调度、催办或安排验收。只有出现新的可执行结论、阻塞、需要用户决策或用户明确询问时，才用 record_reply 向用户同步 1—3 句；纯状态消息、纯 keepalive 一律静默续等，禁止制造可见消息堵塞队列。用户要求“全体/各角色/多人”回答时必须 team_message broadcast + collect 收真实回应，禁止代答。"
+    : "4. 团队消息随 check_messages 送达（【拾光团队消息】，已读无需 read）；标「需回应」的（成员发来的 directive / question）用 team_message({action:'respond', messageId, content}) 回应原 messageId，拾光系统的调度按正文执行。领取、进度、提交、失败与验收结论会随 team_task / team_review 的动作自动上报主控，不要再另发 team_message 复述；只有遇到需要主控或用户决策的阻塞时才 team_message send。"
   const skills = role.skills.length
     ? `已分配 Agent Skills：${role.skills.map((skill) => `/${skill.name}`).join('、')}。只在任务相关时按 Cursor Skills 机制调用，不要把技能名称当作已完成工作。`
     : '当前席位没有单独指定 Agent Skill；仍可按 Cursor 自动发现机制使用工作区内相关技能。'
@@ -829,9 +829,9 @@ export function buildTeamRoleBriefing(input: {
     `工作边界：${role.instructions}`,
     TEAM_REPLY_STYLE_INSTRUCTION,
     skills,
-    `所有团队工具与通信工具只调用 ${server}，且每次传 ${ch}；通信协议（record_reply / check_messages / 静默规则 / 终止条件）以 ${server} 服务器说明为准，内部协作通知只用 team_message 回执处理，不算用户可见回复。`,
+    `所有团队工具与通信工具只调用 ${server}，且每次传 ${ch}；通信协议（record_reply / check_messages / 静默规则 / 终止条件）以 ${server} 服务器说明为准，团队消息不是用户可见对话，不 record_reply。`,
     '按顺序执行：',
-    `1. 本简报即启动回执，随附的 context 是本轮团队上下文快照（稳定成员目录、未读协作消息、本轮已确认记忆）；需要刷新时再次调用 team_check_in ${ch}。不要读取或复述 Cursor 历史聊天，聊天记录不是团队记忆；有未读消息先处理。`,
+    `1. 本简报即启动回执，随附的 context 是本组上下文快照（稳定成员目录、未读消息数、已确认记忆）；需要刷新时再次调用 team_check_in ${ch}。不要读取或复述 Cursor 历史聊天，聊天记录不是团队记忆。`,
     roleWorkflow,
     executionWorkflow,
     collaborationWorkflow,
@@ -871,7 +871,9 @@ export function buildMembershipNotice(input: {
       return [
         `${MEMBERSHIP_NOTICE_PREFIX}你（CH-${input.channelId}）已加入协作组「${input.group.name}」，角色「${input.roleName ?? '成员'}」；lead：${lead}。`,
         `组目标：${input.group.goal || '（未填写，以用户随后指令为准）'}`,
-        `立即调用 team_check_in(${ch}) 领取完整简报与上下文，之后按简报与服务器说明工作；简报之外不要自行开始任务。`
+        `立即调用 team_check_in(${ch}) 领取完整简报与上下文，之后按简报与服务器说明工作；简报之外不要自行开始任务。`,
+        // 阶段 4 · 4A 退化提示：团队工具随建组出现在工具列表里（list_changed）；宿主没刷新时只能由用户重载 MCP。
+        '若你的工具列表里还没有 team_* 工具，用一句话请用户在 Cursor 的 MCP 面板重载「SG Team」，然后再调用。'
       ].join('\n')
     case 'left':
       return [

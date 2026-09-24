@@ -151,8 +151,10 @@ describe('协作组作用域 · 消息', () => {
         runId: data.runId, sender: { type: 'agent', slotId: data.slotIdOf('1') }, recipient: { type: 'agent', slotId: data.slotIdOf('4') },
         kind: 'question', content: '跨组提问', clientMessageId: 'cross-group-0001'
       }))).toBe('recipient_not_in_group')
-      // 投递队列不按组过滤：投递只看接收席位。
-      expect(data.collaboration.listPendingNotifications(data.runId).map((message) => message.id)).toEqual([notice.id])
+      // 内联投递按「接收席位 + 它当前的组」取未读。
+      expect(data.collaboration.listUnreadForRecipient({
+        runId: data.runId, slotId: data.slotIdOf('2'), groupId: data.groupA.id, limit: 10
+      }).map((message) => message.id)).toEqual([notice.id])
     } finally {
       data.close()
     }

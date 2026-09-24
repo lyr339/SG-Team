@@ -19,16 +19,11 @@ class FakeCollaborationRepository implements TeamCollaborationRepository {
   listRunMembers(): [] { return [] }
   clearRun(): boolean { return false }
   createMessage(): never { throw new Error('should not create messages for a completed run') }
-  markNotificationSending(): never { throw new Error('unused') }
-  markNotificationResult(): never { throw new Error('unused') }
+  listUnreadForRecipient(): [] { return [] }
+  markDelivered(): [] { return [] }
   markRead(): never { throw new Error('unused') }
   acknowledge(): never { throw new Error('unused') }
   orphanPendingReceipts(): [] { return [] }
-  listPendingNotifications(): [] { return [] }
-  recoverStaleSending(): number { return 0 }
-  recordLiveness(): void {}
-  getLiveness(): undefined { return undefined }
-  listLiveness(): [] { return [] }
   close(): void {}
 }
 

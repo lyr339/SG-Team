@@ -118,11 +118,6 @@ export interface DesktopSnapshot {
    * 渲染层据此按值复用上一份快照的数组，未变通道的历史回合不重渲，也据此识别推送里被省略的通道。
    */
   conversationRevisions?: Record<string, number>
-  /**
-   * 不进入会话时间线的投递回执（key = commandId）。
-   * 用于系统内部通知等静默消息，让调度器能确认送达但不污染用户会话。
-   */
-  commandReceipts?: Record<string, ConversationEntry>
   /** 按通道映射的 Cursor 原生实时过程流。 */
   liveProcess?: Record<string, LiveProcessState>
   /** 按通道映射的 Cursor 原生流式回复。record_reply 落地后自动移除。 */
@@ -147,16 +142,10 @@ export interface SendMessageInput {
   /** 消息附件（图片/文件） */
   attachments?: import('../domain/conversation-entry').MessageAttachment[]
   /**
-   * 静默投递：消息只进出站队列（Agent 可收到），不写入会话时间线。
-   * 用于系统内部协作通知（如团队消息投递提醒），避免对用户刷屏。
+   * 投递类型（主进程内部）：`membership` 是拾光服务端的成员关系通知（入组 / 出组 / 解散 / lead 变更），
+   * 只进出站队列、不写入会话时间线、不开回复守门，投递时用成员关系后缀。渲染层普通发送不填写。
    */
-  silent?: boolean
-  /**
-   * 投递类型（主进程内部）：`internal` 等价 silent；`membership` 是拾光服务端的成员关系通知
-   *（入组 / 出组 / 解散 / lead 变更），同为 silent，但投递时用成员关系后缀而非内部协作后缀。
-   * 渲染层普通发送不填写。
-   */
-  kind?: 'user' | 'internal' | 'membership'
+  kind?: 'user' | 'membership'
   /**
    * 「等待新会话」：消息留给该席位重建/重启后的新会话，当前会话取不到。
    * 渲染层只填这个布尔；主进程按席位现任会话令牌换算为 holdSessionToken。

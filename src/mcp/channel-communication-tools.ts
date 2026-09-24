@@ -9,8 +9,8 @@ import {
   buildKeepaliveText,
   buildMembershipNoticeSuffix,
   buildMergedNote,
-  buildSilentDeliverySuffix,
   buildStorageUnavailableMessage,
+  buildTeamMessagesDelivery,
   buildTurnNote
 } from '../domain/channel-delivery-policy'
 import type { MessageAttachment } from '../domain/conversation-entry'
@@ -32,6 +32,11 @@ export interface ChannelCommunicationDeps {
   keepaliveTimeoutMs?: number
   /** record_reply 撞上存储瞬断时的重试间隔；测试可注入短值。 */
   recordReplyRetryDelayMs?: number
+  /**
+   * 工具面刷新（阶段 4 · 4A）：每次 check_messages 长轮询返回前调用一次。建组 / 解散与成员关系通知
+   * 同源，先切工具面再交付通知，模型读到通知的下一轮就看到（或看不到）团队工具。
+   */
+  refreshToolSurface?: () => void
 }
 
 /** record_reply 对 SQLITE_BUSY/LOCKED 的进程内重试次数：覆盖拾光桌面端启停的锁窗口，不与 Agent 侧重试叠成风暴。 */
@@ -218,9 +223,9 @@ function deliveredContentBlocks(input: {
 
 const channelSchema = {
   channel_id: z.string().regex(/^\d+$/)
-    .describe('拾光分配给当前 Agent 的通道号（如 "2"），启动指令中声明，每次调用必传'),
+    .describe('当前通道号（启动指令给出，如 "2"），每次必传'),
   session: z.string().regex(/^[a-zA-Z0-9_-]{8,128}$/).optional()
-    .describe('启动指令给出的会话令牌（session）；给出后每次调用都要附带，用于区分同一通道上的新旧会话。启动指令未给出时省略')
+    .describe('启动指令给出的会话令牌；给出后每次附带，未给出则省略')
 }
 
 /**
@@ -245,7 +250,7 @@ export function registerChannelCommunicationTools(
 
   const runCheck = async (
     channelId: string,
-    input: { reply?: string; session?: string },
+    input: { session?: string },
     signal: AbortSignal
   ): Promise<ToolResult> => {
     const verdict = fence(channelId, input.session)
@@ -255,7 +260,6 @@ export function registerChannelCommunicationTools(
     const service = deps.serviceFor(channelId)
     const result = await service.checkMessages({
       channelId,
-      reply: input.reply,
       // 围栏已放行的令牌继续下传：保持位消息（会话交接「等待新会话」）按令牌投递。
       session: input.session,
       // 长轮询期间逐轮复核：席位被换席/轮换时旧会话即刻退出，不再取走新消息。
@@ -263,17 +267,17 @@ export function registerChannelCommunicationTools(
       signal,
       keepaliveTimeoutMs: deps.keepaliveTimeoutMs
     })
+    // 工具面先于返回体：list_changed 与本次结果走同一条有序流，Cursor 先重拉工具再把结果交给模型。
+    deps.refreshToolSurface?.()
     switch (result.type) {
       case 'retired':
         return { content: [{ type: 'text' as const, text: buildSessionRetiredText({ channelId, reason: result.reason }) }] }
       case 'delivered': {
-        // 后缀按投递类型分流：成员关系通知没有 messageId，不能套内部协作后缀的 team_message read 指引。
+        // 出站队列只剩用户消息与成员关系通知两种；后者没有 messageId、不开守门，用独立后缀。
         const kind = resolveOutboundKind(result.message.text, result.message.kind, result.message.silent)
         const suffix = kind === 'membership'
           ? buildMembershipNoticeSuffix({ channelId, tick: result.turnCount })
-          : kind === 'internal'
-            ? buildSilentDeliverySuffix({ channelId, tick: result.turnCount })
-            : buildDeliverySuffix({ channelId, tick: result.turnCount })
+          : buildDeliverySuffix({ channelId, tick: result.turnCount })
         const imageBlocks = inlineImageContentBlocks(result.message.attachments)
         const fileText = inlineFileText(result.message.attachments)
         return {
@@ -289,6 +293,13 @@ export function registerChannelCommunicationTools(
           })
         }
       }
+      case 'team':
+        return {
+          content: [{
+            type: 'text' as const,
+            text: buildTeamMessagesDelivery({ channelId, tick: result.turnCount, messages: result.batch.messages })
+          }]
+        }
       case 'keepalive':
         return {
           content: [{
@@ -366,15 +377,14 @@ export function registerChannelCommunicationTools(
       title: '检查新消息',
       description: '长轮询等待并获取下一条用户消息；返回 <sg_team_keepalive/> 表示正常在岗，按返回提示带上最新 tick 静默继续调用即可。只有收到 need_reply_sync 时才补 record_reply。',
       inputSchema: z.object(channelSchema).extend({
-        reply: z.string().max(100_000).optional(),
         // tick 不参与业务语义（服务端不校验）：只为让每次长轮询调用参数不同，
         // 规避宿主 IDE 反循环保护对「相同参数重复调用」的误报。
         tick: z.string().regex(/^\d{1,12}$/).optional()
-          .describe('长轮询游标：上一次 check_messages 返回中提示的 tick 值，每次调用必须更新为最新提示（首次或没有提示时省略），使每次调用参数不同')
+          .describe('上一次返回提示的 tick（首次省略）；每次换成最新值，使相邻调用参数不同')
       }),
       annotations: { readOnlyHint: false, idempotentHint: false }
     },
-    async ({ channel_id, reply, session }, ctx) => runCheck(channel_id, { reply, session }, ctx.mcpReq.signal)
+    async ({ channel_id, session }, ctx) => runCheck(channel_id, { session }, ctx.mcpReq.signal)
   )
 
 
@@ -382,17 +392,14 @@ export function registerChannelCommunicationTools(
     'record_reply',
     {
       title: '同步完整可见回复',
-      description: '把刚刚展示给用户的完整回复正文归档到拾光；每次用户可见回复后必须调用一次，再进入下一轮等待。过程流由拾光直接读取 Cursor 原生内存事件，本工具不接收过程数据。',
+      description: '把刚刚展示给用户的完整回复正文归档到拾光；每次用户可见回复后调用一次，再回到 check_messages。',
       inputSchema: z.object(channelSchema).extend({
         content: z.string().min(1).max(100_000),
-        title: z.string().max(200).optional(),
-        groupId: z.string().max(100).optional(),
-        taskId: z.string().max(100).optional(),
-        files: z.array(z.string().max(500)).max(32).optional()
+        title: z.string().max(200).optional()
       }),
       annotations: { readOnlyHint: false, idempotentHint: false }
     },
-    async ({ channel_id, session, content, title, groupId, taskId, files }) => {
+    async ({ channel_id, session, content, title }) => {
       const verdict = fence(channel_id, session)
       if (verdict.status === 'retired') {
         return toolJson({
@@ -401,7 +408,7 @@ export function registerChannelCommunicationTools(
           message: buildSessionRetiredText({ channelId: channel_id, reason: verdict.reason })
         }, true)
       }
-      return recordWithRetry(deps.serviceFor(channel_id), { channelId: channel_id, content, title, groupId, taskId, files })
+      return recordWithRetry(deps.serviceFor(channel_id), { channelId: channel_id, content, title })
     }
   )
 }

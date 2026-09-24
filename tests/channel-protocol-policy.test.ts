@@ -4,8 +4,9 @@ import {
   buildKeepaliveText,
   buildMembershipNoticeSuffix,
   buildReplySyncRequiredMessage,
-  buildSilentDeliverySuffix,
-  buildStorageUnavailableMessage
+  buildStorageUnavailableMessage,
+  buildTeamMessagesDelivery,
+  CHANNEL_USER_DELIVERY_MARKER
 } from '../src/domain/channel-delivery-policy'
 import { buildChannelWaitInstruction } from '../src/domain/channel-wait-policy'
 import {
@@ -13,11 +14,25 @@ import {
   CHANNEL_KEEPALIVE_TIMEOUT_MIN_MS,
   CHANNEL_KEEPALIVE_TIMEOUT_MS,
   MEMBERSHIP_NOTICE_PREFIX,
+  TEAM_MESSAGES_DELIVERY_PREFIX,
   resolveKeepaliveTimeoutMs,
   resolveOutboundKind
 } from '../src/domain/channel-message'
+import type { TeamInboxMessage } from '../src/domain/team-collaboration'
 import { buildMembershipNotice, buildTeamRoleBriefing, createConfiguredTeamBundle } from '../src/domain/team-control'
 import { buildUnifiedServerInstructions } from '../src/mcp/team-tools'
+
+function teamMessage(overrides: Partial<TeamInboxMessage> = {}): TeamInboxMessage {
+  return {
+    id: 'team-message:1',
+    kind: 'status',
+    senderLabel: '构建者 · CH-3',
+    subject: '任务进度',
+    content: '进度 60%',
+    needsResponse: false,
+    ...overrides
+  }
+}
 
 describe('keepalive 窗口', () => {
   it('默认 5 分钟：远低于 Cursor cursor-mcp 扩展对每次工具调用的 1 小时超时，又把纯待命席位的气泡增长压到原来的 1/5', () => {
@@ -81,12 +96,12 @@ describe('channel protocol policy text', () => {
     const suffix = buildDeliverySuffix({ channelId: '3', tick: 6 })
     expect(suffix).toContain("再 check_messages（带 tick:'6'）")
 
-    const silent = buildSilentDeliverySuffix({ channelId: '3', tick: 6 })
-    expect(silent).toContain("check_messages（带 tick:'6'） 静默待命")
+    const team = buildTeamMessagesDelivery({ channelId: '3', tick: 6, messages: [teamMessage()] })
+    expect(team).toContain("check_messages（带 tick:'6'） 静默待命")
 
     // 无 tick（异常路径兜底）时保持旧形态，不出现占位符。
     expect(buildDeliverySuffix({ channelId: '3' })).not.toContain('tick:')
-    expect(buildSilentDeliverySuffix({ channelId: '3' })).not.toContain('tick:')
+    expect(buildTeamMessagesDelivery({ channelId: '3', messages: [teamMessage()] })).not.toContain('tick:')
   })
 
   it('keepalive returns the exact next call with a fresh tick and names the IDE loop false positive', () => {
@@ -110,13 +125,15 @@ describe('channel protocol policy text', () => {
     const instructions = buildUnifiedServerInstructions()
 
     expect(instructions).toContain('每次真实用户可见回复后必须 record_reply')
-    expect(instructions).toContain('团队内部通知只用 team_message 回执处理')
+    // 阶段 4 · 4C：团队消息随 check_messages 送达；instructions 预告其标题并把它排除在可见回复协议之外。
+    expect(instructions).toContain(`check_messages 送达的${TEAM_MESSAGES_DELIVERY_PREFIX}不是用户消息`)
+    expect(instructions).not.toContain('team_message 回执')
     // 工具面收敛后的对象划分说明：模型据此在 7 个团队工具里选对象，再选 action/view。
     expect(instructions).toContain('team_tasks 看任务（view）')
-    expect(instructions).toContain('team_run 运行与主控（action）')
+    expect(instructions).toContain('team_run 主控权限（action）')
     expect(instructions).toContain('keepalive、无未读或已读重复时必须静默续等')
     expect(instructions).toContain('也不要 record_reply')
-    expect(instructions).toContain('内部通知不会触发该守门')
+    expect(instructions).toContain('也不触发该守门')
     // 反循环根治：instructions 必须建立 tick 契约并点名 IDE 重复调用提醒是误报。
     expect(instructions).toContain('携带上一次返回中提示的 tick')
     expect(instructions).toContain('误报')
@@ -145,19 +162,37 @@ describe('channel protocol policy text', () => {
       .toContain('请停止自动重试')
   })
 
-  it('keeps silent internal notifications out of the user-visible reply protocol', () => {
-    const instruction = buildSilentDeliverySuffix({ channelId: '2' })
+  it('inlines team message bodies, labels only member directives / questions for respond, and stays off the user reply protocol', () => {
+    const text = buildTeamMessagesDelivery({
+      channelId: '2',
+      tick: 9,
+      messages: [
+        teamMessage({ id: 'team-message:a', kind: 'directive', senderLabel: '拾光系统', subject: '新任务：登录接口', content: '【系统任务调度】任务 ID：task-1' }),
+        teamMessage({ id: 'team-message:b', kind: 'question', senderLabel: '主控协调 · CH-1', subject: '接口约定', content: '字段用 camelCase 吗？', needsResponse: true }),
+        teamMessage({ id: 'team-message:c', kind: 'response', senderLabel: '构建者 · CH-3', subject: '接口约定', content: '是', replyToMessageId: 'team-message:z' })
+      ]
+    })
 
-    expect(instruction).toContain('内部协作通知协议')
-    expect(instruction).toContain('不是用户可见对话')
-    expect(instruction).toContain("team_message({action:'read', messageId})")
-    expect(instruction).toContain("team_message({action:'respond', messageId, content})")
-    expect(instruction).toContain('不要调用 record_reply')
-    expect(instruction).not.toContain('持续对话协议')
+    expect(text.startsWith(`${TEAM_MESSAGES_DELIVERY_PREFIX}CH-2 · 3 条`)).toBe(true)
+    expect(text).toContain('【系统任务调度】任务 ID：task-1')
+    expect(text).toContain('[1] 指令 · 来自 拾光系统 · messageId: team-message:a\n主题：新任务：登录接口')
+    expect(text).toContain('[2] 提问 · 来自 主控协调 · CH-1 · 需回应 · messageId: team-message:b')
+    expect(text).toContain('[3] 回应 · 来自 构建者 · CH-3 · 回应 team-message:z · messageId: team-message:c')
+    expect(text).toContain("标「需回应」的用 team_message({channel_id:'2', action:'respond', messageId, content}) 回应")
+    expect(text).toContain('不要调用 record_reply')
+    expect(text).not.toContain("action:'read'")
+    expect(text).not.toContain(CHANNEL_USER_DELIVERY_MARKER)
+  })
+
+  it('truncates an oversized team message body and points at team_message read for the full text', () => {
+    const text = buildTeamMessagesDelivery({ channelId: '2', messages: [teamMessage({ content: '长'.repeat(5_000) })] })
+    expect(text).toContain(`${'长'.repeat(4_000)}…（正文过长已截断`)
+    expect(text).not.toContain('长'.repeat(4_001))
+    expect(text).toContain("team_message({action:'read', messageId}) 读取")
   })
 
   it('keeps reply-sync recovery limited to the explicit need-sync error path', () => {
-    const message = buildReplySyncRequiredMessage(false)
+    const message = buildReplySyncRequiredMessage()
 
     expect(message).toContain('上一轮用户消息已经处理')
     expect(message).toContain('请立即调用 record_reply')
@@ -174,8 +209,6 @@ describe('membership notice protocol (会话池 · 协作组)', () => {
     expect(suffix).toContain('不是注入')
     expect(suffix).not.toContain("team_message({action:'read'")
     expect(suffix).toContain('不要调用 record_reply')
-    // 与内部协作后缀是两种不同的协议文本。
-    expect(buildSilentDeliverySuffix({ channelId: '3', tick: 1010 })).toContain("team_message({action:'read'")
   })
 
   it('builds the four notice templates with the marker prefix so relay / delivery classify them as membership', () => {

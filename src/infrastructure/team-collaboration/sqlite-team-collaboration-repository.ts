@@ -3,10 +3,9 @@ import { randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import type { TeamCollaborationRepository } from '../../application/team-collaboration-repository'
+import type { TeamCollaborationRepository, TeamInboxRow } from '../../application/team-collaboration-repository'
 import type {
   AuthorizedTeamAgent,
-  ChannelLivenessRecord,
   CreateTeamMessageInput,
   TeamAgentRuntimeIdentity,
   TeamCollaborationEvent,
@@ -31,11 +30,6 @@ const MESSAGE_KINDS = new Set<TeamMessageKind>([
   'response',
   'status',
   'notice'
-])
-const NOTIFICATION_RESULTS = new Set<TeamMessageNotificationState>([
-  'notified',
-  'uncertain',
-  'failed'
 ])
 const CLIENT_MESSAGE_ID = /^[a-zA-Z0-9:_-]{8,200}$/
 
@@ -315,13 +309,9 @@ export class SqliteTeamCollaborationRepository implements TeamCollaborationRepos
       const events = this.database.prepare(`
         DELETE FROM team_collaboration_events WHERE run_id = ?
       `).run(normalizedRunId)
-      const liveness = this.database.prepare(`
-        DELETE FROM channel_liveness WHERE run_id = ?
-      `).run(normalizedRunId)
       const changed = numberOf(messages.changes)
         + numberOf(threads.changes)
-        + numberOf(events.changes)
-        + numberOf(liveness.changes) > 0
+        + numberOf(events.changes) > 0
       if (changed) {
         this.database.prepare(`
           UPDATE team_collaboration_meta
@@ -464,72 +454,78 @@ export class SqliteTeamCollaborationRepository implements TeamCollaborationRepos
     return this.messageById(messageId)!
   }
 
-  markNotificationSending(messageId: string, commandId: string, detail = '正在通知目标 Agent', at = Date.now()): TeamMessage {
-    const message = this.requireMessage(messageId)
-    if (message.recipient.type !== 'agent') return message
-    this.database.exec('BEGIN IMMEDIATE')
-    try {
-      const result = this.database.prepare(`
-        UPDATE team_message_receipts
-        SET notification_state = 'sending', notification_command_id = ?,
-            notification_detail = ?, updated_at = ?
-        WHERE message_id = ? AND notification_state = 'queued' AND read_at IS NULL
-      `).run(commandId.trim(), detail.trim().slice(0, 2_000), at, message.id)
-      if (numberOf(result.changes) > 0) {
-        this.appendEvent({
-          type: 'message.notification_sending',
-          runId: message.runId,
-          threadId: message.threadId,
-          messageId: message.id,
-          actor: { type: 'operator' },
-          detail: commandId,
-          at
-        })
-      }
-      this.database.exec('COMMIT')
-    } catch (error) {
-      if (this.database.isTransaction) this.database.exec('ROLLBACK')
-      throw error
-    }
-    return this.requireMessage(message.id)
+  listUnreadForRecipient(input: { runId: string; slotId: string; groupId: string; limit: number }): TeamInboxRow[] {
+    const rows = this.database.prepare(`
+      SELECT m.*, t.subject, r.notification_state, r.notification_command_id,
+        r.notification_detail, r.notified_at, r.read_at, r.acknowledged_at,
+        r.responded_at, r.response_message_id, r.updated_at AS receipt_updated_at
+      FROM team_messages m
+      JOIN team_message_receipts r ON r.message_id = m.id
+      JOIN team_message_threads t ON t.id = m.thread_id
+      WHERE m.run_id = ? AND m.recipient_key = ? AND m.group_id = ? AND r.read_at IS NULL
+        AND COALESCE(r.notification_detail, '') NOT LIKE ?
+      ORDER BY m.created_at ASC, m.rowid ASC
+      LIMIT ?
+    `).all(
+      input.runId.trim(),
+      actorKey({ type: 'agent', slotId: input.slotId.trim() }),
+      input.groupId.trim(),
+      `%${ORPHANED_RECEIPT_DETAIL}%`,
+      Math.min(100, Math.max(1, Math.floor(input.limit)))
+    ) as SqliteRow[]
+    return rows.map((row) => ({
+      ...messageFromRows(row, {
+        notification_state: row.notification_state,
+        notification_command_id: row.notification_command_id,
+        notification_detail: row.notification_detail,
+        notified_at: row.notified_at,
+        read_at: row.read_at,
+        acknowledged_at: row.acknowledged_at,
+        responded_at: row.responded_at,
+        response_message_id: row.response_message_id,
+        updated_at: row.receipt_updated_at
+      }),
+      subject: String(row.subject)
+    }))
   }
 
-  markNotificationResult(
-    messageId: string,
-    result: 'notified' | 'uncertain' | 'failed',
-    detail: string,
-    at = Date.now()
-  ): TeamMessage {
-    if (!NOTIFICATION_RESULTS.has(result)) throw new Error('通知结果无效')
-    const message = this.requireMessage(messageId)
-    if (message.recipient.type !== 'agent') return message
-    if (message.receipt.notificationState === 'notified' && result !== 'notified') return message
+  markDelivered(messageIds: string[], recipient: TeamMessageActor, at = Date.now()): string[] {
+    const ids = [...new Set(messageIds.map((id) => id.trim()).filter(Boolean))]
+    if (!ids.length) return []
+    const select = this.database.prepare(`
+      SELECT m.id, m.run_id, m.thread_id FROM team_messages m
+      JOIN team_message_receipts r ON r.message_id = m.id
+      WHERE m.id = ? AND m.recipient_key = ? AND r.read_at IS NULL
+    `)
+    const update = this.database.prepare(`
+      UPDATE team_message_receipts
+      SET notification_state = CASE WHEN notification_state = 'not_required' THEN notification_state ELSE 'notified' END,
+          notified_at = COALESCE(notified_at, ?), read_at = ?, updated_at = ?
+      WHERE message_id = ? AND read_at IS NULL
+    `)
+    const delivered: string[] = []
     this.database.exec('BEGIN IMMEDIATE')
     try {
-      const updated = this.database.prepare(`
-        UPDATE team_message_receipts
-        SET notification_state = ?, notification_detail = ?,
-            notified_at = CASE WHEN ? = 'notified' THEN COALESCE(notified_at, ?) ELSE notified_at END,
-            updated_at = ?
-        WHERE message_id = ?
-      `).run(result, detail.trim().slice(0, 2_000), result, at, at, message.id)
-      if (numberOf(updated.changes) > 0) {
+      for (const id of ids) {
+        const row = select.get(id, actorKey(recipient)) as SqliteRow | undefined
+        if (!row || numberOf(update.run(at, at, at, id).changes) === 0) continue
         this.appendEvent({
-          type: `message.notification_${result}`,
-          runId: message.runId,
-          threadId: message.threadId,
-          messageId: message.id,
-          actor: { type: 'operator' },
-          detail,
+          type: 'message.read',
+          runId: String(row.run_id),
+          threadId: String(row.thread_id),
+          messageId: id,
+          actor: recipient,
+          detail: 'delivered_by_check_messages',
           at
         })
+        delivered.push(id)
       }
       this.database.exec('COMMIT')
     } catch (error) {
       if (this.database.isTransaction) this.database.exec('ROLLBACK')
       throw error
     }
-    return this.requireMessage(message.id)
+    return delivered
   }
 
   markRead(messageId: string, recipient: TeamMessageActor, at = Date.now()): TeamMessage {
@@ -584,126 +580,6 @@ export class SqliteTeamCollaborationRepository implements TeamCollaborationRepos
       throw error
     }
     return rows.map((row) => String(row.id))
-  }
-
-  listPendingNotifications(runId?: string, limit = 25): TeamMessage[] {
-    const normalizedLimit = Math.min(100, Math.max(1, Math.floor(limit)))
-    const rows = runId?.trim()
-      ? this.database.prepare(`
-          SELECT m.id FROM team_messages m
-          JOIN team_message_receipts r ON r.message_id = m.id
-          WHERE m.run_id = ? AND m.recipient_key LIKE 'agent:%'
-            AND r.notification_state = 'queued' AND r.read_at IS NULL
-          ORDER BY m.created_at ASC, m.id ASC LIMIT ?
-        `).all(runId.trim(), normalizedLimit) as SqliteRow[]
-      : this.database.prepare(`
-          SELECT m.id FROM team_messages m
-          JOIN team_message_receipts r ON r.message_id = m.id
-          WHERE m.recipient_key LIKE 'agent:%'
-            AND r.notification_state = 'queued' AND r.read_at IS NULL
-          ORDER BY m.created_at ASC, m.id ASC LIMIT ?
-        `).all(normalizedLimit) as SqliteRow[]
-    return rows.map((row) => this.requireMessage(String(row.id)))
-  }
-
-  recoverStaleSending(beforeAt: number): number {
-    const rows = this.database.prepare(`
-      SELECT m.id FROM team_messages m
-      JOIN team_message_receipts r ON r.message_id = m.id
-      WHERE r.notification_state = 'sending' AND r.updated_at <= ?
-      ORDER BY r.updated_at ASC
-    `).all(beforeAt) as SqliteRow[]
-    if (!rows.length) return 0
-    const recoveredAt = Date.now()
-    this.database.exec('BEGIN IMMEDIATE')
-    try {
-      for (const row of rows) {
-        const message = this.requireMessage(String(row.id))
-        this.database.prepare(`
-          UPDATE team_message_receipts
-          SET notification_state = 'uncertain',
-              notification_detail = '外置软件重启前未收到最终投递回执；未自动重发',
-              updated_at = ?
-          WHERE message_id = ? AND notification_state = 'sending'
-        `).run(recoveredAt, message.id)
-        this.appendEvent({
-          type: 'message.notification_uncertain',
-          runId: message.runId,
-          threadId: message.threadId,
-          messageId: message.id,
-          actor: { type: 'operator' },
-          detail: 'recovered_stale_sending',
-          at: recoveredAt
-        })
-      }
-      this.database.exec('COMMIT')
-    } catch (error) {
-      if (this.database.isTransaction) this.database.exec('ROLLBACK')
-      throw error
-    }
-    return rows.length
-  }
-
-  recordLiveness(input: { channelId: string; runId: string; verified: boolean; at: number }): void {
-    const existing = this.getLiveness(input.channelId, input.runId)
-    const consecutiveFailures = input.verified
-      ? 0
-      : (existing?.consecutiveFailures ?? 0) + 1
-    const liveness = input.verified
-      ? 'active'
-      : consecutiveFailures >= 3
-        ? 'confirmed_offline'
-        : 'suspected_offline'
-    this.database.prepare(`
-      INSERT INTO channel_liveness (
-        channel_id, run_id, liveness, last_verified_at, consecutive_failures,
-        last_ping_at, last_pong_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(channel_id, run_id) DO UPDATE SET
-        liveness = excluded.liveness,
-        last_verified_at = excluded.last_verified_at,
-        consecutive_failures = excluded.consecutive_failures,
-        last_ping_at = excluded.last_ping_at,
-        last_pong_at = excluded.last_pong_at,
-        updated_at = excluded.updated_at
-    `).run(
-      input.channelId,
-      input.runId,
-      liveness,
-      input.verified ? input.at : existing?.lastVerifiedAt ?? input.at,
-      consecutiveFailures,
-      input.at,
-      input.verified ? input.at : existing?.lastPongAt ?? null,
-      input.at
-    )
-  }
-
-  getLiveness(channelId: string, runId: string): ChannelLivenessRecord | undefined {
-    const row = this.database.prepare(`
-      SELECT * FROM channel_liveness WHERE channel_id = ? AND run_id = ?
-    `).get(channelId, runId) as SqliteRow | undefined
-    if (!row) return undefined
-    return {
-      channelId: String(row.channel_id),
-      liveness: String(row.liveness) as ChannelLivenessRecord['liveness'],
-      lastVerifiedAt: numberOf(row.last_verified_at),
-      consecutiveFailures: numberOf(row.consecutive_failures),
-      lastPingAt: optionalNumber(row.last_ping_at),
-      lastPongAt: optionalNumber(row.last_pong_at)
-    }
-  }
-
-  listLiveness(runId: string): ChannelLivenessRecord[] {
-    return (this.database.prepare(`
-      SELECT * FROM channel_liveness WHERE run_id = ? ORDER BY updated_at DESC
-    `).all(runId) as SqliteRow[]).map((row) => ({
-      channelId: String(row.channel_id),
-      liveness: String(row.liveness) as ChannelLivenessRecord['liveness'],
-      lastVerifiedAt: numberOf(row.last_verified_at),
-      consecutiveFailures: numberOf(row.consecutive_failures),
-      lastPingAt: optionalNumber(row.last_ping_at),
-      lastPongAt: optionalNumber(row.last_pong_at)
-    }))
   }
 
   close(): void {
@@ -913,18 +789,6 @@ export class SqliteTeamCollaborationRepository implements TeamCollaborationRepos
         created_at INTEGER NOT NULL
       );
 
-      CREATE TABLE IF NOT EXISTS channel_liveness (
-        channel_id TEXT NOT NULL,
-        run_id TEXT NOT NULL REFERENCES team_runs(id) ON DELETE CASCADE,
-        liveness TEXT NOT NULL,
-        last_verified_at INTEGER NOT NULL,
-        consecutive_failures INTEGER NOT NULL DEFAULT 0,
-        last_ping_at INTEGER,
-        last_pong_at INTEGER,
-        updated_at INTEGER NOT NULL,
-        PRIMARY KEY (channel_id, run_id)
-      );
-
       CREATE INDEX IF NOT EXISTS idx_team_threads_run_updated
       ON team_message_threads(run_id, updated_at DESC);
       CREATE INDEX IF NOT EXISTS idx_team_messages_run_created
@@ -935,8 +799,6 @@ export class SqliteTeamCollaborationRepository implements TeamCollaborationRepos
       ON team_message_receipts(notification_state, read_at, updated_at);
       CREATE INDEX IF NOT EXISTS idx_team_collaboration_events_run
       ON team_collaboration_events(run_id, seq);
-      CREATE INDEX IF NOT EXISTS idx_channel_liveness_run
-      ON channel_liveness(run_id, updated_at DESC);
 
       INSERT OR IGNORE INTO team_collaboration_meta (
         id, schema_version, revision, seq, updated_at
@@ -947,31 +809,10 @@ export class SqliteTeamCollaborationRepository implements TeamCollaborationRepos
     ).get() as SqliteRow
     const version = numberOf(meta.schema_version)
     if (version === 1) {
-      this.database.exec('BEGIN IMMEDIATE')
-      try {
-        this.database.exec(`
-          CREATE TABLE IF NOT EXISTS channel_liveness (
-            channel_id TEXT NOT NULL,
-            run_id TEXT NOT NULL REFERENCES team_runs(id) ON DELETE CASCADE,
-            liveness TEXT NOT NULL,
-            last_verified_at INTEGER NOT NULL,
-            consecutive_failures INTEGER NOT NULL DEFAULT 0,
-            last_ping_at INTEGER,
-            last_pong_at INTEGER,
-            updated_at INTEGER NOT NULL,
-            PRIMARY KEY (channel_id, run_id)
-          );
-          CREATE INDEX IF NOT EXISTS idx_channel_liveness_run
-          ON channel_liveness(run_id, updated_at DESC);
-        `)
-        this.database.prepare(
-          'UPDATE team_collaboration_meta SET schema_version = ?, revision = revision + 1, updated_at = ? WHERE id = 1'
-        ).run(SCHEMA_VERSION, Date.now())
-        this.database.exec('COMMIT')
-      } catch (error) {
-        if (this.database.isTransaction) this.database.exec('ROLLBACK')
-        throw error
-      }
+      // v2 当年只新增了 channel_liveness（阶段 4 · 4D 已退役），v1 库升级只需推进版本号。
+      this.database.prepare(
+        'UPDATE team_collaboration_meta SET schema_version = ?, revision = revision + 1, updated_at = ? WHERE id = 1'
+      ).run(SCHEMA_VERSION, Date.now())
     } else if (version !== SCHEMA_VERSION) {
       throw new Error(`团队协作数据库版本不兼容：${version}，当前支持 ${SCHEMA_VERSION}`)
     }
@@ -989,5 +830,8 @@ export class SqliteTeamCollaborationRepository implements TeamCollaborationRepos
       CREATE INDEX IF NOT EXISTS idx_team_messages_run_group
       ON team_messages(run_id, group_id, created_at);
     `)
+    // 活性探测（team_run ping / pong / liveness）已退役（阶段 4 · 4D）：presence 是唯一的在岗证据。
+    // IF EXISTS 让两个进程以任意顺序打开都幂等；共库的旧构建重新打开会建回空表，下一次新构建打开再删。
+    this.database.exec('DROP TABLE IF EXISTS channel_liveness')
   }
 }

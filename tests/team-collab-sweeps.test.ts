@@ -83,28 +83,9 @@ describe('findUnansweredDirectives', () => {
 })
 
 describe('leadSilenceEvidence（正面终止证据口径）', () => {
-  it('runtime 新鲜活性一票否决陈旧 liveness 离线记录', () => {
-    // ping 失败残留的 suspected 记录无刷新机制，runtime 新鲜即健在直接证据
+  it('runtime 新鲜在线即健在的直接证据', () => {
     expect(leadSilenceEvidence({
       runtime: { online: true, lastSeenAt: NOW },
-      liveness: {
-        channelId: '1',
-        liveness: 'suspected_offline',
-        lastVerifiedAt: NOW - 5_000,
-        consecutiveFailures: 2
-      },
-      now: NOW
-    })).toBeNull()
-  })
-
-  it('runtime 缺失时即使 confirmed_offline 也不诱导接管', () => {
-    expect(leadSilenceEvidence({
-      liveness: {
-        channelId: '1',
-        liveness: 'confirmed_offline',
-        lastVerifiedAt: NOW - 5_000,
-        consecutiveFailures: 3
-      },
       now: NOW
     })).toBeNull()
   })
@@ -124,16 +105,9 @@ describe('leadSilenceEvidence（正面终止证据口径）', () => {
   })
 
   it('健康主控不误报：lastSeenAt 新鲜时其余时间戳再旧也返回 null', () => {
-    // 回归主控复审指出的缺陷：签到/ping 等一次性事件时间戳不作心跳口径
+    // 回归主控复审指出的缺陷：签到等一次性事件时间戳不作心跳口径
     expect(leadSilenceEvidence({
       runtime: { online: true, lastSeenAt: NOW - 5_000 },
-      liveness: {
-        channelId: '1',
-        liveness: 'active',
-        lastVerifiedAt: NOW - 3_600_000,
-        consecutiveFailures: 0,
-        lastPongAt: NOW - 3_600_000
-      },
       installedAt: NOW - 86_400_000,
       now: NOW
     })).toBeNull()
@@ -147,7 +121,7 @@ describe('leadSilenceEvidence（正面终止证据口径）', () => {
     expect(leadSilenceEvidence({ now: NOW })).toBeNull()
   })
 
-  it('processing 长任务不因 no-pong 或时间陈旧误报', () => {
+  it('processing 长任务不因时间陈旧误报', () => {
     expect(leadSilenceEvidence({
       runtime: {
         online: false,
@@ -155,10 +129,6 @@ describe('leadSilenceEvidence（正面终止证据口径）', () => {
         status: 'running',
         connectionPhase: 'processing',
         lastSeenAt: NOW - 3_600_000
-      },
-      liveness: {
-        channelId: '1', liveness: 'confirmed_offline', lastVerifiedAt: NOW,
-        consecutiveFailures: 3
       },
       now: NOW
     })).toBeNull()

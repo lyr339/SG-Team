@@ -487,9 +487,6 @@ describe('TeamCollaborationSweeper · sweepLeadHeartbeat（主控心跳失联）
         lastSeenAt: data.currentNow() - 45 * 60_000,
         lastAgentActivityAt: data.currentNow() - 1_000
       })
-      data.collaboration.recordLiveness({
-        channelId: '1', runId: data.bundle.run.id, verified: false, at: data.currentNow()
-      })
       const before = data.messageCount()
       expect(data.sweeper.sweep()).toBe(0)
       expect(data.messageCount()).toBe(before)
@@ -562,13 +559,11 @@ describe('TeamCollaborationSweeper · sweepLeadHeartbeat（主控心跳失联）
     }
   })
 
-  it('活性记录 suspected_offline 也不触发（忙碌 Agent 可能无法 pong）', () => {
+  it('runtime 离线但没有 Cursor 终止证据也不触发', () => {
     const data = setup()
     try {
       const runId = data.bundle.run.id
-      // runtime 置为离线（主控会话无活性）：ping 探测的离线记录成为有效佐证
       data.runtimeOverrides.set(data.slot('lead').id, { online: false, lastSeenAt: undefined })
-      data.collaboration.recordLiveness({ channelId: '1', runId, verified: false, at: Date.now() })
       const before = data.messageCount()
       expect(data.sweeper.sweep()).toBe(0)
       const snapshot = data.collaboration.loadRun(runId)
@@ -576,21 +571,6 @@ describe('TeamCollaborationSweeper · sweepLeadHeartbeat（主控心跳失联）
         .map((id) => snapshot.messages[id]!)
         .find((message) => message.content.includes('【主控失联提醒】'))
       expect(alert).toBeUndefined()
-      expect(data.messageCount()).toBe(before)
-    } finally {
-      data.close()
-    }
-  })
-
-  it('陈旧 liveness 离线记录 + runtime 新鲜：不误报（主控复审裁决回归）', () => {
-    const data = setup()
-    try {
-      const runId = data.bundle.run.id
-      // ping 失败残留的 suspected 记录，但主控 runtime 持续新鲜（长轮询在岗，默认快照即新鲜）
-      data.collaboration.recordLiveness({ channelId: '1', runId, verified: false, at: Date.now() })
-      const before = data.messageCount()
-      data.setNow(data.currentNow() + 10 * 60_000)
-      expect(data.sweeper.sweep()).toBe(0)
       expect(data.messageCount()).toBe(before)
     } finally {
       data.close()

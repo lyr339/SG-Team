@@ -14,7 +14,6 @@ import { registerTeamControlIpc } from './register-team-control-ipc'
 import { CursorComposerTelemetryReader } from '../infrastructure/cursor/cursor-composer-telemetry'
 import { DesktopSessionService } from '../application/desktop-session-service'
 import { SqliteTeamCollaborationRepository } from '../infrastructure/team-collaboration/sqlite-team-collaboration-repository'
-import { TeamMessageDispatcher } from '../application/team-message-dispatcher'
 import { SqliteTeamMemoryRepository } from '../infrastructure/team-memory/sqlite-team-memory-repository'
 import { TeamCollaborationService } from '../application/team-collaboration-service'
 import { TeamCollaborationSweeper } from '../application/team-collaboration-sweeper'
@@ -142,7 +141,6 @@ let desktopSessionService: DesktopSessionService | undefined
 let cursorStreamObserver: CursorStreamObserver | undefined
 let cursorUsageTrackerRef: CursorUsageTracker | undefined
 let teamCollaborationRepository: SqliteTeamCollaborationRepository | undefined
-let teamMessageDispatcher: TeamMessageDispatcher | undefined
 let teamMemoryRepository: SqliteTeamMemoryRepository | undefined
 let teamCollaborationService: TeamCollaborationService | undefined
 let teamCollaborationSweeper: TeamCollaborationSweeper | undefined
@@ -581,13 +579,6 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
       onAllTriggered: (plan) => accountAutomationService.onAllSessionsTriggered(plan.id)
     }
   )
-  // 协作通知与用户消息共用同一发送分流（内嵌通道走 SQLite，插件通道走 WS）
-  teamMessageDispatcher = new TeamMessageDispatcher(
-    teamCollaborationRepository,
-    desktopSessionService,
-    teamControlService
-  )
-  teamMessageDispatcher.start()
   teamCollaborationService = new TeamCollaborationService(
     teamCollaborationRepository,
     teamControlService
@@ -959,7 +950,6 @@ app.on('before-quit', () => {
   channelMessageRelay?.stop()
   teamFailoverService?.stop()
   teamOrchestrator?.stop()
-  teamMessageDispatcher?.dispose()
   teamCollaborationService?.dispose()
   teamCollaborationSweeper?.stopSweeper()
   teamMemoryService?.dispose()
