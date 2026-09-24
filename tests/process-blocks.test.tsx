@@ -54,20 +54,20 @@ describe('ProcessBlocks', () => {
 
     const html = renderToStaticMarkup(<ProcessBlocks blocks={blocks} />)
 
-    // 动词随状态变化（对齐 Cursor 的 Running / Ran / Run 三态），不再是猜测性的「运行验证」。
-    expect(html).toContain('<strong>运行失败</strong>')
-    expect(html).toContain('失败')
-    // 组头：进行中取 loading 形态 + 明细计数（中文文案，2026-09-18 审查项 1）；预览窗内成员行可见。
+    // 动词随状态变化（Cursor 的 Running / Ran / Run 三态，错误态是原形动词 + 红色），不再是猜测性的「运行验证」。
+    expect(html).toContain('<strong>Run</strong>')
+    expect(html).toContain('is-command is-failed')
+    // 组头：进行中取 loading 形态 + 明细计数（Cursor 原文英文，2026-09-22）；预览窗内成员行可见。
     expect(html).toContain('cursor-native-group is-explore is-running')
-    expect(html).toContain('<strong>探索中</strong>')
-    expect(html).toContain('1 次搜索')
+    expect(html).toContain('<strong>Exploring</strong>')
+    expect(html).toContain('1 search')
     expect(html).toContain('cursor-native-group__preview')
-    expect(html).toContain('已搜索')
-    // 进行中的思考：标题即状态「思考中」，流光由 CSS 按 is-running 应用（原脉冲点已移除，2026-09-13）
-    expect(html).toContain('<strong>思考中</strong>')
+    expect(html).toContain('Grepped')
+    // 进行中的思考：标题即状态「Thinking」，流光由 CSS 按 is-running 应用（原脉冲点已移除，2026-09-13）
+    expect(html).toContain('<strong>Thinking</strong>')
     expect(html).toContain('cursor-native-thought is-running')
     expect(html).not.toContain('cursor-native-thought__pulse')
-    expect(html).not.toContain('<strong>思考</strong>')
+    expect(html).not.toContain('<strong>Thought</strong>')
     expect(html).toContain('aria-expanded="false"')
   })
 
@@ -80,11 +80,11 @@ describe('ProcessBlocks', () => {
       },
       { kind: 'tool', id: 'img-running', toolName: 'generate_image', toolKind: 'image', toolCase: 'generateImageToolCall', summary: 'board-v2.png', status: 'running' }
     ]} />)
-    // 两张卡都独立成卡（Cursor 也不把图片生成归入探索组），动词随状态：已生成图片 / 生成图片中。
+    // 两张卡都独立成卡（Cursor 也不把图片生成归入探索组），动词随状态：Generated image / Generating image。
     expect(html).toContain('cursor-native-tool is-image is-done')
-    expect(html).toContain('<strong>已生成图片</strong>')
+    expect(html).toContain('<strong>Generated image</strong>')
     expect(html).toContain('cursor-native-tool is-image is-running')
-    expect(html).toContain('<strong>生成图片中</strong>')
+    expect(html).toContain('<strong>Generating image</strong>')
     expect(html).not.toContain('generate_image')
     // 完成卡：缩略图经 sg-image 协议内联在头部之下，不需要展开；进行中的卡没有图片正文。
     expect(html).toContain('src="sg-image://local/%2Ftmp%2Fassets%2Fboard-v1.png"')
@@ -102,7 +102,7 @@ describe('ProcessBlocks', () => {
     expect(running).toContain('cursor-native-shell')
     // 头部：意图说明 + 动词 + 程序名；命令本身移到正文 `$ …` 着色行。
     expect(running).toContain('<strong>跑回归</strong>')
-    expect(running).toContain('运行中')
+    expect(running).toContain('Running')
     expect(running).toContain('cursor-native-shell__prompt')
     expect(running).toContain('cursor-native-shell__token is-command">npx<')
     expect(running).toContain('cursor-native-shell__token is-flag">--reporter=dot<')
@@ -306,8 +306,8 @@ describe('ProcessBlocks', () => {
     ]
     const html = renderToStaticMarkup(<ProcessBlocks blocks={blocks} />)
     expect(html).toContain('data-group-id="group:block:r1"')
-    expect(html).toContain('<strong>已探索</strong>')
-    expect(html).toContain('3 个文件')
+    expect(html).toContain('<strong>Explored</strong>')
+    expect(html).toContain('3 files')
     // 已完成的组不带预览窗，成员行折叠不可见；shell 保持独立卡。
     expect(html).not.toContain('cursor-native-group__preview')
     expect(html).not.toContain('/a.ts')
@@ -321,13 +321,13 @@ describe('ProcessBlocks', () => {
     expect(container.querySelector('.cursor-native-shell__output.is-expanded')?.textContent).toBe('ok')
   })
 
-  it('flips the thinking header to “思考 N 秒” once the block is done', () => {
+  it('flips the thinking header to “Thought for Ns” once the block is done', () => {
     const html = renderToStaticMarkup(<ProcessBlocks blocks={[
       { kind: 'thinking', id: 'th-done', text: '想清楚了。', status: 'done', durationMs: 38_429 }
     ]} />)
-    expect(html).toContain('<strong>思考</strong>')
-    expect(html).toContain('38 秒')
-    expect(html).not.toContain('思考中')
+    expect(html).toContain('<strong>Thought</strong>')
+    expect(html).toContain('<time>for 38s</time>')
+    expect(html).not.toContain('Thinking')
     expect(html).not.toContain('cursor-native-thought__pulse')
   })
 
@@ -342,32 +342,34 @@ describe('ProcessBlocks', () => {
     }]} />)
 
     expect(html).toContain('cursor-native-tool__head" disabled=""')
-    // 完成态由动词表达（已调用），右侧不再重复「完成」；无明细也无折叠箭头 → meta 为空。
+    // 完成态由动词表达（Ran MCP），右侧不再重复「完成」；无明细也无折叠箭头 → meta 为空。
     expect(html).toMatch(/cursor-native-tool__meta[^>]*><\/span>/)
     expect(html).not.toContain('cursor-native-tool__state')
     expect(html).toContain('过程记录')
   })
 
   it('leaves the state word to the verb itself; only questionnaire states get the right-side label', () => {
-    // 审查项 6：动词随状态取词（读取中 / 读取失败），右侧不再挂重复的「进行中 / 失败」；
-    // 进行中由行标题流光表达，失败由红色动词与红框表达。
+    // 审查项 6：动词随状态取词（Reading / Read），右侧不再挂重复的「进行中 / 失败」；
+    // 进行中由行标题流光表达，失败由红色动词（Cursor 错误态原形）与红框表达。
     const running = renderToStaticMarkup(<ProcessBlocks blocks={[
       { kind: 'tool', id: 'r', toolName: 'read_file_v2', toolKind: 'read', summary: '/a.ts', status: 'running' }
     ]} />)
-    expect(running).toContain('<strong>读取中</strong>')
+    expect(running).toContain('<strong>Reading</strong>')
     expect(running).toContain('is-read is-running')
     expect(running).not.toContain('cursor-native-tool__state')
     const failed = renderToStaticMarkup(<ProcessBlocks blocks={[
       { kind: 'tool', id: 'f', toolName: 'read_file_v2', toolKind: 'read', summary: '/a.ts', status: 'failed', error: 'ENOENT' }
     ]} />)
-    expect(failed).toContain('<strong>读取失败</strong>')
+    expect(failed).toContain('<strong>Read</strong>')
     expect(failed).toContain('is-read is-failed')
     expect(failed).not.toContain('cursor-native-tool__state')
-    // 未知工具平时以工具名作标题，失败时也必须说出「执行失败」。
+    // 未知工具平时以工具名作标题，失败时回到动词（Cursor 错误态原形 Run），红色承担失败语义。
     const failedOther = renderToStaticMarkup(<ProcessBlocks blocks={[
       { kind: 'tool', id: 'o', toolName: 'custom_probe', toolKind: 'other', summary: 'probe', status: 'failed', error: 'boom' }
     ]} />)
-    expect(failedOther).toContain('<strong>执行失败</strong>')
+    expect(failedOther).toContain('<strong>Run</strong>')
+    expect(failedOther).not.toContain('<strong>custom_probe</strong>')
+    expect(failedOther).toContain('is-other is-failed')
   })
 
   it('renders escaped newlines inside process text as real line breaks', () => {
@@ -458,7 +460,7 @@ describe('ProcessBlocks', () => {
       { kind: 'thinking', id: 'th', text: '想一想', status: 'done', startedAt: 1_000, completedAt: 13_400, timingEstimated: true },
       { kind: 'tool', id: 'r', toolName: 'read_file_v2', toolKind: 'read', summary: '/a.ts', status: 'done', startedAt: 13_400, completedAt: 13_500, timingEstimated: true }
     ]} />)
-    expect(html).toContain('<time>~12 秒</time>')
+    expect(html).toContain('<time>for ~12s</time>')
     expect(html).not.toContain('<time>~0.1 秒</time>')
   })
 
@@ -468,11 +470,12 @@ describe('ProcessBlocks', () => {
       { kind: 'tool', id: 'browser', toolName: 'browser_navigate', toolKind: 'browser', summary: 'http://localhost', output: '页面已加载', status: 'done' },
       { kind: 'tool', id: 'todo', toolName: 'todos', toolKind: 'todo', summary: '待办清单 0/1', todos: [{ content: '视觉验收', status: 'in_progress' }], status: 'running' }
     ]} />)
-    // 单个抓取类调用按 Cursor 规则也成组（非轻探索阈值 1），组头「已探索 1 次抓取」，成员折叠。
-    expect(html).toContain('<strong>已探索</strong>')
-    expect(html).toContain('1 次抓取')
-    expect(html).not.toContain('<strong>已浏览</strong>')
-    expect(html).toContain('<time>3.0 秒</time>')
+    // 单个抓取类调用按 Cursor 规则也成组（非轻探索阈值 1），组头「Explored 1 fetch」，成员折叠。
+    expect(html).toContain('<strong>Explored</strong>')
+    expect(html).toContain('1 fetch')
+    expect(html).not.toContain('1 step')
+    expect(html).not.toContain('<strong>Browsed</strong>')
+    expect(html).toContain('<time>for 3s</time>')
     expect(html).toContain('待办清单 0/1')
     expect(html).toContain('aria-expanded="false"')
   })

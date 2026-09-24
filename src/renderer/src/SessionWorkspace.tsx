@@ -525,17 +525,17 @@ export function SessionWorkspace({
           )}
           <div className={`chat-bubble${idle ? ' live-process-idle' : ''}`}>
             {continuation ? (
-              // 直播态由过程卡自己的「Cursor 实时过程」标记表达，这里只说明这一段是什么。
+              // 直播态由过程卡内 Thinking / 工具行的文字流光表达，这里只说明这一段是什么。
               <div className={`chat-continuation-caption${liveActive ? ' is-live' : ''}`} role="status">
                 {liveActive ? '回复后继续工作中' : '回复后继续工作'}
               </div>
             ) : null}
             {idle ? (
               // 回合开场（已投递、首个过程块未到）：链路健康时说 Agent 在做什么
-              //（Cursor 开场 Planning next moves 的同款表达，文字流光），不再报系统腔的
-              // 「过程流就绪后将在此实时展示」；只有链路真出问题才降级为诊断提示。
+              //（Cursor 开场原文 Planning next moves，文字流光；与名册状态行同一措辞），
+              // 不再报系统腔的「过程流就绪后将在此实时展示」；只有链路真出问题才降级为诊断提示。
               nativeProcessStream?.state === 'connected' ? (
-                <span className="live-process-planning" role="status">正在规划下一步</span>
+                <span className="live-process-planning" role="status">Planning next moves</span>
               ) : (
                 <>
                   <span className="typing-indicator"><i /><i /><i /></span>

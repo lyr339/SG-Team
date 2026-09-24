@@ -119,8 +119,8 @@ describe('SessionWorkspace', () => {
         startedAt: 180_000, updatedAt: 180_100
       }
     })
-    // 已完成的思考折叠成一行「思考」头（历史轻量，2026-09-18），过程卡与回答仍在同一回合行。
-    expect(html).toContain('<strong>思考</strong>')
+    // 已完成的思考折叠成一行「Thought」头（历史轻量，2026-09-18），过程卡与回答仍在同一回合行。
+    expect(html).toContain('<strong>Thought</strong>')
     expect(html).toContain('data-step-id="block:thought-long"')
     expect(html).not.toContain('长任务完整过程')
     expect(html).toContain('长任务最终回答')
@@ -193,14 +193,15 @@ describe('SessionWorkspace', () => {
     expect(html).not.toContain('实时过程中 ·')
   })
 
-  it('过程流链路健康时开场占位是「正在规划下一步」流光，而不是系统腔提示', () => {
+  it('过程流链路健康时开场占位是「Planning next moves」流光（Cursor 原文），而不是系统腔提示', () => {
     const html = renderWorkspace({
       session: { status: 'running', waiting: false, connectionPhase: 'processing' },
       entries: [entry({ id: 'u1', role: 'user', source: 'desktop', text: '继续处理' })],
       nativeProcessStream: { state: 'connected', detail: 'hook 已附着', updatedAt: 1 }
     })
     expect(html).toContain('live-process-planning')
-    expect(html).toContain('正在规划下一步')
+    expect(html).toContain('Planning next moves')
+    expect(html).not.toContain('正在规划下一步')
     expect(html).not.toContain('typing-indicator')
     expect(html).not.toContain('过程流就绪后将在此实时展示')
   })
@@ -229,8 +230,10 @@ describe('SessionWorkspace', () => {
       }
     })
     expect(html).toContain('过程记录')
-    expect(html).toContain('cursor-native-process__live')
-    expect(html).toContain('Cursor 实时过程')
+    // 直播态不再挂「Cursor 实时过程」标记行（2026-09-22）：is-live 类保留，过程流直接铺开。
+    expect(html).toContain('cursor-native-process is-live')
+    expect(html).not.toContain('cursor-native-process__live')
+    expect(html).not.toContain('Cursor 实时过程')
     expect(html).toContain('cursor-native-process__flow')
     expect(html).toContain('App.tsx')
     expect(html).not.toContain('live-process-idle')
@@ -652,7 +655,7 @@ describe('SessionWorkspace', () => {
       })]
     })
     expect(html).toContain('process-turn')
-    expect(html).toContain('已读取')
+    expect(html).toContain('Read')
     expect(html).toContain('src/App.tsx')
     expect(html).toContain('chat-row--process')
     expect(html).not.toContain('process-turn__live-label')
@@ -770,8 +773,8 @@ describe('统一回合时间线（阶段 F：RC-8 turn identity）', () => {
     })
     expect(sealed).toContain('统一身份验证')
     expect(sealed).toContain('最终回答')
-    // 历史轻量（2026-09-18 审查项 2）：封口后的思考折叠成一行「思考」头，正文点开再看。
-    expect(sealed).toContain('<strong>思考</strong>')
+    // 历史轻量（2026-09-18 审查项 2）：封口后的思考折叠成一行「Thought」头，正文点开再看。
+    expect(sealed).toContain('<strong>Thought</strong>')
     expect(sealed).not.toContain('思考完成')
     expect(sealed.match(/chat-row chat-row--agent live-process-row[" ]/g)).toBe(null)
   })
@@ -859,9 +862,8 @@ describe('统一回合时间线（阶段 F：RC-8 turn identity）', () => {
         blocks: [{ kind: 'thinking', id: 'cursor:th-1', text: '生成中的思考内容', status: 'done', startedAt: 1_000_120 }]
       }
     })
-    expect(html).toContain('Cursor 实时过程')
+    expect(html).toContain('cursor-native-process is-live')
     expect(html).toContain('cursor-native-thought')
-    expect(html).toContain('is-live')
 
     // generating=false（历史快照）：无直播徽标，整段直接显示。
     const history = renderWorkspace({
@@ -876,10 +878,10 @@ describe('统一回合时间线（阶段 F：RC-8 turn identity）', () => {
         blocks: [{ kind: 'thinking', id: 'cursor:th-1', text: '历史思考内容', status: 'done', startedAt: 1_000_120 }]
       }
     })
-    expect(history).not.toContain('Cursor 实时过程')
+    expect(history).not.toContain('cursor-native-process is-live')
     // 历史上下文：已完成的思考折叠成一行头（正文点开即全文直出，immediate 语义由
     // streaming-hydration / use-streaming-text 用例锁定）。
-    expect(history).toContain('<strong>思考</strong>')
+    expect(history).toContain('<strong>Thought</strong>')
     expect(history).not.toContain('历史思考内容')
   })
 })

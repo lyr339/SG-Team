@@ -2090,8 +2090,8 @@ button.workspace-group-chip:focus-visible { outline: 2px solid var(--accent-bord
 .chat-row--continuation { margin-top: -2px; }
 .chat-continuation-caption { display: block; margin: 0 2px 6px; color: var(--text-soft); font-size: var(--fs-11); font-weight: 600; }
 .chat-continuation-caption.is-live { color: var(--accent); }
-/* Agent 已受理、首个过程块未到的开场气泡：健康链路一行流光「正在规划下一步」
-  （思考中同款 shine，颜色与 Thought 的三级文字一致）；链路异常才降级为点 + 诊断提示。 */
+/* Agent 已受理、首个过程块未到的开场气泡：健康链路一行流光「Planning next moves」
+  （Thinking 同款 shine，颜色与 Thought 的三级文字一致）；链路异常才降级为点 + 诊断提示。 */
 .live-process-idle { display: flex; align-items: center; gap: 8px; color: var(--faint); }
 .live-process-idle .typing-indicator { margin-left: 0; }
 .live-process-planning { color: var(--color-text-tertiary); font-size: var(--fs-12); font-weight: 600; letter-spacing: -.01em; }
@@ -2101,7 +2101,8 @@ button.workspace-group-chip:focus-visible { outline: 2px solid var(--accent-bord
 .cursor-native-thought__head { width: fit-content; display: inline-flex; align-items: baseline; gap: 5px; padding: 0; color: var(--color-text-tertiary); background: transparent; border: 0; text-align: left; cursor: pointer; }
 /* Thinking 用紫色点缀（Claude 家族视觉语言），与工具色板中的 search 紫同族不同形 */
 .cursor-native-thought__head strong { color: light-dark(#7449cc, #b795ff); font-size: var(--fs-12); font-weight: 600; letter-spacing: -.01em; }
-.cursor-native-thought__head time { color: var(--muted); font: 500 var(--fs-11)/1 var(--mono); }
+/* 「Thought for 3s」是一句话：时长接在动词后同字号同字重，只降一级颜色。 */
+.cursor-native-thought__head time { color: var(--muted); font-size: var(--fs-12); font-weight: 600; letter-spacing: -.01em; }
 .cursor-native-thought__head > svg { width: 13px; height: 13px; align-self: center; margin-left: 2px; }
 
 /* ============================================================
@@ -2201,8 +2202,6 @@ button.workspace-group-chip:focus-visible { outline: 2px solid var(--accent-bord
 .process-turn__collapse svg { width: 14px; height: 14px; }
 /* Cursor-native process：会话内直接按原生顺序铺开 Thought / tool，不再套总览大卡。 */
 .cursor-native-process { width: 100%; max-width: 100%; min-width: 0; margin: 2px 0 14px; overflow: visible; background: transparent; border: 0; border-radius: 0; box-shadow: none; }
-.cursor-native-process__live { width: fit-content; display: inline-flex; align-items: center; gap: 6px; margin: 0 0 10px 2px; color: var(--color-text-info); font-size: var(--fs-10); font-weight: 600; }
-.cursor-native-process__live i { width: 6px; height: 6px; background: currentColor; border-radius: 50%; }
 .cursor-native-process__flow { width: 100%; max-width: 100%; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
 .cursor-native-thought { display: grid; gap: 7px; min-width: 0; padding: 0 2px; }
 .cursor-native-thought__body { max-width: none; color: var(--text-soft); font-size: var(--fs-12); line-height: 1.68; }
@@ -2408,7 +2407,6 @@ button.workspace-group-chip:focus-visible { outline: 2px solid var(--accent-bord
 .cursor-native-group__stats i[data-kind="additions"] { color: light-dark(#1f7a45, #6fcf97); }
 .cursor-native-group__stats i[data-kind="deletions"] { color: light-dark(#c2453f, #f28b82); }
 .cursor-native-group__meta { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); white-space: nowrap; }
-.cursor-native-group__count { font: 500 var(--fs-10)/1 var(--mono); }
 .cursor-native-group.is-running .cursor-native-group__label > strong { color: var(--tool-hue, var(--text)); }
 .cursor-native-group.is-failed .cursor-native-group__label > strong { color: var(--red); }
 .cursor-native-group__meta > svg { width: 15px; height: 15px; }

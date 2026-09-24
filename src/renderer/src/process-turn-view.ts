@@ -66,48 +66,54 @@ export interface ProcessTurnViewModel {
   timingEstimated: boolean
 }
 
-const ACTIONS: Record<'thinking' | 'message', string> = {
-  thinking: '思考',
-  message: 'Agent'
-}
+/**
+ * 过程流文案沿用 Cursor 原文英文（2026-09-22 用户拍板：会话页过程流要的是 Cursor 原生
+ * 那种英文，不再本地化）——Thinking / Thought、Reading / Read、Explored … 逐字取自
+ * Cursor 3.6.31 的 `zJv` 三态表；拾光自己的界面壳（明细标签、计数、问卷状态）仍是中文。
+ */
+const THINKING_ACTION: Record<ProcessBlock['status'], string> = { running: 'Thinking', done: 'Thought', failed: 'Thought' }
+const MESSAGE_ACTION = 'Agent'
 
 interface StepVerbs { running: string; done: string; failed: string }
 
 /**
- * 工具动词随状态变化（对齐 Cursor 自身的 Reading / Read / Read 三态），
- * 而不是一个固定名词——「运行验证」这种猜测性的标签会把普通 shell 调用说成验证。
+ * 工具动词随状态变化（Cursor `zJv` 三态表：loading / completed / error 形态，
+ * 错误态是 Cursor 自己的原形动词，失败语义由红色承担），而不是一个固定名词——
+ * 「运行验证」这种猜测性的标签会把普通 shell 调用说成验证。
  */
 const TOOL_VERBS: Record<ProcessToolKind, StepVerbs> = {
-  read: { running: '读取中', done: '已读取', failed: '读取失败' },
-  search: { running: '搜索中', done: '已搜索', failed: '搜索失败' },
-  edit: { running: '编辑中', done: '已编辑', failed: '编辑失败' },
-  write: { running: '写入中', done: '已写入', failed: '写入失败' },
-  command: { running: '运行中', done: '已运行', failed: '运行失败' },
-  browser: { running: '浏览中', done: '已浏览', failed: '浏览失败' },
-  mcp: { running: '调用中', done: '已调用', failed: '调用失败' },
-  todo: { running: '更新待办', done: '已更新待办', failed: '更新待办失败' },
-  task: { running: '子任务进行中', done: '子任务完成', failed: '子任务失败' },
-  question: { running: '等待回答', done: '已回答', failed: '提问失败' },
-  image: { running: '生成图片中', done: '已生成图片', failed: '生成图片失败' },
-  other: { running: '执行中', done: '已执行', failed: '执行失败' }
+  read: { running: 'Reading', done: 'Read', failed: 'Read' },
+  search: { running: 'Grepping', done: 'Grepped', failed: 'Grep' },
+  edit: { running: 'Editing', done: 'Edited', failed: 'Edit' },
+  write: { running: 'Editing', done: 'Edited', failed: 'Edit' },
+  command: { running: 'Running', done: 'Ran', failed: 'Run' },
+  browser: { running: 'Browsing', done: 'Browsed', failed: 'Browse' },
+  mcp: { running: 'Running MCP', done: 'Ran MCP', failed: 'Run MCP' },
+  todo: { running: 'Updating todos', done: 'Updated todos', failed: 'Update todos' },
+  task: { running: 'Working on task', done: 'Completed task', failed: 'Work on task' },
+  question: { running: 'Asking question', done: 'Asked question', failed: 'Ask question' },
+  image: { running: 'Generating image', done: 'Generated image', failed: 'Generate image' },
+  other: { running: 'Running', done: 'Ran', failed: 'Run' }
 }
 
 /**
- * 按 Cursor 原生 case 细分的动词（Cursor `zJv` 三态表的中文对应）：toolKind 只能分到
+ * 按 Cursor 原生 case 细分的动词（`zJv` 三态表原文）：toolKind 只能分到
  * read / search 一级，ls、glob、semSearch、webSearch、fetch、readLints、await 各有其词。
  */
 const CASE_VERBS: Record<string, StepVerbs> = {
-  lsToolCall: { running: '列出中', done: '已列出', failed: '列出失败' },
-  globToolCall: { running: '搜索文件中', done: '已搜索文件', failed: '搜索文件失败' },
-  semSearchToolCall: { running: '语义搜索中', done: '已语义搜索', failed: '语义搜索失败' },
-  webSearchToolCall: { running: '搜索网页中', done: '已搜索网页', failed: '搜索网页失败' },
-  fetchToolCall: { running: '抓取中', done: '已抓取', failed: '抓取失败' },
-  webFetchToolCall: { running: '抓取中', done: '已抓取', failed: '抓取失败' },
-  readLintsToolCall: { running: '读取诊断中', done: '已读取诊断', failed: '读取诊断失败' },
-  deleteToolCall: { running: '删除中', done: '已删除', failed: '删除失败' },
-  readTodosToolCall: { running: '读取待办', done: '已读取待办', failed: '读取待办失败' },
-  getMcpToolsToolCall: { running: '探索工具中', done: '已探索工具', failed: '探索工具失败' },
-  awaitToolCall: { running: '等待后台命令', done: '后台命令已结束', failed: '等待后台命令失败' }
+  lsToolCall: { running: 'Listing', done: 'Listed', failed: 'List' },
+  globToolCall: { running: 'Searching files', done: 'Searched files', failed: 'Search files' },
+  semSearchToolCall: { running: 'Searching', done: 'Searched', failed: 'Search' },
+  webSearchToolCall: { running: 'Searching web', done: 'Searched web', failed: 'Search web' },
+  fetchToolCall: { running: 'Fetching', done: 'Fetched', failed: 'Fetch' },
+  webFetchToolCall: { running: 'Fetching page', done: 'Fetched page', failed: 'Fetch page' },
+  readLintsToolCall: { running: 'Reading lints', done: 'Read lints', failed: 'Read lints' },
+  deleteToolCall: { running: 'Deleting', done: 'Deleted', failed: 'Delete' },
+  readTodosToolCall: { running: 'Reading todos', done: 'Read todos', failed: 'Read todos' },
+  getMcpToolsToolCall: { running: 'Exploring tools', done: 'Explored tools', failed: 'Explore tools' },
+  awaitToolCall: { running: 'Waiting', done: 'Waited', failed: 'Wait' },
+  applyAgentDiffToolCall: { running: 'Applying diff', done: 'Applied diff', failed: 'Apply diff' },
+  switchModeToolCall: { running: 'Switching mode', done: 'Switched mode', failed: 'Switch mode' }
 }
 
 const STATE_TEXT: Record<ProcessTurnStep['status'], string> = { running: '进行中', done: '完成', failed: '失败' }
@@ -227,7 +233,7 @@ function blockStep(raw: ProcessBlock, id: string): ProcessTurnStep {
       id,
       blockId,
       kind: 'thinking',
-      action: ACTIONS.thinking,
+      action: THINKING_ACTION[block.status],
       stateText: STATE_TEXT[block.status],
       body: clean(block.text),
       status: block.status,
@@ -243,7 +249,7 @@ function blockStep(raw: ProcessBlock, id: string): ProcessTurnStep {
       id,
       blockId,
       kind: 'message',
-      action: ACTIONS.message,
+      action: MESSAGE_ACTION,
       stateText: STATE_TEXT[block.status],
       body: clean(block.text),
       status: block.status,
@@ -286,12 +292,12 @@ function blockStep(raw: ProcessBlock, id: string): ProcessTurnStep {
   // 动词：MCP 用真实工具名（team_task / browser_navigate），计划更新单列，其余先按原生 case
   // 细分（ls / glob / fetch / await …），再回退类别 + 状态取词。
   const verbs = (block.toolCase ? CASE_VERBS[block.toolCase] : undefined) ?? TOOL_VERBS[kind]
-  // 未知工具平时以工具名作标题，但失败时必须由动词说出「执行失败」——
-  // 右侧不再挂重复的状态词（审查项 6），失败语义只能落在这里。
+  // 未知工具平时以工具名作标题，但失败时必须回到动词（Cursor 错误态原形 Run，红色承担失败语义）——
+  // 右侧不再挂重复的状态词（审查项 6）。
   const verb = mcp?.tool
     ? `${TOOL_VERBS.mcp[block.status]} ${mcp.tool}`
     : block.toolName === 'planUpdate'
-      ? (block.status === 'running' ? '更新计划' : '已更新计划')
+      ? (block.status === 'running' ? 'Updating plan' : 'Updated plan')
       : kind === 'other' && block.toolName && !title && block.status !== 'failed' ? block.toolName : verbs[block.status]
   const details: ProcessStepDetail[] = []
   // 有意图说明时对象不再占头部，但要在明细里第一眼可见。
