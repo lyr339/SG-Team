@@ -71,7 +71,7 @@ const INSPECTOR_TAB_GEOMETRY_PROBE = `(() => {
   }))
   const bar = shell.querySelector('.workspace-inspector__bar').getBoundingClientRect()
   const close = shell.querySelector('.workspace-inspector__close').getBoundingClientRect()
-  const iconOnly = shell.classList.contains('is-review') && bar.width < shell.getBoundingClientRect().width / 2
+  const iconOnly = bar.width < shell.getBoundingClientRect().width / 2
   const size = iconOnly ? 30 : 32
   if (tabs.some((tab) => tab.height !== size || (iconOnly && tab.width !== size) || (!iconOnly && !tab.active && tab.width !== size))) throw new Error('标签尺寸不一致: ' + JSON.stringify(tabs))
   if (tabs.some((tab) => iconOnly ? tab.revealWidth !== 0 : (tab.active ? tab.revealWidth <= 0 : tab.revealWidth !== 0))) throw new Error('标签展开状态错误')
@@ -91,6 +91,15 @@ const REVIEW_WIDE_HEADER_PROBE = `(() => {
   }
   if (tabs.right > shell.right + 1) throw new Error('标签越过右栏边缘')
   return { width: Math.round(shell.width), summaryHeight: Math.round(summary.height), toolbarRight: Math.round(toolbar.right), tabsLeft: Math.round(tabs.left) }
+})()`
+const INSPECTOR_WIDE_PANEL_PROBE = `(() => {
+  const bar = document.querySelector('.workspace-inspector__bar').getBoundingClientRect()
+  const header = document.querySelector('.inspector-panel:not(.is-hidden) .inspector-section__header')
+  const title = header?.querySelector('div:first-child')?.getBoundingClientRect()
+  const aside = header?.querySelector('.inspector-section__aside')?.getBoundingClientRect()
+  if (!header || !title || title.right > bar.left + 1 || (aside && aside.right > bar.left + 1)) throw new Error('面板标题与标签重叠')
+  if (Math.abs(header.getBoundingClientRect().top - bar.top) > 2) throw new Error('面板标题未与标签同排')
+  return { titleRight:Math.round(title.right), tabsLeft:Math.round(bar.left), asideRight:aside ? Math.round(aside.right) : null }
 })()`
 const EDIT_CARD = '.cursor-native-edit[data-step-id="block:live-edit"]'
 // 真浏览器检查：hover / 鼠标点击后移出 / 键盘焦点，及完整代码的局部横向滚动。
@@ -207,6 +216,30 @@ const scenes = [
     storage: baseStorage({ width }), clip: '.workspace-inspector',
     actions: [{ label: '范围、统计、操作与标签同排不相撞', probe: REVIEW_WIDE_HEADER_PROBE }]
   })),
+  ...['plan', 'activity', 'artifacts'].map((tab) => ({
+    name: `inspector-wide-${tab}`, width: 1440, height: 900, colorScheme: 'dark',
+    storage: baseStorage({ tab, width: 520, colorMode: 'dark' }), clip: '.workspace-inspector',
+    actions: [{ label: '面板标题与固定标签同排不遮挡', probe: INSPECTOR_WIDE_PANEL_PROBE }]
+  })),
+  {
+    name: 'inspector-tabs-stable', width: 1440, height: 900, colorScheme: 'light',
+    storage: baseStorage({ width: 540 }), clip: '.workspace-inspector',
+    actions: [{ label: '四标签切换位置稳定', probe: `new Promise((done, fail) => {
+      const tabs = [...document.querySelectorAll('.inspector-tab')]
+      const before = tabs.map(tab => tab.getBoundingClientRect().left)
+      tabs[1].click()
+      setTimeout(() => {
+        const after = tabs.map(tab => tab.getBoundingClientRect().left)
+        if (after.some((left,i) => Math.abs(left-before[i]) > 1)) return fail(new Error('切换到计划时标签横跳: '+JSON.stringify({before,after})))
+        tabs[2].click()
+        setTimeout(() => {
+          const final = tabs.map(tab => tab.getBoundingClientRect().left)
+          if (final.some((left,i) => Math.abs(left-before[i]) > 1)) return fail(new Error('切换到活动时标签横跳: '+JSON.stringify({before,final})))
+          done({stable:true})
+        },250)
+      },250)
+    })` }]
+  },
   {
     name: 'review-dual-min', width: 1440, height: 900, colorScheme: 'light',
     storage: { ...baseStorage({ width: 540 }), [SESSION_RAIL_WIDTH_KEY]: JSON.stringify([560]) },
