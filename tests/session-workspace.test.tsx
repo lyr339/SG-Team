@@ -484,7 +484,7 @@ describe('SessionWorkspace', () => {
       liveProcess: { turn: 'stale-turn', startedAt: 1_100, updatedAt: 2_000, generating: false,
         blocks: [{ kind: 'thinking', id: 'stale-thought', text: '旧帧', status: 'running', startedAt: 1_100 }] }
     })
-    expect(html).toContain('>Worked for 1s</span>')
+    expect(html).toContain('>Worked</span>')
     expect(html).toContain('cursor-native-process__flow" hidden')
   })
 

@@ -231,4 +231,73 @@ describe('Agent 回合行身份贯穿 responding → sealed（阶段 F/G，§8.5
     expect(flow.hidden).toBe(true)
     expect(settledRow.querySelector('.cursor-native-process__summary')?.textContent).toBe('Worked for 1m 0s')
   })
+
+  it('does not keep counting a continuation while the long-lived Cursor turn is waiting for messages', () => {
+    const now = Date.parse('2026-09-25T12:00:00+08:00')
+    vi.setSystemTime(now)
+    const reply: ConversationEntry = {
+      id: 'reply:r1', channelId: '1', role: 'assistant', source: 'cursor', text: '已接手',
+      timestamp: now - 2 * 60_000, status: 'complete', replyToEntryId: user.id
+    }
+    // Cursor 的长期原生 turn 在 check_messages 待命时仍可能报告 generating。
+    // 协议席位已经 waiting，旧过程不能因此被重新判成业务工作。
+    render(root, {
+      entries: [user, reply],
+      session: { status: 'waiting', waiting: true, connectionPhase: 'waiting' },
+      liveProcess: { turn: 'cursor:long', startedAt: now - 60_000, updatedAt: now,
+        generating: true, blocks: [{ kind: 'tool', id: 'follow-read', toolName: 'Read', toolKind: 'read',
+          summary: 'notes.md', status: 'done', startedAt: now - 60_000, completedAt: now }] }
+    })
+    const heading = container.querySelector<HTMLElement>('.chat-row--continuation .cursor-native-process__summary')!
+    expect(heading.textContent).toBe('Worked for 1m 0s')
+    act(() => { vi.advanceTimersByTime(2 * 60 * 60_000) })
+    expect(heading.textContent).toBe('Worked for 1m 0s')
+  })
+
+  it('does not keep counting an explicitly stopped seat with a stale streaming process', () => {
+    const now = Date.parse('2026-09-25T12:00:00+08:00')
+    vi.setSystemTime(now)
+    render(root, {
+      entries: [user],
+      session: { online: false, connected: false, status: 'offline', waiting: false, runtimeEvidence: 'stopped' },
+      liveProcess: { turn: 'cursor:stale', startedAt: now - 60_000, updatedAt: now,
+        generating: true, blocks: [{ kind: 'thinking', id: 'stale-thinking', text: '已结束的过程', status: 'running',
+          startedAt: now - 60_000 }] }
+    })
+    const heading = container.querySelector<HTMLElement>('.cursor-native-process__summary')!
+    expect(heading.textContent).toBe('Worked')
+    expect(container.querySelector('.cursor-native-process')?.className).toContain('is-done')
+    expect(container.querySelector('.cursor-native-thought.is-running')).toBeNull()
+    act(() => { vi.advanceTimersByTime(2 * 60 * 60_000) })
+    expect(heading.textContent).toBe('Worked')
+  })
+
+  it('keeps an older continuation settled when another message starts work in the same native turn', () => {
+    const now = Date.parse('2026-09-25T12:00:00+08:00')
+    vi.setSystemTime(now)
+    const firstUser = { ...user, timestamp: now - 5 * 60_000, deliveredAt: now - 5 * 60_000 }
+    const reply: ConversationEntry = {
+      id: 'reply:r1', channelId: '1', role: 'assistant', source: 'cursor', text: '第一轮完成',
+      timestamp: now - 4 * 60_000, status: 'complete', replyToEntryId: firstUser.id
+    }
+    const nextUser: ConversationEntry = {
+      id: 'outbox:u2', channelId: '1', role: 'user', source: 'desktop', text: '第二轮开始',
+      timestamp: now - 60_000, deliveredAt: now - 60_000, status: 'complete'
+    }
+    render(root, {
+      entries: [firstUser, reply, nextUser],
+      liveProcess: { turn: 'cursor:long', startedAt: now - 5 * 60_000, updatedAt: now,
+        generating: true, blocks: [
+          { kind: 'tool', id: 'old-read', toolName: 'Read', toolKind: 'read', summary: 'old.md', status: 'done',
+            startedAt: now - 3 * 60_000, completedAt: now - 2.5 * 60_000 },
+          { kind: 'thinking', id: 'new-thought', text: '第二轮工作中', status: 'running', startedAt: now - 30_000 }
+        ] }
+    })
+    const oldHeading = container.querySelector<HTMLElement>('.chat-row--continuation .cursor-native-process__summary')!
+    expect(oldHeading.textContent).toBe('Worked for 30s')
+    expect(container.querySelector<HTMLElement>('.chat-row--continuation .cursor-native-process__flow')?.hidden).toBe(true)
+    expect(container.textContent).toContain('Working for 30s')
+    act(() => { vi.advanceTimersByTime(60_000) })
+    expect(oldHeading.textContent).toBe('Worked for 30s')
+  })
 })

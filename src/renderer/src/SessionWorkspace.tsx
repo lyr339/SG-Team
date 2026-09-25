@@ -191,6 +191,10 @@ export function SessionWorkspace({
   // 托盘是否在场（与 QueuedMessageTray 自己的渲染判定同一口径：服务端计数与可见排队条目取大）。
   const trayVisible = Math.max(session.queueDepth, queuedEntries.length) > 0
   const latestAssistantId = [...timelineEntries].reverse().find((entry) => entry.role === 'assistant')?.id
+  const latestDeliveredUserId = [...timelineEntries].reverse().find((entry) => (
+    entry.role === 'user' && entry.status === 'complete'
+      && (entry.deliveredAt !== undefined || entry.source !== 'desktop' || !queuedTransport)
+  ))?.id
   const seenCount = useRef(timelineEntries.length)
   /**
    * 观看者到来（本视图按 channelId 挂载）时已存在的实时过程块：切换会话进入正在
@@ -469,11 +473,15 @@ export function SessionWorkspace({
     continuation?: { anchorReplyId: string; hasLiveSource: boolean }
   }): React.JSX.Element => {
     const { turnKey, process, response, reply, grouped, detached, idle, continuation } = input
-    const hasLiveWork = process?.generating === true
+    const olderContinuation = Boolean(continuation && latestDeliveredUserId && turnKey !== `turn:${latestDeliveredUserId}`)
+    // Cursor 的长期原生 turn 在 check_messages 待命时仍可能 generating=true；
+    // 是否在做本次业务，以通道席位的运行相位为准，避免旧续作重启后再次计时。
+    const hasLiveWork = !olderContinuation && agentRunning && !session.waiting && session.runtimeEvidence !== 'stopped' && (
+      process?.generating === true
       || response?.status === 'streaming'
-      || Boolean(session.online && !session.waiting && session.status === 'running'
-        && continuation?.hasLiveSource !== false
+      || Boolean(continuation?.hasLiveSource !== false
         && process?.blocks.some((block) => block.status === 'running'))
+    )
     // 续作即使没有自己的 reply，也可能只是历史块；主过程没有回复时，则以席位
     // 已离线/待命且无运行证据为结束边界。不能把「reply 缺失」等同于还在工作。
     const settledWithoutReply = !reply && !hasLiveWork
@@ -486,6 +494,16 @@ export function SessionWorkspace({
     // live 信号（RC-9）：服务端 generating 为权威——Cursor 常把生成中的 Thinking
     // 块标记为 done，仅靠「某块 running」会把直播过程误判为历史而跳过打字机。
     const liveActive = responding && hasLiveWork
+    // 迟到的原生帧可能还带着 running 块；席位已结算时只把展示副本收口，
+    // 不改服务端快照或持久化记录，手动展开历史过程也不再闪“进行中”。
+    const displayBlocks = !responding && blocks?.some((block) => block.status === 'running')
+      ? blocks.map((block) => block.status === 'running' ? { ...block, status: 'done' as const } : block)
+      : blocks
+    const completedAt = !responding && blocks?.length
+      && blocks.every((block) => typeof block.completedAt === 'number' && Number.isFinite(block.completedAt))
+      ? Math.max(...blocks.map((block) => block.completedAt!)) : undefined
+    // 原生长 turn 的 updatedAt 属于整轮；旧续作不能借新消息的更新时间膨胀耗时。
+    const displayUpdatedAt = reply?.timestamp ?? (responding ? process?.updatedAt : completedAt)
     const suggestions = reply?.status === 'complete' ? suggestedActionsFromText(reply.text) : []
     const defaultOpen = continuation
       ? liveActive || continuation.anchorReplyId === latestAssistantId
@@ -528,10 +546,10 @@ export function SessionWorkspace({
             {hasProcess ? (
               <ProcessTurnCard
                 id={reply?.turn ?? process?.turn ?? turnKey}
-                blocks={blocks}
+                blocks={displayBlocks}
                 truncatedItemCount={replyBlocks?.length ? reply?.processTruncatedItemCount : process?.truncatedItemCount}
                 startedAt={replyBlocks?.length ? reply?.processBlocks?.[0]?.startedAt : process?.startedAt}
-                updatedAt={reply ? reply.timestamp : process?.updatedAt}
+                updatedAt={displayUpdatedAt}
                 defaultOpen={defaultOpen}
                 compact
                 live={liveActive}
