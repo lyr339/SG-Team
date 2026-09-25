@@ -441,7 +441,7 @@ if (previewParameters.get('continuation') === '1') {
   }
   state.desktop.liveAgentResponses = undefined
   state.desktop.sessions = state.desktop.sessions.map((session) => session.channelId === '2'
-    ? { ...session, status: 'running', connectionPhase: 'processing', waiting: true, online: true, deliveryMode: 'queued' }
+    ? { ...session, status: 'running', connectionPhase: 'processing', waiting: false, online: true, deliveryMode: 'queued' }
     : session)
 }
 // 已结束续作的重启回放：历史块有确切结束时刻，当前席位待命，标题必须静止。
@@ -456,7 +456,13 @@ if (previewParameters.get('continuation') === 'archived') {
       continuationBlocks: [{ kind: 'tool', id: 'archived-read', toolName: 'Read', toolKind: 'read',
         summary: 'src/renderer/src/timeline-view.ts', status: 'done', startedAt, completedAt: startedAt + 60_000 }] }
   ] }
-  state.desktop.liveProcess = undefined
+  // Cursor 长会话重连会重新给出 generating 帧；席位已经待命，旧续作仍应按完成时刻定格。
+  state.desktop.liveProcess = { '2': {
+    turn: 'cursor:archived-continuation', startedAt, updatedAt: previewNow, generating: true,
+    blocks: [{ kind: 'tool', id: 'late-archived-read', toolName: 'Read', toolKind: 'read',
+      summary: 'src/renderer/src/virtual-process-turns.ts', status: 'done',
+      startedAt: startedAt + 30_000, completedAt: startedAt + 60_000 }]
+  } }
   state.desktop.liveAgentResponses = undefined
   state.desktop.sessions = state.desktop.sessions.map((session) => session.channelId === '2'
     ? { ...session, status: 'waiting', waiting: true, connectionPhase: 'waiting', online: true }

@@ -1084,8 +1084,10 @@ const scenes = [
         probe: `(() => {
           const reply = document.querySelector('[data-entry-id="reply:handoff-1"]')
           const row = document.querySelector('.chat-row--continuation')
-          if (!reply || !row) return { found: false }
+          if (!reply || !row) throw new Error('直播续作行缺失')
           const caption = row.querySelector('.chat-continuation-caption')?.textContent ?? ''
+          if (!caption.endsWith('中')) throw new Error('真实续作被当作已结束：' + caption)
+          if (row.getBoundingClientRect().top < reply.getBoundingClientRect().bottom - 1) throw new Error('续作行跑到回复上方')
           return {
             found: true,
             below: row.getBoundingClientRect().top >= reply.getBoundingClientRect().bottom - 1,
