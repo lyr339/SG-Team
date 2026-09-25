@@ -164,8 +164,10 @@ const HunkView = memo(function HunkView({ path, hunk, index, actions, onQuote, o
       </div>
       {hunk.lines.map((line, lineIndex) => (
         <div className={`review-line is-${line.kind}`} key={`${index}:${lineIndex}`}>
-          <span>{line.oldLine ?? ''}</span>
-          <span>{line.newLine ?? ''}</span>
+          <span title={line.kind === 'context' && line.oldLine !== undefined && line.newLine !== undefined && line.oldLine !== line.newLine
+            ? `原 ${line.oldLine} · 新 ${line.newLine}` : undefined}>
+            {line.kind === 'deletion' ? line.oldLine : line.newLine ?? line.oldLine ?? ''}
+          </span>
           <pre><i>{line.kind === 'addition' ? '+' : line.kind === 'deletion' ? '-' : ' '}</i><InlineText text={line.text} segments={segments[lineIndex]} /></pre>
         </div>
       ))}

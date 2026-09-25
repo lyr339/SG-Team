@@ -129,6 +129,26 @@ describe('ReviewPanel', () => {
     await act(async () => root.unmount())
   })
 
+  it('aligns deleted and added numbers in one gutter even when old and new ranges differ', async () => {
+    const api = installApi()
+    api.getWorkspaceReviewFile.mockResolvedValue({
+      state: 'ready', path: 'src/login.tsx', truncated: false,
+      hunks: [{ header: '@@ -799 +813 @@', skippedBefore: 0, lines: [
+        { kind: 'deletion', text: 'before', oldLine: 799 },
+        { kind: 'addition', text: 'after', newLine: 813 }
+      ] }]
+    })
+    const root = createRoot(container)
+    await act(async () => root.render(<ReviewPanel workspaceKey="ws" turnPaths={[]} />))
+    const deleted = container.querySelector('.review-line.is-deletion')!
+    const added = container.querySelector('.review-line.is-addition')!
+    expect(deleted.querySelectorAll(':scope > span')).toHaveLength(1)
+    expect(added.querySelectorAll(':scope > span')).toHaveLength(1)
+    expect(deleted.querySelector(':scope > span')?.textContent?.trim()).toBe('799')
+    expect(added.querySelector(':scope > span')?.textContent?.trim()).toBe('813')
+    await act(async () => root.unmount())
+  })
+
   it('reloads when the main process pushes a change signal and re-reads expanded diffs on a new revision', async () => {
     const api = installApi()
     const root = createRoot(container)

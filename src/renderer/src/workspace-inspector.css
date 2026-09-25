@@ -358,7 +358,7 @@
 .review-hunk { min-width: max-content; content-visibility: auto; contain-intrinsic-size: auto 260px; }
 /* hunk 标识退为安静的代码坐标；滚动时仍可贴住差异视口左沿。 */
 .review-hunk__header {
-  position: sticky; left: 0; min-width: 100%; width: max-content;
+  position: sticky; left: 0; width: calc(100cqw - 12px); box-sizing: border-box;
   display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 18px;
   color: var(--review-muted); background: var(--review-canvas);
   border: 0; border-top: 1px solid var(--review-line);
@@ -366,7 +366,7 @@
 }
 /* 未修改段是独立的折叠带，而不是一道断裂的虚线。 */
 .review-hunk__skipped {
-  position: sticky; left: 10px; width: calc(100cqw - 20px); box-sizing: border-box;
+  position: sticky; left: 10px; width: calc(100cqw - 32px); box-sizing: border-box;
   margin: 7px 10px; padding: 6px 12px;
   color: var(--review-muted); background: var(--review-skip-bg); border: 0; border-radius: 8px;
   font: 500 var(--fs-11)/1.5 var(--font-sans);
@@ -376,13 +376,26 @@
 .review-hunk:hover .review-hunk__actions, .review-hunk:focus-within .review-hunk__actions { opacity: 1; }
 .review-hunk__actions > button { width: 24px; height: 24px; color: var(--review-muted); }
 .review-hunk__actions > button svg { width: 13px; height: 13px; }
-/* 行号、正文、增删底色沿同一条连续代码面排版；代码不再被文件卡裁成小窗。 */
+/* 旧/新行号共用一列：删行显示旧号，增行与上下文显示新号；水平阅读时行号与标记留在左沿。 */
 .review-line {
   min-width: 100%; width: max-content; min-height: 24px;
-  display: grid; grid-template-columns: 46px 46px minmax(240px, 1fr);
+  display: grid; grid-template-columns: 54px minmax(240px, 1fr);
   align-items: stretch; color: var(--review-text); font: 500 var(--fs-11)/1.55 var(--font-mono);
 }
-.review-line > span { padding: 2px 7px; color: var(--review-muted); background: color-mix(in srgb, var(--review-canvas) 82%, transparent); text-align: right; font-variant-numeric: tabular-nums; user-select: none; }
+.review-line > span {
+  position: sticky; left: 0; z-index: 1; padding: 2px 10px 2px 8px;
+  color: var(--review-muted); background: var(--review-canvas);
+  text-align: right; font-variant-numeric: tabular-nums; user-select: none;
+}
+/* Codex 式变更轨：删行是逐像素短红纹，增行是一条完整绿色，均贴着行号列左沿。 */
+.review-line.is-deletion > span::before, .review-line.is-addition > span::before {
+  content: ''; position: absolute; inset: 0 auto 0 0; width: 4px; pointer-events: none;
+}
+.review-line.is-deletion > span::before {
+  background-color: var(--review-canvas);
+  background-image: repeating-linear-gradient(to bottom, var(--review-red) 0 0.5px, transparent 0.5px 1.5px);
+}
+.review-line.is-addition > span::before { background: var(--review-green); }
 .review-line > pre { margin: 0; padding: 2px 16px 2px 7px; white-space: pre; }
 .review-line > pre > i { display: inline-block; width: 16px; color: var(--review-muted); font-style: normal; user-select: none; }
 .review-line.is-addition { background: var(--review-add-bg); }
@@ -413,7 +426,7 @@
    「第 N 次」收进信息色小胶囊当序号锚点，动作词升正文色——扫读时先看到序号再看到动作。 */
 .review-edit { min-width: max-content; }
 .review-edit__head {
-  position: sticky; left: 0; min-width: 100%; width: max-content;
+  position: sticky; left: 0; width: calc(100cqw - 12px); box-sizing: border-box;
   display: flex; align-items: center; gap: 9px; padding: 7px 18px;
   color: var(--review-muted); background: var(--review-canvas);
   border-block: 1px solid var(--review-line);

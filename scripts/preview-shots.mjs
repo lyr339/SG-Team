@@ -281,6 +281,38 @@ const scenes = [
     if (scope.getBoundingClientRect().right >= toolbar.getBoundingClientRect().left) throw new Error('范围与操作按钮重叠')
     return { width: Math.round(head.clientWidth), height: Math.round(head.clientHeight) }
   })()` }] },
+  { name: 'review-gutter-scroll', width: 1180, height: 760, colorScheme: 'dark', storage: baseStorage({ width: 320, colorMode: 'dark' }), actions: [{
+    label: '单列行号与增删轨在横向阅读时固定', probe: `(() => {
+      const diff = document.querySelector('.review-diff')
+      const oldNumber = diff?.querySelector('.review-line.is-deletion > span')
+      const newNumber = diff?.querySelector('.review-line.is-addition > span')
+      if (!diff || !oldNumber || !newNumber || diff.scrollWidth <= diff.clientWidth) throw new Error('窄栏差异没有横向阅读区')
+      const oldX = oldNumber.getBoundingClientRect().left
+      const newX = newNumber.getBoundingClientRect().left
+      const hunkHeader = diff.querySelector('.review-hunk__header')
+      const editHeader = diff.querySelector('.review-edit__head')
+      const skipped = diff.querySelector('.review-hunk__skipped')
+      const headerBefore = hunkHeader?.getBoundingClientRect().left
+      const editBefore = editHeader?.getBoundingClientRect().left
+      const skippedBefore = skipped?.getBoundingClientRect().left
+      if (Math.abs(oldX-newX) > 1) throw new Error('增删行号没有共用一列')
+      const oldMarker = getComputedStyle(oldNumber, '::before')
+      const newMarker = getComputedStyle(newNumber, '::before')
+      const stripes = oldMarker.backgroundImage
+      const green = newMarker.backgroundColor
+      if (!stripes.includes('repeating-linear-gradient') || green === 'rgba(0, 0, 0, 0)') throw new Error('增删轨样式缺失')
+      if (Math.abs(parseFloat(oldMarker.width)-4) > .1 || Math.abs(parseFloat(newMarker.width)-4) > .1) throw new Error('增删轨太宽')
+      diff.scrollLeft = 120
+      if (Math.abs(oldNumber.getBoundingClientRect().left-oldX) > 1 || Math.abs(newNumber.getBoundingClientRect().left-newX) > 1) throw new Error('滚动时行号/变更轨漂走')
+      if (hunkHeader && Math.abs(hunkHeader.getBoundingClientRect().left-headerBefore) > 1) throw new Error('代码块标题漂走')
+      if (editHeader && Math.abs(editHeader.getBoundingClientRect().left-editBefore) > 1) throw new Error('逐次编辑标题漂走')
+      if (hunkHeader && hunkHeader.getBoundingClientRect().right > diff.getBoundingClientRect().right + 1) throw new Error('代码块标题越过窄栏')
+      if (editHeader && editHeader.getBoundingClientRect().right > diff.getBoundingClientRect().right + 1) throw new Error('逐次编辑标题越过窄栏')
+      return { old:oldNumber.textContent, next:newNumber.textContent, scrollLeft:diff.scrollLeft, aligned:true, sticky:true,
+        header:[headerBefore,hunkHeader?.getBoundingClientRect().left,hunkHeader?.getBoundingClientRect().right], edit:[editBefore,editHeader?.getBoundingClientRect().left],
+        skipped:[skippedBefore,skipped?.getBoundingClientRect().left], diffRight:diff.getBoundingClientRect().right }
+    })()`
+  }] },
   { name: 'activity-narrow', width: 1180, height: 760, colorScheme: 'light', storage: baseStorage({ tab: 'activity', width: 300 }) },
   // 透明模式：卡片透明度 0（clear）——正文区必须保持阅读面。
   { name: 'review-clear', width: 1440, height: 900, colorScheme: 'light', storage: baseStorage({ cardOpacity: 0 }) },
@@ -347,7 +379,32 @@ const scenes = [
   },
   { name: 'review-error-dark', width: 1440, height: 900, colorScheme: 'dark', query: 'review=error', storage: baseStorage({ colorMode: 'dark', scope: 'uncommitted' }) },
   { name: 'review-many', width: 1440, height: 900, colorScheme: 'light', query: 'review=many', storage: baseStorage({ scope: 'uncommitted' }) },
-  { name: 'review-many-narrow-dark', width: 1180, height: 760, colorScheme: 'dark', query: 'review=many', storage: baseStorage({ width: 300, colorMode: 'dark', scope: 'uncommitted' }) },
+  {
+    name: 'review-reference-dark', width: 2000, height: 900, colorScheme: 'dark', query: 'review=many',
+    storage: baseStorage({ width: 1000, colorMode: 'dark', scope: 'uncommitted' }), clip: '.workspace-inspector',
+    actions: [{ click: '.inspector-review__toolbar button[aria-label="展开全部文件"]' }, { wait: 300 }, {
+      label: '宽栏连续差异保留文件分节与代码横向阅读', probe: `(() => {
+        const shell = document.querySelector('.workspace-inspector')
+        const files = [...shell.querySelectorAll('.review-file')]
+        const diffs = [...shell.querySelectorAll('.review-diff')]
+        if (files.length < 5 || diffs.length < 2) throw new Error('多文件差异没有连续展示')
+        if (shell.scrollWidth > shell.clientWidth + 1) throw new Error('代码把整个右栏撑宽')
+        if (diffs.some(diff => getComputedStyle(diff).overflowX !== 'auto')) throw new Error('代码区缺横向阅读')
+        return { width:Math.round(shell.clientWidth), files:files.length, diffSections:diffs.length }
+      })()`
+    }]
+  },
+  { name: 'review-many-narrow-dark', width: 1180, height: 760, colorScheme: 'dark', query: 'review=many', storage: baseStorage({ width: 300, colorMode: 'dark', scope: 'uncommitted' }), actions: [{
+    label: 'Git 代码块未修改行提示随窄栏横向阅读保持可见', probe: `(() => {
+      const diff = document.querySelector('.review-diff')
+      const skipped = diff?.querySelector('.review-hunk__skipped')
+      if (!diff || !skipped || diff.scrollWidth <= diff.clientWidth) throw new Error('Git 差异前提不足')
+      const before = skipped.getBoundingClientRect().left
+      diff.scrollLeft = 120
+      if (Math.abs(skipped.getBoundingClientRect().left-before) > 1) throw new Error('未修改行提示滚出视口')
+      return {scrollLeft:diff.scrollLeft,skipped:[before,skipped.getBoundingClientRect().left],width:skipped.getBoundingClientRect().width,diffWidth:diff.clientWidth}
+    })()`
+  }] },
   // 右栏关闭态（对照）与开合中途帧（验证轨道过渡在插值而不是跳变）。
   { name: 'inspector-closed', width: 1440, height: 900, colorScheme: 'light', storage: { ...baseStorage(), [INSPECTOR_OPEN_KEY]: '0' } },
   {
