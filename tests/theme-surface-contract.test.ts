@@ -251,4 +251,13 @@ describe('theme surface contracts', () => {
     // reduced-motion 必须豁免 todo 的呼吸核与淡入动画（核停在满态：实心环心，仍与空心待办可辨）
     expect(styles).toMatch(/@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\.todo-live__core,\s*\n\s*\.process-turn-step__todos li\s*\{[^}]*animation:\s*none/)
   })
+
+  it('never lets pre / code fall back to the UA generic monospace (SimSun on zh-CN Windows)', () => {
+    const inspector = readFileSync(join(process.cwd(), 'src/renderer/src/workspace-inspector.css'), 'utf8')
+    // 全局兜底：四个等宽元素统一 --mono，字号跟随上下文；右栏 diff 的 <pre> 再显式继承整组 font。
+    expect(styles).toMatch(/:where\(code, kbd, samp, pre\)\s*\{[^}]*font-family:\s*var\(--mono\)[^}]*font-size:\s*inherit/)
+    expect(inspector).toMatch(/\.review-line > pre\s*\{[^}]*font:\s*inherit/)
+    // 唯一的等宽字族定义：Windows 上必须列出 Cascadia / Consolas，否则 generic monospace 会落到宋体或 Courier New。
+    expect(foundation).toMatch(/--font-mono:[^;]*"Cascadia Code"[^;]*Consolas[^;]*monospace;/)
+  })
 })

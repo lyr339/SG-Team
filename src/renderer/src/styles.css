@@ -243,7 +243,10 @@ strong, time, .num { font-variant-numeric: tabular-nums; }
 body { line-height: var(--font-text-sm-line-height); letter-spacing: 0; }
 :where(h1, h2, h3, h4) { font-family: var(--font-sans); font-weight: var(--font-weight-semibold); letter-spacing: 0; }
 :where(button, input, textarea, select) { font-family: var(--font-sans); letter-spacing: 0; }
-:where(code, kbd, samp, pre) { letter-spacing: 0; }
+/* pre / code / kbd / samp：UA 默认字族是 generic monospace，zh-CN 页面在 Windows 上会落到宋体——
+   右栏 diff 的 <pre> 就是这样变成另一副面孔的；统一收口到 --mono，字号跟随上下文
+   （UA 对 generic monospace 的 13px 特例随之失效）。各处自己的 font 声明仍照常覆盖。 */
+:where(code, kbd, samp, pre) { font-family: var(--mono); font-size: inherit; letter-spacing: 0; }
 
 :focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 ::-webkit-scrollbar { width: 10px; height: 10px; }

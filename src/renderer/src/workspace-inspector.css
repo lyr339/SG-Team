@@ -402,7 +402,8 @@
   background-image: repeating-linear-gradient(to bottom, var(--review-diff-red) 0 0.5px, transparent 0.5px 1.5px);
 }
 .review-line.is-addition > span::before { background: var(--review-diff-green); }
-.review-line > pre { margin: 0; padding: 2px 16px 2px 7px; white-space: pre; }
+/* <pre> 不带 UA 的 monospace 字族进来：字族 / 字号 / 字重 / 行高全部继承 .review-line。 */
+.review-line > pre { margin: 0; padding: 2px 16px 2px 7px; font: inherit; white-space: pre; }
 .review-line > pre > i { display: inline-block; width: 16px; color: var(--review-muted); font-style: normal; user-select: none; }
 .review-line.is-addition { background: var(--review-add-bg); }
 .review-line.is-deletion { background: var(--review-del-bg); }
