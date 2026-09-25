@@ -60,8 +60,9 @@ export function WorkspaceInspector({
   onClose
 }: WorkspaceInspectorProps): React.JSX.Element {
   const [activeTab, setActiveTab] = useState<InspectorTabId>(readStoredInspectorTab)
-  const [reviewSummary, setReviewSummary] = useState<WorkspaceReviewSummary>()
   const workspaceKey = workspaceId || workspaceName || session.id
+  const [summaryState, setSummaryState] = useState<{ workspaceKey: string; value: WorkspaceReviewSummary }>()
+  const reviewSummary = summaryState?.workspaceKey === workspaceKey ? summaryState.value : undefined
   const todos = useMemo(() => currentCursorTodos(entries, liveProcess), [entries, liveProcess])
   const activity = useMemo(() => projectActivity(entries, liveProcess, workspacePath), [entries, liveProcess, workspacePath])
   const artifacts = useMemo(() => projectArtifacts(entries, reviewSummary, workspacePath), [entries, reviewSummary, workspacePath])
@@ -73,9 +74,9 @@ export function WorkspaceInspector({
     [entries, liveProcess, turnScope, workspacePath]
   )
   const onSummary = useCallback((summary: WorkspaceReviewSummary | undefined) => {
-    setReviewSummary(summary)
+    setSummaryState(summary ? { workspaceKey, value: summary } : undefined)
     onReviewSummary?.(summary)
-  }, [onReviewSummary])
+  }, [onReviewSummary, workspaceKey])
   // 中栏文件栏的「审查」：切到变更标签（开右栏由 DesktopShell 处理，切范围与定位由 ReviewPanel 处理）。
   useEffect(() => subscribeReviewFocus(() => setActiveTab('review')), [])
   // 右栏收起时暂停变更摘要的轮询——除非本轮有改动过的文件：那时输入区上方的文件栏正在
@@ -93,7 +94,7 @@ export function WorkspaceInspector({
   return (
     <InspectorShell tabs={tabs} activeTab={activeTab} onTabChange={setActiveTab} onClose={onClose}>
       <InspectorPanel tab="review">
-        <ReviewPanel workspaceKey={workspaceKey} turnPaths={turnPaths} turnFiles={turnFiles} turnEdits={turnEdits} paused={reviewPaused} onQuote={onQuoteToComposer} onSummary={onSummary} />
+        <ReviewPanel key={workspaceKey} workspaceKey={workspaceKey} turnPaths={turnPaths} turnFiles={turnFiles} turnEdits={turnEdits} paused={reviewPaused} onQuote={onQuoteToComposer} onSummary={onSummary} />
       </InspectorPanel>
       <InspectorPanel tab="plan">
         <PlanPanel todos={todos} onOpenTab={setActiveTab} />

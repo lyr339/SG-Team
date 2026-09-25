@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentSession } from '../src/domain/agent-session'
 import type { ConversationEntry } from '../src/domain/conversation-entry'
+import type { WorkspaceReviewSummary } from '../src/domain/workspace-review'
 import { WorkspaceInspector } from '../src/renderer/src/WorkspaceInspector'
 import { INSPECTOR_TAB_STORAGE_KEY } from '../src/renderer/src/inspector/InspectorShell'
 
@@ -120,6 +121,38 @@ describe('WorkspaceInspector shell', () => {
     const hidden = container.querySelector('.inspector-panel.is-hidden')
     expect(hidden?.getAttribute('hidden')).not.toBeNull()
     expect(hidden?.textContent).toContain('src/login.tsx')
+    await act(async () => root.unmount())
+  })
+
+  it('removes the previous workspace review and artifacts before the next summary arrives', async () => {
+    localStorage.setItem(INSPECTOR_TAB_STORAGE_KEY, 'artifacts')
+    localStorage.setItem('sg-team.inspector:review-scope:v2', 'uncommitted')
+    const api = window.sgDesktop as unknown as { getWorkspaceReview: ReturnType<typeof vi.fn> }
+    const summary = (name: string): WorkspaceReviewSummary => ({
+      state: 'ready', scope: 'uncommitted', workspaceName: name, revision: name, updatedAt: 1,
+      additions: 1, deletions: 0, liveUpdates: true,
+      files: [{ path: `docs/${name}.md`, status: 'added', staged: false, unstaged: true, additions: 1, deletions: 0 }]
+    })
+    let deliverNext: ((value: WorkspaceReviewSummary) => void) | undefined
+    api.getWorkspaceReview.mockResolvedValueOnce(summary('old'))
+      .mockImplementationOnce(() => new Promise<WorkspaceReviewSummary>((resolve) => { deliverNext = resolve }))
+    const root = createRoot(container)
+    await act(async () => root.render(
+      <WorkspaceInspector session={session} entries={entries} workspaceId="old" onClose={() => {}} />
+    ))
+    const oldRow = container.querySelector('.review-file[data-path="docs/old.md"]')
+    expect(oldRow).not.toBeNull()
+    expect(container.textContent).toContain('docs/old.md')
+
+    await act(async () => root.render(
+      <WorkspaceInspector session={session} entries={entries} workspaceId="new" onClose={() => {}} />
+    ))
+    expect(container.contains(oldRow)).toBe(false)
+    expect(container.textContent).not.toContain('docs/old.md')
+    expect(container.querySelector('.review-file[data-path="docs/new.md"]')).toBeNull()
+
+    await act(async () => deliverNext?.(summary('new')))
+    expect(container.textContent).toContain('docs/new.md')
     await act(async () => root.unmount())
   })
 })
