@@ -245,21 +245,29 @@ interface PendingConfirm {
 }
 
 /**
- * 撤销确认：锚在所属文件行下方的浮层，不挤开列表；Esc 或「取消」关闭，
- * 焦点落在确认按钮上，回车即确认。
+ * 撤销确认：锚在所属文件行下方的浮层，不挤开列表；焦点先落在「取消」，
+ * Tab 留在确认面里，Esc 回到原动作按钮，避免误触破坏性操作。
  */
 function RevertConfirm({ confirm, onCancel, onConfirm }: { confirm: PendingConfirm; onCancel: () => void; onConfirm: () => void }): React.JSX.Element {
   return (
     <div className="inspector-confirm" role="alertdialog" aria-label="确认撤销" onKeyDown={(event) => {
       if (event.key === 'Escape') {
+        event.preventDefault()
         event.stopPropagation()
         onCancel()
+      } else if (event.key === 'Tab') {
+        const buttons = event.currentTarget.querySelectorAll<HTMLButtonElement>('button')
+        const edge = event.shiftKey ? buttons[0] : buttons[buttons.length - 1]
+        if (document.activeElement === edge) {
+          event.preventDefault()
+          buttons[event.shiftKey ? buttons.length - 1 : 0]?.focus()
+        }
       }
     }}>
       <p>{confirm.label}</p>
       <div>
-        <button type="button" className="is-secondary" onClick={onCancel}>取消</button>
-        <button type="button" className="is-danger" autoFocus onClick={onConfirm}>确认撤销</button>
+        <button type="button" className="is-secondary" autoFocus onClick={onCancel}>取消</button>
+        <button type="button" className="is-danger" onClick={onConfirm}>确认撤销</button>
       </div>
     </div>
   )
@@ -338,6 +346,7 @@ export function ReviewPanel({ workspaceKey, turnPaths, turnFiles, turnEdits, onQ
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
   const [diffs, setDiffs] = useState<Record<string, WorkspaceReviewFileDiff | 'loading'>>({})
   const [confirm, setConfirm] = useState<PendingConfirm>()
+  const confirmOpener = useRef<HTMLButtonElement | null>(null)
   const [busyPath, setBusyPath] = useState('')
   /** 中栏文件栏点进来要定位的文件；摘要里出现它时展开并滚到它，随后清空。 */
   const [focusPath, setFocusPath] = useState('')
@@ -606,6 +615,7 @@ export function ReviewPanel({ workspaceKey, turnPaths, turnFiles, turnEdits, onQ
 
   const requestAction = (file: WorkspaceReviewFileSummary, action: WorkspaceReviewAction, hunkHeader?: string): void => {
     if (action === 'revert') {
+      confirmOpener.current = document.activeElement instanceof HTMLButtonElement ? document.activeElement : null
       const inHead = !(file.status === 'untracked' || file.status === 'added')
       setConfirm({
         path: file.path,
@@ -620,11 +630,15 @@ export function ReviewPanel({ workspaceKey, turnPaths, turnFiles, turnEdits, onQ
     }
     void runAction(file.path, action, hunkHeader)
   }
+  const cancelConfirm = (): void => {
+    confirmOpener.current?.focus()
+    setConfirm(undefined)
+  }
 
   // j / k 在文件间移动焦点；n / p 在已展开的代码块间跳转（滚动到块头并短暂高亮）。
   const onListKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
     const target = event.target as HTMLElement | null
-    if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
+    if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.closest('[role="alertdialog"]'))) return
     const list = listRef.current
     if (!list) return
     if (event.key === 'j' || event.key === 'k') {
@@ -796,7 +810,7 @@ export function ReviewPanel({ workspaceKey, turnPaths, turnFiles, turnEdits, onQ
                   {confirming && confirm ? (
                     <RevertConfirm
                       confirm={confirm}
-                      onCancel={() => setConfirm(undefined)}
+                      onCancel={cancelConfirm}
                       onConfirm={() => {
                         const pending = confirm
                         setConfirm(undefined)
@@ -872,7 +886,7 @@ export function ReviewPanel({ workspaceKey, turnPaths, turnFiles, turnEdits, onQ
                   {confirming && confirm ? (
                     <RevertConfirm
                       confirm={confirm}
-                      onCancel={() => setConfirm(undefined)}
+                      onCancel={cancelConfirm}
                       onConfirm={() => {
                         const pending = confirm
                         setConfirm(undefined)

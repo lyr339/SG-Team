@@ -156,11 +156,23 @@ describe('ReviewPanel', () => {
     expect(quoted).toContain('-const color = theme.light')
     expect(quoted).toContain('+const color = theme.dark')
 
-    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="撤销 src/login.tsx"]')!.click())
+    const revertButton = container.querySelector<HTMLButtonElement>('[aria-label="撤销 src/login.tsx"]')!
+    await act(async () => { revertButton.focus(); revertButton.click() })
     expect(api.applyWorkspaceReviewAction).not.toHaveBeenCalled()
     expect(container.querySelector('[role="alertdialog"]')?.textContent).toContain('恢复到 HEAD 版本')
+    expect(document.activeElement?.textContent).toBe('取消')
+    await act(async () => document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'j', bubbles: true, cancelable: true })))
+    expect(document.activeElement?.textContent).toBe('取消')
+    await act(async () => document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true })))
+    expect(document.activeElement?.textContent).toBe('确认撤销')
+    await act(async () => document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })))
+    expect(container.querySelector('[role="alertdialog"]')).toBeNull()
+    expect(document.activeElement).toBe(revertButton)
+
+    await act(async () => revertButton.click())
     await act(async () => Array.from(container.querySelectorAll('button')).find((button) => button.textContent === '取消')!.click())
     expect(container.querySelector('[role="alertdialog"]')).toBeNull()
+    expect(document.activeElement).toBe(revertButton)
     expect(api.applyWorkspaceReviewAction).not.toHaveBeenCalled()
 
     await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="撤销 src/login.tsx"]')!.click())
