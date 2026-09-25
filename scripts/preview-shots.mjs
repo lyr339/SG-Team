@@ -379,6 +379,28 @@ const scenes = [
   },
   { name: 'review-error-dark', width: 1440, height: 900, colorScheme: 'dark', query: 'review=error', storage: baseStorage({ colorMode: 'dark', scope: 'uncommitted' }) },
   { name: 'review-many', width: 1440, height: 900, colorScheme: 'light', query: 'review=many', storage: baseStorage({ scope: 'uncommitted' }) },
+  { name: 'review-syntax-dark', width: 1680, height: 900, colorScheme: 'dark', query: 'review=syntax',
+    storage: baseStorage({ width: 900, colorMode: 'dark', scope: 'uncommitted' }), clip: '.workspace-inspector',
+    actions: [{ label: '代码着色与字级差异同时保留', probe: `(() => {
+      const code = document.querySelector('.review-file[data-path="scripts/preview-shots.mjs"]')
+      const strings = [...(code?.querySelectorAll('.review-syntax.is-string') ?? [])]
+      const marks = [...(code?.querySelectorAll('.review-line mark') ?? [])]
+      if (!strings.length || !marks.length) throw new Error('语法着色或字级差异缺失')
+      return { strings:strings.map(x=>x.textContent).slice(0,3), marks:marks.map(x=>x.textContent) }
+    })()` }] },
+  { name: 'review-syntax-narrow', width: 1180, height: 760, colorScheme: 'dark', query: 'review=syntax',
+    storage: baseStorage({ width: 320, colorMode: 'dark', scope: 'uncommitted' }), clip: '.workspace-inspector',
+    actions: [{ label: '窄栏语法着色留在代码区内', probe: `(() => {
+      const shell = document.querySelector('.workspace-inspector')
+      const diff = shell?.querySelector('.review-diff')
+      const gutter = diff?.querySelector('.review-line.is-deletion > span')
+      if (!diff || !gutter || !diff.querySelector('.review-syntax.is-string')) throw new Error('窄栏差异内容缺失')
+      if (shell.scrollWidth > shell.clientWidth + 1) throw new Error('着色后整栏溢出')
+      const left = gutter.getBoundingClientRect().left
+      diff.scrollLeft = diff.scrollWidth
+      if (Math.abs(gutter.getBoundingClientRect().left-left) > 1) throw new Error('着色后行号漂移')
+      return { scrollLeft:diff.scrollLeft, sticky:true }
+    })()` }] },
   {
     name: 'review-reference-dark', width: 2000, height: 900, colorScheme: 'dark', query: 'review=many',
     storage: baseStorage({ width: 1000, colorMode: 'dark', scope: 'uncommitted' }), clip: '.workspace-inspector',

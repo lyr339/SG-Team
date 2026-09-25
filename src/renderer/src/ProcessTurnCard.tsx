@@ -1,6 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type { ProcessBlock } from '../../domain/conversation-entry'
 import { MessageImage } from './AttachmentImageViewer'
+import { tokenizeCodeLine } from './code-tokenizer'
 import { stepDomId, subscribeReveal } from './inspector/reveal-bus'
 import { MessageContent } from './MessageContent'
 import { groupProcessSteps, parseFileChangeStats, thoughtDurationDetails, type ProcessGroupVariant, type ProcessTurnGroup } from './process-step-groups'
@@ -95,38 +96,6 @@ function thoughtDuration(step: ProcessTurnStep): string {
   if (durationMs === undefined || !Number.isFinite(durationMs)) return ''
   const details = thoughtDurationDetails(durationMs)
   return step.durationMs === undefined && step.timingEstimated ? details.replace(/^for /, 'for ~') : details
-}
-
-const CODE_KEYWORDS = new Set([
-  'as', 'async', 'await', 'break', 'case', 'catch', 'class', 'const', 'continue', 'default', 'delete',
-  'do', 'else', 'export', 'extends', 'false', 'finally', 'for', 'from', 'function', 'if', 'import',
-  'in', 'instanceof', 'interface', 'let', 'new', 'null', 'of', 'return', 'switch', 'throw', 'true',
-  'try', 'type', 'typeof', 'undefined', 'var', 'void', 'while', 'with', 'yield'
-])
-
-type CodeTokenTone = 'plain' | 'comment' | 'keyword' | 'string' | 'number' | 'name' | 'operator'
-interface CodeToken { text: string; tone: CodeTokenTone }
-
-/** 过程卡只需稳定的轻量着色，不引入运行时高亮器或额外 bundle。 */
-function tokenizeCodeLine(line: string): CodeToken[] {
-  const pattern = /(\/\*.*?\*\/|\/\/.*$|#.*$|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b(?:0x[\da-f]+|\d+(?:\.\d+)?)\b|\b[A-Za-z_$][\w$]*\b|[=!<>+\-*/|&?:]+)/gi
-  const tokens: CodeToken[] = []
-  let cursor = 0
-  for (const match of line.matchAll(pattern)) {
-    const index = match.index ?? 0
-    if (index > cursor) tokens.push({ text: line.slice(cursor, index), tone: 'plain' })
-    const text = match[0]
-    const tone: CodeTokenTone = text.startsWith('//') || text.startsWith('/*') || text.startsWith('#')
-      ? 'comment'
-      : /^['"`]/.test(text) ? 'string'
-        : /^(?:0x[\da-f]+|\d)/i.test(text) ? 'number'
-          : CODE_KEYWORDS.has(text) ? 'keyword'
-            : /^[A-Za-z_$]/.test(text) ? 'name' : 'operator'
-    tokens.push({ text, tone })
-    cursor = index + text.length
-  }
-  if (cursor < line.length) tokens.push({ text: line.slice(cursor), tone: 'plain' })
-  return tokens.length ? tokens : [{ text: line || ' ', tone: 'plain' }]
 }
 
 function CodeLine({ text }: { text: string }): React.JSX.Element {

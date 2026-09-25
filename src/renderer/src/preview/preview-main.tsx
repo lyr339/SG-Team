@@ -99,9 +99,9 @@ const previewWarmupRun: import('../../../domain/session-warmup').SessionWarmupRu
 // run 只有 running / completed 两态（阶段 2 · 2B）：`?runStatus=completed` 走查已结束的运行。
 const previewRunStatus = (['running', 'completed'] as TeamRunStatus[])
   .find((status) => status === requestedRunStatus)
-// 右栏「变更」面板走查：?review=clean|not_git|error|many（缺省为两文件就绪态）。
+// 右栏「变更」面板走查：?review=clean|not_git|error|many|syntax（缺省为两文件就绪态）。
 // not_git 下面板会自动落到「本轮」（Agent 编辑流）；not_git 卡片要手动切回「未提交」才能看到。
-const reviewScene = (['clean', 'not_git', 'error', 'many'] as const).find((scene) => scene === previewParameters.get('review'))
+const reviewScene = (['clean', 'not_git', 'error', 'many', 'syntax'] as const).find((scene) => scene === previewParameters.get('review'))
 /** 预览里的「Cursor 当前工程」与它的通道号：`?detectedWorkspace=1` 换成另一个工程（4 个通道）。 */
 const previewWorkspace = detectedWorkspaceMode
   ? { workspaceId: 'detected-property-app', workspaceName: '物业管理', workspacePath: '/Users/demo/Workspace/物业管理', channelIds: ['1', '2', '3', '4'] }
@@ -1649,6 +1649,10 @@ const api: SgDesktopApi = {
     if (reviewScene === 'error') {
       return { ...base, state: 'error', additions: 0, deletions: 0, files: [], liveUpdates: false, detail: 'git status 退出码 128：fatal: not a git repository (or any of the parent directories)' }
     }
+    if (reviewScene === 'syntax') {
+      return { ...base, state: 'ready', additions: 1, deletions: 1,
+        files: [{ path: 'scripts/preview-shots.mjs', status: 'modified', staged: false, unstaged: true, additions: 1, deletions: 1 }] }
+    }
     if (turnFilesScene) {
       // 前三个是本轮改过且 Git 已看到的；App.tsx 是与本轮无关的未提交改动（栏里不该出现）；
       // 正在写的 team-handoff-service.ts 故意不在这里 → 栏上那一行回退到过程块估算。
@@ -1702,7 +1706,15 @@ const api: SgDesktopApi = {
   revealWorkspaceFile: async () => true,
   openWorkspaceFile: async () => ({ ok: true, method: 'editor' }),
   onWorkspaceReviewChanged: () => () => {},
-  getWorkspaceReviewFile: async ({ path }) => ({
+  getWorkspaceReviewFile: async ({ path }) => reviewScene === 'syntax' ? ({
+    state: 'ready', path, truncated: false,
+    hunks: [{ header: '@@ -870,3 +870,3 @@', skippedBefore: 869, lines: [
+      { kind: 'context', text: '  storage: railStorage({ colorMode: \'dark\' }),', oldLine: 870, newLine: 870 },
+      { kind: 'deletion', text: "  name: 'session-continuation-archived-dark',", oldLine: 871 },
+      { kind: 'addition', text: "  name: 'session-continuation-archived-light',", newLine: 871 },
+      { kind: 'context', text: '  actions: [{ wait: 1_500 }]', oldLine: 872, newLine: 872 }
+    ] }]
+  }) : ({
     state: 'ready', path, truncated: false,
     hunks: [{
       header: '@@ -628 +628 @@', skippedBefore: 627,

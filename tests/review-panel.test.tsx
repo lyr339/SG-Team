@@ -3,6 +3,7 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { WorkspaceReviewFileDiff, WorkspaceReviewSummary } from '../src/domain/workspace-review'
+import { tokenizeCodeLine } from '../src/renderer/src/code-tokenizer'
 import { buildFileQuote, buildHunkQuote, buildTurnFileQuote, ReviewPanel, splitPath } from '../src/renderer/src/inspector/ReviewPanel'
 import { requestReviewFocus } from '../src/renderer/src/inspector/review-focus-bus'
 import type { TurnReviewEdit } from '../src/renderer/src/inspector/turn-review-view'
@@ -74,6 +75,14 @@ describe('ReviewPanel', () => {
     document.body.appendChild(container)
   })
 
+  it('keeps JS private fields distinct from hash comments in review diffs', () => {
+    const line = 'this.#ready = true'
+    const tokens = tokenizeCodeLine(line, false)
+    expect(tokens.map((token) => token.text).join('')).toBe(line)
+    expect(tokens.some((token) => token.tone === 'comment')).toBe(false)
+    expect(tokenizeCodeLine('# note')[0]).toEqual({ text: '# note', tone: 'comment' })
+  })
+
   afterEach(() => {
     container.remove()
     localStorage.clear()
@@ -112,6 +121,8 @@ describe('ReviewPanel', () => {
     expect(api.getWorkspaceReviewFile).toHaveBeenCalledWith({ path: 'src/login.tsx', scope: 'uncommitted' })
     const marks = Array.from(container.querySelectorAll('.review-line mark')).map((mark) => mark.textContent)
     expect(marks).toEqual(['light', 'dark'])
+    expect(Array.from(container.querySelectorAll('.review-line .review-syntax.is-keyword')).map((token) => token.textContent)).toContain('const')
+    expect(container.querySelector('.review-line.is-deletion pre')?.textContent).toContain('const color = theme.light')
     // 已暂存文件显示状态标签。
     expect(container.textContent).toContain('已暂存')
 
@@ -146,6 +157,25 @@ describe('ReviewPanel', () => {
     expect(added.querySelectorAll(':scope > span')).toHaveLength(1)
     expect(deleted.querySelector(':scope > span')?.textContent?.trim()).toBe('799')
     expect(added.querySelector(':scope > span')?.textContent?.trim()).toBe('813')
+    await act(async () => root.unmount())
+  })
+
+  it('keeps string syntax color through a changed word without altering diff text', async () => {
+    const api = installApi()
+    api.getWorkspaceReviewFile.mockResolvedValue({
+      state: 'ready', path: 'src/login.tsx', truncated: false,
+      hunks: [{ header: '@@ -1 +1 @@', skippedBefore: 0, lines: [
+        { kind: 'deletion', text: "const name = 'archived-dark'", oldLine: 1 },
+        { kind: 'addition', text: "const name = 'archived-light'", newLine: 1 }
+      ] }]
+    })
+    const root = createRoot(container)
+    await act(async () => root.render(<ReviewPanel workspaceKey="ws" turnPaths={[]} />))
+    const marks = Array.from(container.querySelectorAll('.review-line mark'))
+    expect(marks.map((mark) => mark.textContent)).toEqual(['dark', 'light'])
+    expect(marks.every((mark) => mark.querySelector('.review-syntax.is-string'))).toBe(true)
+    expect(container.querySelector('.review-line.is-deletion pre')?.textContent).toBe("-const name = 'archived-dark'")
+    expect(container.querySelector('.review-line.is-addition pre')?.textContent).toBe("+const name = 'archived-light'")
     await act(async () => root.unmount())
   })
 

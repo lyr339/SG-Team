@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import type {
   WorkspaceDiffHunk,
   WorkspaceReviewAction,
@@ -10,6 +10,7 @@ import type {
 } from '../../../domain/workspace-review'
 import { fileActionAvailability, hunkActionAvailability } from '../../../domain/workspace-review'
 import { FileTypeIcon } from '../FileTypeIcon'
+import { tokenizeCodeLine } from '../code-tokenizer'
 import { fileIconKind } from '../file-type'
 import { describeLineCounts, turnTotalsTitle, type TurnFileView, type TurnFilesView } from '../turn-files-view'
 import { RefreshIcon } from '../UiIcons'
@@ -133,9 +134,35 @@ export function buildTurnFileQuote(file: TurnFileView, editCount: number): strin
   return `> 关于 \`${file.path}\`（本轮 ${editCount} 次编辑 · ${describeLineCounts(file.additions, file.deletions, file.binary)}）：\n\n`
 }
 
-function InlineText({ text, segments }: { text: string; segments?: InlineSegment[] }): React.JSX.Element {
-  if (!segments) return <>{text}</>
-  return <>{segments.map((segment, index) => segment.changed ? <mark key={index}>{segment.text}</mark> : <span key={index}>{segment.text}</span>)}</>
+function InlineText({ text, segments, syntax }: { text: string; segments?: InlineSegment[]; syntax: boolean }): React.JSX.Element {
+  if (!syntax || !text) return <>{segments
+    ? segments.map((segment, index) => segment.changed ? <mark key={index}>{segment.text}</mark> : <span key={index}>{segment.text}</span>)
+    : text}</>
+  // 先按完整代码行分词，再按字级差异边界拆片；改动落在字符串中间时，整段仍保持字符串色。
+  const changed = segments ? new Uint8Array(text.length) : undefined
+  if (segments && changed) {
+    let cursor = 0
+    for (const segment of segments) {
+      if (segment.changed) changed.fill(1, cursor, cursor + segment.text.length)
+      cursor += segment.text.length
+    }
+  }
+  const nodes: ReactNode[] = []
+  let offset = 0
+  for (const token of tokenizeCodeLine(text, false)) {
+    const colored = token.tone === 'keyword' || token.tone === 'string' || token.tone === 'comment' || token.tone === 'number'
+    for (let start = 0; start < token.text.length;) {
+      const marked = changed?.[offset + start] === 1
+      let end = start + 1
+      while (end < token.text.length && (changed?.[offset + end] === 1) === marked) end += 1
+      const piece = token.text.slice(start, end)
+      const content = colored ? <span key={nodes.length} className={`review-syntax is-${token.tone}`}>{piece}</span> : piece
+      nodes.push(marked ? <mark key={nodes.length}>{content}</mark> : content)
+      start = end
+    }
+    offset += token.text.length
+  }
+  return <>{nodes}</>
 }
 
 interface HunkViewProps {
@@ -150,6 +177,7 @@ interface HunkViewProps {
 const HunkView = memo(function HunkView({ path, hunk, index, actions, onQuote, onAction }: HunkViewProps): React.JSX.Element {
   const segments = useMemo(() => hunkInlineSegments(hunk.lines), [hunk.lines])
   const range = hunkLineRange(hunk)
+  const syntax = /\.(?:[cm]?[jt]sx?|json)$/i.test(path)
   return (
     <div className="review-hunk" data-hunk-index={index}>
       {hunk.skippedBefore > 0 ? <div className="review-hunk__skipped">{hunk.skippedBefore} 行未修改</div> : null}
@@ -168,7 +196,7 @@ const HunkView = memo(function HunkView({ path, hunk, index, actions, onQuote, o
             ? `原 ${line.oldLine} · 新 ${line.newLine}` : undefined}>
             {line.kind === 'deletion' ? line.oldLine : line.newLine ?? line.oldLine ?? ''}
           </span>
-          <pre><i>{line.kind === 'addition' ? '+' : line.kind === 'deletion' ? '-' : ' '}</i><InlineText text={line.text} segments={segments[lineIndex]} /></pre>
+          <pre><i>{line.kind === 'addition' ? '+' : line.kind === 'deletion' ? '-' : ' '}</i><InlineText text={line.text} segments={segments[lineIndex]} syntax={syntax && line.kind !== 'meta' && line.text.length <= 220} /></pre>
         </div>
       ))}
     </div>

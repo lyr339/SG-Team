@@ -407,6 +407,10 @@
 .review-line mark { color: inherit; border-radius: 3px; padding: 0 1px; margin: 0 -1px; background: color-mix(in srgb, currentColor 20%, transparent); }
 .review-line.is-addition mark { background: color-mix(in srgb, var(--review-green) 26%, transparent); }
 .review-line.is-deletion mark { background: color-mix(in srgb, var(--review-red) 25%, transparent); }
+.review-line .review-syntax.is-keyword { color: light-dark(#7654a0, #bea4dc); }
+.review-line .review-syntax.is-string { color: light-dark(#a54651, #ec9da3); }
+.review-line .review-syntax.is-number { color: light-dark(#946037, #d3ad81); }
+.review-line .review-syntax.is-comment { color: var(--review-muted); }
 .review-line.is-meta { color: var(--muted); font-style: italic; }
 .review-diff__truncated { min-width: max-content; padding: 8px 12px; color: var(--color-text-warning); background: var(--color-background-warning); font-size: var(--fs-11); }
 
