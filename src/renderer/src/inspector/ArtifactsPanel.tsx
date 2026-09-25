@@ -18,9 +18,9 @@ const SOURCE_LABELS: Record<ArtifactItem['source'], string> = {
 function ImageCard({ item, now, actions }: { item: ArtifactItem; now: number; actions: WorkspaceFileActions }): React.JSX.Element | null {
   const [broken, setBroken] = useState(false)
   const source = item.attachment.previewUrl
-  // 工作区新增图片按「工作区路径 + 仓库相对路径」拼装，工作区位于仓库子目录时可能
-  // 拼错；预加载失败就整卡隐藏，不留破图。
+  // 工作区图片可能在扫描后被移动或删除；保留文件卡和定位动作，只收起失效的预览。
   useEffect(() => {
+    setBroken(false)
     if (!source || item.source !== 'worktree' || typeof Image === 'undefined') return
     let disposed = false
     const probe = new Image()
@@ -28,11 +28,11 @@ function ImageCard({ item, now, actions }: { item: ArtifactItem; now: number; ac
     probe.src = source
     return () => { disposed = true }
   }, [item.source, source])
-  if (broken) return null
   return (
     <figure className={`artifact-card is-${item.source}`}>
       <div className="artifact-card__thumb">
-        <AttachmentThumbnail attachment={item.attachment} className="artifact-card__image" />
+        {broken ? <span className="artifact-card__unavailable">预览暂不可用</span>
+          : <AttachmentThumbnail attachment={item.attachment} className="artifact-card__image" />}
       </div>
       <figcaption>
         <strong title={item.attachment.path ?? item.name}>{item.name}</strong>

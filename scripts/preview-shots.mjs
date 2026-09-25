@@ -33,11 +33,11 @@ const ONLY = flag('--only')?.split(',').map((value) => value.trim()).filter(Bool
 const INSPECTOR_OPEN_KEY = 'sg-team.layout:v1:workspace-inspector:open'
 const INSPECTOR_TAB_KEY = 'sg-team.inspector:active-tab'
 const INSPECTOR_WIDTH_KEY = 'sg-team.layout:v1:shell.workspace-inspector'
-const REVIEW_SCOPE_KEY = 'sg-team.inspector:review-scope'
+const REVIEW_SCOPE_KEY = 'sg-team.inspector:review-scope:v2'
 const APPEARANCE_KEY = 'shiguang.appearance.v1'
 
 /** 基础存储：右栏展开、CH-2 会话、默认宽度；accent / background 为主题色 / 背景预设 id（缺省拾光橙 / 折光）。 */
-function baseStorage({ tab = 'review', width = 420, cardOpacity = 0.9, colorMode = 'light', scope = 'uncommitted', accent = 'sg-orange', background = 'refraction' } = {}) {
+function baseStorage({ tab = 'review', width = 540, cardOpacity = 0.9, colorMode = 'light', scope = 'turn', accent = 'sg-orange', background = 'refraction' } = {}) {
   return {
     [INSPECTOR_OPEN_KEY]: '1',
     [INSPECTOR_TAB_KEY]: tab,
@@ -60,6 +60,38 @@ function railStorage({ cardOpacity = 0.94, colorMode = 'light', railWidth = 326 
 }
 
 const TABS = ['review', 'plan', 'activity', 'artifacts']
+const INSPECTOR_TAB_GEOMETRY_PROBE = `(() => {
+  const shell = document.querySelector('.workspace-inspector')
+  const tabs = [...shell.querySelectorAll('.inspector-tab')].map((tab) => ({
+    label: tab.querySelector('.inspector-tab__label')?.textContent,
+    active: tab.classList.contains('is-active'),
+    width: Math.round(tab.getBoundingClientRect().width),
+    height: Math.round(tab.getBoundingClientRect().height),
+    revealWidth: Math.round(tab.querySelector('.inspector-tab__reveal').getBoundingClientRect().width)
+  }))
+  const bar = shell.querySelector('.workspace-inspector__bar').getBoundingClientRect()
+  const close = shell.querySelector('.workspace-inspector__close').getBoundingClientRect()
+  const iconOnly = shell.classList.contains('is-review') && bar.width < shell.getBoundingClientRect().width / 2
+  const size = iconOnly ? 30 : 32
+  if (tabs.some((tab) => tab.height !== size || (iconOnly && tab.width !== size) || (!iconOnly && !tab.active && tab.width !== size))) throw new Error('标签尺寸不一致: ' + JSON.stringify(tabs))
+  if (tabs.some((tab) => iconOnly ? tab.revealWidth !== 0 : (tab.active ? tab.revealWidth <= 0 : tab.revealWidth !== 0))) throw new Error('标签展开状态错误')
+  if (Math.abs(close.height - size) > .5 || Math.abs((close.top + close.height / 2) - (bar.top + bar.height / 2)) > .5) throw new Error('关闭按钮未对齐')
+  return { iconOnly, tabs }
+})()`
+const REVIEW_WIDE_HEADER_PROBE = `(() => {
+  const shell = document.querySelector('.workspace-inspector').getBoundingClientRect()
+  const summary = document.querySelector('.inspector-review__summary').getBoundingClientRect()
+  const scope = document.querySelector('.inspector-review__scope-trigger').getBoundingClientRect()
+  const totals = document.querySelector('.inspector-review__totals').getBoundingClientRect()
+  const toolbar = document.querySelector('.inspector-review__toolbar').getBoundingClientRect()
+  const tabs = document.querySelector('.workspace-inspector__bar').getBoundingClientRect()
+  if (summary.height > 55) throw new Error('审查工具行换行: ' + summary.height)
+  if (scope.right > totals.left + 1 || totals.right > toolbar.left + 1 || toolbar.right > tabs.left + 1) {
+    throw new Error('审查工具行重叠: ' + JSON.stringify({scope:scope.right,totals:[totals.left,totals.right],toolbar:[toolbar.left,toolbar.right],tabs:tabs.left}))
+  }
+  if (tabs.right > shell.right + 1) throw new Error('标签越过右栏边缘')
+  return { width: Math.round(shell.width), summaryHeight: Math.round(summary.height), toolbarRight: Math.round(toolbar.right), tabsLeft: Math.round(tabs.left) }
+})()`
 const EDIT_CARD = '.cursor-native-edit[data-step-id="block:live-edit"]'
 // 真浏览器检查：hover / 鼠标点击后移出 / 键盘焦点，及完整代码的局部横向滚动。
 function editCardProbe(expanded, arrowVisible) {
@@ -170,29 +202,30 @@ const scenes = [
     { name: `${tab}-light`, width: 1440, height: 900, colorScheme: 'light', storage: baseStorage({ tab }) },
     { name: `${tab}-dark`, width: 1440, height: 900, colorScheme: 'dark', storage: baseStorage({ tab, colorMode: 'dark' }) }
   ]),
-  // 标签胶囊：四个标签平时只露图标，选中的那个展开出文字与计数；切换时新胶囊长出、旧胶囊收回同步进行。
+  ...[520, 540].map((width) => ({
+    name: `review-wide-${width}`, width: 1440, height: 900, colorScheme: 'light',
+    storage: baseStorage({ width }), clip: '.workspace-inspector',
+    actions: [{ label: '范围、统计、操作与标签同排不相撞', probe: REVIEW_WIDE_HEADER_PROBE }]
+  })),
+  {
+    name: 'review-dual-min', width: 1440, height: 900, colorScheme: 'light',
+    storage: { ...baseStorage({ width: 540 }), [SESSION_RAIL_WIDTH_KEY]: JSON.stringify([560]) },
+    actions: [{ label: '最小窗口双栏可见且中栏守住阅读宽度', probe: `(() => {
+      const left = document.querySelector('.session-sidebar-pane').getBoundingClientRect()
+      const middle = document.querySelector('.content-stage').getBoundingClientRect()
+      const right = document.querySelector('.workspace-inspector-pane').getBoundingClientRect()
+      if (left.width < 300 || right.width < 320 || middle.width < 500) throw new Error('双栏空间预算失效: ' + JSON.stringify({left:left.width,middle:middle.width,right:right.width}))
+      if (left.right > middle.left + 1 || middle.right > right.left + 1) throw new Error('双栏互相覆盖')
+      return { left:Math.round(left.width), middle:Math.round(middle.width), right:Math.round(right.width) }
+    })()` }]
+  },
+  // 宽审查栏四标签收为图标；其它面板的选中标签展开文字。两个几何模式分别验收。
   ...['light', 'dark'].map((colorMode) => ({
     name: `inspector-tabs-${colorMode}`, width: 1440, height: 900, colorScheme: colorMode, storage: baseStorage({ colorMode }),
     clip: '.workspace-inspector__bar',
     actions: [{
       label: '标签胶囊几何',
-      probe: `(() => {
-        const tabs = Array.from(document.querySelectorAll('.inspector-tab')).map((tab) => ({
-          label: tab.querySelector('.inspector-tab__label')?.textContent,
-          active: tab.classList.contains('is-active'),
-          width: Math.round(tab.getBoundingClientRect().width),
-          height: Math.round(tab.getBoundingClientRect().height),
-          revealWidth: Math.round(tab.querySelector('.inspector-tab__reveal').getBoundingClientRect().width)
-        }))
-        const bar = document.querySelector('.workspace-inspector__bar').getBoundingClientRect()
-        const close = document.querySelector('.workspace-inspector__close').getBoundingClientRect()
-        return {
-          collapsedAreSquare: tabs.filter((tab) => !tab.active).every((tab) => tab.width === 32 && tab.height === 32 && tab.revealWidth === 0),
-          activeExpanded: tabs.some((tab) => tab.active && tab.revealWidth > 0),
-          closeAlignedWithTabs: Math.abs(close.height - 32) < 0.5 && Math.abs((close.top + close.height / 2) - (bar.top + bar.height / 2)) < 0.5,
-          tabs
-        }
-      })()`
+      probe: INSPECTOR_TAB_GEOMETRY_PROBE
     }]
   })),
   {
@@ -205,9 +238,16 @@ const scenes = [
     clip: '.workspace-inspector__bar',
     actions: [{ click: '.inspector-tab:nth-child(3)' }, { wait: 400 }]
   },
-  { name: 'inspector-tabs-narrow', width: 1180, height: 760, colorScheme: 'light', storage: baseStorage({ tab: 'activity', width: 300 }), clip: '.workspace-inspector__bar' },
+  { name: 'inspector-tabs-narrow', width: 1180, height: 760, colorScheme: 'light', storage: baseStorage({ tab: 'activity', width: 300 }), clip: '.workspace-inspector__bar', actions: [{ label: '窄栏标签几何', probe: INSPECTOR_TAB_GEOMETRY_PROBE }] },
   // 窄栏：窗口 1180 宽、右栏收到下限 300，标签应收成纯图标。
-  { name: 'review-narrow', width: 1180, height: 760, colorScheme: 'light', storage: baseStorage({ width: 300 }) },
+  { name: 'review-narrow', width: 1180, height: 760, colorScheme: 'light', storage: baseStorage({ width: 300 }), actions: [{ label: '窄栏操作仍在一行', probe: `(() => {
+    const head = document.querySelector('.inspector-review__summary')
+    const scope = document.querySelector('.inspector-review__scope-trigger')
+    const toolbar = document.querySelector('.inspector-review__toolbar')
+    if (!head || head.scrollWidth > head.clientWidth + 1 || head.getBoundingClientRect().height > 55) throw new Error('窄栏审查头部换行或溢出')
+    if (scope.getBoundingClientRect().right >= toolbar.getBoundingClientRect().left) throw new Error('范围与操作按钮重叠')
+    return { width: Math.round(head.clientWidth), height: Math.round(head.clientHeight) }
+  })()` }] },
   { name: 'activity-narrow', width: 1180, height: 760, colorScheme: 'light', storage: baseStorage({ tab: 'activity', width: 300 }) },
   // 透明模式：卡片透明度 0（clear）——正文区必须保持阅读面。
   { name: 'review-clear', width: 1440, height: 900, colorScheme: 'light', storage: baseStorage({ cardOpacity: 0 }) },
@@ -217,9 +257,9 @@ const scenes = [
   // 悬停第一条文件行：动作簇出现。
   { name: 'review-hover-row', width: 1440, height: 900, colorScheme: 'light', storage: baseStorage(), actions: [{ hover: '.review-file__row' }] },
   // 撤销确认浮层。
-  { name: 'review-revert-confirm', width: 1440, height: 900, colorScheme: 'light', storage: baseStorage(), actions: [{ hover: '.review-file__row' }, { click: '.review-file__actions button.is-danger' }, { wait: 250 }] },
+  { name: 'review-revert-confirm', width: 1440, height: 900, colorScheme: 'light', storage: baseStorage({ scope: 'uncommitted' }), actions: [{ hover: '.review-file__row' }, { click: '.review-file__actions button.is-danger' }, { wait: 250 }] },
   // 分支范围 + 展开全部。
-  { name: 'review-branch-expanded', width: 1440, height: 900, colorScheme: 'light', storage: baseStorage({ scope: 'branch' }), actions: [{ click: '.inspector-review__count > button' }, { wait: 400 }] },
+  { name: 'review-branch-expanded', width: 1440, height: 900, colorScheme: 'light', storage: baseStorage({ scope: 'branch' }), actions: [{ click: '.inspector-review__toolbar button[aria-label="展开全部文件"]' }, { wait: 400 }] },
   // 活动页悬停一行：定位 / 复制动作。
   { name: 'activity-hover-row', width: 1440, height: 900, colorScheme: 'light', storage: baseStorage({ tab: 'activity' }), actions: [{ hover: '.activity-command .activity-row' }] },
   // 产物卡悬停：右上角浮层动作。
@@ -232,17 +272,17 @@ const scenes = [
   { name: 'activity-empty', width: 1440, height: 900, colorScheme: 'light', channel: '1', storage: { ...baseStorage({ tab: 'activity' }), 'shiguang.lastSessionChannel.v1': '1' } },
   { name: 'artifacts-empty-dark', width: 1440, height: 900, colorScheme: 'dark', channel: '1', storage: { ...baseStorage({ tab: 'artifacts', colorMode: 'dark' }), 'shiguang.lastSessionChannel.v1': '1' } },
   // 变更面板的其它状态（预览参数 ?review=…）。
-  { name: 'review-clean', width: 1440, height: 900, colorScheme: 'light', query: 'review=clean', storage: baseStorage() },
+  { name: 'review-clean', width: 1440, height: 900, colorScheme: 'light', query: 'review=clean', storage: baseStorage({ scope: 'uncommitted' }) },
   // 非 Git 工程：面板自动落到「本轮」，正文是 Agent 编辑流（文件行 + 逐次编辑卡 + ≈ 合计），无任何 Git 动作。
   {
     name: 'review-not-git-turn', width: 1440, height: 900, colorScheme: 'light', query: 'review=not_git', storage: baseStorage(),
     actions: [{ wait: 500 }, {
       label: '非 Git 工程自动切到本轮编辑流',
       probe: `(() => {
-        const scope = document.querySelector('.inspector-review__scope > button[aria-pressed="true"]')
+        const scope = document.querySelector('.inspector-review__scope-trigger')
         const files = Array.from(document.querySelectorAll('.review-file'))
         const totals = document.querySelector('.inspector-review__totals')
-        if ((scope?.textContent ?? '').indexOf('本轮') !== 0) throw new Error('范围没有自动落到本轮: ' + scope?.textContent)
+        if ((scope?.textContent ?? '').indexOf('Last Turn') !== 0) throw new Error('范围没有落到 Last Turn: ' + scope?.textContent)
         if ((document.body.textContent ?? '').includes('当前工程未启用 Git')) throw new Error('本轮视图不该出现 not_git 卡片')
         if (!files.length) throw new Error('编辑流文件列表为空')
         if (!document.querySelector('.review-edit')) throw new Error('没有逐次编辑卡')
@@ -261,7 +301,7 @@ const scenes = [
   // 手动切回「未提交」：not_git 卡片仍在，并带「查看本轮 Agent 改动」的回程链接。
   {
     name: 'review-not-git', width: 1440, height: 900, colorScheme: 'light', query: 'review=not_git', storage: baseStorage(),
-    actions: [{ wait: 500 }, { click: '.inspector-review__scope > button:first-child' }, { wait: 250 }, {
+    actions: [{ wait: 500 }, { click: '.inspector-review__scope-trigger' }, { click: '.inspector-review__scope-menu button:nth-child(2)' }, { wait: 250 }, {
       label: 'not_git 卡片与回程链接',
       probe: `(() => {
         const body = document.body.textContent ?? ''
@@ -272,9 +312,9 @@ const scenes = [
       })()`
     }]
   },
-  { name: 'review-error-dark', width: 1440, height: 900, colorScheme: 'dark', query: 'review=error', storage: baseStorage({ colorMode: 'dark' }) },
-  { name: 'review-many', width: 1440, height: 900, colorScheme: 'light', query: 'review=many', storage: baseStorage() },
-  { name: 'review-many-narrow-dark', width: 1180, height: 760, colorScheme: 'dark', query: 'review=many', storage: baseStorage({ width: 300, colorMode: 'dark' }) },
+  { name: 'review-error-dark', width: 1440, height: 900, colorScheme: 'dark', query: 'review=error', storage: baseStorage({ colorMode: 'dark', scope: 'uncommitted' }) },
+  { name: 'review-many', width: 1440, height: 900, colorScheme: 'light', query: 'review=many', storage: baseStorage({ scope: 'uncommitted' }) },
+  { name: 'review-many-narrow-dark', width: 1180, height: 760, colorScheme: 'dark', query: 'review=many', storage: baseStorage({ width: 300, colorMode: 'dark', scope: 'uncommitted' }) },
   // 右栏关闭态（对照）与开合中途帧（验证轨道过渡在插值而不是跳变）。
   { name: 'inspector-closed', width: 1440, height: 900, colorScheme: 'light', storage: { ...baseStorage(), [INSPECTOR_OPEN_KEY]: '0' } },
   {
@@ -1305,14 +1345,14 @@ const scenes = [
   // 点「审查」：右栏展开并切到「变更」标签、范围切到「本轮」；点某一行：该文件在右栏被展开高亮。
   {
     name: 'session-turn-files-review', width: 1440, height: 900, colorScheme: 'light', query: 'turnfiles=1',
-    storage: { ...railStorage(), 'sg-team.layout:v1:workspace-inspector:open': '0', 'sg-team.inspector:active-tab': 'plan', 'sg-team.inspector:review-scope': 'uncommitted' },
+    storage: { ...railStorage(), 'sg-team.layout:v1:workspace-inspector:open': '0', 'sg-team.inspector:active-tab': 'plan', [REVIEW_SCOPE_KEY]: 'uncommitted' },
     clip: null,
     actions: [{ wait: 400 }, { click: '[data-path="src/mcp/index.ts"] .turn-files__row' }, { wait: 500 }, {
       label: '右栏定位',
       probe: `(() => {
         const inspector = document.querySelector('.workspace-inspector-pane')
         const active = document.querySelector('.inspector-tab.is-active')
-        const scope = document.querySelector('.inspector-review__scope > button[aria-pressed="true"]')
+        const scope = document.querySelector('.inspector-review__scope-trigger')
         const file = document.querySelector('.review-file[data-path="src/mcp/index.ts"]')
         return {
           inspectorVisible: inspector ? !inspector.hasAttribute('inert') : false,

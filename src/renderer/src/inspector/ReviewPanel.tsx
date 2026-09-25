@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type {
   WorkspaceDiffHunk,
   WorkspaceReviewAction,
@@ -10,6 +10,7 @@ import type {
 } from '../../../domain/workspace-review'
 import { fileActionAvailability, hunkActionAvailability } from '../../../domain/workspace-review'
 import { FileTypeIcon } from '../FileTypeIcon'
+import { fileIconKind } from '../file-type'
 import { describeLineCounts, turnTotalsTitle, type TurnFileView, type TurnFilesView } from '../turn-files-view'
 import { RefreshIcon } from '../UiIcons'
 import { Collapsible } from './Collapsible'
@@ -19,7 +20,7 @@ import { ChevronIcon, CollapseAllIcon, CopyIcon, DiffIcon, ExpandAllIcon, Folder
 import { InspectorSkeleton, InspectorState, InspectorToast, useTransientFeedback } from './InspectorState'
 import { cssEscape } from './reveal-bus'
 import { subscribeReviewFocus } from './review-focus-bus'
-import { fileTouchedBy, filterSummaryToPaths, REVIEW_SCOPE_LABELS, reviewPathsMatch, type ReviewScopeId } from './review-scope'
+import { fileTouchedBy, filterSummaryToPaths, reviewPathsMatch, type ReviewScopeId } from './review-scope'
 import type { TurnReviewEdit } from './turn-review-view'
 import { useWorkspaceFileActions } from './use-workspace-file-actions'
 
@@ -48,15 +49,6 @@ export interface ReviewPanelProps {
   pollIntervalMs?: { live: number; fallback: number }
 }
 
-const STATUS_LABELS: Record<WorkspaceReviewFileStatus, string> = {
-  modified: 'M',
-  added: 'A',
-  deleted: 'D',
-  renamed: 'R',
-  untracked: 'U',
-  conflicted: '!'
-}
-
 const STATUS_TITLES: Record<WorkspaceReviewFileStatus, string> = {
   modified: '已修改',
   added: '新增',
@@ -66,7 +58,7 @@ const STATUS_TITLES: Record<WorkspaceReviewFileStatus, string> = {
   conflicted: '有冲突'
 }
 
-const SCOPE_ORDER: ReviewScopeId[] = ['uncommitted', 'turn', 'branch']
+const SCOPE_ORDER: ReviewScopeId[] = ['turn', 'uncommitted', 'branch']
 const SCOPE_TITLES: Record<ReviewScopeId, string> = {
   uncommitted: '工作树相对 HEAD 的全部未提交变更',
   turn: '本轮 Agent 的逐次编辑（来自 Cursor 编辑流，不依赖 Git）',
@@ -78,16 +70,19 @@ const EDIT_ACTION_LABELS: Record<TurnReviewEdit['action'], string> = {
   write: '写入',
   delete: '删除'
 }
-const SCOPE_STORAGE_KEY = 'sg-team.inspector:review-scope'
+const SCOPE_STORAGE_KEY = 'sg-team.inspector:review-scope:v2'
 const DEFAULT_POLL = { live: 15_000, fallback: 2_000 }
 const KEYBOARD_HINT = 'j / k 切换文件 · n / p 切换代码块'
+const SCOPE_DISPLAY: Record<ReviewScopeId, string> = {
+  turn: 'Last Turn', uncommitted: 'Uncommitted', branch: 'Branch'
+}
 
 function readStoredScope(): ReviewScopeId {
   try {
     const stored = localStorage.getItem(SCOPE_STORAGE_KEY)
-    return SCOPE_ORDER.includes(stored as ReviewScopeId) ? stored as ReviewScopeId : 'uncommitted'
+    return SCOPE_ORDER.includes(stored as ReviewScopeId) ? stored as ReviewScopeId : 'turn'
   } catch {
-    return 'uncommitted'
+    return 'turn'
   }
 }
 
@@ -161,7 +156,7 @@ const HunkView = memo(function HunkView({ path, hunk, index, actions, onQuote, o
       <div className="review-hunk__header" tabIndex={-1}>
         <code>{hunk.header}</code>
         <span className="review-hunk__actions">
-          {onQuote ? <button type="button" title="把这段差异引用到输入框，向 Agent 提问或要求修改" aria-label="反馈这段差异给 Agent" onClick={() => onQuote(buildHunkQuote(path, hunk))}><QuoteIcon /></button> : null}
+                  {onQuote ? <button type="button" title="把这段差异引用到输入框，向 Agent 提问或要求修改" aria-label="反馈这段差异给 Agent" onClick={() => onQuote(buildHunkQuote(path, hunk))}><QuoteIcon /></button> : null}
           {actions.stage ? <button type="button" title="暂存这个代码块" aria-label={`暂存代码块 ${range ? `L${range.from}` : index + 1}`} onClick={() => onAction('stage', hunk.header)}><StageIcon /></button> : null}
           {actions.unstage ? <button type="button" title="取消暂存这个代码块" aria-label={`取消暂存代码块 ${range ? `L${range.from}` : index + 1}`} onClick={() => onAction('unstage', hunk.header)}><UnstageIcon /></button> : null}
           {actions.revert ? <button type="button" className="is-danger" title="撤销这个代码块的改动（不可恢复）" aria-label={`撤销代码块 ${range ? `L${range.from}` : index + 1}`} onClick={() => onAction('revert', hunk.header)}><RevertIcon /></button> : null}
@@ -276,6 +271,63 @@ function flashElement(element: HTMLElement): void {
   window.setTimeout(() => element.classList.remove('is-revealed'), 1_400)
 }
 
+function ReviewScopePicker({ scope, turnCount, onChange }: {
+  scope: ReviewScopeId
+  turnCount: number
+  onChange: (scope: ReviewScopeId) => void
+}): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const menuId = useId()
+  useEffect(() => { if (open) menuRef.current?.querySelector<HTMLButtonElement>('[aria-checked="true"]')?.focus() }, [open])
+  useEffect(() => {
+    if (!open) return
+    const onPointerDown = (event: PointerEvent): void => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false)
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    return () => document.removeEventListener('pointerdown', onPointerDown)
+  }, [open])
+  const close = (): void => { setOpen(false); triggerRef.current?.focus() }
+  return (
+    <div className="inspector-review__scope" ref={rootRef} onBlur={(event) => {
+      if (!event.currentTarget.contains(event.relatedTarget as Node)) setOpen(false)
+    }}>
+      <button ref={triggerRef} type="button" className="inspector-review__scope-trigger"
+        aria-label={`审查范围：${SCOPE_DISPLAY[scope]}`} aria-haspopup="menu" aria-expanded={open} aria-controls={open ? menuId : undefined}
+        title={SCOPE_TITLES[scope]} onClick={() => setOpen((value) => !value)}>
+        <span>{SCOPE_DISPLAY[scope]}</span>
+        <ChevronIcon open={open} />
+      </button>
+      {open ? (
+        <div className="inspector-review__scope-menu" id={menuId} role="menu" aria-label="审查范围" ref={menuRef}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); return }
+            if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+            event.preventDefault()
+            const choices = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')]
+            const index = choices.indexOf(document.activeElement as HTMLButtonElement)
+            const next = event.key === 'Home' ? 0 : event.key === 'End' ? choices.length - 1
+              : (index + (event.key === 'ArrowDown' ? 1 : -1) + choices.length) % choices.length
+            choices[next]?.focus()
+          }}>
+          {SCOPE_ORDER.map((candidate) => (
+            <button key={candidate} type="button" role="menuitemradio" aria-checked={candidate === scope}
+              title={SCOPE_TITLES[candidate]}
+              onClick={() => { onChange(candidate); close() }}>
+              <span>{SCOPE_DISPLAY[candidate]}</span>
+              {candidate === 'turn' && turnCount > 0 ? <small>{turnCount}</small> : null}
+              {candidate === scope ? <span className="inspector-review__scope-check" aria-hidden="true">✓</span> : null}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 export function ReviewPanel({ workspaceKey, turnPaths, turnFiles, turnEdits, onQuote, onSummary, paused = false, pollIntervalMs = DEFAULT_POLL }: ReviewPanelProps): React.JSX.Element {
   const [scope, setScope] = useState<ReviewScopeId>(readStoredScope)
   /** 「本轮」走 Agent 编辑流（有 turnFiles 才启用；预览 / 旧调用方退回 Git 过滤）。 */
@@ -301,6 +353,7 @@ export function ReviewPanel({ workspaceKey, turnPaths, turnFiles, turnEdits, onQ
   const summaryInFlight = useRef(false)
   const revisionRef = useRef('')
   const initializedWorkspace = useRef('')
+  const turnInitializedRef = useRef('')
   const listRef = useRef<HTMLDivElement>(null)
   const pausedRef = useRef(paused)
   /** 收起期间收到过主进程推送：展开时补拉。 */
@@ -376,6 +429,7 @@ export function ReviewPanel({ workspaceKey, turnPaths, turnFiles, turnEdits, onQ
     summaryInFlight.current = false
     revisionRef.current = ''
     initializedWorkspace.current = ''
+    turnInitializedRef.current = ''
     setSummary(undefined)
     setError('')
     setExpanded(new Set())
@@ -458,7 +512,6 @@ export function ReviewPanel({ workspaceKey, turnPaths, turnFiles, turnEdits, onQ
 
   // 「本轮」首次有列表：默认展开第一个文件（与 Git 口径的首载一致）。只做一次，
   // 用户收起全部后不再强行展开；带定位请求进来时目标文件由定位效果叠加展开。
-  const turnInitializedRef = useRef('')
   useEffect(() => {
     if (!turnActive || !turnFiles?.files.length) return
     if (turnInitializedRef.current === workspaceKey) return
@@ -613,28 +666,7 @@ export function ReviewPanel({ workspaceKey, turnPaths, turnFiles, turnEdits, onQ
   return (
     <section className="inspector-review" aria-label="工作区代码审查">
       <header className="inspector-review__summary">
-        {/* 分段控件：滑块是最后一个（绝对定位的）非按钮子节点——测试与探针都按 `> button` 取按钮，顺序不变。 */}
-        <div
-          className="inspector-review__scope"
-          role="group"
-          aria-label="审查范围"
-          style={{ '--scope-index': SCOPE_ORDER.indexOf(scope) } as React.CSSProperties}
-        >
-          {SCOPE_ORDER.map((candidate) => (
-            <button
-              key={candidate}
-              type="button"
-              className={candidate === scope ? 'is-active' : ''}
-              aria-pressed={candidate === scope}
-              title={SCOPE_TITLES[candidate]}
-              onClick={() => setScope(candidate)}
-            >
-              {REVIEW_SCOPE_LABELS[candidate]}
-              {candidate === 'turn' && turnCount ? <b>{turnCount}</b> : null}
-            </button>
-          ))}
-          <span className="inspector-review__scope-thumb" aria-hidden="true" />
-        </div>
+        <ReviewScopePicker scope={scope} turnCount={turnCount} onChange={setScope} />
         <div
           className="inspector-review__totals"
           title={turnActive && turnList.length && turnFiles ? turnTotalsTitle(turnFiles) : undefined}
@@ -648,25 +680,20 @@ export function ReviewPanel({ workspaceKey, turnPaths, turnFiles, turnEdits, onQ
               ? <>{turnFiles.estimated ? <small aria-hidden="true">≈</small> : null}<b>+{turnFiles.additions}</b><em>−{turnFiles.deletions}</em></>
               : null)
             : visible?.state === 'ready' ? <><b>+{visible.additions}</b><em>−{visible.deletions}</em></> : null}
+        </div>
+        <div className="inspector-review__toolbar" role="group" aria-label="审查操作">
+          {listPaths.length > 1 ? <button type="button" className="inspector-icon-button" aria-label={allExpanded ? '收起全部文件' : '展开全部文件'} title={`${allExpanded ? '收起全部' : '展开全部'} · ${KEYBOARD_HINT}`} onClick={toggleAll}>
+            {allExpanded ? <CollapseAllIcon /> : <ExpandAllIcon />}
+          </button> : null}
           <button type="button" className={`inspector-icon-button${refreshing ? ' is-spinning' : ''}`} aria-label="刷新工作区变更" title={liveUpdates ? '正在实时监听工作区；点击立即刷新' : '刷新'} onClick={() => void loadSummary(true)}>
             <RefreshIcon />
           </button>
         </div>
       </header>
-      <div className="inspector-review__meta">
-        <span className="inspector-review__workspace" title={summary?.workspaceName}>{summary?.workspaceName || '等待识别工程'}</span>
-        {branchLabel ? <code className="inspector-review__branch" title={branch?.base ? `基线分支：${branch.base}` : '当前分支'}>{branchLabel}</code> : null}
-        {(turnActive ? turnList.length > 0 : visible?.state === 'ready') ? (
-          <span className="inspector-review__count">
-            {listPaths.length} 个文件
-            {listPaths.length > 1 ? (
-              <button type="button" className="inspector-icon-button" aria-label={allExpanded ? '收起全部文件' : '展开全部文件'} title={`${allExpanded ? '收起全部' : '展开全部'} · ${KEYBOARD_HINT}`} onClick={toggleAll}>
-                {allExpanded ? <CollapseAllIcon /> : <ExpandAllIcon />}
-              </button>
-            ) : null}
-          </span>
-        ) : null}
-      </div>
+      {scope !== 'turn' && branchLabel ? <div className="inspector-review__meta" title={branch?.base ? `基线分支：${branch.base}` : '当前分支'}>
+        <code className="inspector-review__branch">{branchLabel}</code>
+        <span className="inspector-review__count">{listPaths.length} 个文件</span>
+      </div> : null}
 
       {/* Git 侧的错误 / 骨架 / 干净 / 不可用只在 Git 口径下出现：「本轮」的内容来自编辑流，Git 的状态与它无关。 */}
       {error && !turnActive ? <InspectorState tone="error" title="读取工作区变更失败" hint={error} compact /> : null}
@@ -735,9 +762,7 @@ export function ReviewPanel({ workspaceKey, turnPaths, turnFiles, turnEdits, onQ
               <article className={`review-file${file.status ? ` is-${file.status}` : ''}${estimated ? ' is-estimated' : ''}${open ? ' is-open' : ''}${busy ? ' is-busy' : ''}${confirming ? ' is-confirming' : ''}${revealedPath === file.path ? ' is-revealed' : ''}`} key={file.path} data-path={file.path} data-source={file.source}>
                 <div className="review-file__row">
                   <button className="review-file__head" type="button" onClick={() => toggleTurnFile(file.path)} aria-expanded={open} title={headTitle}>
-                    {file.status
-                      ? <i title={STATUS_TITLES[file.status]}>{STATUS_LABELS[file.status]}</i>
-                      : <i className="is-type"><FileTypeIcon kind={file.icon} /></i>}
+                    <i className="is-type" title={file.status ? STATUS_TITLES[file.status] : undefined}><FileTypeIcon kind={file.icon} /></i>
                     <span className="review-file__path">
                       {file.dir ? <small><bdi>{file.dir}</bdi></small> : null}
                       <strong><span>{file.stem}</span>{file.ext ? <b>{file.ext}</b> : null}</strong>
@@ -801,6 +826,7 @@ export function ReviewPanel({ workspaceKey, turnPaths, turnFiles, turnEdits, onQ
             const confirming = confirm?.path === file.path
             const touchedThisTurn = highlightTurn && fileTouchedBy(file, turnPaths)
             const stateLabel = file.committed ? '已提交' : file.staged && file.unstaged ? '部分暂存' : file.staged ? '已暂存' : ''
+            const displayState = stateLabel || (file.status === 'modified' ? '' : STATUS_TITLES[file.status])
             const gitActions = scope !== 'branch'
             const headTitle = [
               file.previousPath ? `${file.previousPath} → ${file.path}` : file.path,
@@ -811,12 +837,12 @@ export function ReviewPanel({ workspaceKey, turnPaths, turnFiles, turnEdits, onQ
               <article className={`review-file is-${file.status}${open ? ' is-open' : ''}${busy ? ' is-busy' : ''}${confirming ? ' is-confirming' : ''}${touchedThisTurn ? ' is-turn' : ''}${revealedPath === file.path ? ' is-revealed' : ''}`} key={file.path} data-path={file.path}>
                 <div className="review-file__row">
                   <button className="review-file__head" type="button" onClick={() => toggleFile(file)} aria-expanded={open} title={headTitle}>
-                    <i title={STATUS_TITLES[file.status]}>{STATUS_LABELS[file.status]}</i>
+                    <i className="is-type" title={STATUS_TITLES[file.status]}><FileTypeIcon kind={fileIconKind(ext)} /></i>
                     <span className="review-file__path">
                       {dir ? <small><bdi>{dir}</bdi></small> : null}
                       <strong><span>{stem}</span>{ext ? <b>{ext}</b> : null}</strong>
                       {touchedThisTurn ? <em className="is-turn" title="本轮 Agent 改动过这个文件">本轮</em> : null}
-                      {stateLabel ? <em className="review-file__state">{stateLabel}</em> : null}
+                      {displayState ? <em className="review-file__state">{displayState}</em> : null}
                     </span>
                     <span className="review-file__counts">
                       {file.binary ? <small>BIN</small> : <><b>+{file.additions ?? 0}</b><em>−{file.deletions ?? 0}</em></>}

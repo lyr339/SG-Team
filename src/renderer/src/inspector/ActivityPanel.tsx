@@ -46,7 +46,7 @@ function CommandRow({ command, actions }: { command: ActivityCommand; actions: W
           <span className="activity-row__icon"><TerminalGlyph /></span>
           <code>{command.command}</code>
           <span className="activity-row__meta">
-            {command.exitCode !== undefined ? <em className={command.exitCode === 0 ? 'is-ok' : 'is-bad'}>exit {command.exitCode}</em> : command.status === 'running' ? <em className="is-running"><i />运行中</em> : failed ? <em className="is-bad">失败</em> : null}
+            {command.exitCode !== undefined ? <em className={command.exitCode === 0 ? 'is-ok' : 'is-bad'}>exit {command.exitCode}</em> : command.status === 'running' ? <em className="is-running">运行中</em> : failed ? <em className="is-bad">失败</em> : null}
             {formatDuration(command.durationMs) ? <time>{formatDuration(command.durationMs)}</time> : null}
             {hasOutput ? <ChevronIcon open={open} /> : null}
           </span>
@@ -80,7 +80,6 @@ function TurnSection({ turn, defaultOpen, now, actions }: { turn: ActivityTurn; 
     <section className={`activity-turn${turn.live ? ' is-live' : ''}${open ? ' is-open' : ''}`}>
       <button type="button" className="activity-turn__head" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
         <span className="activity-turn__title">
-          {turn.live ? <i className="activity-turn__pulse" aria-hidden="true" /> : null}
           <strong>{turn.prompt ?? '过程记录'}</strong>
         </span>
         <span className="activity-turn__meta">
@@ -103,7 +102,7 @@ function TurnSection({ turn, defaultOpen, now, actions }: { turn: ActivityTurn; 
                         <code>{file.display}</code>
                         <span className="activity-row__meta">
                           <em className="activity-kind">{file.kinds.includes('write') && !file.kinds.includes('edit') ? '写入' : '修改'}{file.count > 1 ? ` ×${file.count}` : ''}</em>
-                          {file.status === 'running' ? <em className="is-running"><i />进行中</em> : null}
+                          {file.status === 'running' ? <em className="is-running">进行中</em> : null}
                         </span>
                       </span>
                       <RowActions
@@ -158,7 +157,7 @@ function TurnSection({ turn, defaultOpen, now, actions }: { turn: ActivityTurn; 
                         <code>{tool.server ? <small>{tool.server} / </small> : null}{tool.toolName}</code>
                         <span className="activity-row__meta">
                           {tool.count > 1 ? <em className="activity-kind">×{tool.count}</em> : null}
-                          {tool.status === 'failed' ? <em className="is-bad">失败</em> : tool.status === 'running' ? <em className="is-running"><i />进行中</em> : null}
+                          {tool.status === 'failed' ? <em className="is-bad">失败</em> : tool.status === 'running' ? <em className="is-running">进行中</em> : null}
                         </span>
                       </span>
                       <RowActions locateLabel={tool.toolName} onLocate={() => void actions.reveal({ blockId: tool.blockId })} />

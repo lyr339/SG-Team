@@ -8,12 +8,6 @@ import type { LiveProcessState } from '../../../shared/desktop-api'
  */
 export type ReviewScopeId = 'uncommitted' | 'turn' | 'branch'
 
-export const REVIEW_SCOPE_LABELS: Record<ReviewScopeId, string> = {
-  uncommitted: '未提交',
-  turn: '本轮',
-  branch: '分支'
-}
-
 const PATH_KEYS = ['path', 'file_path', 'filePath', 'targetFile', 'target_file', 'filename', 'relativePath', 'relative_workspace_path']
 
 /** 过程块里能代表文件的字符串（summary 优先，其次 input 里的路径键）。 */

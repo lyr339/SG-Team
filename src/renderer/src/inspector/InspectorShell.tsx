@@ -145,7 +145,7 @@ export function InspectorShell({ tabs, activeTab, onTabChange, onClose, children
 
   return (
     <ShellContext.Provider value={{ baseId, activeTab }}>
-      <aside className="workspace-inspector" aria-label="会话辅助工作区" onKeyDown={onShellKeyDown}>
+      <aside className={`workspace-inspector${activeTab === 'review' ? ' is-review' : ''}`} aria-label="会话辅助工作区" onKeyDown={onShellKeyDown}>
         <header className="workspace-inspector__bar">
           <div className="workspace-inspector__tabs" role="tablist" aria-label="辅助工作区标签" onKeyDown={onTabListKeyDown}>
             {tabs.map((tab, index) => {
@@ -165,6 +165,7 @@ export function InspectorShell({ tabs, activeTab, onTabChange, onClose, children
                   className={`inspector-tab${selected ? ' is-active' : ''}`}
                   role="tab"
                   type="button"
+                  aria-label={tab.label}
                   aria-selected={selected}
                   aria-controls={`${baseId}-panel-${tab.id}`}
                   tabIndex={selected ? 0 : -1}

@@ -59,10 +59,17 @@ function installApi(): ApiMock {
 
 describe('ReviewPanel', () => {
   let container: HTMLDivElement
+  const scopeKey = 'sg-team.inspector:review-scope:v2'
+  const chooseScope = async (label: string): Promise<void> => {
+    await act(async () => container.querySelector<HTMLButtonElement>('.inspector-review__scope-trigger')!.click())
+    await act(async () => Array.from(container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]'))
+      .find((button) => button.textContent?.includes(label))!.click())
+  }
 
   beforeEach(() => {
     ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
     localStorage.clear()
+    localStorage.setItem(scopeKey, 'uncommitted')
     container = document.createElement('div')
     document.body.appendChild(container)
   })
@@ -70,6 +77,25 @@ describe('ReviewPanel', () => {
   afterEach(() => {
     container.remove()
     localStorage.clear()
+  })
+
+  it('opens on Last Turn by default and keeps the range menu keyboard accessible', async () => {
+    localStorage.removeItem(scopeKey)
+    localStorage.setItem('sg-team.inspector:review-scope', 'uncommitted') // previous UI preference is deliberately reset once
+    installApi()
+    const root = createRoot(container)
+    await act(async () => root.render(<ReviewPanel workspaceKey="ws" turnPaths={['src/login.tsx']} />))
+    const trigger = container.querySelector<HTMLButtonElement>('.inspector-review__scope-trigger')!
+    expect(trigger.textContent).toContain('Last Turn')
+    await act(async () => trigger.click())
+    expect(trigger.getAttribute('aria-expanded')).toBe('true')
+    expect(document.activeElement?.textContent).toContain('Last Turn')
+    await act(async () => document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })))
+    expect(document.activeElement?.textContent).toContain('Uncommitted')
+    await act(async () => document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+    expect(document.activeElement).toBe(trigger)
+    await act(async () => root.unmount())
   })
 
   it('shows files with branch info, filters the turn scope by touched paths and re-fetches on scope switch', async () => {
@@ -89,15 +115,12 @@ describe('ReviewPanel', () => {
     // 已暂存文件显示状态标签。
     expect(container.textContent).toContain('已暂存')
 
-    const scopeButtons = Array.from(container.querySelectorAll<HTMLButtonElement>('.inspector-review__scope > button'))
-    expect(scopeButtons.map((button) => button.textContent)).toEqual(['未提交', '本轮1', '分支'])
-    await act(async () => scopeButtons[1]!.click())
+    await chooseScope('Last Turn')
     expect(container.textContent).toContain('login.tsx')
     expect(container.textContent).not.toContain('theme.ts')
-    expect(container.textContent).toContain('1 个文件')
-    expect(localStorage.getItem('sg-team.inspector:review-scope')).toBe('turn')
+    expect(localStorage.getItem(scopeKey)).toBe('turn')
 
-    await act(async () => scopeButtons[2]!.click())
+    await chooseScope('Branch')
     expect(api.getWorkspaceReview).toHaveBeenLastCalledWith({ scope: 'branch' })
     expect(container.textContent).toContain('dark.md')
     expect(container.textContent).toContain('已提交')
@@ -226,31 +249,28 @@ describe('ReviewPanel', () => {
     const root = createRoot(container)
     await act(async () => root.render(<ReviewPanel workspaceKey="ws" turnPaths={['src/login.tsx', 'src/theme.ts']} />))
     // 默认范围「未提交」，首个文件展开、第二个收起。
-    expect(localStorage.getItem('sg-team.inspector:review-scope')).toBe('uncommitted')
+    expect(localStorage.getItem(scopeKey)).toBe('uncommitted')
     expect(container.querySelector('.review-file[data-path="src/theme.ts"]')!.className).not.toContain('is-open')
 
     await act(async () => requestReviewFocus({ path: 'src/theme.ts' }))
     // 范围切到「本轮」（摘要按范围重拉后仍是同一批文件），目标文件被展开、读取差异并短暂高亮。
-    expect(localStorage.getItem('sg-team.inspector:review-scope')).toBe('turn')
-    expect(container.querySelector<HTMLButtonElement>('.inspector-review__scope > button[aria-pressed="true"]')!.textContent).toContain('本轮')
+    expect(localStorage.getItem(scopeKey)).toBe('turn')
+    expect(container.querySelector<HTMLButtonElement>('.inspector-review__scope-trigger')!.textContent).toContain('Last Turn')
     const target = container.querySelector('.review-file[data-path="src/theme.ts"]')!
     expect(target.className).toContain('is-open')
     expect(target.className).toContain('is-revealed')
     expect(api.getWorkspaceReviewFile).toHaveBeenCalledWith({ path: 'src/theme.ts', scope: 'uncommitted' })
 
     // 不带路径：只切范围，不改展开集合。
-    await act(async () => {
-      const scopeButtons = Array.from(container.querySelectorAll<HTMLButtonElement>('.inspector-review__scope > button'))
-      scopeButtons[0]!.click()
-    })
-    expect(localStorage.getItem('sg-team.inspector:review-scope')).toBe('uncommitted')
+    await chooseScope('Uncommitted')
+    expect(localStorage.getItem(scopeKey)).toBe('uncommitted')
     await act(async () => requestReviewFocus())
-    expect(localStorage.getItem('sg-team.inspector:review-scope')).toBe('turn')
+    expect(localStorage.getItem(scopeKey)).toBe('turn')
 
     // 文件栏处于「上一轮」保持态时请求「未提交」范围（那时右栏的「本轮」是空的）：切过去并定位同一文件。
     await act(async () => requestReviewFocus({ path: 'src/login.tsx', scope: 'uncommitted' }))
-    expect(localStorage.getItem('sg-team.inspector:review-scope')).toBe('uncommitted')
-    expect(container.querySelector<HTMLButtonElement>('.inspector-review__scope > button[aria-pressed="true"]')!.textContent).toContain('未提交')
+    expect(localStorage.getItem(scopeKey)).toBe('uncommitted')
+    expect(container.querySelector<HTMLButtonElement>('.inspector-review__scope-trigger')!.textContent).toContain('Uncommitted')
     expect(container.querySelector('.review-file[data-path="src/login.tsx"]')!.className).toContain('is-revealed')
     await act(async () => root.unmount())
   })
@@ -306,15 +326,15 @@ describe('ReviewPanel', () => {
         <ReviewPanel workspaceKey="ws" turnPaths={['src/relay.ts', 'src/app.tsx']} turnFiles={turnView()} turnEdits={turnEdits} onQuote={onQuote} />
       ))
       // not_git 一到就自动落到「本轮」；死卡片不出现。
-      expect(localStorage.getItem('sg-team.inspector:review-scope')).toBe('turn')
-      expect(container.querySelector<HTMLButtonElement>('.inspector-review__scope > button[aria-pressed="true"]')!.textContent).toContain('本轮')
+      expect(localStorage.getItem(scopeKey)).toBe('turn')
+      expect(container.querySelector<HTMLButtonElement>('.inspector-review__scope-trigger')!.textContent).toContain('Last Turn')
       expect(container.textContent).not.toContain('当前工程未启用 Git')
       // 合计与文件栏同源：估算标 ≈。
       const totals = container.querySelector('.inspector-review__totals')!
       expect(totals.textContent).toContain('≈')
       expect(totals.textContent).toContain('+27')
       expect(totals.textContent).toContain('−6')
-      expect(container.textContent).toContain('2 个文件')
+      expect(container.querySelectorAll('.review-file')).toHaveLength(2)
       // 首个文件默认展开，差异行来自编辑流；Git 的单文件差异接口一次都没被叫。
       const relay = container.querySelector('.review-file[data-path="src/relay.ts"]')!
       expect(relay.className).toContain('is-open')
@@ -335,18 +355,17 @@ describe('ReviewPanel', () => {
       expect(container.querySelector('.review-file[data-path="src/app.tsx"]')!.textContent).toContain('正在写入，差异稍后出现…')
 
       // 手动切回「未提交」还能看到 not_git 卡片，且带「查看本轮 Agent 改动」的回程链接。
-      const scopeButtons = Array.from(container.querySelectorAll<HTMLButtonElement>('.inspector-review__scope > button'))
-      await act(async () => scopeButtons[0]!.click())
+      await chooseScope('Uncommitted')
       expect(container.textContent).toContain('当前工程未启用 Git')
       const back = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === '查看本轮 Agent 改动')!
       await act(async () => back.click())
-      expect(container.querySelector<HTMLButtonElement>('.inspector-review__scope > button[aria-pressed="true"]')!.textContent).toContain('本轮')
+      expect(container.querySelector<HTMLButtonElement>('.inspector-review__scope-trigger')!.textContent).toContain('Last Turn')
       await act(async () => root.unmount())
     })
 
     it('with git ready the rows gain status letters and git actions; totals drop the ≈ when counts are exact', async () => {
       const api = installApi()
-      localStorage.setItem('sg-team.inspector:review-scope', 'turn')
+      localStorage.setItem(scopeKey, 'turn')
       const view = turnView({
         files: [{ path: 'src/login.tsx', dir: 'src/', stem: 'login', ext: '.tsx', icon: 'react', ambiguous: false, additions: 4, deletions: 1, status: 'modified', source: 'git' }],
         additions: 4, deletions: 1, estimated: false, working: false
@@ -360,7 +379,7 @@ describe('ReviewPanel', () => {
       ))
       const row = container.querySelector('.review-file[data-path="src/login.tsx"]')!
       expect(row.className).toContain('is-modified')
-      expect(row.querySelector('.review-file__head > i')!.textContent).toBe('M')
+      expect(row.querySelector('.review-file__head > i .file-type-icon.is-react')).not.toBeNull()
       expect(row.querySelector('.review-file__counts')!.textContent).not.toContain('≈')
       expect(container.querySelector('.inspector-review__totals')!.getAttribute('title')).toContain('工作树相对 HEAD')
       // Git 认识这个文件：暂存可用，撤销走确认（作用于工作树，与「未提交」同一后端）。
@@ -377,7 +396,7 @@ describe('ReviewPanel', () => {
 
     it('holds the previous turn with a note, and composer-sourced totals name Cursor as the source', async () => {
       installApi()
-      localStorage.setItem('sg-team.inspector:review-scope', 'turn')
+      localStorage.setItem(scopeKey, 'turn')
       const root = createRoot(container)
       await act(async () => root.render(
         <ReviewPanel workspaceKey="ws" turnPaths={[]} turnFiles={turnView({ scope: 'previous' })} turnEdits={turnEdits} />
@@ -411,7 +430,7 @@ describe('ReviewPanel', () => {
 
     it('an empty turn shows its own empty state and offers the git jump only when git is ready', async () => {
       installNotGitApi()
-      localStorage.setItem('sg-team.inspector:review-scope', 'turn')
+      localStorage.setItem(scopeKey, 'turn')
       const empty: TurnFilesView = { files: [], additions: 0, deletions: 0, working: false, estimated: false, totalsSource: 'sum', scope: 'turn' }
       const root = createRoot(container)
       await act(async () => root.render(<ReviewPanel workspaceKey="ws" turnPaths={[]} turnFiles={empty} turnEdits={new Map()} />))

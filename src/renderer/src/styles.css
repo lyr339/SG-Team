@@ -640,6 +640,7 @@ body.is-resizing-columns .resizable-columns { transition: none; }
 .content-stage { min-width: 0; min-height: 0; overflow: hidden; background: var(--canvas); border-radius: var(--r-xl); box-shadow: var(--shadow-1); }
 .context-sidebar { min-width: 0; min-height: 0; overflow: hidden; background: var(--surface); border-radius: var(--r-xl); box-shadow: var(--shadow-1); }
 .workspace-dock, .workspace-inspector-pane, .session-sidebar-pane { min-width: 0; min-height: 0; overflow: hidden; }
+.workspace-inspector-pane { container: inspector-dock / inline-size; }
 /* 左右两栏开合同一套语言：轨道 N px ↔ 0 的滑动过渡（轨道数不变才可插值）；分隔条同步收到 0。
    栏内内容固定为真实宽度并贴向自己那一侧，收合时被裁切而不是被挤压，文字不会中途重排。
    visibility 延迟到过渡结束再隐藏，展开时立即可见；inert / aria-hidden 由 DesktopShell 设置。 */
