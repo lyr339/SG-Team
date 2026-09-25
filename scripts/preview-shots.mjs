@@ -298,10 +298,15 @@ const scenes = [
       if (Math.abs(oldX-newX) > 1) throw new Error('增删行号没有共用一列')
       const oldMarker = getComputedStyle(oldNumber, '::before')
       const newMarker = getComputedStyle(newNumber, '::before')
+      const oldStyle = getComputedStyle(oldNumber)
+      const newStyle = getComputedStyle(newNumber)
       const stripes = oldMarker.backgroundImage
       const green = newMarker.backgroundColor
       if (!stripes.includes('repeating-linear-gradient') || green === 'rgba(0, 0, 0, 0)') throw new Error('增删轨样式缺失')
       if (Math.abs(parseFloat(oldMarker.width)-4) > .1 || Math.abs(parseFloat(newMarker.width)-4) > .1) throw new Error('增删轨太宽')
+      if (!oldStyle.boxShadow.includes('inset') || !newStyle.boxShadow.includes('inset')) throw new Error('行号右侧深色分隔线缺失')
+      if (oldStyle.backgroundColor === getComputedStyle(oldNumber.parentElement).backgroundColor ||
+          newStyle.backgroundColor === getComputedStyle(newNumber.parentElement).backgroundColor) throw new Error('行号底色没有与代码底色分层')
       diff.scrollLeft = 120
       if (Math.abs(oldNumber.getBoundingClientRect().left-oldX) > 1 || Math.abs(newNumber.getBoundingClientRect().left-newX) > 1) throw new Error('滚动时行号/变更轨漂走')
       if (hunkHeader && Math.abs(hunkHeader.getBoundingClientRect().left-headerBefore) > 1) throw new Error('代码块标题漂走')
