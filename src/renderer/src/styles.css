@@ -350,6 +350,8 @@ body { line-height: var(--font-text-sm-line-height); letter-spacing: 0; }
    ============================================================ */
 
 .desktop-shell { width: 100%; height: 100%; display: grid; grid-template-rows: 54px minmax(0, 1fr); background: transparent; }
+/* Windows 原生窗口按钮覆盖层同步收至 46px；macOS 保留红绿灯所需的 54px。 */
+html[data-platform="win32"] .desktop-shell { grid-template-rows: 46px minmax(0, 1fr); }
 
 .topbar {
   position: relative;
@@ -1186,6 +1188,21 @@ button.workspace-group-chip:focus-visible { outline: 2px solid var(--accent-bord
 /* 留白按中栏而非整个窗口计算：左右栏都展开时，正文仍保有足够阅读宽度。 */
 .workspace-timeline { min-height: 0; padding: 20px clamp(18px, 4cqw, 54px) 26px; overflow-y: auto; }
 .workspace-timeline__content { width: min(100%, 980px); min-height: 100%; margin-inline: auto; }
+.timeline-selection-actions {
+  position: absolute; z-index: 12; display: inline-flex; align-items: center; gap: 2px;
+  min-height: 34px; padding: 3px; color: var(--text); background: var(--surface-solid);
+  border: 1px solid var(--color-border-secondary); border-radius: 9px; box-shadow: var(--shadow-md);
+  transform: translateX(-50%); user-select: none; -webkit-user-select: none;
+  animation: timeline-selection-in 130ms ease-out;
+}
+.timeline-selection-actions button { min-height: 27px; padding: 0 10px; color: var(--text-soft); background: transparent; border: 0; border-radius: 6px; font: 600 var(--fs-11)/1 var(--font-sans); }
+.timeline-selection-actions button + button { border-left: 1px solid var(--color-border-tertiary); border-radius: 0 6px 6px 0; }
+.timeline-selection-actions button:hover { color: var(--accent-deep); background: var(--accent-wash); }
+.timeline-selection-actions button:focus-visible { outline: 2px solid var(--color-ring-primary); outline-offset: -2px; }
+.timeline-selection-actions [role="status"] { padding: 0 7px; color: var(--color-text-success); font-size: var(--fs-10); white-space: nowrap; }
+.timeline-selection-actions [role="status"].is-error { color: var(--color-text-danger); }
+@keyframes timeline-selection-in { from { opacity: 0; transform: translate(-50%, 4px); } to { opacity: 1; transform: translate(-50%, 0); } }
+@media (prefers-reduced-motion: reduce) { .timeline-selection-actions { animation: none; } }
 
 /* ---------- 对话气泡体系 ---------- */
 .chat-divider { display: flex; justify-content: center; margin: 18px 0 6px; }

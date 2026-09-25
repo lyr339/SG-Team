@@ -60,6 +60,24 @@ function railStorage({ cardOpacity = 0.94, colorMode = 'light', railWidth = 326 
 }
 
 const TABS = ['review', 'plan', 'activity', 'artifacts']
+const SELECT_TIMELINE_TEXT = `new Promise((done, fail) => {
+  const paragraph = [...document.querySelectorAll('.workspace-timeline .chat-row--agent .message-content p')]
+    .find((node) => node.textContent?.includes('架构报告已整理完毕'))
+  if (!paragraph) return fail(new Error('选择目标正文缺失'))
+  paragraph.scrollIntoView({ block: 'center' })
+  requestAnimationFrame(() => {
+    const node = document.createTreeWalker(paragraph, NodeFilter.SHOW_TEXT).nextNode()
+    if (!node?.textContent) return fail(new Error('正文没有文本节点'))
+    const range = document.createRange()
+    range.setStart(node, 0)
+    range.setEnd(node, Math.min(9, node.textContent.length))
+    const selection = window.getSelection()
+    selection.removeAllRanges()
+    selection.addRange(range)
+    paragraph.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 0 }))
+    done(selection.toString())
+  })
+})`
 const INSPECTOR_TAB_GEOMETRY_PROBE = `(() => {
   const shell = document.querySelector('.workspace-inspector')
   const tabs = [...shell.querySelectorAll('.inspector-tab')].map((tab) => ({
@@ -178,6 +196,56 @@ const RAIL_BAR_PROBE = `new Promise((done, fail) => {
 })`
 
 const scenes = [
+  { name: 'windows-topbar-compact', width: 1440, height: 900, colorScheme: 'dark', storage: railStorage({ colorMode: 'dark' }), clip: '.topbar',
+    actions: [{ eval: `document.documentElement.dataset.platform = 'win32'` }, { wait: 80 }, {
+      label: 'Windows 顶栏与原生按钮空间同高', probe: `(() => {
+        const bar = document.querySelector('.topbar').getBoundingClientRect()
+        const actions = document.querySelector('.topbar__actions').getBoundingClientRect()
+        if (Math.abs(bar.height - 46) > .5 || actions.right > innerWidth - 138) throw new Error('Windows 顶栏高度或原生按钮避让错误')
+        return { height:bar.height, actionsRight:Math.round(actions.right), nativeStart:innerWidth - 138 }
+      })()`
+    }] },
+  { name: 'mac-topbar-unchanged', width: 1440, height: 900, colorScheme: 'dark', storage: railStorage({ colorMode: 'dark' }), clip: '.topbar',
+    actions: [{ eval: `document.documentElement.dataset.platform = 'darwin'` }, { probe: `(() => {
+      const height = document.querySelector('.topbar').getBoundingClientRect().height
+      if (Math.abs(height - 54) > .5) throw new Error('macOS 顶栏高度被误改')
+      return { height }
+    })()` }] },
+  ...['light', 'dark'].map((colorMode) => ({
+    name: `session-selection-${colorMode}`, width: 1440, height: 900, colorScheme: colorMode,
+    storage: railStorage({ colorMode }), clip: '.workspace-timeline-wrap',
+    actions: [{ eval: SELECT_TIMELINE_TEXT }, { wait: 120 }, { label: '选中文字出现轻量操作条', probe: `(() => {
+      const bar = document.querySelector('.timeline-selection-actions')
+      if (!bar || !bar.textContent.includes('复制') || !bar.textContent.includes('引用')) throw new Error('选中工具条缺失')
+      const rect = bar.getBoundingClientRect(), frame = document.querySelector('.workspace-timeline-wrap').getBoundingClientRect()
+      if (rect.left < frame.left || rect.right > frame.right || rect.top < frame.top || rect.bottom > frame.bottom) throw new Error('选中工具条越界')
+      return { selected:window.getSelection()?.toString(), withinTimeline:true }
+    })()` }]
+  })),
+  { name: 'session-selection-quote', width: 1440, height: 900, colorScheme: 'light', storage: railStorage(), clip: '.workspace-composer',
+    actions: [{ eval: SELECT_TIMELINE_TEXT }, { click: '.timeline-selection-actions button[title="引用选中文字到输入框"]' }, {
+      label: '引用选中文字并聚焦输入框', probe: `(() => {
+        const textarea = document.querySelector('.workspace-composer textarea')
+        if (!textarea?.value.includes('> 架构报告已整理完毕') || document.activeElement !== textarea || document.querySelector('.timeline-selection-actions')) throw new Error('引用没有进入输入框')
+        return { draft:textarea.value.slice(0, 50), focused:true }
+      })()`
+    }] },
+  { name: 'session-selection-copy', width: 1440, height: 900, colorScheme: 'light', storage: railStorage(), clip: '.workspace-timeline-wrap',
+    actions: [{ eval: `Object.defineProperty(navigator, 'clipboard', { configurable:true, value:{ writeText:async text => { window.__copiedSelection = text } } })` },
+      { eval: SELECT_TIMELINE_TEXT }, { click: '.timeline-selection-actions button[title="复制选中文字"]' }, {
+        label: '只复制选中片段并给予反馈', probe: `(() => {
+          const feedback = document.querySelector('.timeline-selection-actions [role="status"]')?.textContent
+          if (window.__copiedSelection !== '架构报告已整理完毕' || feedback !== '已复制') throw new Error('选中复制或反馈错误')
+          return { copied:window.__copiedSelection, feedback }
+        })()`
+      }] },
+  { name: 'session-selection-scroll-dismiss', width: 1440, height: 900, colorScheme: 'light', storage: railStorage(), clip: '.workspace-timeline-wrap',
+    actions: [{ eval: SELECT_TIMELINE_TEXT }, { eval: `document.querySelector('.workspace-timeline').dispatchEvent(new Event('scroll'))` }, {
+      label: '滚动时收起浮层', probe: `(() => {
+        if (document.querySelector('.timeline-selection-actions')) throw new Error('滚动后浮层残留')
+        return { dismissed:true }
+      })()`
+    }] },
   ...['light', 'dark'].map(colorMode => ({
     name: `session-typing-isolation-${colorMode}`, width: 1180, height: 900, colorScheme: colorMode,
     storage: railStorage({ colorMode }), clip: null,

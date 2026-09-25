@@ -14,6 +14,7 @@ import { TurnFilesBar } from './TurnFilesBar'
 import type { ReviewFocusRequest } from './inspector/review-focus-bus'
 import type { TurnFilesView } from './turn-files-view'
 import { TurnResponseText } from './TurnResponseText'
+import { TimelineSelectionActions } from './TimelineSelectionActions'
 import { SessionUsageStat } from './SessionUsageStat'
 import { suggestedActionsFromText } from './process-turn-view'
 import { partitionTimelineEntries, projectTurnTimeline, type TurnTimelineItem } from './timeline-view'
@@ -328,11 +329,12 @@ export function SessionWorkspace({
     }
   }
 
-  const quoteEntry = (entry: ConversationEntry): void => {
-    const quoted = entry.text.split('\n').map((line) => `> ${line}`).join('\n')
+  const quoteText = (text: string): void => {
+    const quoted = text.split('\n').map((line) => `> ${line}`).join('\n')
     const currentDraft = draftRef.current
     onDraftChange(currentDraft ? `${currentDraft}\n\n${quoted}\n\n` : `${quoted}\n\n`)
   }
+  const quoteEntry = (entry: ConversationEntry): void => quoteText(entry.text)
 
   const retryEntry = async (entry: ConversationEntry): Promise<void> => {
     const index = timelineEntries.findIndex((candidate) => candidate.id === entry.id)
@@ -811,6 +813,7 @@ export function SessionWorkspace({
             ) : timelineContent}
           </div>
         </div>
+        <TimelineSelectionActions key={session.channelId} viewportRef={follow.viewportRef} onQuote={quoteText} onError={setSendError} />
         {follow.awayFromBottom && timelineItems.length > 0 && (
           <button className="timeline-jump" role="status" aria-live="polite" onClick={jumpToBottom}>
             {pendingBelow > 0 ? `${pendingBelow} 条新消息` : '回到底部'} ↓
