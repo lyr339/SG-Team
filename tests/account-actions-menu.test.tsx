@@ -6,12 +6,12 @@ import { SettingsAccounts } from '../src/renderer/src/settings/SettingsAccounts'
 import type { CursorAccountMetadata } from '../src/domain/cursor-account'
 
 /**
- * 账号卡片操作行的「⋯」溢出菜单。
+ * 账号行操作列的「⋯」溢出菜单。
  * 它存在的首要理由是布局：行内按钮数固定为 无感切换 / 切换并重启 / 删除，
- * 不再随账号状态在 4~6 个之间浮动——否则窄卡时有的卡换行、有的不换，
- * 等高卡片会把不换行那张的按钮压到卡底，两张卡的按钮一上一下。
+ * 不再随账号状态在 4~6 个之间浮动——一行的横向预算有限，次要动作进弹层后
+ * 操作列宽度可预期，常驻按钮在所有行里右缘对齐。
  */
-describe('账号卡片：次要操作溢出菜单', () => {
+describe('账号行：次要操作溢出菜单', () => {
   let container: HTMLDivElement
   let root: Root
 
@@ -79,10 +79,10 @@ describe('账号卡片：次要操作溢出菜单', () => {
       onProcessAccount: onProcessAozaiAccount
     })
 
-    // 行内按钮：⋯ + 无感切换 + 切换并重启 + 删除，恰好四个，与账号是否当前无关。
-    const inline = [...container.querySelectorAll<HTMLButtonElement>('.account-card__actions > button')]
-    expect(inline.map((b) => b.textContent)).toEqual(['', '无感切换', '切换并重启', '删除'])
-    expect(inline[0]!.className).toContain('account-actions-menu__trigger')
+    // 行内按钮：无感切换 + 切换并重启 + 删除 + 行尾的 ⋯，恰好四个，与账号是否当前无关。
+    const inline = [...container.querySelectorAll<HTMLButtonElement>('.account-row__actions > button')]
+    expect(inline.map((b) => b.textContent)).toEqual(['无感切换', '切换并重启', '删除', ''])
+    expect(inline[3]!.className).toContain('account-actions-menu__trigger')
 
     await openMenu()
     expect(items()).toEqual(['重新登录', '升级 Pro', '奥仔处理'])
@@ -101,13 +101,13 @@ describe('账号卡片：次要操作溢出菜单', () => {
       onRestartWithAccount: async () => {}
     }
     await render(common)
-    const rows = [...container.querySelectorAll('.account-card__actions')]
+    const rows = [...container.querySelectorAll('.account-row__actions')]
     expect(rows).toHaveLength(2)
-    // 非当前卡多一个「无感切换」，但两张卡都只有一行、差值仅 1，不会触发换行分歧。
+    // 非当前行多一个最左的「无感切换」；操作列右缘锚定，常驻的 切换并重启 / 删除 / ⋯ 在两行里对齐。
     expect([...rows[0]!.querySelectorAll('button')].map((b) => b.textContent))
-      .toEqual(['', '无感切换', '切换并重启', '删除'])
+      .toEqual(['无感切换', '切换并重启', '删除', ''])
     expect([...rows[1]!.querySelectorAll('button')].map((b) => b.textContent))
-      .toEqual(['', '切换并重启', '删除'])
+      .toEqual(['切换并重启', '删除', ''])
   })
 
   it('没有任何次要动作时不渲染「⋯」；Escape 与点击外部都能收起菜单', async () => {

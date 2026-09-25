@@ -814,13 +814,16 @@ const memoryListeners = new Set<Listener<typeof state.memory>>()
 const teamListeners = new Set<Listener<typeof state.team>>()
 let previewCursorAccounts: Array<{
   id: string; label: string; maskedToken: string; active: boolean; createdAt: number; updatedAt: number
+  pendingMachineAlign?: boolean
   fingerprintProfileId?: string
   email?: string
   hasCredentials?: boolean
 }> = [
   // 首个账号预置窗口绑定 + 卡号凭据：预览同时覆盖「已绑定 / 跟随默认」与「可自动登录 / 仅 Token」两种行形态
   { id: 'preview-acc-1', label: 'work@example.com', maskedToken: '••••9f2k', active: true, createdAt: previewNow - 40 * 60_000, updatedAt: previewNow - 5 * 60_000, fingerprintProfileId: 'bit-proxy', email: 'work@example.com', hasCredentials: true },
-  { id: 'preview-acc-2', label: 'spare@example.com', maskedToken: '••••41qz', active: false, createdAt: previewNow - 90 * 60_000, updatedAt: previewNow - 30 * 60_000 }
+  { id: 'preview-acc-2', label: 'spare@example.com', maskedToken: '••••41qz', active: false, createdAt: previewNow - 90 * 60_000, updatedAt: previewNow - 30 * 60_000 },
+  // 最满的一行：长邮箱 + 已绑窗口 + 热切后待对齐机器码——用来盯身份列的省略与元信息列的宽度预算
+  { id: 'preview-acc-3', label: 'karimjebediah4454.workspace@outlook.com', maskedToken: '••••mmcs', active: false, createdAt: previewNow - 6 * 3_600_000, updatedAt: previewNow - 2 * 3_600_000, pendingMachineAlign: true, fingerprintProfileId: 'bit-direct' }
 ]
 
 /**

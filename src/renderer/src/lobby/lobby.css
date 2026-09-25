@@ -188,66 +188,7 @@
   line-height: 1.5;
 }
 
-.lobby-account__list {
-  width: min(100%, 845px);
-  max-height: 188px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  justify-content: start;
-  padding: 0;
-  gap: 5px;
-}
-
-.lobby-account__list > article {
-  min-width: 0;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 0;
-  overflow: hidden;
-  background: var(--surface-pure);
-  border: 1px solid var(--color-border-tertiary);
-  border-radius: 11px;
-}
-
-.lobby-account__list > article > button:first-child {
-  border: 0;
-  border-radius: 0;
-  transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
-}
-
-.lobby-account .account-list > article > button:first-child {
-  min-height: 42px;
-  gap: 7px;
-  padding: 5px 8px;
-}
-
-.lobby-account .account-list article button > i {
-  width: 30px;
-  height: 30px;
-  background: var(--accent);
-  border-radius: 9px;
-}
-
-.lobby-account__list > article > button:first-child:hover:not(:disabled) {
-  border-color: var(--accent-border);
-  box-shadow: var(--shadow-1);
-}
-
-.lobby-account__list > article.is-active > button:first-child {
-  background: color-mix(in srgb, var(--anthropic-orange) 6%, var(--surface-solid));
-  box-shadow: none;
-}
-.lobby-account__list > article.is-active { border-color: var(--accent-border); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 8%, transparent); }
-
-.lobby-account__row-actions {
-  display: flex;
-  justify-content: flex-end;
-  align-items: stretch;
-  gap: 2px;
-  min-height: 29px;
-  padding: 2px 4px;
-  background: var(--color-background-secondary);
-  border-top: var(--border-width-regular) solid var(--color-border-tertiary);
-}
-
+/* 账号行的元信息 chip：会员档位 + 刷新（列表本体在 settings.css 的 .settings-account-list）。 */
 .account-membership-inline {
   min-width: 0;
   align-self: center;
@@ -284,8 +225,8 @@
 .account-membership-plan.is-tier-ultra, .account-membership-refresh.is-tier-ultra { color: light-dark(#7040a1, #c29bea); }
 .account-membership-plan.is-tier-enterprise, .account-membership-refresh.is-tier-enterprise { color: light-dark(#aa4b22, #f4976f); }
 .account-membership-plan.is-tier-unknown, .account-membership-refresh.is-tier-unknown { color: var(--muted); }
-/* 会员刷新按钮：样式与容器解耦（账号卡 meta 行 / 操作行均可放置）——
-   历史上挂在 .lobby-account__row-actions 作用域下，移出该容器即塌缩成无色块。 */
+/* 会员刷新按钮：样式与容器解耦（账号行 meta 列 / 操作列均可放置）——
+   历史上挂在操作行作用域下，移出该容器即塌缩成无色块。 */
 .account-membership-refresh {
   width: 20px;
   min-width: 20px;
@@ -319,12 +260,7 @@
   .account-membership-refresh.is-refreshing svg { animation: none; }
 }
 
-.lobby-account__row-actions button {
-  min-height: 25px;
-  padding-inline: 7px;
-  font-size: var(--fs-10);
-}
-
+/* 「切换并重启」：蓝色文字按钮；确认态转琥珀（需要拍板的语义色）。 */
 .lobby-account__inject {
   color: var(--blue);
 }
@@ -562,7 +498,6 @@
 }
 
 @media (max-width: 700px) {
-  .lobby-account__list { grid-template-columns: minmax(0, 1fr); }
   .account-browser__modes { grid-template-columns: minmax(0, 1fr); }
 }
 
@@ -584,8 +519,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .lobby-tile,
-  .lobby-account__list > article > button:first-child {
+  .lobby-tile {
     transition: none;
   }
 }

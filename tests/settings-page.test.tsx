@@ -243,6 +243,26 @@ describe('SettingsPage', () => {
     expect(fallback).not.toContain('account-status-line')
   })
 
+  it('账号按行呈现：每账号一行、身份 / 元信息 / 操作三格；当前行带 is-active 与「当前」，其余行给出「设为当前」', () => {
+    const html = renderToStaticMarkup(<SettingsPage {...propsFor({
+      accounts: [accounts[0]!, { ...accounts[1]!, pendingMachineAlign: true }],
+      onSetAccountFingerprintProfile: async () => {}
+    })} />)
+    expect(html.match(/<li class="account-row/g)).toHaveLength(2)
+    expect(html.match(/class="account-row__identity"/g)).toHaveLength(2)
+    expect(html.match(/class="account-row__meta"/g)).toHaveLength(2)
+    expect(html.match(/class="account-row__actions"/g)).toHaveLength(2)
+    // 当前行：光刃由 is-active 驱动；头像是装饰（aria-hidden），身份按钮不可再点；文字胶囊「当前」保证有色状态也有文字。
+    expect(html).toMatch(/<li class="account-row is-active"><i class="account-row__avatar" aria-hidden="true">W<\/i><button class="account-row__identity" disabled=""[^>]*>[\s\S]*?account-row__current">当前</)
+    // 非当前行：提示文案随 hover 浮现，静态标记里已在位。
+    expect(html).toMatch(/<li class="account-row">[\s\S]*?account-row__select-hint">设为当前</)
+    // 次行只装 Token 与 chip：待重启对齐与窗口绑定都在这一格里，不混进操作列。
+    expect(html).toMatch(/class="account-row__meta"><small class="account-row__token">••••41qz<\/small>[\s\S]*?待重启对齐[\s\S]*?account-window-binding[\s\S]*?<div class="account-row__actions">/)
+    // 操作列：无感切换（仅非当前）/ 切换并重启 / 删除 / 行尾 ⋯。
+    expect(html).toMatch(/<div class="account-row__actions"><button class="account-process lobby-account__inject"[\s\S]*?>切换并重启<\/button><button class="account-remove"[\s\S]*?>删除<\/button><button[^>]*account-actions-menu__trigger/)
+    expect(html).not.toContain('account-card__')
+  })
+
   it('只给非活跃账号显示无感切换，并保留冷切换与机器码待对齐提示', () => {
     const html = renderToStaticMarkup(<SettingsPage {...propsFor({
       accounts: [accounts[0]!, { ...accounts[1]!, pendingMachineAlign: true }],

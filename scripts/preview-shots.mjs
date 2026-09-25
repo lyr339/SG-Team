@@ -657,6 +657,78 @@ const scenes = [
       ] } : {})
     }))
   ),
+  // 账号列表（一账号一行）：确认态 + hover 行的特写。探针盯四件事——行不横向溢出、
+  // 右缘锚定的 切换并重启 / 删除 / ⋯ 在所有行同一 x、确认态文案变短时按钮不变窄、
+  // 二次确认同一时刻只有一个（Esc 收回；再点另一枚会顶掉前一个）。
+  ...['light', 'dark'].map(colorScheme => ({
+    name: `settings-accounts-rows-armed-${colorScheme}`, hash: 'account:accounts',
+    width: 1440, height: 900, colorScheme, storage: baseStorage({ colorMode: colorScheme }), clip: '.settings-account-list',
+    actions: [
+      { click: '.account-row:nth-child(3) .lobby-account__inject' },
+      { label: '确认重启等宽', probe: `(() => {
+        const rows = [...document.querySelectorAll('.account-row')]
+        if (rows.length < 3) throw new Error('预览应有三行账号')
+        const width = (row) => Math.round(rows[row].querySelector('.lobby-account__inject').getBoundingClientRect().width)
+        if (!rows[2].querySelector('.lobby-account__inject').textContent.includes('确认重启')) throw new Error('第三行未进入确认重启')
+        if (width(2) !== width(1)) throw new Error('确认重启比切换并重启窄')
+        return { confirmWidth: width(2), restWidth: width(1) }
+      })()` },
+      { key: 'Escape', code: 'Escape' },
+      { label: 'Esc 收回确认', probe: `(() => {
+        const text = document.querySelector('.account-row:nth-child(3) .lobby-account__inject').textContent
+        if (text !== '切换并重启') throw new Error('Esc 未收回确认重启: ' + text)
+        return { text }
+      })()` },
+      { click: '.account-row:nth-child(3) .lobby-account__inject' },
+      { click: '.account-row:nth-child(2) .account-remove' },
+      { hover: '.account-row:nth-child(2) .account-row__identity' },
+      { label: '账号行几何', probe: `(() => {
+        const rows = [...document.querySelectorAll('.account-row')]
+        for (const row of rows) if (row.scrollWidth > row.clientWidth + 1) throw new Error('账号行横向溢出')
+        const lefts = (selector) => rows.map(row => Math.round(row.querySelector(selector).getBoundingClientRect().left))
+        for (const selector of ['.lobby-account__inject', '.account-remove', '.account-actions-menu__trigger']) {
+          if (new Set(lefts(selector)).size !== 1) throw new Error(selector + ' 未在各行对齐: ' + lefts(selector).join(','))
+        }
+        const width = (row, selector) => Math.round(rows[row].querySelector(selector).getBoundingClientRect().width)
+        if (width(1, '.account-remove') !== width(0, '.account-remove')) throw new Error('确认比删除窄')
+        if (rows[1].querySelector('.account-remove').textContent !== '确认') throw new Error('第二行未进入确认删除')
+        if (rows[2].querySelector('.lobby-account__inject').textContent !== '切换并重启') throw new Error('点删除后第三行的确认重启应被顶掉')
+        if (document.querySelectorAll('.account-row__actions .is-confirming').length !== 1) throw new Error('同一时刻应只有一枚待确认按钮')
+        const hint = rows[1].querySelector('.account-row__select-hint')
+        if (Number(getComputedStyle(hint).opacity) < .9) throw new Error('hover 行的「设为当前」未浮现')
+        const emails = rows.map(row => row.querySelector('.account-row__identity strong')).map(e => e.scrollWidth <= e.clientWidth + 1)
+        return { rows: rows.length, heights: rows.map(row => Math.round(row.getBoundingClientRect().height)), emailsIntact: emails }
+      })()` }
+    ]
+  })),
+  // 账号列表的中档容器（会话栏拉宽后内容区 ≈ 611px）：操作上移到邮箱同一行、元信息独占次行——
+  // 探针盯：行仍是两行文本的高度、chip 不折行、操作与邮箱同一水平线、无横向溢出。
+  {
+    name: 'settings-accounts-rows-mid-light', hash: 'account:accounts',
+    width: 1440, height: 900, colorScheme: 'light', storage: baseStorage(), clip: '.settings-account-list',
+    actions: [
+      { eval: `document.querySelector('.settings-account-list').style.width = '611px'` },
+      { wait: 120 },
+      { label: '中档账号行几何', probe: `(() => {
+        const rows = [...document.querySelectorAll('.account-row')]
+        if (rows.length < 3) throw new Error('预览应有三行账号')
+        for (const row of rows) {
+          if (row.scrollWidth > row.clientWidth + 1) throw new Error('账号行横向溢出')
+          const height = row.getBoundingClientRect().height
+          if (height > 84) throw new Error('中档下账号行不应超过两行文本高度: ' + Math.round(height))
+          const meta = row.querySelector('.account-row__meta').getBoundingClientRect()
+          if (meta.height > 26) throw new Error('中档下元信息 chip 不应折行: ' + Math.round(meta.height))
+          const identity = row.querySelector('.account-row__identity').getBoundingClientRect()
+          const actions = row.querySelector('.account-row__actions').getBoundingClientRect()
+          const identityMid = identity.top + identity.height / 2
+          const actionsMid = actions.top + actions.height / 2
+          if (Math.abs(identityMid - actionsMid) > 4) throw new Error('中档下操作应与邮箱同一水平线')
+          if (meta.top < actions.bottom - 1) throw new Error('中档下元信息应在操作行之下')
+        }
+        return { heights: rows.map(row => Math.round(row.getBoundingClientRect().height)) }
+      })()` }
+    ]
+  },
   // 自动化运行卡：每个相位一张整页 + 一张卡片特写（空闲态已在 settings-automation-* 覆盖）。
   ...['countdown', 'processing', 'hardening-countdown', 'importing', 'deleting', 'cleaning', 'done', 'failed', 'cancelled'].flatMap(phase =>
     ['light', 'dark'].map(colorScheme => ({
