@@ -60,7 +60,7 @@ export function WorkspaceInspector({
   onClose
 }: WorkspaceInspectorProps): React.JSX.Element {
   const [activeTab, setActiveTab] = useState<InspectorTabId>(readStoredInspectorTab)
-  const workspaceKey = workspaceId || workspaceName || session.id
+  const workspaceKey = workspacePath || workspaceId || workspaceName || session.id
   const [summaryState, setSummaryState] = useState<{ workspaceKey: string; value: WorkspaceReviewSummary }>()
   const reviewSummary = summaryState?.workspaceKey === workspaceKey ? summaryState.value : undefined
   const todos = useMemo(() => currentCursorTodos(entries, liveProcess), [entries, liveProcess])

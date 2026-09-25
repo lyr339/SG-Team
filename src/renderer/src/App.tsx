@@ -948,7 +948,7 @@ export function App(): React.JSX.Element {
   }, [workspaceChannelId])
   // 输入区上方的本轮文件栏：右栏审查页已经在算的「本轮」范围 + 它读到的 Git 摘要，投影成一份视图。
   // 摘要由右栏镜像过来（不重复拉取）；过程流 ~10Hz 推送时按内容等价复用上一份对象，让栏的 memo 边界生效。
-  const reviewWorkspaceKey = activeWorkspace?.id || activeProjectName || selectedSession?.id || ''
+  const reviewWorkspaceKey = activeWorkspace?.path || activeWorkspace?.id || activeProjectName || selectedSession?.id || ''
   const [reviewSummaryState, setReviewSummaryState] = useState<{ workspaceKey: string; value: WorkspaceReviewSummary }>()
   const workspaceReviewSummary = reviewSummaryState?.workspaceKey === reviewWorkspaceKey ? reviewSummaryState.value : undefined
   const acceptWorkspaceReviewSummary = useCallback((summary: WorkspaceReviewSummary | undefined): void => {

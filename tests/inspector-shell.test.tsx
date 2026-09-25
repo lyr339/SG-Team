@@ -124,7 +124,7 @@ describe('WorkspaceInspector shell', () => {
     await act(async () => root.unmount())
   })
 
-  it('removes the previous workspace review and artifacts before the next summary arrives', async () => {
+  it('removes the previous review and artifacts when the directory changes under the same workspace id', async () => {
     localStorage.setItem(INSPECTOR_TAB_STORAGE_KEY, 'artifacts')
     localStorage.setItem('sg-team.inspector:review-scope:v2', 'uncommitted')
     const api = window.sgDesktop as unknown as { getWorkspaceReview: ReturnType<typeof vi.fn> }
@@ -138,14 +138,14 @@ describe('WorkspaceInspector shell', () => {
       .mockImplementationOnce(() => new Promise<WorkspaceReviewSummary>((resolve) => { deliverNext = resolve }))
     const root = createRoot(container)
     await act(async () => root.render(
-      <WorkspaceInspector session={session} entries={entries} workspaceId="old" onClose={() => {}} />
+      <WorkspaceInspector session={session} entries={entries} workspaceId="shared" workspacePath="/repo/old" onClose={() => {}} />
     ))
     const oldRow = container.querySelector('.review-file[data-path="docs/old.md"]')
     expect(oldRow).not.toBeNull()
     expect(container.textContent).toContain('docs/old.md')
 
     await act(async () => root.render(
-      <WorkspaceInspector session={session} entries={entries} workspaceId="new" onClose={() => {}} />
+      <WorkspaceInspector session={session} entries={entries} workspaceId="shared" workspacePath="/repo/new" onClose={() => {}} />
     ))
     expect(container.contains(oldRow)).toBe(false)
     expect(container.textContent).not.toContain('docs/old.md')
