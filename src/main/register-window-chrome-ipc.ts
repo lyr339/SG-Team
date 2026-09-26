@@ -2,8 +2,8 @@ import { ipcMain, type BrowserWindow } from 'electron'
 import { IPC } from '../shared/desktop-api'
 import { assertTrustedSender } from './ipc-security'
 
-/** Windows 原生按钮覆盖层与渲染层 Windows 专属顶栏高度一致；macOS 仍为 54px。 */
-export const WINDOW_TOPBAR_HEIGHT = 46
+/** Windows 原生按钮覆盖层与渲染层 Windows 专属顶栏高度一致；macOS 使用 48px。 */
+export const WINDOW_TOPBAR_HEIGHT = 42
 
 /** 覆盖层实色取自 claude-theme.css --color-background-primary 的 light-dark 值。 */
 const CHROME_COLORS = {

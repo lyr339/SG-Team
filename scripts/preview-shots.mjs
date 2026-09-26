@@ -201,21 +201,26 @@ const scenes = [
       label: 'Windows 顶栏与原生按钮空间同高', probe: `(() => {
         const bar = document.querySelector('.topbar').getBoundingClientRect()
         const actions = document.querySelector('.topbar__actions').getBoundingClientRect()
-        if (Math.abs(bar.height - 46) > .5 || actions.right > innerWidth - 138) throw new Error('Windows 顶栏高度或原生按钮避让错误')
+        if (Math.abs(bar.height - 42) > .5 || actions.right > innerWidth - 138) throw new Error('Windows 顶栏高度或原生按钮避让错误')
         return { height:bar.height, actionsRight:Math.round(actions.right), nativeStart:innerWidth - 138 }
       })()`
     }] },
-  { name: 'mac-topbar-unchanged', width: 1440, height: 900, colorScheme: 'dark', storage: railStorage({ colorMode: 'dark' }), clip: '.topbar',
+  { name: 'mac-topbar-compact', width: 1440, height: 900, colorScheme: 'dark', storage: railStorage({ colorMode: 'dark' }), clip: '.topbar',
     actions: [{ eval: `document.documentElement.dataset.platform = 'darwin'` }, { probe: `(() => {
       const height = document.querySelector('.topbar').getBoundingClientRect().height
-      if (Math.abs(height - 54) > .5) throw new Error('macOS 顶栏高度被误改')
+      if (Math.abs(height - 48) > .5) throw new Error('macOS 顶栏高度错误')
       const project = document.querySelector('.workspace-detection-chip')
       const connection = document.querySelector('.connection-chip')
       const icons = [...document.querySelectorAll('.topbar__actions .panel-button, .topbar__actions .appearance-button, .topbar__actions .account-button')]
-      if (!project || !connection || !icons.length || [project,connection,...icons].some(el => Math.abs(el.getBoundingClientRect().height - 32) > .5)) throw new Error('顶栏控件高度未统一')
-      if (icons.some(el => Math.abs(el.getBoundingClientRect().width - 32) > .5)) throw new Error('图标按钮宽度未收紧')
+      if (!project || !connection || !icons.length || [project,connection,...icons].some(el => Math.abs(el.getBoundingClientRect().height - 30) > .5)) throw new Error('顶栏控件高度未统一')
+      if (icons.some(el => Math.abs(el.getBoundingClientRect().width - 30) > .5)) throw new Error('图标按钮宽度未收紧')
       if (project.scrollWidth > project.clientWidth + 1 || connection.scrollWidth > connection.clientWidth + 1) throw new Error('顶栏文字被裁切')
       return { height, projectWidth:Math.round(project.getBoundingClientRect().width), connectionWidth:Math.round(connection.getBoundingClientRect().width), iconCount:icons.length }
+    })()` }, { click: '.connection-chip' }, { label: '连接详情随顶栏下沿落位', probe: `(() => {
+      const bar = document.querySelector('.topbar').getBoundingClientRect()
+      const panel = document.querySelector('.connection-popover')?.getBoundingClientRect()
+      if (!panel || Math.abs(panel.top - bar.bottom - 6) > 1) throw new Error('连接详情浮层与新顶栏高度错位')
+      return { gap:Math.round(panel.top-bar.bottom) }
     })()` }] },
   ...['light', 'dark'].map((colorMode) => ({
     name: `session-selection-${colorMode}`, width: 1440, height: 900, colorScheme: colorMode,

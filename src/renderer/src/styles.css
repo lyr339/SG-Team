@@ -352,9 +352,9 @@ body { line-height: var(--font-text-sm-line-height); letter-spacing: 0; }
    壳层：顶栏导航 + 侧栏 + 内容区
    ============================================================ */
 
-.desktop-shell { width: 100%; height: 100%; display: grid; grid-template-rows: 54px minmax(0, 1fr); background: transparent; }
-/* Windows 原生窗口按钮覆盖层同步收至 46px；macOS 保留红绿灯所需的 54px。 */
-html[data-platform="win32"] .desktop-shell { grid-template-rows: 46px minmax(0, 1fr); }
+.desktop-shell { width: 100%; height: 100%; display: grid; grid-template-rows: 48px minmax(0, 1fr); background: transparent; }
+/* macOS 仍给原生红绿灯留足空间；Windows 的 CSS 轨道与原生标题栏覆盖层同高。 */
+html[data-platform="win32"] .desktop-shell { grid-template-rows: 42px minmax(0, 1fr); }
 
 .topbar {
   position: relative;
@@ -394,11 +394,11 @@ html[data-platform="darwin"] .topbar__context { position: relative; left: -8px; 
 .brand__mark img { width: 100%; height: 100%; display: block; object-fit: cover; }
 .brand strong { font-family: var(--display); font-size: var(--fs-15); font-weight: 600; letter-spacing: 0.12em; }
 
-.workspace-detection-chip { min-width: 0; max-width: 320px; min-height: 32px; display: flex; align-items: center; gap: 6px; padding: 0 8px; color: var(--text-soft); background: var(--surface-solid); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow-hairline); font-size: var(--fs-10); font-weight: 600; }
+.workspace-detection-chip { min-width: 0; max-width: 320px; min-height: 30px; display: flex; align-items: center; gap: 5px; padding: 0 7px; color: var(--text-soft); background: var(--surface-solid); border: 1px solid var(--line); border-radius: 7px; box-shadow: var(--shadow-hairline); font-size: var(--fs-10); font-weight: 550; }
 .workspace-detection-chip:hover { color: var(--accent); border-color: var(--accent-border); background: var(--surface); }
-.workspace-detection-chip svg { width: 16px; height: 16px; flex: 0 0 auto; }
+.workspace-detection-chip svg { width: 15px; height: 15px; flex: 0 0 auto; }
 .workspace-detection-chip > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.workspace-detection-chip .workspace-menu__chevron { width: 12px; height: 12px; color: var(--muted); transition: transform 140ms ease; }
+.workspace-detection-chip .workspace-menu__chevron { width: 11px; height: 11px; color: var(--muted); transition: transform 140ms ease; }
 .workspace-detection-chip[aria-expanded="true"] { border-color: var(--accent-border); }
 .workspace-detection-chip[aria-expanded="true"] .workspace-menu__chevron { transform: rotate(180deg); }
 .workspace-menu { position: fixed; z-index: 100; max-height: calc(100dvh - 80px); overflow: auto; padding: 8px; color: var(--text); background: var(--surface-solid); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 28px rgb(0 0 0 / 0.18); font-size: 12px; -webkit-app-region: no-drag; animation: workspace-menu-in 140ms ease-out; }
@@ -426,20 +426,20 @@ html[data-platform="darwin"] .topbar__context { position: relative; left: -8px; 
 .topbar-nav button svg { width: 16px; height: 16px; }
 .topbar-nav button span { white-space: nowrap; }
 
-.topbar__actions { min-width: 0; justify-self: end; display: flex; align-items: center; gap: 7px; overflow: visible; }
+.topbar__actions { min-width: 0; justify-self: end; display: flex; align-items: center; gap: 6px; overflow: visible; }
 .appearance-control { position: relative; flex: 0 0 auto; display: grid; place-items: center; }
 .appearance-button, .panel-button, .account-button {
-  width: 32px; height: 32px;
+  width: 30px; height: 30px;
   display: grid; place-items: center;
   padding: 0;
   color: var(--muted);
   background: var(--surface);
   border: 1px solid var(--color-border-secondary);
-  border-radius: 8px;
+  border-radius: 7px;
   transition: color 140ms ease, border-color 140ms ease, background 140ms ease;
 }
 :is(.appearance-button, .panel-button, .account-button):is(:hover, .is-active) { color: var(--accent-deep); background: var(--surface-solid); border-color: var(--accent-border); }
-:is(.appearance-button, .panel-button, .account-button) svg { width: 16px; height: 16px; }
+:is(.appearance-button, .panel-button, .account-button) svg { width: 15px; height: 15px; }
 .appearance-popover {
   position: absolute;
   top: calc(100% + 8px); right: 0;
@@ -548,23 +548,23 @@ html[data-color-mode="dark"] .appearance-background__tile > i { background-image
 .appearance-presets button:hover { color: var(--text); border-color: var(--line-strong); }
 .appearance-presets button.is-active { color: var(--accent-deep); background: var(--accent-wash); border-color: var(--accent-border); }
 .connection-chip {
-  min-height: 32px;
+  min-height: 30px;
   flex: 0 0 auto;
-  display: flex; align-items: center; gap: 6px;
-  padding: 0 9px;
+  display: flex; align-items: center; gap: 5px;
+  padding: 0 7px;
   color: var(--text-soft);
   background: var(--surface);
   border: var(--border-width-regular) solid var(--line);
-  border-radius: 8px;
+  border-radius: 7px;
   font-size: var(--fs-11);
-  font-weight: 600;
+  font-weight: 550;
   white-space: nowrap;
   transition: border-color 140ms ease, background 140ms ease;
 }
 .connection-chip:hover { border-color: var(--line-strong); }
 .connection-chip i { width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; background: var(--faint); }
 .connection-chip__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.connection-chip__online { color: var(--muted); font-size: var(--fs-10); font-weight: 600; white-space: nowrap; }
+.connection-chip__online { color: var(--muted); font-size: var(--fs-10); font-weight: 550; white-space: nowrap; }
 .connection-chip--connected { color: var(--color-text-secondary); }
 .connection-chip--connected i { background: var(--color-text-success); box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-text-success) 14%, transparent); }
 .connection-chip--connecting i, .connection-chip--reconnecting i { background: var(--amber); animation: connection-pulse 1.4s ease-in-out infinite; }
@@ -578,7 +578,7 @@ html[data-color-mode="dark"] .appearance-background__tile > i { background-image
 .connection-popover {
   position: absolute;
   /* 右侧避让 Windows 标题栏覆盖层按钮（macOS 下安全区为 0，视觉不变） */
-  top: 50px; right: calc(14px + var(--window-control-safe-right));
+  top: calc(100% + 6px); right: calc(14px + var(--window-control-safe-right));
   width: min(390px, calc(100vw - 28px));
   display: grid; gap: 13px;
   padding: 18px;
@@ -1982,7 +1982,7 @@ button.workspace-group-chip:focus-visible { outline: 2px solid var(--accent-bord
 
 @media (max-width: 1200px) {
   .connection-chip__online { display: none; }
-  .connection-chip { padding-inline: 8px; }
+  .connection-chip { padding-inline: 7px; }
 }
 
 @media (max-width: 1050px) {
@@ -1998,9 +1998,9 @@ button.workspace-group-chip:focus-visible { outline: 2px solid var(--accent-bord
 @media (max-width: 760px) {
   .topbar { --topbar-gutter: 8px; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 6px; margin: 0; }
   .connection-chip__label, .connection-chip__online { display: none; }
-  .connection-chip { min-width: 34px; padding: 0 8px; justify-content: center; gap: 6px; }
+  .connection-chip { min-width: 30px; padding: 0 7px; justify-content: center; gap: 5px; }
   .brand strong { display: none; }
-  .workspace-detection-chip { width: 34px; padding: 0; justify-content: center; }
+  .workspace-detection-chip { width: 30px; padding: 0; justify-content: center; }
   .workspace-detection-chip > span, .workspace-detection-chip .workspace-menu__chevron { display: none; }
   .topbar-nav { justify-self: center; }
   .topbar-nav button { flex-basis: 54px; min-width: 46px; padding-inline: 7px; }
