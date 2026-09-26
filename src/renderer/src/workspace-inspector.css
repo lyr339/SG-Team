@@ -123,11 +123,14 @@
   flex: 0 0 auto; min-height: 58px; display: flex; align-items: center; justify-content: space-between; gap: 12px;
   padding: 10px 12px 10px 14px; border-bottom: 1px solid var(--review-line);
 }
+/* 双行标题的计数/操作对齐标题首行，而不是落在标题与说明之间。 */
+.workspace-inspector .inspector-section__header { align-items: flex-start; }
 .inspector-section__header > div:first-child { min-width: 0; display: grid; gap: 3px; }
 /* 行高取整数像素：小节头下方是 sticky 分组头与 hairline，小数行盒会让整列躺上亚像素、光栅化闪跳。 */
 .inspector-section__header strong { font-size: var(--fs-12); font-weight: 650; line-height: 20px; }
 .inspector-section__header span { overflow: hidden; color: var(--muted); font-size: var(--fs-11); line-height: 16px; text-overflow: ellipsis; white-space: nowrap; }
 .inspector-section__aside { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; color: var(--text-soft); font: 650 var(--fs-13)/1 var(--font-numeric); }
+.workspace-inspector .inspector-section__aside { min-height: 20px; line-height: 20px; }
 
 /* 空态在面板剩余高度内居中，略微上偏（视觉重心），并给出一个能去的地方。 */
 .inspector-state {
@@ -461,6 +464,8 @@
    分段进度条是清单的缩略图；「当前项」只在行内标注一次（呼吸核环 + 左缘 2px），不再整行铺语义色；
    完成 / 取消收拢为单行划线（全文进 title），把空间与对比度让给未完成项。 */
 .inspector-plan { height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+/* 右侧定位按钮 26px，比标题行的 20px 多 6px：上移半差让 1/3 与标题同轴。 */
+.inspector-plan .inspector-section__aside { transform: translateY(-3px); }
 .inspector-plan__ratio { color: var(--text-soft); font: 650 var(--fs-13)/1 var(--font-numeric); font-variant-numeric: tabular-nums; }
 .inspector-plan__progress { flex: 0 0 auto; padding: 11px 16px; border-bottom: 1px solid var(--review-line); }
 .inspector-plan .todo-progress { height: 3px; gap: 3px; }

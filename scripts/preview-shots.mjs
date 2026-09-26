@@ -196,6 +196,26 @@ const RAIL_BAR_PROBE = `new Promise((done, fail) => {
 })`
 
 const scenes = [
+  ...[540, 300].map((width) => ({
+    name: `inspector-header-align-${width}`, width: width === 300 ? 1180 : 1440, height: 900,
+    colorScheme: 'dark', storage: baseStorage({ width, colorMode: 'dark' }), clip: '.workspace-inspector',
+    actions: [{ label: '三种计数与各自标题首行对齐', probe: `new Promise(async (done, fail) => {
+      const result = []
+      for (const id of ['plan','activity','artifacts']) {
+        const tab = [...document.querySelectorAll('.inspector-tab')].find(tab => tab.getAttribute('aria-label') === ({plan:'计划',activity:'活动',artifacts:'产物'})[id])
+        tab?.click()
+        await new Promise(resolve => setTimeout(resolve, 220))
+        const panel = document.querySelector('.inspector-panel:not(.is-hidden)')
+        const title = panel?.querySelector('.inspector-section__header strong')?.getBoundingClientRect()
+        const count = panel?.querySelector('.inspector-section__aside b')?.getBoundingClientRect()
+        if (!title || !count) return fail(new Error(id + ' 标题或计数缺失'))
+        const delta = count.top - title.top
+        if (Math.abs(delta - (title.height-count.height)/2) > 1.5) return fail(new Error(id + ' 计数未与标题首行居中'))
+        result.push({id,topDelta:Math.round(delta*10)/10})
+      }
+      done(result)
+    })` }]
+  })),
   { name: 'windows-topbar-compact', width: 1440, height: 900, colorScheme: 'dark', storage: railStorage({ colorMode: 'dark' }), clip: '.topbar',
     actions: [{ eval: `document.documentElement.dataset.platform = 'win32'` }, { wait: 80 }, {
       label: 'Windows 顶栏与原生按钮空间同高', probe: `(() => {
