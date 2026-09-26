@@ -73,8 +73,8 @@ describe('WorkspaceInspector shell', () => {
     })
     expect(document.activeElement?.textContent).toBe('计划1')
     expect(localStorage.getItem(INSPECTOR_TAB_STORAGE_KEY)).toBe('plan')
-    expect(container.textContent).toContain('Cursor Todos')
-    // 当前项只在列表行标注（spinner + aria-current），小节头是安静的来源说明，不复读任务全文。
+    expect(container.textContent).toContain('任务 1进行中 · 0待处理')
+    // 当前项在列表行由缺口环和 aria-current 标注，小节头仅显示状态计数。
     expect(container.textContent).toContain('写测试')
     expect(container.querySelector('.inspector-plan__list li.is-in_progress')!.getAttribute('aria-current')).toBe('step')
 

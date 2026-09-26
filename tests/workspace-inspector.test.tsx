@@ -62,9 +62,9 @@ describe('WorkspaceInspector Cursor Todos', () => {
         onClose={onClose}
       />
     ))
-    expect(container.textContent).toContain('Cursor Todos')
+    expect(container.textContent).toContain('任务 1进行中 · 0待处理')
     expect(container.textContent).toContain('实现真实 Review')
-    expect(container.textContent).toContain('0/1')
+    expect(container.querySelector('.inspector-plan__list')?.getAttribute('aria-label')).toBe('任务清单，0/1 已完成')
     await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="收起右侧工作区"]')!.click())
     expect(onClose).toHaveBeenCalledTimes(1)
     await act(async () => root.unmount())

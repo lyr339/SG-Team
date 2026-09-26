@@ -73,24 +73,22 @@ describe('PlanPanel', () => {
     })
   }
 
-  it('renders a segmented progress bar and shared todo indicators, current row marked exactly once', async () => {
+  it('renders a quiet status summary and shared todo indicators, current row marked exactly once', async () => {
     await render(snapshot([
       { content: '已完成项', status: 'completed' },
       { content: '进行中项', status: 'in_progress' },
       { content: '待办项', status: 'pending' },
       { content: '取消项', status: 'cancelled' }
     ]))
-    const progress = container.querySelector('.inspector-plan__progress .todo-progress')!
-    expect(progress.getAttribute('aria-valuenow')).toBe('1')
-    expect(progress.getAttribute('aria-valuemax')).toBe('4')
-    expect(Array.from(progress.querySelectorAll('i')).map((segment) => segment.className))
-      .toEqual(['is-completed', 'is-in_progress', 'is-pending', 'is-cancelled'])
+    expect(container.querySelector('.inspector-plan__progress')).toBeNull()
+    expect(container.querySelector('.inspector-plan__list')!.getAttribute('aria-label')).toBe('任务清单，1/4 已完成')
 
     const rows = Array.from(container.querySelectorAll('.inspector-plan__list li'))
     expect(rows.map((row) => row.className)).toEqual(['is-completed', 'is-in_progress', 'is-pending', 'is-cancelled'])
-    // 图元与时间线同源：描边勾 / 细环 + 呼吸核 / 空心圆 / 斜杠圈
+    // 图元与时间线同源：描边勾 / 缺口环 / 点线环 / 斜杠圈
     expect(rows[0]!.querySelector('.todo-indicator svg path')).toBeTruthy()
-    expect(rows[1]!.querySelector('.todo-indicator svg.todo-live circle.todo-live__core')).toBeTruthy()
+    expect(rows[1]!.querySelector('.todo-indicator svg.todo-live circle[stroke-dasharray="25 9"]')).toBeTruthy()
+    expect(rows[2]!.querySelector('.todo-indicator svg.todo-pending circle[stroke-dasharray="0.1 4.06"]')).toBeTruthy()
     expect(rows[1]!.querySelector('.todo-spinner')).toBeNull()
     expect(rows[3]!.querySelector('.todo-indicator svg path')).toBeTruthy()
     // 当前项标注一次：aria-current 在行上，不再有「进行中」文字标签
@@ -99,7 +97,7 @@ describe('PlanPanel', () => {
     expect(container.querySelector('.inspector-plan__list em')).toBeNull()
     // 头部不再复读当前项全文
     expect(container.querySelector('.inspector-section__header span')!.textContent).toBe('来自当前 Composer 的实时任务状态')
-    expect(container.querySelector('.inspector-plan__ratio')!.textContent).toBe('1/4')
+    expect(container.querySelector('.inspector-section__header strong')!.textContent).toBe('任务 1进行中 · 1待处理')
   })
 
   it('gives settled rows a full-text tooltip and renders path tokens as code', async () => {
@@ -112,6 +110,16 @@ describe('PlanPanel', () => {
     expect(rows[0]!.querySelector('.inspector-plan__text')!.getAttribute('title')).toBe(long)
     expect(rows[1]!.querySelector('.inspector-plan__text')!.getAttribute('title')).toBeNull()
     expect(rows[1]!.querySelector('.inspector-plan__text code')!.textContent).toBe('application/seat-rotation-service.ts')
+  })
+
+  it('shows completed and cancelled totals when every task has settled', async () => {
+    await render(snapshot([{ content: '跳过项', status: 'cancelled' }]))
+    expect(container.querySelector('.inspector-section__header strong')!.textContent).toBe('任务 1已取消')
+    await render(snapshot([
+      { content: '完成项', status: 'completed' },
+      { content: '跳过项', status: 'cancelled' }
+    ]))
+    expect(container.querySelector('.inspector-section__header strong')!.textContent).toBe('任务 1已完成 · 1已取消')
   })
 
   it('marks status flips with one-shot animation classes, without replaying on mount or unrelated updates', async () => {

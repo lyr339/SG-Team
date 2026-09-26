@@ -461,30 +461,22 @@
 .review-diff__footnote { min-width: max-content; margin: 0; padding: 6px 12px; color: var(--faint); font-size: var(--fs-10); line-height: 1.5; }
 
 /* ---------- Plan（Cursor Todos） ----------
-   与时间线任务清单同一套图元（.todo-indicator / .todo-progress / .todo-live，styles.css）：
-   分段进度条是清单的缩略图；「当前项」只在行内标注一次（呼吸核环 + 左缘 2px），不再整行铺语义色；
-   完成 / 取消收拢为单行划线（全文进 title），把空间与对比度让给未完成项。 */
+   与时间线任务清单共用图元；靠环形和文字对比度识别状态，不给每行加边线或色条。 */
 .inspector-plan { height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-.inspector-plan__ratio { color: var(--text-soft); font: 650 var(--fs-13)/1 var(--font-numeric); font-variant-numeric: tabular-nums; }
-.inspector-plan__progress { flex: 0 0 auto; padding: 11px 16px; border-bottom: 1px solid var(--review-line); }
-.inspector-plan .todo-progress { height: 3px; gap: 3px; }
-.inspector-plan .todo-progress i.is-in_progress { background: color-mix(in srgb, var(--review-green) 58%, var(--review-skip-bg)); }
-.inspector-plan .todo-progress i.is-in_progress::after { display: none; }
+.inspector-plan .inspector-section__header strong { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inspector-plan__count { margin-left: 5px; color: var(--text-soft); font-size: var(--fs-12); font-weight: 500; }
 .inspector-plan__list { min-height: 0; margin: 0; padding: 4px 0 10px; overflow: auto; list-style: none; }
 .inspector-plan__list li {
-  min-height: 36px; display: grid; grid-template-columns: 16px minmax(0, 1fr); align-items: start; gap: 10px;
-  padding: 8px 16px; border-bottom: 1px solid var(--review-line);
+  min-height: 30px; display: grid; grid-template-columns: 16px minmax(0, 1fr); align-items: start; gap: 10px;
+  padding: 6px 16px;
   transition: background-color 120ms ease;
   animation: inspector-plan-enter 200ms ease-out both;
 }
 .inspector-plan__list li:hover { background: var(--review-row-hover); }
-.inspector-plan__list li .todo-indicator { margin-top: 1px; color: var(--text-soft); }
+.inspector-plan__list li .todo-indicator { margin-top: 1px; color: var(--text-soft); opacity: .7; }
 .inspector-plan__text { min-width: 0; color: var(--text-soft); font-size: var(--fs-12); line-height: 1.45; overflow-wrap: break-word; }
 .inspector-plan__text code { font: 500 calc(var(--fs-12) - 1px)/inherit var(--mono); }
-/* 当前项：文字升主色，左缘 2px 审查绿示位，呼吸核环染同一枚绿——与左缘、与检查器里其余
-   「正在进行」的绿色（review-edit 进行中 / activity 运行中 / 进度条当前段）是同一句话；不再加文字标签。 */
-.inspector-plan__list li.is-in_progress { box-shadow: inset 2px 0 0 var(--review-green); }
-.inspector-plan__list li.is-in_progress .todo-indicator { color: var(--review-green); }
+/* 当前项只有正文升主色；环与待办保持同一灰阶。 */
 .inspector-plan__list li.is-in_progress .inspector-plan__text { color: var(--text); }
 /* 完成 / 取消：单行收拢 + 划线 + 降级色；多行删除线是主要噪声源，全文由 title 承担。 */
 .inspector-plan__list li.is-completed .todo-indicator, .inspector-plan__list li.is-cancelled .todo-indicator { color: var(--muted); }
@@ -492,8 +484,7 @@
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; overflow: hidden;
   color: var(--muted); text-decoration: line-through; text-decoration-color: var(--color-border-secondary);
 }
-/* 状态微动效（一次性，仅状态翻转时由 is-just-* 标记触发）：刚完成画勾、刚开始整枚环轻弹一下
-  （弹的是 svg 整体，不是核——核身上挂着常驻呼吸动画，同一元素不能再叠一条一次性动画）。 */
+/* 状态微动效（一次性，仅状态翻转时由 is-just-* 标记触发）：刚完成画勾、刚开始整枚环轻弹一下。 */
 .inspector-plan__list li.is-just-completed .todo-indicator path { stroke-dasharray: 13; stroke-dashoffset: 13; animation: inspector-plan-check 260ms cubic-bezier(0.2, 0.8, 0.2, 1) 40ms forwards; }
 .inspector-plan__list li.is-just-started .todo-live { animation: inspector-plan-pop 180ms cubic-bezier(0.2, 0.8, 0.2, 1); }
 @keyframes inspector-plan-enter { from { opacity: 0; } }

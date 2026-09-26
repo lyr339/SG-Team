@@ -105,6 +105,9 @@ export function PlanPanel({ todos, onOpenTab }: { todos: CursorTodoSnapshot; onO
   const items = todos.items
   const tones = useMemo(() => items.map((todo) => todoTone(todo.status)), [items])
   const completed = tones.filter((tone) => tone === 'completed').length
+  const cancelled = tones.filter((tone) => tone === 'cancelled').length
+  const pending = tones.filter((tone) => tone === 'pending').length
+  const running = tones.filter((tone) => tone === 'in_progress').length
   const runningIndex = tones.indexOf('in_progress')
 
   const toneMemory = useRef<ToneMemory>({ memory: new Map(), just: new Map() })
@@ -122,16 +125,18 @@ export function PlanPanel({ todos, onOpenTab }: { todos: CursorTodoSnapshot; onO
     node.scrollIntoView({ block: 'nearest', behavior: reduced ? 'auto' : 'smooth' })
   }, [runningKey])
 
-  // 当前项只在列表行标注一次（spinner + 左缘指示）；小节头保持安静的来源说明。
+  // 小节头概览任务状态；当前项只在列表行以缺口环和正文对比度标注。
   const hint = todos.live ? '来自当前 Composer 的实时任务状态' : '来自最近一轮对话的任务清单'
+  const statusLabel = running || pending
+    ? `${running}进行中 · ${pending}待处理`
+    : [completed && `${completed}已完成`, cancelled && `${cancelled}已取消`].filter(Boolean).join(' · ')
   return (
     <section className="inspector-plan" aria-label="Cursor 任务清单">
       <InspectorSectionHeader
-        title="Cursor Todos"
+        title={items.length ? <>任务 <small className="inspector-plan__count">{statusLabel}</small></> : '任务'}
         hint={hint}
         aside={(
           <>
-            {items.length ? <b className="inspector-plan__ratio">{completed}/{items.length}</b> : null}
             {todos.blockId ? (
               <button type="button" className="inspector-icon-button" title="在时间线中定位这份清单" aria-label="在时间线中定位这份清单" onClick={() => void actions.reveal({ blockId: todos.blockId })}>
                 <TargetGlyph />
@@ -141,44 +146,30 @@ export function PlanPanel({ todos, onOpenTab }: { todos: CursorTodoSnapshot; onO
         )}
       />
       {items.length ? (
-        <>
-          <div className="inspector-plan__progress">
-            <div
-              className="todo-progress"
-              role="progressbar"
-              aria-label={`任务进度 ${completed}/${items.length}`}
-              aria-valuemin={0}
-              aria-valuemax={items.length}
-              aria-valuenow={completed}
-            >
-              {items.map((todo, index) => <i key={`seg:${todoKey(todo, index)}`} className={`is-${tones[index]}`} />)}
-            </div>
-          </div>
-          <ol className="inspector-plan__list">
-            {items.map((todo, index) => {
-              const tone = tones[index]!
-              const key = todoKey(todo, index)
-              const just = justMarks.get(key)
-              const settled = tone === 'completed' || tone === 'cancelled'
-              const justClass = just === 'completed' ? ' is-just-completed' : just === 'in_progress' ? ' is-just-started' : ''
-              return (
-                <li
-                  key={key}
-                  className={`is-${tone}${justClass}`}
-                  aria-current={tone === 'in_progress' ? 'step' : undefined}
-                  ref={tone === 'in_progress' ? runningRef : undefined}
-                >
-                  <TodoIndicator tone={tone} />
-                  <span className="inspector-plan__text" title={settled ? todo.content : undefined}>
-                    {todoContentSegments(todo.content).map((segment, segmentIndex) => segment.code
-                      ? <code key={segmentIndex}>{segment.text}</code>
-                      : <Fragment key={segmentIndex}>{segment.text}</Fragment>)}
-                  </span>
-                </li>
-              )
-            })}
-          </ol>
-        </>
+        <ol className="inspector-plan__list" aria-label={`任务清单，${completed}/${items.length} 已完成`}>
+          {items.map((todo, index) => {
+            const tone = tones[index]!
+            const key = todoKey(todo, index)
+            const just = justMarks.get(key)
+            const settled = tone === 'completed' || tone === 'cancelled'
+            const justClass = just === 'completed' ? ' is-just-completed' : just === 'in_progress' ? ' is-just-started' : ''
+            return (
+              <li
+                key={key}
+                className={`is-${tone}${justClass}`}
+                aria-current={tone === 'in_progress' ? 'step' : undefined}
+                ref={tone === 'in_progress' ? runningRef : undefined}
+              >
+                <TodoIndicator tone={tone} />
+                <span className="inspector-plan__text" title={settled ? todo.content : undefined}>
+                  {todoContentSegments(todo.content).map((segment, segmentIndex) => segment.code
+                    ? <code key={segmentIndex}>{segment.text}</code>
+                    : <Fragment key={segmentIndex}>{segment.text}</Fragment>)}
+                </span>
+              </li>
+            )
+          })}
+        </ol>
       ) : (
         <InspectorState
           icon={<PlanIcon />}
