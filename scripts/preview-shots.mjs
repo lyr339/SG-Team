@@ -199,7 +199,7 @@ const scenes = [
   ...[540, 300].map((width) => ({
     name: `inspector-header-align-${width}`, width: width === 300 ? 1180 : 1440, height: 900,
     colorScheme: 'dark', storage: baseStorage({ width, colorMode: 'dark' }), clip: '.workspace-inspector',
-    actions: [{ label: '三种计数与各自标题首行对齐', probe: `new Promise(async (done, fail) => {
+    actions: [{ label: '三种计数与右侧按钮行对齐', probe: `new Promise(async (done, fail) => {
       const result = []
       for (const id of ['plan','activity','artifacts']) {
         const tab = [...document.querySelectorAll('.inspector-tab')].find(tab => tab.getAttribute('aria-label') === ({plan:'计划',activity:'活动',artifacts:'产物'})[id])
@@ -209,9 +209,12 @@ const scenes = [
         const title = panel?.querySelector('.inspector-section__header strong')?.getBoundingClientRect()
         const count = panel?.querySelector('.inspector-section__aside b')?.getBoundingClientRect()
         if (!title || !count) return fail(new Error(id + ' 标题或计数缺失'))
-        const delta = count.top - title.top
-        if (Math.abs(delta - (title.height-count.height)/2) > 1.5) return fail(new Error(id + ' 计数未与标题首行居中'))
-        result.push({id,topDelta:Math.round(delta*10)/10})
+        const shell = document.querySelector('.workspace-inspector').getBoundingClientRect()
+        const bar = document.querySelector('.workspace-inspector__bar').getBoundingClientRect()
+        const target = bar.width < shell.width/2 ? document.querySelector('.inspector-tab.is-active').getBoundingClientRect() : title
+        const delta = count.top + count.height/2 - target.top - target.height/2
+        if (Math.abs(delta) > 1.5) return fail(new Error(id + ' 计数与右侧按钮行上下错位: ' + delta))
+        result.push({id,centerDelta:Math.round(delta*10)/10})
       }
       done(result)
     })` }]
