@@ -1796,7 +1796,6 @@ button.workspace-group-chip:focus-visible { outline: 2px solid var(--accent-bord
 .account-add-form label span, .account-add-form > small { color: var(--muted); font-size: var(--fs-10); }
 .account-add-form input { min-height: 37px; padding: 0 10px; color: var(--text); background: var(--surface); border: var(--border-width-regular) solid var(--line); border-radius: 8px; outline: none; }
 .account-add-form input:focus { border-color: var(--accent-border-strong); box-shadow: 0 0 0 3px color-mix(in srgb, var(--anthropic-orange) 10%, transparent); }
-.account-dialog-error { margin: 10px 15px 0; padding: 8px 10px; color: var(--red); background: var(--red-soft); border-radius: 8px; font-size: var(--fs-10); }
 
 .account-process { padding: 0 9px; color: var(--accent); background: transparent; border: 0; border-radius: 8px; font-size: var(--fs-10); font-weight: 600; white-space: nowrap; }
 .account-process:hover:not(:disabled) { background: var(--accent-wash); }

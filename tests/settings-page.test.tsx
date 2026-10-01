@@ -23,7 +23,6 @@ function propsFor(overrides: Partial<SettingsPageProps> = {}): SettingsPageProps
   return {
     accounts,
     busy: false,
-    error: '',
     onSave: async () => {},
     onSelect: async () => {},
     onRemove: async () => {},

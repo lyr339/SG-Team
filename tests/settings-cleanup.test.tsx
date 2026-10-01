@@ -281,7 +281,7 @@ describe('存储清理面板', () => {
     history.replaceState(null, '', '#account:cleanup')
     const onScan = vi.fn(async () => {})
     const pageProps: SettingsPageProps = {
-      accounts: [], busy: false, error: '',
+      accounts: [], busy: false,
       onSave: vi.fn(async () => {}), onSelect: vi.fn(async () => {}), onRemove: vi.fn(async () => {}),
       onScanCursorStorage: onScan
     }

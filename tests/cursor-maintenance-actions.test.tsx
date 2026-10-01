@@ -27,7 +27,6 @@ describe('Cursor 本机维护操作', () => {
     return {
       accounts: [],
       busy: false,
-      error: '',
       onSave: async () => {},
       onSelect: async () => {},
       onRemove: async () => {},

@@ -9,7 +9,7 @@ let root: Root
 let container: HTMLDivElement
 const props: SettingsPageProps = {
   accounts: [{ id: 'a', label: 'test@example.com', active: true, maskedToken: '***', createdAt: 1, updatedAt: 1 }],
-  busy: false, error: '', onSave: vi.fn(async () => {}), onSelect: vi.fn(async () => {}),
+  busy: false, onSave: vi.fn(async () => {}), onSelect: vi.fn(async () => {}),
   onRemove: vi.fn(async () => {}), onRestartWithAccount: vi.fn(async () => {}),
   onImportFromLocal: vi.fn(async () => {}), onImportFromBrowser: vi.fn(async () => {})
 }

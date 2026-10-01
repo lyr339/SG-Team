@@ -1001,7 +1001,25 @@ const scenes = [
       })()` }
     ]
   },
-  // 自动化运行卡：每个相位一张整页 + 一张卡片特写（空闲态已在 settings-automation-* 覆盖）。
+  // 设置页操作反馈：只调用预览 mock，不操作真实 Cursor。
+  ...['success', 'warning', 'error'].flatMap(tone => ['light', 'dark'].map(colorMode => ({
+    name: `settings-notice-${tone}-${colorMode}`, hash: 'account:accounts', width: 1440, height: 1000,
+    colorScheme: colorMode, storage: baseStorage({ colorMode, cardOpacity: 0 }), clip: '.settings-notice',
+    actions: [
+      { eval: tone === 'error'
+        ? `window.sgDesktop.restartCursorWithAccount=async()=>{throw new Error('Cursor 安装目录不可写，请检查权限。')}`
+        : `window.sgDesktop.restartCursorWithAccount=async()=>({switched:true,killedCursor:true,relaunchMode:'cdp',cdpPortReady:${tone === 'success'},machineIdentityApplied:true,runtimeVerified:true})` },
+      { click: '.account-row:first-child .lobby-account__inject' }, { click: '.account-row:first-child .lobby-account__inject' },
+      { label: '结构化操作反馈', probe: `(() => {
+        const note=document.querySelector('.settings-notice.is-${tone}')
+        if (!note || note.getAttribute('role') !== '${tone === 'error' ? 'alert' : 'status'}') throw new Error('状态语义错误')
+        if (note.querySelector('[aria-expanded]').getAttribute('aria-expanded') !== '${tone !== 'success'}') throw new Error('诊断展开态错误')
+        if (note.scrollWidth > note.clientWidth + 1 || !note.querySelector('[aria-label="关闭提示"]')) throw new Error('布局或关闭入口错误')
+        return { title: note.querySelector('strong').textContent, height: note.getBoundingClientRect().height }
+      })()` }
+    ]
+  }))),
+  // 自动化运行卡与倒计时设置。
   ...['light', 'dark'].flatMap(colorMode => [false, true].map(narrow => ({
     name: `settings-timer-controls-${colorMode}${narrow ? '-narrow' : ''}`, hash: 'account:automation', query: 'automation=done',
     width: 1440, height: 1200, colorScheme: colorMode, storage: baseStorage({ colorMode }), clip: '.settings-automation',

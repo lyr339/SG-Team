@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { SettingsPageProps } from './settings-view'
 import { isActiveAutomationPhase } from './settings-view'
 import { SettingsAccounts } from './SettingsAccounts'
+import { SettingsNotice } from './SettingsNotice'
 import { SettingsImportSource } from './SettingsImportSource'
 import { SettingsAutomation } from './SettingsAutomation'
 import { SettingsAozai } from './SettingsAozai'
@@ -50,7 +51,7 @@ function initialGroup(): SettingsGroupId {
 
 /**
  * 设置页（方案 A）：左侧分组导航 + 右侧内容面板。
- * 整包接收 accountPanel props（App.tsx 组装逻辑零变更），组内自取所需字段。
+ * App 提供账号操作与结构化反馈；分组自取所需字段，共用页级结果提示。
  * 运行态只在两处留下痕迹：自动化导航项的状态圆点、自动化组顶部的运行卡（AutomationRunCard）。
  */
 export function SettingsPage(props: SettingsPageProps): React.JSX.Element {
@@ -112,11 +113,11 @@ export function SettingsPage(props: SettingsPageProps): React.JSX.Element {
       </nav>
 
       <div className="settings-content">
-        {props.error ? <p className="account-dialog-error settings-error" role="alert">{props.error}</p> : null}
         <header className="settings-content__head" key={`head-${active.id}`}>
           <h1>{active.label}</h1>
           <p>{active.description}</p>
         </header>
+        {props.notice ? <SettingsNotice message={props.notice} onDismiss={props.onDismissNotice} /> : null}
         <div className="settings-groups">
           <div hidden={group !== 'stats'}><SettingsStats {...props} active={group === 'stats'} /></div>
           <div hidden={group !== 'accounts'}><SettingsAccounts {...props} active={group === 'accounts'} onNavigateToImport={() => selectGroup('import')} /></div>

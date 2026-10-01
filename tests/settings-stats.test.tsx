@@ -229,7 +229,7 @@ describe('统计页组件', () => {
     history.replaceState(null, '', '#account:stats')
     const { usage, seats } = fixture(Date.now())
     const pageProps: SettingsPageProps = {
-      accounts: [], busy: false, error: '',
+      accounts: [], busy: false,
       onSave: vi.fn(async () => {}), onSelect: vi.fn(async () => {}), onRemove: vi.fn(async () => {}),
       usageSnapshot: usage, statsSeats: seats
     }

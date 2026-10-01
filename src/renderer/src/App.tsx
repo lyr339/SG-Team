@@ -19,6 +19,7 @@ import { GroupComposer, type GroupComposerMode } from './run/GroupComposer'
 import { nextGroupName, ungroupedSeatsOf } from './run/pool-view'
 import { SettingsPage } from './settings/SettingsPage'
 import type { SettingsPageProps } from './settings/settings-view'
+import type { SettingsNoticeMessage } from './settings/SettingsNotice'
 import { TransferMembershipDialog } from './team/TransferMembershipDialog'
 import { SessionHandoffDialog } from './SessionHandoffDialog'
 import { resolveHandoffEntry } from './handoff-entry'
@@ -148,7 +149,10 @@ export function App(): React.JSX.Element {
   const [handoffError, setHandoffError] = useState('')
   const [cursorAccounts, setCursorAccounts] = useState<CursorAccountMetadata[]>([])
   const [cursorAccountBusy, setCursorAccountBusy] = useState(false)
-  const [cursorAccountError, setCursorAccountError] = useState('')
+  const [cursorAccountNotice, setCursorAccountNotice] = useState<SettingsNoticeMessage>()
+  const reportCursorAccountError = useCallback((title: string, reason: unknown): void => {
+    setCursorAccountNotice({ tone: 'error', title, detail: userFacingErrorMessage(reason) })
+  }, [])
   // 升级 Pro 结账结果反馈（待扫码/复核通过/失败原因）；按账号粒度置忙在组件内。
   const [proUpgradeFeedback, setProUpgradeFeedback] = useState<{ ok: boolean; message: string } | null>(null)
   const [cursorUpdatePreferences, setCursorUpdatePreferences] = useState<CursorUpdatePreferences>()
@@ -345,7 +349,7 @@ export function App(): React.JSX.Element {
         setCursorAccounts(accounts)
         void refreshAccountMemberships()
       })
-      .catch((reason: unknown) => setCursorAccountError(reason instanceof Error ? reason.message : String(reason)))
+      .catch((reason: unknown) => reportCursorAccountError('账号信息读取失败', reason))
     void window.sgDesktop.getProcessingProviderStatuses()
       .then((statuses) => setProcessingStatuses((current) => ({
         ...current,
@@ -1064,9 +1068,10 @@ export function App(): React.JSX.Element {
   const accountPanel: SettingsPageProps = {
     accounts: cursorAccounts,
     busy: cursorAccountBusy,
-    error: cursorAccountError,
+    notice: cursorAccountNotice,
+    onDismissNotice: () => setCursorAccountNotice(undefined),
     onSave: async (input) => {
-      setCursorAccountBusy(true); setCursorAccountError('')
+      setCursorAccountBusy(true); setCursorAccountNotice(undefined)
       try {
         setCursorAccounts(await window.sgDesktop.saveCursorAccount(input))
         // 新账号默认设为活跃（makeActive），一致性锚点变化 → 立即重算指示
@@ -1075,11 +1080,11 @@ export function App(): React.JSX.Element {
         void refreshMembership()
         void refreshAccountMemberships()
       }
-      catch (reason) { setCursorAccountError(reason instanceof Error ? reason.message : String(reason)); throw reason }
+      catch (reason) { reportCursorAccountError('账号保存失败', reason); throw reason }
       finally { setCursorAccountBusy(false) }
     },
     onSaveCard: async (input) => {
-      setCursorAccountBusy(true); setCursorAccountError('')
+      setCursorAccountBusy(true); setCursorAccountNotice(undefined)
       try {
         const result = await window.sgDesktop.saveCursorAccountCard(input)
         setCursorAccounts(result.accounts)
@@ -1089,7 +1094,7 @@ export function App(): React.JSX.Element {
         void refreshAccountMemberships()
         return { outcome: result.outcome, label: result.label, tokenRefreshed: result.tokenRefreshed, loginError: result.loginError }
       }
-      catch (reason) { setCursorAccountError(reason instanceof Error ? reason.message : String(reason)); throw reason }
+      catch (reason) { reportCursorAccountError('账号导入失败', reason); throw reason }
       finally { setCursorAccountBusy(false) }
     },
     onReloginAccount: async (accountId) => {
@@ -1100,7 +1105,7 @@ export function App(): React.JSX.Element {
         setCursorAccounts(result.accounts)
         void refreshRuntimeMatch()
       }
-      catch (reason) { setCursorAccountError(reason instanceof Error ? reason.message : String(reason)); throw reason }
+      catch (reason) { reportCursorAccountError('账号重新登录失败', reason); throw reason }
     },
     onStartProUpgrade: async (accountId) => {
       // 结账链可能等页面加载/人机验证（最长约 2 分钟）：不锁全局 busy（组件内按账号置忙）。
@@ -1117,9 +1122,9 @@ export function App(): React.JSX.Element {
     },
     proUpgradeFeedback,
     onSelect: async (accountId) => {
-      setCursorAccountBusy(true); setCursorAccountError('')
+      setCursorAccountBusy(true); setCursorAccountNotice(undefined)
       try { setCursorAccounts(await window.sgDesktop.selectCursorAccount(accountId)) }
-      catch (reason) { setCursorAccountError(reason instanceof Error ? reason.message : String(reason)) }
+      catch (reason) { reportCursorAccountError('当前账号未能更改', reason) }
       finally { setCursorAccountBusy(false) }
       // 换活跃账号会改变劈叉判定（Cursor 登录没变、锚点变了），立即刷新状态行
       void refreshRuntimeMatch()
@@ -1129,10 +1134,10 @@ export function App(): React.JSX.Element {
     // 窗口绑定是纯本地元信息写入：不锁账号 busy（避免改绑时整行按钮闪禁），失败走账号区错误条
     onSetAccountFingerprintProfile: async (accountId, profileId) => {
       try { setCursorAccounts(await window.sgDesktop.setCursorAccountFingerprintProfile(accountId, profileId)) }
-      catch (reason) { setCursorAccountError(reason instanceof Error ? reason.message : String(reason)) }
+      catch (reason) { reportCursorAccountError('窗口绑定未能保存', reason) }
     },
     onRemove: async (accountId) => {
-      setCursorAccountBusy(true); setCursorAccountError('')
+      setCursorAccountBusy(true); setCursorAccountNotice(undefined)
       try {
         setCursorAccounts(await window.sgDesktop.removeCursorAccount(accountId))
         // 删除活跃账号时 vault 会顺延活跃位，一致性锚点变化 → 立即重算指示
@@ -1141,47 +1146,47 @@ export function App(): React.JSX.Element {
         void refreshMembership()
         void refreshAccountMemberships()
       }
-      catch (reason) { setCursorAccountError(reason instanceof Error ? reason.message : String(reason)) }
+      catch (reason) { reportCursorAccountError('账号移除失败', reason) }
       finally { setCursorAccountBusy(false) }
     },
     onImportFromLocal: async () => {
-      setCursorAccountBusy(true); setCursorAccountError('')
+      setCursorAccountBusy(true); setCursorAccountNotice(undefined)
       try {
         setCursorAccounts(await window.sgDesktop.importCursorAccountFromLocalCursor())
         void refreshRuntimeMatch()
         void refreshMembership()
         void refreshAccountMemberships()
       }
-      catch (reason) { setCursorAccountError(reason instanceof Error ? reason.message : String(reason)) }
+      catch (reason) { reportCursorAccountError('本机账号导入失败', reason) }
       finally { setCursorAccountBusy(false) }
     },
     onImportFromBrowser: async () => {
-      setCursorAccountBusy(true); setCursorAccountError('')
+      setCursorAccountBusy(true); setCursorAccountNotice(undefined)
       try {
         setCursorAccounts(await window.sgDesktop.importCursorAccountFromBrowser())
         void refreshRuntimeMatch()
         void refreshMembership()
         void refreshAccountMemberships()
       }
-      catch (reason) { setCursorAccountError(reason instanceof Error ? reason.message : String(reason)) }
+      catch (reason) { reportCursorAccountError('浏览器账号导入失败', reason) }
       finally { setCursorAccountBusy(false) }
     },
     onImportFromFingerprint: async () => {
-      setCursorAccountBusy(true); setCursorAccountError('')
+      setCursorAccountBusy(true); setCursorAccountNotice(undefined)
       try {
         setCursorAccounts(await window.sgDesktop.importCursorAccountFromFingerprint())
         void refreshRuntimeMatch()
         void refreshMembership()
         void refreshAccountMemberships()
       }
-      catch (reason) { setCursorAccountError(reason instanceof Error ? reason.message : String(reason)) }
+      catch (reason) { reportCursorAccountError('指纹浏览器账号导入失败', reason) }
       finally { setCursorAccountBusy(false) }
     },
     // 提前登录：开窗导航 cursor.com（不关窗；失败提示走账号区错误条）
     onOpenFingerprintLogin: async () => {
-      setCursorAccountBusy(true); setCursorAccountError('')
+      setCursorAccountBusy(true); setCursorAccountNotice(undefined)
       try { await window.sgDesktop.openFingerprintLoginPage() }
-      catch (reason) { setCursorAccountError(reason instanceof Error ? reason.message : String(reason)) }
+      catch (reason) { reportCursorAccountError('登录窗口未能打开', reason) }
       finally { setCursorAccountBusy(false) }
     },
     onCleanupFingerprintEnvironment: async () => {
@@ -1189,16 +1194,18 @@ export function App(): React.JSX.Element {
       await window.sgDesktop.cleanupFingerprintEnvironment()
     },
     onRestartWithAccount: async (accountId) => {
-      setCursorAccountBusy(true); setCursorAccountError('')
+      setCursorAccountBusy(true); setCursorAccountNotice(undefined)
       try {
         const result = await window.sgDesktop.restartCursorWithAccount(accountId)
         if (!result.switched) return
         if (!result.runtimeVerified) {
-          setCursorAccountError('⚠️ Cursor 已重启，但运行时登录态尚未完成确认。')
+          setCursorAccountNotice(result.relaunchMode === 'failed'
+            ? { tone: 'warning', title: 'Cursor 未能启动', detail: '请手动启动 Cursor 后核对登录态。' }
+            : { tone: 'warning', title: 'Cursor 登录态仍待确认', detail: 'Cursor 已启动，但运行时登录态尚未完成确认。' })
           return
         }
         if (result.tokenExpired) {
-          setCursorAccountError('⚠️ 该账号的 Token 已过期，请重新获取后再切换。')
+          setCursorAccountNotice({ tone: 'warning', title: '账号 Token 已过期', detail: '请重新获取 Token 后再切换。' })
           return
         }
         const relaunchNote = result.relaunchMode === 'cdp'
@@ -1208,15 +1215,18 @@ export function App(): React.JSX.Element {
           : result.relaunchMode === 'failed'
             ? '拉起 Cursor 失败，请手动启动 Cursor。'
             : '已重新拉起 Cursor。'
-        setCursorAccountError(
-          `✅ Cursor 运行时已确认目标账号，登录态与机器码均已落库（${result.killedCursor ? '已重启' : 'Cursor 原先未运行'}；${relaunchNote}）`
-        )
+        const portPending = result.relaunchMode === 'cdp' && !result.cdpPortReady
+        setCursorAccountNotice({
+          tone: portPending ? 'warning' : 'success',
+          title: portPending ? '账号已切换，会话端口仍在准备' : '账号切换完成',
+          detail: `Cursor 已确认目标账号，登录态与机器码已保存。${result.killedCursor ? 'Cursor 已重启。' : 'Cursor 原先未运行。'}${relaunchNote}`
+        })
         // 切换成功 = 运行态与活跃账号重新对齐，立即刷新被动状态行
         void refreshRuntimeMatch()
         // 切换后运行账号变了，档位行同步重查
         void refreshMembership()
         void refreshAccountMemberships([accountId])
-      } catch (reason) { setCursorAccountError(reason instanceof Error ? reason.message : String(reason)) }
+      } catch (reason) { reportCursorAccountError('账号切换并重启失败', reason) }
       finally {
         // 冷切换的每个出口 vault 都可能已变（activeId + 清「待重启对齐」标记）：
         // 无条件回读，「当前」徽标与账号行标记跟 vault 真实状态对齐，不留旧值。
@@ -1225,22 +1235,22 @@ export function App(): React.JSX.Element {
       }
     },
     onSwitchLiveAccount: async (accountId) => {
-      setCursorAccountBusy(true); setCursorAccountError('')
+      setCursorAccountBusy(true); setCursorAccountNotice(undefined)
       try {
         const result = await window.sgDesktop.switchCursorAccountLive(accountId)
         if (!result.switched) {
-          setCursorAccountError(`⚠️ 无感换号未完成：${result.reason ?? '未知原因'}。可改用「切换并重启」。`)
+          setCursorAccountNotice({ tone: 'warning', title: '无感切换未完成', detail: `${result.reason ?? '未知原因'}。可改用「切换并重启」。` })
           return
         }
-        setCursorAccountError(result.warning
-          ? `⚠️ 已换号，但本地状态需要处理：${result.warning}`
-          : '✅ 已换号，Cursor 无需重启——令牌、邮箱与账号缓存均已刷新；机器码待下次「切换并重启」时对齐。')
+        setCursorAccountNotice(result.warning
+          ? { tone: 'warning', title: '账号已切换，本地状态仍需处理', detail: result.warning }
+          : { tone: 'success', title: '账号已切换，无需重启 Cursor', detail: '令牌、邮箱与账号缓存已刷新。机器码将在下次「切换并重启」时对齐。' })
         void refreshRuntimeMatch()
         void refreshMembership()
         void refreshAccountMemberships([accountId])
         // pendingMachineAlign 标记随热切置位，账号行标记立即刷新
         void window.sgDesktop.listCursorAccounts().then(setCursorAccounts).catch(() => {})
-      } catch (reason) { setCursorAccountError(reason instanceof Error ? reason.message : String(reason)) }
+      } catch (reason) { reportCursorAccountError('无感切换失败', reason) }
       finally { setCursorAccountBusy(false) }
     },
     runtimeMatch,

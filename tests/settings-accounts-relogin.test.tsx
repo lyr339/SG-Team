@@ -29,7 +29,6 @@ describe('账号卡片：重新登录（凭据自动登录）', () => {
         { id: 'account:plain', label: 'plain@x.co', maskedToken: '••••efgh', active: false, createdAt: 2, updatedAt: 2 }
       ],
       busy: false,
-      error: '',
       onSave: async () => {},
       onSelect: async () => {},
       onRemove: async () => {},

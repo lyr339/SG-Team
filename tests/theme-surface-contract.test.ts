@@ -11,6 +11,14 @@ const settings = readFileSync(join(process.cwd(), 'src/renderer/src/settings/set
 const update = readFileSync(join(process.cwd(), 'src/renderer/src/settings/update.css'), 'utf8')
 
 describe('theme surface contracts', () => {
+  it('retires the account error banner and keeps notice surfaces neutral and readable', () => {
+    expect(styles).not.toContain('.account-dialog-error')
+    expect(settings).not.toContain('.settings-error')
+    expect(settings).toMatch(/\.settings-notice\s*\{[^}]*background:\s*var\(--surface-solid\)/)
+    expect(settings).toMatch(/\.settings-notice__head\s*\{[^}]*align-items:\s*center/)
+    expect(settings).toMatch(/\.settings-notice__head strong\s*\{[^}]*overflow-wrap:\s*anywhere/)
+  })
+
   it('does not apply text-action padding to the account overflow icon button', () => {
     expect(settings).toMatch(/\.account-row__actions > button:not\(\.account-actions-menu__trigger\)\s*\{[^}]*padding-inline:\s*9px/)
     expect(settings).not.toMatch(/\.account-row__actions > button\s*\{/)

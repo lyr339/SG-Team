@@ -1,4 +1,5 @@
 import type { CursorAccountMetadata, CursorRuntimeAccountMatch } from '../../../domain/cursor-account'
+import type { SettingsNoticeMessage } from './SettingsNotice'
 import type { CursorMembershipStatus, CursorMembershipTier } from '../../../domain/cursor-membership'
 import { cursorMembershipTierLabel } from '../../../domain/cursor-membership'
 import type {
@@ -145,9 +146,10 @@ interface ProcessingFeedback extends StatusFeedback { providerId: ProcessingProv
 export interface SettingsPageProps {
   accounts: CursorAccountMetadata[]
   busy: boolean
-  error: string
+  notice?: SettingsNoticeMessage
+  onDismissNotice?: () => void
   onSave: (input: { label: string; token: string }) => Promise<void>
-  /** 卡号粘贴导入：返回新建/更新与自动登录结果供表单亮出反馈；失败抛错（同时进账号区错误条）。 */
+  /** 卡号粘贴导入：返回新建/更新与自动登录结果供表单亮出反馈；失败抛错并进入设置操作反馈。 */
   onSaveCard?: (input: { card: string }) => Promise<{
     outcome: 'created' | 'updated'
     label: string

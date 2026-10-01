@@ -33,7 +33,6 @@ describe('导入来源：卡号粘贴表单', () => {
     return {
       accounts: [],
       busy: false,
-      error: '',
       onSave: async () => {},
       onSelect: async () => {},
       onRemove: async () => {},
