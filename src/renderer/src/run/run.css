@@ -264,6 +264,20 @@ html[data-card-transparency="clear"] :is(.run-body, .pool-groups) {
 .run-panel.is-composing { grid-template-columns: minmax(0, .45fr) minmax(0, .55fr); column-gap: 24px; }
 .run-panel.is-composing > :is(.run-section-head, .run-field--workspace, .run-callout) { grid-column: 1 / -1; }
 .run-panel .run-section-head > .secondary-button { min-height: 30px; padding: 0 10px; font-size: var(--fs-11); }
+/* 已结束批次的下一步是创建，而不是结束当前会话：只突出安全的新建入口。 */
+.run-panel .run-section-head > .run-new-batch {
+  min-height: 34px;
+  gap: 7px;
+  padding-inline: 12px;
+  color: #fff;
+  background: color-mix(in srgb, var(--accent) 72%, #171b24);
+  border-color: var(--accent-border-strong);
+  border-radius: 9px;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / .12);
+}
+.run-new-batch svg { width: 16px; height: 16px; flex: none; }
+.run-panel .run-section-head > .run-new-batch:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 68%, #171b24); }
+.run-panel .run-section-head > .run-new-batch:disabled { color: var(--color-text-disabled); background: var(--color-background-secondary); border-color: var(--color-border-disabled); box-shadow: none; }
 /* 清单以自身宽度决定换行，不删模型参数或运行证据。 */
 .run-seats { container: run-seats / inline-size; }
 
@@ -650,18 +664,21 @@ button.group-card-member__who:hover { background: var(--surface-soft); }
 .run-seats__list { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 0 12px; margin: 0; padding: 0; list-style: none; }
 /* 所有行共享列宽：有单独配置的行也不会挤歪别的行；没有例外时中列自然为零。 */
 .run-seat {
+  position: relative;
+  isolation: isolate;
   display: grid;
   grid-template-columns: subgrid;
   grid-column: 1 / -1;
   align-items: center;
-  padding: 4px 0;
+  padding: 4px 8px;
   border-top: 1px solid var(--line-faint);
-  transition: background 140ms ease;
   animation: run-fade-in 240ms ease both;
   animation-delay: calc(var(--seat-index, 0) * 28ms);
 }
 .run-seat:first-child { border-top: 0; }
-.run-seat:hover { background: color-mix(in srgb, var(--text) 3%, transparent); }
+/* 悬停面留在行内，文字两侧各留 8px；共享列与直线分隔不受圆角影响。 */
+.run-seat::before { content: ''; position: absolute; inset: 4px 0; z-index: -1; border-radius: 9px; background: transparent; pointer-events: none; transition: background 140ms ease; }
+.run-seat:hover::before, .run-seat:focus-within::before { background: color-mix(in srgb, var(--text) 4%, transparent); }
 /* 统一配置落地：每行自上而下依次泛一层主题色光晕、模型名短暂点亮，随后淡出——确认「全都改了」。 */
 .run-seat.is-synced .run-seat__main { animation: run-seat-sync 1100ms ease both; animation-delay: calc(var(--seat-index, 0) * 45ms); }
 .run-seat.is-synced .run-seat__model strong { animation: run-seat-sync-text 1100ms ease both; animation-delay: calc(var(--seat-index, 0) * 45ms); }
@@ -691,7 +708,7 @@ button.group-card-member__who:hover { background: var(--surface-soft); }
 .run-seat__open:hover:not(:disabled) { color: var(--accent-deep); }
 .run-seat__open:disabled { cursor: default; }
 .run-seat__model { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; min-width: 0; padding: 3px 0; border: 0; border-radius: 6px; background: transparent; color: inherit; text-align: left; }
-.run-seat__model:hover:not(:disabled) { background: color-mix(in srgb, var(--text) 3%, transparent); }
+.run-seat__model:hover:not(:disabled) strong { color: var(--accent-deep); }
 .run-seat__model:disabled { cursor: default; user-select: text; }
 .run-seat__model-copy { min-width: 0; display: grid; gap: 2px; }
 .run-seat__channel { grid-area: channel; color: var(--muted); font: 600 var(--fs-11)/1 var(--mono); letter-spacing: .02em; }
@@ -897,6 +914,8 @@ button.group-card-member__who:hover { background: var(--surface-soft); }
   /* 组名跳转的点亮改为静态光环一闪即收（仍由 PoolPage 的计时移除）。 */
   .group-card.is-focused { box-shadow: 0 0 0 1px var(--accent), 0 0 0 5px var(--accent-wash); }
   .run-seat.is-synced .run-seat__main, .run-seat.is-synced .run-seat__model strong { animation: none; }
+  .run-seat::before { transition: none; }
+  .run-panel .run-section-head > .run-new-batch { transition: none; }
   .run-batch-config__value.is-swapped, .run-batch-config__value.is-swapped > strong { animation: none; }
   .run-slot, .run-slot__inner > * { transition: none; }
   .pool-groups__history > summary::before, .group-card, .group-card-member__actions, .group-composer__member, .group-composer__lead-pick { transition: none; }

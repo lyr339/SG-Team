@@ -1855,7 +1855,7 @@ button.workspace-group-chip:focus-visible { outline: 2px solid var(--accent-bord
 .menu-select__chevron { flex: none; width: 12px; height: 12px; color: var(--muted); transition: transform 140ms ease; }
 .menu-select.is-open .menu-select__chevron { transform: rotate(180deg); }
 .menu-select__menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 240; min-width: 100%; margin: 0; padding: 5px; list-style: none; background: var(--surface-solid); border: 1px solid var(--line); border-radius: 11px; box-shadow: var(--shadow-3); max-height: 224px; overflow-y: auto; }
-.menu-select__menu.is-portal { position: fixed; min-width: 0; }
+.menu-select__menu.is-portal { position: fixed; top: auto; bottom: auto; min-width: 0; }
 .menu-select__menu li[role="option"] > button { width: 100%; min-height: 30px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 9px; color: var(--text); background: none; border: 0; border-radius: 7px; font-size: var(--font-text-sm-size); text-align: left; cursor: pointer; }
 .menu-select__menu li[role="option"] > button:hover { background: var(--accent-wash); }
 .menu-select__menu li[role="option"] > button.is-selected { color: var(--accent-deep); background: var(--accent-wash); font-weight: 600; }

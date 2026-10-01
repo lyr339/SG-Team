@@ -187,6 +187,8 @@ describe('PoolPage（一个工程一个会话池；阶段 2 · 2B 起没有团�
       expect(buttonNamed('结束全部会话').disabled).toBe(true)
       expect(container.querySelector('.run-state-chip')?.textContent).toBe('批次已结束')
       expect(container.textContent).toContain('上次批次')
+      expect(buttonNamed('新建批次').classList.contains('run-new-batch')).toBe(true)
+      expect(buttonNamed('新建批次').querySelector('svg[aria-hidden="true"]')).not.toBeNull()
     })
   })
 
@@ -202,6 +204,7 @@ describe('PoolPage（一个工程一个会话池；阶段 2 · 2B 起没有团�
     it('guards "结束并新建批次" once while sessions are live; confirm opens the configurator and creating does not ask again', async () => {
       const { onCreateIndependentSessions } = await render(independentTeam(['waiting', 'waiting']))
       expect(container.textContent).not.toContain('会话数量')
+      expect(buttonNamed('结束并新建批次').classList.contains('run-new-batch')).toBe(false)
       await click(buttonNamed('结束并新建批次'))
       expect(sheet()?.textContent).toContain('新建独立批次')
       expect(sheet()?.textContent).toContain('2 个会话仍在线或待确认')

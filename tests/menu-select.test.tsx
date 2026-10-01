@@ -38,6 +38,7 @@ describe('MenuSelect（账号管线自绘下拉）', () => {
       onChange: () => {}
     })
     expect(buttonOf().textContent).toContain('选项 A')
+    expect(container!.querySelector('.menu-select__swatch')).toBeNull()
     expect(document.body.querySelector('.menu-select__menu')).toBeNull()
     expect(buttonOf().getAttribute('aria-expanded')).toBe('false')
   })
@@ -58,6 +59,7 @@ describe('MenuSelect（账号管线自绘下拉）', () => {
     expect(options.map((option) => option.querySelector('span')?.textContent)).toEqual(['选项 A', '选项 B'])
     expect(options[0]!.className).toContain('is-selected')
     expect(options[0]!.querySelector('.menu-select__check svg')).not.toBeNull()
+    expect(menu.querySelector('.menu-select__swatch')).toBeNull()
 
     await act(async () => { options[1]!.click() })
     expect(onChange).toHaveBeenCalledWith('b')
@@ -135,5 +137,17 @@ describe('MenuSelect（账号管线自绘下拉）', () => {
     expect(menu.style.width).toBe('240px')
     expect(menu.style.left).toBe('774px')
     expect(menu.querySelector('button')?.title).toBe('#7 这是一个较长的指纹浏览器窗口名称')
+  })
+
+  it('触发器靠近窗口底部时使用上方空间，不同时设置上下定位', async () => {
+    await renderSelect({ value: '90', menuMinWidth: 156, options: [{ value: '90', label: '90 天前' }], onChange: () => {} })
+    vi.spyOn(buttonOf(), 'getBoundingClientRect').mockReturnValue({
+      x: 100, y: window.innerHeight - 68, left: 100, top: window.innerHeight - 68, right: 180, bottom: window.innerHeight - 44,
+      width: 80, height: 24, toJSON: () => ({})
+    })
+    await act(async () => { buttonOf().click() })
+    const menu = document.body.querySelector<HTMLElement>('.menu-select__menu')!
+    expect(menu.style.top).toBe('')
+    expect(menu.style.bottom).toBe('74px')
   })
 })

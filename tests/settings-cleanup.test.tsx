@@ -200,6 +200,11 @@ describe('存储清理面板', () => {
 
     const select = row('chat-history').querySelector<HTMLButtonElement>('.menu-select button, button[aria-haspopup]')!
     await act(async () => { select.click() })
+    const menu = document.body.querySelector<HTMLElement>('.menu-select__menu')!
+    expect(menu.parentElement).toBe(document.body)
+    expect(menu.style.width).toBe('156px')
+    expect(menu.querySelector('.menu-select__swatch')).toBeNull()
+    expect([...menu.querySelectorAll('button > span')].map((item) => item.textContent)).toEqual(['30 天前', '90 天前', '180 天前'])
     const option = [...document.body.querySelectorAll<HTMLButtonElement>('.menu-select__menu button')].find((button) => button.textContent?.includes('30 天前'))!
     await act(async () => { option.click() })
     expect(onScan).toHaveBeenCalledWith({ chatHistoryOlderThanDays: 30 })

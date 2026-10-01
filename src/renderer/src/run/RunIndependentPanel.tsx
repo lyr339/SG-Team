@@ -119,7 +119,8 @@ export function RunIndependentPanel({
             </span>
           ) : null}
         </div>
-        <button type="button" className="secondary-button" disabled={busy} onClick={onNewBatch}>
+        <button type="button" className={`secondary-button${ended ? ' run-new-batch' : ''}`} disabled={busy} onClick={onNewBatch}>
+          {ended ? <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" /></svg> : null}
           {ended ? '新建批次' : '结束并新建批次'}
         </button>
       </header>

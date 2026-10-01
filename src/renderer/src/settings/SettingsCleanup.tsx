@@ -278,6 +278,7 @@ export function SettingsCleanup({
                     <MenuSelect
                       ariaLabel="对话历史阈值"
                       value={String(olderThanDays)}
+                      menuMinWidth={156}
                       disabled={busy}
                       options={CHAT_HISTORY_OLDER_THAN_OPTIONS.map((days) => ({ value: String(days), label: `${days} 天前` }))}
                       onChange={(value) => { const days = Number(value); setOlderThanDays(days); rescan(days) }}

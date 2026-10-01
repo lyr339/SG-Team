@@ -94,7 +94,7 @@ export function MenuSelect({ value, options, placeholder = '请选择…', disab
           setOpen((current) => !current)
         }}
       >
-        <span className="menu-select__value">{selected ? <><i className="menu-select__swatch" aria-hidden="true" />{selected.label}</> : <em>{placeholder}</em>}</span>
+        <span className="menu-select__value">{selected ? <>{selected.tone ? <i className="menu-select__swatch" aria-hidden="true" /> : null}{selected.label}</> : <em>{placeholder}</em>}</span>
         <ChevronDownIcon className="menu-select__chevron" />
       </button>
       {open && menuStyle ? createPortal(
@@ -110,7 +110,7 @@ export function MenuSelect({ value, options, placeholder = '请选择…', disab
                   setOpen(false)
                 }}
               >
-                <span><i className="menu-select__swatch" aria-hidden="true" />{option.label}</span>
+                <span>{option.tone ? <i className="menu-select__swatch" aria-hidden="true" /> : null}{option.label}</span>
                 {option.value === value ? (
                   <i className="menu-select__check" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="m3.5 8 3 3 6-6" /></svg></i>
                 ) : null}

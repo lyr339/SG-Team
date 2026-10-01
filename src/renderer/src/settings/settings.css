@@ -1209,7 +1209,7 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
   white-space: nowrap;
   transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
 }
-.storage-cleanup__button:hover:not(:disabled) { border-color: var(--accent-border); color: var(--text); }
+.storage-cleanup__button:not(.is-primary):hover:not(:disabled) { border-color: var(--accent-border); color: var(--text); }
 .storage-cleanup__button:disabled { opacity: .5; cursor: not-allowed; }
 .storage-cleanup__button.is-primary { color: var(--color-text-inverse); background: var(--color-background-inverse); border-color: var(--color-background-inverse); }
 .storage-cleanup__button.is-primary:hover:not(:disabled) { opacity: .88; }

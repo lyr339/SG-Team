@@ -41,7 +41,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
-  align-items: start;
+  align-items: center;
   padding: 9px 12px;
   color: var(--color-text-success);
   background: var(--color-background-success);
@@ -52,6 +52,8 @@
 }
 .app-update__updated > button {
   width: 22px; height: 22px;
+  display: grid;
+  place-items: center;
   padding: 0;
   color: inherit;
   background: transparent;
@@ -62,6 +64,7 @@
   opacity: .7;
 }
 .app-update__updated > button:hover { opacity: 1; background: color-mix(in srgb, currentColor 10%, transparent); }
+.app-update__updated > button:focus-visible { outline: 2px solid var(--color-ring-primary); outline-offset: 2px; }
 /* mac 脚本结果的失败态（更新失败已恢复 / 回滚失败）：同一横幅，换成危险色。 */
 .app-update__updated.is-danger {
   color: var(--color-text-danger);

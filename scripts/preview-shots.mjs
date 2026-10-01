@@ -113,6 +113,16 @@ const CLEANUP_LAYOUT_PROBE = `(() => {
   if (!section.querySelector('.storage-cleanup__chat-field button') || !section.querySelector('.toggle-switch input')) throw new Error('历史范围或压实选项丢失')
   const risk = getComputedStyle(section.querySelector('.storage-cleanup__risk'))
   if (risk.borderTopWidth !== '0px' || risk.backgroundColor !== 'rgba(0, 0, 0, 0)') throw new Error('风险标签仍是胶囊')
+  // 必须测真实悬停态：静态截图没有触发曾将暗色主按钮变成白底白字的级联冲突。
+  const button = section.querySelector('.storage-cleanup__head .is-primary'), css = getComputedStyle(button)
+  if (!button.matches(':hover')) throw new Error('未覆盖清理主按钮悬停态')
+  const luminance = colour => {
+    const rgb = colour.match(/^rgb\\((\\d+), (\\d+), (\\d+)\\)$/)
+    if (!rgb) throw new Error('主按钮前景/背景不是不透明 RGB：' + colour)
+    return rgb.slice(1).map(v => Number(v) / 255).map(v => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4).reduce((sum, v, i) => sum + v * [.2126, .7152, .0722][i], 0)
+  }
+  const fg = luminance(css.color), bg = luminance(css.backgroundColor), contrast = (Math.max(fg, bg) + .05) / (Math.min(fg, bg) + .05)
+  if (contrast < 4.5) throw new Error('清理主按钮悬停对比度不足：' + contrast.toFixed(2))
   return { items: rows.length, width: Math.round(section.getBoundingClientRect().width), noOverlap: true }
 })()`
 
@@ -1055,10 +1065,21 @@ const scenes = [
   { name: 'settings-maintenance-missing-pump', hash: 'account:maintenance', query: 'pump=missing', width: 1440, height: 900, colorScheme: 'light', storage: baseStorage({ colorMode: 'light' }), clip: null },
   // 存储清理：Cursor 已退出（全部可清，默认预选含缓存/日志；高窗一次看全八项）、勾上对话历史后的
   // 红色确认块、无可清理内容的空态。盘点 mock 有 350ms 延迟，动作前先等它落地。
+  ...['light', 'dark'].flatMap(colorScheme => [900, 450].map(height => ({
+    name: `settings-cleanup-menu-${colorScheme}${height === 450 ? '-above' : ''}`, hash: 'account:cleanup', query: 'cleanup=closed',
+    width: 1440, height, colorScheme, storage: baseStorage({ colorMode: colorScheme }), clip: '.settings-section--cleanup',
+    actions: [{ wait: 600 }, { click: '.storage-cleanup__chat-field .menu-select__button' }, { label: '日期菜单不裁剪文字', probe: `(() => {
+      const menu = document.querySelector('.menu-select__menu'), box = menu.getBoundingClientRect()
+      if (menu.querySelector('.menu-select__swatch')) throw new Error('日期选项不应带装饰色块')
+      if (box.left < 0 || box.right > innerWidth || box.top < 0 || box.bottom > innerHeight) throw new Error('菜单超出视口')
+      for (const label of menu.querySelectorAll('button > span')) if (label.scrollWidth > label.clientWidth + 1) throw new Error('日期被截断：' + label.textContent)
+      return { width: box.width, labels: [...menu.querySelectorAll('button > span')].map(node => node.textContent) }
+    })()` }]
+  }))),
   ...['light', 'dark'].map(colorScheme => ({
     name: `settings-cleanup-closed-${colorScheme}`, hash: 'account:cleanup', query: 'cleanup=closed',
     width: 1440, height: 1200, colorScheme, storage: baseStorage({ colorMode: colorScheme }), clip: '.settings-section--cleanup',
-    actions: [{ wait: 600 }, { label: '清理页排版与功能入口', probe: CLEANUP_LAYOUT_PROBE }]
+    actions: [{ wait: 600 }, { hover: '.storage-cleanup__head .is-primary' }, { label: '清理页排版、功能入口与悬停对比度', probe: CLEANUP_LAYOUT_PROBE }]
   })),
   ...['light', 'dark'].flatMap(colorScheme => [null, 380].map(sectionWidth => ({
     name: `settings-cleanup-clear-${colorScheme}${sectionWidth ? '-380' : ''}`, hash: 'account:cleanup', query: 'cleanup=closed',
@@ -1067,6 +1088,7 @@ const scenes = [
     actions: [
       { wait: 600 },
       ...(sectionWidth ? [{ eval: `document.querySelector('.settings-section--cleanup').style.width = '${sectionWidth}px'` }] : []),
+      { hover: '.storage-cleanup__head .is-primary' },
       { label: '透明与窄栏清理页', probe: CLEANUP_LAYOUT_PROBE }
     ]
   }))),

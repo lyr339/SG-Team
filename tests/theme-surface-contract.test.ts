@@ -8,8 +8,26 @@ const controls = readFileSync(join(process.cwd(), 'src/renderer/src/controls.css
 const lobby = readFileSync(join(process.cwd(), 'src/renderer/src/lobby/lobby.css'), 'utf8')
 const run = readFileSync(join(process.cwd(), 'src/renderer/src/run/run.css'), 'utf8')
 const settings = readFileSync(join(process.cwd(), 'src/renderer/src/settings/settings.css'), 'utf8')
+const update = readFileSync(join(process.cwd(), 'src/renderer/src/settings/update.css'), 'utf8')
 
 describe('theme surface contracts', () => {
+  it('insets the seat hover surface without moving shared columns and centres update notice contents', () => {
+    expect(run).toMatch(/\.run-seat\s*\{[^}]*padding:\s*4px 8px/)
+    expect(run).toMatch(/\.run-seat::before\s*\{[^}]*inset:\s*4px 0[^}]*border-radius:\s*9px[^}]*pointer-events:\s*none/)
+    expect(run).not.toMatch(/\.run-seat:hover\s*\{/)
+    expect(run).toMatch(/\.run-seat:focus-within::before/)
+    expect(update).toMatch(/\.app-update__updated\s*\{[^}]*align-items:\s*center/)
+    expect(update).toMatch(/\.app-update__updated > button\s*\{[^}]*place-items:\s*center/)
+    expect(styles).toMatch(/\.menu-select__menu\.is-portal\s*\{[^}]*top:\s*auto[^}]*bottom:\s*auto/)
+  })
+
+  it('keeps cleanup hover text scoped to secondary buttons, preserving inverse and danger colours', () => {
+    expect(settings).toMatch(/\.storage-cleanup__button:not\(\.is-primary\):hover:not\(:disabled\)\s*\{[^}]*color:\s*var\(--text\)/)
+    expect(settings).not.toMatch(/\.storage-cleanup__button:hover:not\(:disabled\)/)
+    expect(settings).toMatch(/\.storage-cleanup__button\.is-primary\s*\{[^}]*color:\s*var\(--color-text-inverse\)/)
+    expect(settings).toMatch(/\.storage-cleanup__button\.is-primary\.is-danger\s*\{[^}]*color:\s*var\(--red\)/)
+  })
+
   it('centers shared action labels explicitly and keeps process summary spacing symmetric', () => {
     const button = styles.match(/\.primary-button, \.secondary-button\s*\{([^}]*)\}/)?.[1] ?? ''
     expect(button).toContain('display: inline-flex')
