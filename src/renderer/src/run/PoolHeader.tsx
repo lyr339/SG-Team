@@ -20,9 +20,7 @@ function compactPoolName(poolName: string, workspaceName: string): string {
 }
 
 /**
- * 会话池头部：左侧是"这是什么、跑得怎样"（状态 / 工程名 / 池名 · 提示），
- * 右侧是宽度恒定的控件（打开会话、结束全部会话）。左侧吸收一切文字长度变化，
- * 右侧控件的位置与头部高度在任何状态下都不动。
+ * 运行页标题：工程与状态同排，说明只保留一行；右侧操作不随状态计数变化而移动。
  */
 export function PoolHeader({ view, busy, busyAction, onEnd, onOpenSessions }: PoolHeaderProps): React.JSX.Element {
   const pool = view.pool
@@ -36,12 +34,11 @@ export function PoolHeader({ view, busy, busyAction, onEnd, onOpenSessions }: Po
     <header className="run-header" aria-label="运行控制">
       <div className="run-header__identity">
         <div className="run-header__line">
-          <span className="run-header__eyebrow">会话池</span>
+          <h1 title={view.workspace?.path}>{workspaceName}</h1>
           <span className={`run-state-chip is-${view.state.tone}`} title={view.state.hint}>
-            <i aria-hidden="true" />{view.state.label}
+            {view.state.label}
           </span>
         </div>
-        <h1 title={view.workspace?.path}>{workspaceName}</h1>
         <small title={subline}>{subline || '\u00a0'}</small>
       </div>
 

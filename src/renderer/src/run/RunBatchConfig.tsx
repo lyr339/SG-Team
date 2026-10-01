@@ -2,7 +2,8 @@ import { useState } from 'react'
 import type { CursorModelOption, CursorModelSelection } from '../../../domain/cursor-model'
 import { cursorModelSelectionSummary, sameCursorModelSelection } from '../cursor-model-selection'
 import { CursorModelConfigDialog } from '../lobby/CursorModelConfigDialog'
-import { modelProviderClass } from '../model-provider'
+import { modelProvider, modelProviderClass } from '../model-provider'
+import { ModelProviderLogo } from '../ModelProviderLogo'
 import { LayersIcon } from '../UiIcons'
 
 export interface RunBatchConfigProps {
@@ -70,21 +71,21 @@ export function RunBatchConfig({
           // 目录不是「正在加载」——主进程每一拍都在读 Cursor 的 state.vscdb。读不到只有两种情形：
           // Cursor 还没把模型列表写回（刚登录 / 冷切换账号后要等它几十秒），或 Cursor 根本没启动、没登录。
           <>
-            <strong><span>Cursor 当前模型</span></strong>
-            <small>Cursor 尚未写入模型列表：登录或切换账号后需等几十秒；持续如此请确认 Cursor 已启动并登录</small>
+            <strong><span className="run-batch-config__name">Cursor 当前模型</span></strong>
+            <small title="登录或换号后，Cursor 写入模型列表可能需要几十秒；持续未更新请检查 Cursor 是否已启动并登录">等待 Cursor 写入模型列表</small>
           </>
         ) : uniform ? (
           <>
             <strong className={modelProviderClass(uniform.modelId, uniform.displayName)}>
-              <i className="run-batch-config__swatch" aria-hidden="true" />
-              <span>{uniform.displayName}</span>
+              <ModelProviderLogo provider={modelProvider(uniform.modelId, uniform.displayName)} />
+              <span className="run-batch-config__name" title={uniform.displayName}>{uniform.displayName}</span>
               {tag ? <em className="run-batch-config__tag" title={tag.title}>{tag.label}</em> : null}
             </strong>
             <small>{cursorModelSelectionSummary(uniform, option)}</small>
           </>
         ) : (
           <>
-            <strong><span>各席配置不同</span></strong>
+            <strong><span className="run-batch-config__name">各席配置不同</span></strong>
             <small>{spread}</small>
           </>
         )}

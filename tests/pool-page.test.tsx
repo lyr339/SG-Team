@@ -30,7 +30,7 @@ describe('PoolPage（一个工程一个会话池；阶段 2 · 2B 起没有团�
 
   const buttons = (): HTMLButtonElement[] => [...container.querySelectorAll<HTMLButtonElement>('button')]
   const buttonNamed = (label: string): HTMLButtonElement => {
-    const button = buttons().find((candidate) => candidate.textContent?.trim() === label)
+    const button = buttons().find((candidate) => (candidate.getAttribute('aria-label') ?? candidate.textContent?.trim()) === label)
     if (!button) throw new Error(`button "${label}" not found in: ${buttons().map((b) => b.textContent?.trim()).join(' | ')}`)
     return button
   }
@@ -64,7 +64,7 @@ describe('PoolPage（一个工程一个会话池；阶段 2 · 2B 起没有团�
   describe('头部与席位', () => {
     it('renders the pool with per-seat state labels and a batch summary; there is no mode switch', async () => {
       await render(independentTeam(['waiting', 'working', 'offline', 'unconfirmed']))
-      expect(container.querySelector('.run-header__eyebrow')?.textContent).toBe('会话池')
+      expect(container.querySelector('.run-header h1')?.textContent).toBe(detected.name)
       expect(container.querySelector('.run-mode-switch')).toBeNull()
       expect(container.querySelector('.run-state-chip')?.textContent).toBe('待命 1 · 执行中 1')
       const badges = [...container.querySelectorAll('.run-seat__badge')].map((node) => node.className.replace('run-seat__badge ', ''))
@@ -82,6 +82,56 @@ describe('PoolPage（一个工程一个会话池；阶段 2 · 2B 起没有团�
       expect(container.querySelector('.run-state-chip')?.textContent).toBe('待命 2/2')
       expect(container.querySelector('.run-batch__count')?.textContent).toBe('2/ 2 在岗')
       expect(buttons().some((button) => button.textContent?.startsWith('补齐会话'))).toBe(false)
+    })
+
+    it('includes waiting for the user in the batch summary without counting offline or unconfirmed seats as on duty', async () => {
+      const team = independentTeam(['waiting', 'working', 'working', 'offline', 'unconfirmed'])
+      team.members[2]!.runtime!.awaitingUser = true
+      await render(team)
+      expect(container.querySelector('.run-batch__count')?.textContent).toBe('3/ 5 在岗')
+      const counts = Object.fromEntries([...container.querySelectorAll('.run-batch__breakdown div')].map((item) => [item.querySelector('dt')?.textContent, item.querySelector('dd')?.textContent]))
+      expect(counts).toEqual({ 待命: '1', 执行中: '1', 等待回答: '1', 离线: '1', 待确认: '1' })
+      expect(container.querySelectorAll('.run-seat')).toHaveLength(5)
+    })
+
+    it('keeps an ended batch read-only and never fills historical rows with the current Cursor model', async () => {
+      const team = independentTeam(['offline', 'offline'], 'completed')
+      team.members[0]!.slot.modelSelection = {
+        modelId: 'historical-model', displayName: '历史保留模型', maxMode: true,
+        parameters: [{ id: 'context', value: '1m' }]
+      }
+      const handlers = await render(team, { cursorModels: [] })
+      expect([...container.querySelectorAll('.run-seat__model strong')].map((item) => item.textContent)).toEqual(['历史保留模型', '未记录模型'])
+      expect(container.querySelector('.run-seat__model small')?.textContent).toBe('context 1m · MAX Mode On')
+      expect(container.querySelector('.run-seat__model')?.getAttribute('aria-description')).not.toContain('请重新选择')
+      const configure = container.querySelector<HTMLButtonElement>('[aria-label="配置 CH-1 会话"]')!
+      expect(configure.disabled).toBe(true)
+      await click(configure)
+      expect(document.querySelector('.cursor-model-dialog')).toBeNull()
+      expect(handlers.onPersistModelSelection).not.toHaveBeenCalled()
+    })
+
+    it('closes the previous batch model editor when the run identity changes', async () => {
+      const team = independentTeam(['waiting'])
+      await render(team)
+      await click(container.querySelector<HTMLButtonElement>('[aria-label="配置 CH-1 会话"]')!)
+      expect(document.querySelector('.cursor-model-dialog')).not.toBeNull()
+      const next = structuredClone(team)
+      next.activeRun!.id = 'run:replacement'
+      await render(next)
+      expect(document.querySelector('.cursor-model-dialog')).toBeNull()
+      expect(container.querySelectorAll('.run-seat')).toHaveLength(1)
+    })
+
+    it('opens an existing conversation from its name without opening the model editor; drafts have no conversation links', async () => {
+      const onOpenSession = vi.fn()
+      const handlers = await render(independentTeam(['waiting', 'offline']), { onOpenSession })
+      await click(container.querySelector<HTMLButtonElement>('[aria-label="打开 CH-2 会话"]')!)
+      expect(onOpenSession).toHaveBeenCalledWith('2')
+      expect(document.querySelector('.cursor-model-dialog')).toBeNull()
+      expect(handlers.onPersistModelSelection).not.toHaveBeenCalled()
+      await render(emptyTeamControlSnapshot(), { onOpenSession })
+      expect(container.querySelector('.run-seat__open')).toBeNull()
     })
   })
 
@@ -136,7 +186,7 @@ describe('PoolPage（一个工程一个会话池；阶段 2 · 2B 起没有团�
       await render(independentTeam(['waiting'], 'completed'))
       expect(buttonNamed('结束全部会话').disabled).toBe(true)
       expect(container.querySelector('.run-state-chip')?.textContent).toBe('批次已结束')
-      expect(container.textContent).toContain('本批次已结束，可以直接开始新批次')
+      expect(container.textContent).toContain('上次批次')
     })
   })
 
@@ -161,11 +211,11 @@ describe('PoolPage（一个工程一个会话池；阶段 2 · 2B 起没有团�
       await click(buttonNamed('结束并新建批次'))
       await click(buttonNamed('确认新建'))
       expect(container.textContent).toContain('会话数量')
-      expect(container.querySelector('.run-slot.is-open .run-banner')?.textContent).toContain('正在配置新的独立批次：创建后当前独立批次结束')
+      expect(container.querySelector('.run-slot.is-open .run-banner')?.textContent).toContain('配置新批次：创建后替换当前批次')
       // 头部本身不变：状态芯片仍是当前运行的。
       expect(container.querySelector('.run-header .run-state-chip')?.textContent).toBe('待命 2/2')
       // 数量接着上一批（2 席）来。
-      await click(buttonNamed('创建 2 个独立会话'))
+      await click(buttonNamed('创建 2 个会话'))
       expect(sheet()).toBeNull()
       expect(onCreateIndependentSessions).toHaveBeenCalledTimes(1)
       expect(onCreateIndependentSessions.mock.calls[0]?.[0]).toMatchObject({ workspacePath: detected.path })
@@ -186,8 +236,8 @@ describe('PoolPage（一个工程一个会话池；阶段 2 · 2B 起没有团�
       const { onCreateIndependentSessions, onLaunchAgentSessions } = await render(independentTeam(['offline'], 'completed'))
       await click(buttonNamed('新建批次'))
       expect(sheet()).toBeNull()
-      expect(container.querySelector('.run-slot.is-open .run-banner')?.textContent).toContain('在下方选好数量与模型后创建')
-      await click(buttonNamed('创建 1 个独立会话'))
+      expect(container.querySelector('.run-slot.is-open .run-banner')?.textContent).toContain('选择数量和模型后创建')
+      await click(buttonNamed('创建 1 个会话'))
       expect(onCreateIndependentSessions).toHaveBeenCalledTimes(1)
       expect(onLaunchAgentSessions).not.toHaveBeenCalled()
     })
@@ -201,7 +251,7 @@ describe('PoolPage（一个工程一个会话池；阶段 2 · 2B 起没有团�
       await click(buttonNamed('确认新建'))
       expect(container.querySelector('.run-field__value code')?.textContent).toBe('/projects/b')
       expect(container.textContent).toContain('Cursor 已切换工程：新批次将创建到「新工程 B」')
-      await click(buttonNamed('创建 1 个独立会话'))
+      await click(buttonNamed('创建 1 个会话'))
       expect(onCreateIndependentSessions).toHaveBeenCalledWith(expect.objectContaining({ workspacePath: '/projects/b' }))
     })
 
@@ -222,13 +272,13 @@ describe('PoolPage（一个工程一个会话池；阶段 2 · 2B 起没有团�
       await click(container.querySelector<HTMLButtonElement>('.run-stepper button[aria-label="减少"]')!)
       expect(field().value).toBe('1')
       expect(container.querySelector<HTMLButtonElement>('.run-stepper button[aria-label="减少"]')?.disabled).toBe(true)
-      expect(buttonNamed('创建 1 个独立会话')).toBeTruthy()
+      expect(buttonNamed('创建 1 个会话')).toBeTruthy()
       expect(container.querySelectorAll('.run-seat')).toHaveLength(1)
 
       // 直接输入：范围内的数字立即生效，不用点十几次。
       await typeCount('12')
       expect(container.querySelectorAll('.run-seat')).toHaveLength(12)
-      expect(buttonNamed('创建 12 个独立会话')).toBeTruthy()
+      expect(buttonNamed('创建 12 个会话')).toBeTruthy()
       // 输入过程中的空值不钳回去，离开输入框才回到当前数量。
       await typeCount('')
       expect(field().value).toBe('')
@@ -239,7 +289,7 @@ describe('PoolPage（一个工程一个会话池；阶段 2 · 2B 起没有团�
       await typeCount('99')
       await act(async () => field().blur())
       expect(field().value).toBe('16')
-      expect(buttonNamed('创建 16 个独立会话')).toBeTruthy()
+      expect(buttonNamed('创建 16 个会话')).toBeTruthy()
     })
 
   })
@@ -258,7 +308,7 @@ describe('PoolPage（一个工程一个会话池；阶段 2 · 2B 起没有团�
       return team
     }
     const batchRow = (): HTMLElement | null => container.querySelector('.run-batch-config')
-    const batchModel = (): string | undefined => container.querySelector('.run-batch-config__value strong > span')?.textContent ?? undefined
+    const batchModel = (): string | undefined => container.querySelector('.run-batch-config__name')?.textContent ?? undefined
     const batchSummary = (): string | undefined => container.querySelector('.run-batch-config__value > small')?.textContent ?? undefined
     const batchNote = (): string | null => container.querySelector('.run-batch-config__note')?.textContent ?? null
     const batchTag = (): string | null => container.querySelector('.run-batch-config__tag')?.textContent ?? null
@@ -307,7 +357,7 @@ describe('PoolPage（一个工程一个会话池；阶段 2 · 2B 起没有团�
       expect(seatSummaries()).toEqual(Array(5).fill(COMPOSER_SLOW))
       expect(batchAction().getAttribute('aria-label')).toBe('修改全部 5 个席位的会话配置')
 
-      await click(buttonNamed('创建 5 个独立会话'))
+      await click(buttonNamed('创建 5 个会话'))
       const sessions = onCreateIndependentSessions.mock.calls[0]?.[0].sessions ?? []
       expect(sessions).toHaveLength(5)
       expect(sessions.map((session) => session.modelSelection?.parameters.find((parameter) => parameter.id === 'fast')?.value)).toEqual(Array(5).fill('false'))
@@ -400,7 +450,7 @@ describe('PoolPage（一个工程一个会话池；阶段 2 · 2B 起没有团�
       await click(buttonNamed('结束并新建批次'))
       await click(buttonNamed('确认新建'))
       expect(container.querySelector<HTMLInputElement>('.run-stepper input')?.value).toBe('5')
-      await click(buttonNamed('创建 5 个独立会话'))
+      await click(buttonNamed('创建 5 个会话'))
       expect(onCreateIndependentSessions.mock.calls[0]?.[0].sessions).toHaveLength(5)
     })
 
@@ -421,7 +471,7 @@ describe('PoolPage（一个工程一个会话池；阶段 2 · 2B 起没有团�
       expect(batchTag()).toBe('沿用上次')
       expect(overrideChips()).toHaveLength(0)
 
-      await click(buttonNamed('创建 3 个独立会话'))
+      await click(buttonNamed('创建 3 个会话'))
       const sessions = onCreateIndependentSessions.mock.calls[0]?.[0].sessions ?? []
       expect(sessions.map((session) => session.modelSelection?.modelId)).toEqual(Array(3).fill('claude-fable-5'))
     })
@@ -493,25 +543,25 @@ describe('PoolPage（一个工程一个会话池；阶段 2 · 2B 起没有团�
   describe('无活跃运行', () => {
     it('goes straight to the batch configurator and creates without any confirmation', async () => {
       const { onCreateIndependentSessions } = await render(emptyTeamControlSnapshot())
-      expect(container.textContent).toContain('开始一次运行')
-      expect(container.textContent).toContain('Cursor 当前打开的工程')
+      expect(container.textContent).toContain('新建会话批次')
+      expect(container.textContent).toContain('选择工程、数量与模型')
       expect(container.textContent).not.toContain('旧团队运行已归档')
       expect(container.querySelector('.run-header')).toBeNull()
       expect(container.textContent).toContain('会话数量')
       expect(container.querySelectorAll('.run-seat')).toHaveLength(3)
-      await click(buttonNamed('创建 3 个独立会话'))
+      await click(buttonNamed('创建 3 个会话'))
       expect(sheet()).toBeNull()
       expect(onCreateIndependentSessions).toHaveBeenCalledTimes(1)
     })
 
     it('treats an archived legacy team run as no run: start page with one explanatory note, creating asks nothing (2B)', async () => {
       const { onCreateIndependentSessions, onEndActiveRun } = await render(teamRun('waiting', 'completed'))
-      expect(container.textContent).toContain('开始一次运行')
+      expect(container.textContent).toContain('新建会话批次')
       expect(container.querySelector('.run-start__note')?.textContent).toContain('旧团队运行已归档')
       expect(container.querySelector('.run-start__note')?.textContent).toContain('独立批次')
       expect(container.querySelector('.run-header')).toBeNull()
       expect(container.textContent).not.toContain('主控协调')
-      await click(buttonNamed('创建 3 个独立会话'))
+      await click(buttonNamed('创建 3 个会话'))
       expect(sheet()).toBeNull()
       expect(onCreateIndependentSessions).toHaveBeenCalledTimes(1)
       expect(onEndActiveRun).not.toHaveBeenCalled()
@@ -520,7 +570,7 @@ describe('PoolPage（一个工程一个会话池；阶段 2 · 2B 起没有团�
     it('waits for a workspace before offering the seats when Cursor has no project open', async () => {
       await render(emptyTeamControlSnapshot(), { detectedWorkspace: undefined })
       expect(container.textContent).toContain('先在 Cursor 中打开一个工程')
-      expect(container.textContent).toContain('Cursor 工程识别完成后即可配置独立会话')
+      expect(container.textContent).toContain('选择工程后即可配置会话')
       expect(buttons().some((button) => button.textContent?.startsWith('创建'))).toBe(false)
     })
   })

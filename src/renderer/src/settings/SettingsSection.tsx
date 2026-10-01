@@ -1,4 +1,5 @@
 interface SettingsSectionProps {
+  className?: string
   /** 区块标题（如「已保存账号」）。 */
   title: string
   /** 一句功能说明，陈述它能做什么；无说明时省略。 */
@@ -14,9 +15,9 @@ interface SettingsSectionProps {
  * 设置分组内的区块外壳：标题 + 说明 + 卡片内容。
  * 视觉对齐设计系统——边框优先、圆角 9-17px、阴影仅 hairline。
  */
-export function SettingsSection({ title, description, descriptionTitle, aside, children }: SettingsSectionProps): React.JSX.Element {
+export function SettingsSection({ className, title, description, descriptionTitle, aside, children }: SettingsSectionProps): React.JSX.Element {
   return (
-    <section className="settings-section">
+    <section className={`settings-section${className ? ` ${className}` : ''}`}>
       <header className="settings-section__head">
         <span className="settings-section__title">
           <strong>{title}</strong>

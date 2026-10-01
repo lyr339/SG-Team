@@ -61,7 +61,7 @@ function windowBindingOptions(
 /**
  * 账号分组：登录一致性状态行 + 已保存账号列表。
  *
- * 列表一账号一行，行是名册式的两行文本：首行邮箱（点击设为当前）+ 当前胶囊，
+ * 列表一账号一行，行是名册式的两行文本：首行邮箱（点击设为当前）+ 当前轻标识，
  * 次行 Token 与元信息 chip（档位 / 待对齐 / 窗口绑定）；头像跨两行，操作列右缘锚定。
  * 元信息含可交互控件（刷新、下拉），所以不在身份按钮之内。
  * 处理器、禁用条件与文案继承自原 LobbyAccountTile；二次确认收成「同一时刻只问一件事」
@@ -241,6 +241,7 @@ export function SettingsAccounts({
                   >
                     <strong>{account.label}</strong>
                     <em className={account.active ? 'account-row__current' : 'account-row__select-hint'}>
+                      {account.active ? <svg aria-hidden="true" viewBox="0 0 16 16"><path d="m3.5 8 3 3 6-6" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg> : null}
                       {account.active ? '当前' : '设为当前'}
                     </em>
                   </button>

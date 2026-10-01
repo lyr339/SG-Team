@@ -1,6 +1,6 @@
 /* ============================================================
    拾光 · 运行页（会话池）
-   一个工程一个会话池：头部（工程 / 状态 / 结束）→ 批次面板 + 席位区 → 协作组卡片网格。
+   工程标题 → 同一阅读面的批次 / 会话清单 → 协作组。按内容宽度重排，不再拆成高矮悬殊的两张卡。
    与大厅同一套 Claude 式语言：三层字号、两级字重、hairline 边框、克制阴影、一个强调色。
    ============================================================ */
 
@@ -16,7 +16,7 @@
 .run-page__inner {
   display: grid;
   align-content: start;
-  max-width: 1180px;
+  max-width: 1200px;
   margin: 0 auto;
   padding: 16px 20px 32px;
 }
@@ -38,7 +38,7 @@
 .run-slot.is-open .run-slot__inner > * { opacity: 1; transition: opacity 200ms ease 60ms; }
 
 /* ---------- 共用：焦点环 / 按压反馈 ---------- */
-.run-page :is(button, input, textarea, [role="radio"]):focus-visible {
+.run-page :is(button, input, textarea, summary, [role="radio"]):focus-visible {
   outline: 2px solid var(--accent-border-strong);
   outline-offset: 2px;
 }
@@ -52,33 +52,32 @@
 }
 
 /* ---------- 共用：卡片 / 节标题 / 链接按钮 / 反馈 ---------- */
-.run-card,
-.run-panel,
-.run-seats,
-.run-header,
-.run-start,
+.run-body,
 .pool-groups {
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: 12px;
   box-shadow: var(--shadow-hairline);
 }
-html[data-card-transparency="clear"] :is(.run-panel, .run-seats, .run-header, .run-start, .pool-groups) {
-  background: color-mix(in srgb, var(--surface-solid) 30%, transparent);
+html[data-card-transparency="clear"] :is(.run-body, .pool-groups) {
+  background: color-mix(in srgb, var(--surface-solid) 74%, transparent);
   border-color: var(--line-strong);
-  backdrop-filter: blur(14px) saturate(115%);
+  backdrop-filter: blur(14px);
 }
 
 .run-section-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   min-width: 0;
+  flex-wrap: wrap;
+  line-height: 20px;
 }
+.run-section-head__title { min-width: 0; display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; }
 .run-section-head strong { font-size: var(--fs-13); font-weight: 650; letter-spacing: 0.01em; }
 .run-section-head span,
-.run-section-head small { overflow: hidden; color: var(--muted); font-size: var(--fs-11); text-overflow: ellipsis; white-space: nowrap; }
+.run-section-head small { min-width: 0; color: var(--muted); font-size: var(--fs-11); line-height: 20px; }
 
 .run-link {
   padding: 4px 8px;
@@ -139,34 +138,25 @@ html[data-card-transparency="clear"] :is(.run-panel, .run-seats, .run-header, .r
 .run-empty {
   display: grid;
   place-items: center;
-  min-height: 220px;
-  padding: 24px;
+  min-height: 90px;
+  padding: 20px 16px;
   color: var(--muted);
   font-size: var(--fs-12);
-  border: 1px dashed var(--line-strong);
-  border-radius: 16px;
+  line-height: 1.5;
 }
 
-/* ---------- 头部 ----------
-   左：信息块（模式 · 状态 / 工程名 / 运行名 · 提示）三行定高，吸收所有文字长度变化；
-   右：控件组（模式切换 / 打开会话 / 结束），文案与宽度恒定，位置在任何状态下都不动。 */
+/* ---------- 工程标题与操作：标题层不再另套卡片 ---------- */
 .run-header {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   column-gap: 24px;
-  padding: 16px 22px;
+  min-height: 72px;
+  padding: 8px 0;
 }
 
 .run-header__identity { display: grid; gap: 3px; min-width: 0; }
-.run-header__line { display: flex; align-items: center; gap: 10px; min-height: 26px; }
-.run-header__eyebrow {
-  color: var(--accent-deep);
-  font-size: var(--fs-11);
-  font-weight: 650;
-  letter-spacing: 0.04em;
-  white-space: nowrap;
-}
+.run-header__line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-height: 26px; }
 .run-header__identity h1 {
   margin: 0;
   overflow: hidden;
@@ -187,7 +177,7 @@ html[data-card-transparency="clear"] :is(.run-panel, .run-seats, .run-header, .r
   white-space: nowrap;
 }
 
-.run-header__controls { display: flex; align-items: center; gap: 14px; }
+.run-header__controls { display: flex; align-items: center; justify-self: end; gap: 14px; }
 
 /* 横幅：配置中的说明与「放弃」，住在头部下方的折叠插槽里，不撑头部。 */
 .run-banner {
@@ -220,25 +210,16 @@ html[data-card-transparency="clear"] :is(.run-panel, .run-seats, .run-header, .r
 .run-banner.is-amber > button:hover:not(:disabled) { background: var(--amber-soft); }
 
 .run-state-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 5px 11px 5px 9px;
+  min-width: 0;
   color: var(--text-soft);
-  background: var(--surface-soft);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  font-size: var(--fs-12);
-  font-weight: 600;
+  font-size: var(--fs-11);
+  font-weight: 500;
+  line-height: 18px;
   white-space: nowrap;
 }
-.run-state-chip i { width: 7px; height: 7px; background: var(--faint); border-radius: 50%; }
-.run-state-chip.is-active { color: var(--color-text-success); background: var(--color-background-success); border-color: color-mix(in srgb, var(--color-border-success) 55%, transparent); }
-.run-state-chip.is-active i { background: var(--color-text-success); box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-text-success) 22%, transparent); }
-.run-state-chip.is-progress { color: var(--blue); background: var(--blue-soft); border-color: var(--blue-border-soft); }
-.run-state-chip.is-progress i { background: var(--blue); animation: run-pulse 1.6s ease-in-out infinite; }
-.run-state-chip.is-warning { color: var(--amber); background: var(--amber-soft); border-color: var(--amber-border-soft); }
-.run-state-chip.is-warning i { background: var(--amber); }
+.run-state-chip.is-active { color: var(--color-text-success); }
+.run-state-chip.is-progress { color: var(--blue); }
+.run-state-chip.is-warning { color: var(--amber); }
 .run-state-chip.is-muted { color: var(--muted); }
 
 .run-header__actions { display: flex; gap: 8px; align-items: center; justify-content: end; }
@@ -263,33 +244,28 @@ html[data-card-transparency="clear"] :is(.run-panel, .run-seats, .run-header, .r
 .run-header__ghost.is-danger:hover:not(:disabled) { background: var(--red-soft); border-color: var(--red-border); }
 .run-header__ghost:disabled { opacity: 0.42; }
 
-/* ---------- 正文两栏 ---------- */
+/* ---------- 批次与清单：一个阅读面，共用左右对齐线 ---------- */
 .run-body {
   display: grid;
-  grid-template-columns: minmax(300px, 400px) minmax(0, 1fr);
-  gap: 14px;
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
+  overflow: hidden;
 }
 .run-body > * { animation: run-fade-in 220ms ease both; }
 
 .run-panel,
 .run-seats {
   display: grid;
-  gap: 14px;
+  gap: 12px;
   align-content: start;
-  padding: 18px 20px 16px;
+  padding: 16px;
 }
-/* 席位卡以自身宽度决定行布局：两栏正文里变窄时把模型摘要折到名字下方，而不是砍掉。 */
+.run-body:has(.run-seats) .run-panel { border-bottom: 1px solid var(--line); }
+.run-panel.is-composing { grid-template-columns: minmax(0, .45fr) minmax(0, .55fr); column-gap: 24px; }
+.run-panel.is-composing > :is(.run-section-head, .run-field--workspace, .run-callout) { grid-column: 1 / -1; }
+.run-panel .run-section-head > .secondary-button { min-height: 30px; padding: 0 10px; font-size: var(--fs-11); }
+/* 清单以自身宽度决定换行，不删模型参数或运行证据。 */
 .run-seats { container: run-seats / inline-size; }
-
-.run-panel__actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-  padding-top: 4px;
-}
-.run-panel__hint { flex-basis: 100%; color: var(--muted); font-size: var(--fs-11); line-height: 1.5; }
 
 /* ---------- 独立：字段 / 步进器 / 批次概况 ---------- */
 .run-field {
@@ -298,11 +274,11 @@ html[data-card-transparency="clear"] :is(.run-panel, .run-seats, .run-header, .r
   align-items: center;
   gap: 12px;
 }
-.run-field__label { color: var(--muted); font-size: var(--fs-11); font-weight: 600; }
+.run-field__label { color: var(--muted); font-size: var(--fs-11); font-weight: 500; }
 .run-field__value { display: grid; gap: 2px; min-width: 0; }
 .run-field__value strong { overflow: hidden; font-size: var(--fs-13); font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .run-field__value code { overflow: hidden; color: var(--muted); font: 500 var(--fs-11)/1.4 var(--mono); text-overflow: ellipsis; white-space: nowrap; }
-.run-field__value small { color: var(--muted); font-size: var(--fs-11); }
+.run-field__value small { color: var(--muted); font-size: var(--fs-11); line-height: 1.5; overflow-wrap: anywhere; }
 
 .run-stepper {
   display: inline-grid;
@@ -345,38 +321,29 @@ html[data-card-transparency="clear"] :is(.run-panel, .run-seats, .run-header, .r
 .run-stepper input:disabled { color: var(--faint); }
 @keyframes run-pop { from { transform: scale(0.82); opacity: 0.4; } to { transform: none; opacity: 1; } }
 
-.run-batch { display: flex; align-items: flex-end; gap: 22px; }
+.run-batch { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 24px; }
 .run-batch__count { display: inline-flex; align-items: baseline; gap: 5px; }
-.run-batch__count b { font-size: 30px; font-weight: 650; letter-spacing: -0.02em; line-height: 1; }
+.run-batch__count b { font: 600 24px/1.2 var(--font-numeric); font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
 .run-batch__count small { color: var(--muted); font-size: var(--fs-12); }
-.run-batch__breakdown { display: grid; grid-auto-flow: column; gap: 16px; margin: 0; }
-.run-batch__breakdown div { display: grid; gap: 2px; }
+.run-batch__breakdown { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0; }
+.run-batch__breakdown div { display: inline-flex; align-items: baseline; gap: 6px; }
 .run-batch__breakdown dt { color: var(--muted); font-size: var(--fs-11); }
-.run-batch__breakdown dd { margin: 0; font-size: var(--fs-15); font-weight: 650; font-variant-numeric: tabular-nums; }
+.run-batch__breakdown dd { margin: 0; font: 600 var(--fs-12)/1.5 var(--font-numeric); font-variant-numeric: tabular-nums; }
 
 /* ---------- 独立：会话配置（批次属性） ----------
    与目标工程、会话数量同一套「标签 / 值 / 动作」语法：厂商色块 + 模型名（+「Cursor 当前」标）/ 参数摘要 / 修改。
    各席分叉时值变成分布描述，动作变成「统一」。 */
-/* 名字一行放不下「Cursor 当前」标时，标折到下一行，而不是把模型名截成省略号。 */
-.run-batch-config__value strong { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 7px; min-width: 0; }
-.run-batch-config__value strong > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.run-batch-config__swatch {
-  flex: none;
-  width: 9px;
-  height: 9px;
-  background: var(--model-provider-fg, var(--muted));
-  border: 1px solid var(--model-provider-border, var(--line));
-  border-radius: 3px;
-  box-shadow: 0 0 0 2px var(--model-provider-bg, var(--surface-soft));
-}
+/* 厂商标识复用会话栏资产；模型名可换行，来源说明不再套胶囊。 */
+.run-batch-config__value strong { display: flex; align-items: flex-start; gap: 4px 7px; min-width: 0; }
+.run-batch-config__value strong > .run-batch-config__name { min-width: 0; overflow-wrap: anywhere; white-space: normal; }
+.run-batch-config .model-logo-slot, .run-seat .model-logo-slot { width: 18px; height: 18px; flex: 0 0 18px; color: var(--model-provider-fg, var(--text-soft)); }
+.run-batch-config .model-logo-slot::after, .run-seat .model-logo-slot::after { display: none; }
+.run-batch-config .model-logo, .run-seat .model-logo { width: 15px; height: 15px; }
 .run-batch-config__tag {
   flex: none;
-  padding: 0 6px;
+  padding: 0;
   color: var(--muted);
-  background: var(--surface-soft);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  font-size: 11px;
+  font-size: var(--fs-11);
   font-style: normal;
   font-weight: 600;
   line-height: 1.6;
@@ -396,12 +363,13 @@ html[data-card-transparency="clear"] :is(.run-panel, .run-seats, .run-header, .r
 /* ---------- 会话池 · 协作组 ----------
    页宽的组卡片网格（`PoolPage` 正文两栏之下）：名称 / 目标 / 成员 / lead / 任务计数。
    状态色只落在 7px 状态点、pill 与卡片描边上；attention 用琥珀描边，解散用虚线 + 降不透明度。 */
-.pool-groups { display: grid; gap: 14px; align-content: start; padding: 18px 20px 16px; }
+.pool-groups { display: grid; gap: 12px; align-content: start; padding: 16px; }
+.pool-groups__empty { margin: 0; padding: 6px 0; color: var(--muted); font-size: var(--fs-12); line-height: 1.5; }
 /* 标题与「建组」不折行；摘要文字吸收全部宽度变化。 */
 .pool-groups > .run-section-head { align-items: center; }
 .pool-groups > .run-section-head strong, .pool-groups > .run-section-head .run-link { flex: none; white-space: nowrap; }
 .pool-groups > .run-section-head span { flex: 1 1 auto; }
-.pool-groups__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 12px; }
+.pool-groups__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 330px), 1fr)); gap: 12px; }
 /* 历史（已解散的组）：一行可展开的摘要，chevron 表达开合，不用按钮外观。 */
 .pool-groups__history > summary {
   display: inline-flex;
@@ -465,17 +433,14 @@ html[data-card-transparency="clear"] .group-card { background: color-mix(in srgb
 .group-card__title strong { overflow: hidden; font-size: var(--fs-13); font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .group-card__tag {
   flex: none;
-  padding: 1px 8px;
+  padding: 0;
   color: var(--muted);
-  background: var(--surface-soft);
-  border: 1px solid var(--line);
-  border-radius: 999px;
   font-size: var(--fs-11);
   font-style: normal;
   font-weight: 600;
   white-space: nowrap;
 }
-.group-card__tag.is-warning { color: var(--amber); background: var(--amber-soft); border-color: var(--amber-border-soft); }
+.group-card__tag.is-warning { color: var(--amber); }
 .group-card__tag.is-muted { color: var(--faint); }
 .group-card__head-actions { display: flex; flex: none; align-items: center; gap: 2px; }
 .group-card__head-actions .account-actions-menu__trigger { margin-right: 0; }
@@ -545,7 +510,7 @@ button.group-card-member__who:hover { background: var(--surface-soft); }
   background: var(--accent-wash);
   border: 1px solid var(--accent-border-soft);
   border-radius: 999px;
-  font-size: 10px;
+  font-size: 12px;
   font-style: normal;
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -559,25 +524,22 @@ button.group-card-member__who:hover { background: var(--surface-soft); }
 .group-card-member__actions .run-link { padding: 2px 7px; font-size: var(--fs-11); }
 .group-card__empty { margin: 0; color: var(--faint); font-size: var(--fs-12); }
 
-.group-card__foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 10px; border-top: 1px solid var(--line-faint); }
+.group-card__foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding-top: 10px; border-top: 1px solid var(--line-faint); }
 .group-card__lead { display: flex; flex: 1 1 auto; align-items: center; gap: 8px; min-width: 0; max-width: 260px; color: var(--muted); font-size: var(--fs-11); font-weight: 600; }
 .group-card__lead > span { flex: none; }
 .group-card__lead .menu-select__button { min-height: 28px; font-size: var(--fs-11); }
-.group-card__counters { display: flex; flex: none; gap: 6px; margin-left: auto; }
+.group-card__counters { display: flex; flex-wrap: wrap; min-width: 0; gap: 6px; margin-left: auto; }
 .group-card__counters em {
-  padding: 1px 7px;
+  padding: 0;
   color: var(--muted);
-  background: var(--surface-soft);
-  border: 1px solid var(--line);
-  border-radius: 999px;
   font-size: var(--fs-11);
   font-style: normal;
   font-weight: 600;
   white-space: nowrap;
 }
-.group-card__counters em.is-open { color: var(--blue); background: var(--blue-soft); border-color: var(--blue-border-soft); }
-.group-card__counters em.is-review { color: var(--amber); background: var(--amber-soft); border-color: var(--amber-border-soft); }
-.group-card__counters em.is-done { color: var(--color-text-success); background: var(--color-background-success); border-color: color-mix(in srgb, var(--color-border-success) 55%, transparent); }
+.group-card__counters em.is-open { color: var(--blue); }
+.group-card__counters em.is-review { color: var(--amber); }
+.group-card__counters em.is-done { color: var(--color-text-success); }
 
 /* ---------- 建组 / 加人抽屉 ----------
    右侧滑入（220ms），与 inspector 同一动效预算；遮罩点击与 Esc 关闭，忙时锁定。
@@ -594,6 +556,7 @@ button.group-card-member__who:hover { background: var(--surface-soft); }
 }
 .group-composer {
   display: grid;
+  container: group-composer / inline-size;
   grid-template-rows: auto minmax(0, 1fr) auto;
   width: min(460px, 100%);
   height: 100%;
@@ -650,25 +613,24 @@ button.group-card-member__who:hover { background: var(--surface-soft); }
 .group-composer__member-who small { color: var(--muted); font-size: var(--fs-11); }
 .group-composer__member > .menu-select { flex: none; width: 132px; }
 .group-composer__member .menu-select__button { min-height: 28px; font-size: var(--fs-11); }
-/* lead 单选：pill 即控件，原生 radio 视觉隐藏但保留键盘可达；选中态用强调色描边 + 淡底。 */
+/* 主控选择保留原生单选语义；小圆与文字足够表达选择，不再铺大胶囊。 */
 .group-composer__lead-pick {
   position: relative;
   display: inline-flex;
   flex: none;
   align-items: center;
   gap: 5px;
-  padding: 3px 9px;
+  padding: 3px 5px;
   color: var(--muted);
-  border: 1px solid transparent;
-  border-radius: 999px;
+  border-radius: 5px;
   font-size: var(--fs-11);
   font-weight: 600;
   cursor: pointer;
   transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
 }
-.group-composer__lead-pick input { position: absolute; width: 1px; height: 1px; margin: 0; opacity: 0; pointer-events: none; }
+.group-composer__lead-pick input { width: 14px; height: 14px; flex: none; margin: 0; accent-color: var(--accent); }
 .group-composer__lead-pick:hover:not(:has(input:disabled)) { color: var(--text); background: var(--surface-soft); }
-.group-composer__lead-pick.is-checked { color: var(--accent-deep); background: var(--accent-wash); border-color: var(--accent-border-soft); }
+.group-composer__lead-pick.is-checked { color: var(--text); }
 .group-composer__lead-pick:has(input:disabled) { opacity: 0.4; cursor: default; }
 .group-composer__lead-pick:has(input:focus-visible) { outline: 2px solid var(--accent-border-strong); outline-offset: 1px; }
 .group-composer__lead-pick.is-none { justify-self: start; margin-top: 2px; font-weight: 500; white-space: normal; }
@@ -678,112 +640,89 @@ button.group-card-member__who:hover { background: var(--surface-soft); }
 .group-composer__error { margin: 0; padding: 8px 10px; color: var(--red); background: var(--red-soft); border: 1px solid var(--red-border-soft); border-radius: 8px; font-size: var(--fs-12); line-height: 1.5; }
 .group-composer__actions { display: flex; justify-content: end; gap: 8px; padding: 14px 20px 18px; border-top: 1px solid var(--line); }
 .group-composer__actions button { min-height: 34px; padding: 0 14px; font-size: var(--fs-12); }
+@container group-composer (max-width: 390px) {
+  .group-composer__member { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+  .group-composer__member-pick { grid-column: 1 / -1; }
+  .group-composer__member > .menu-select { width: 100%; }
+}
 
 /* ---------- 席位区 ---------- */
-.run-seats__list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
-/* 行 = 主按钮（弹性）+ 可选的「单独配置」标 + 运行态；隐式列只在有标时出现，没有标的行不留空列。 */
+.run-seats__list { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 0 12px; margin: 0; padding: 0; list-style: none; }
+/* 所有行共享列宽：有单独配置的行也不会挤歪别的行；没有例外时中列自然为零。 */
 .run-seat {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  grid-auto-flow: column;
-  grid-auto-columns: auto;
+  grid-template-columns: subgrid;
+  grid-column: 1 / -1;
   align-items: center;
-  gap: 8px;
-  padding-right: 12px;
-  background: var(--surface-solid);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  transition: border-color 140ms ease, box-shadow 140ms ease;
+  padding: 4px 0;
+  border-top: 1px solid var(--line-faint);
+  transition: background 140ms ease;
   animation: run-fade-in 240ms ease both;
   animation-delay: calc(var(--seat-index, 0) * 28ms);
 }
-html[data-card-transparency="clear"] .run-seat { background: color-mix(in srgb, var(--surface-solid) 40%, transparent); }
-.run-seat:hover { border-color: var(--color-border-primary); box-shadow: var(--shadow-hairline); }
-.run-seat.is-pending { border-style: dashed; }
+.run-seat:first-child { border-top: 0; }
+.run-seat:hover { background: color-mix(in srgb, var(--text) 3%, transparent); }
 /* 统一配置落地：每行自上而下依次泛一层主题色光晕、模型名短暂点亮，随后淡出——确认「全都改了」。 */
 .run-seat.is-synced .run-seat__main { animation: run-seat-sync 1100ms ease both; animation-delay: calc(var(--seat-index, 0) * 45ms); }
 .run-seat.is-synced .run-seat__model strong { animation: run-seat-sync-text 1100ms ease both; animation-delay: calc(var(--seat-index, 0) * 45ms); }
 @keyframes run-seat-sync {
-  0%, 30% { background: var(--accent-wash); box-shadow: inset 2px 0 0 var(--accent); }
-  100% { background: transparent; box-shadow: none; }
+  0%, 30% { background: var(--accent-wash); }
+  100% { background: transparent; }
 }
 @keyframes run-seat-sync-text {
   0%, 30% { color: var(--accent-deep); }
   100% { color: inherit; }
 }
 .run-seat__main {
+  grid-column: 1;
   display: grid;
-  grid-template-columns: 52px minmax(0, 0.9fr) minmax(0, 1.4fr) auto;
+  grid-template-columns: 52px minmax(110px, 220px) minmax(0, 1fr);
   align-items: center;
-  gap: 14px;
+  gap: 12px;
   min-width: 0;
-  padding: 10px 12px;
+  padding: 8px 0;
   color: inherit;
   background: transparent;
   border: 0;
-  border-radius: 12px;
+  border-radius: 6px;
   text-align: left;
 }
-.run-seat__main:hover:not(:disabled) { background: var(--surface-soft); }
-.run-seat__main:disabled { cursor: default; }
-.run-seat__channel { grid-area: channel; color: var(--accent-deep); font: 700 var(--fs-11)/1 var(--mono); letter-spacing: 0.02em; }
+.run-seat__open { max-width: 100%; display: block; padding: 0; color: inherit; background: transparent; border: 0; border-radius: 3px; font: inherit; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-seat__open:hover:not(:disabled) { color: var(--accent-deep); }
+.run-seat__open:disabled { cursor: default; }
+.run-seat__model { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; min-width: 0; padding: 3px 0; border: 0; border-radius: 6px; background: transparent; color: inherit; text-align: left; }
+.run-seat__model:hover:not(:disabled) { background: color-mix(in srgb, var(--text) 3%, transparent); }
+.run-seat__model:disabled { cursor: default; user-select: text; }
+.run-seat__model-copy { min-width: 0; display: grid; gap: 2px; }
+.run-seat__channel { grid-area: channel; color: var(--muted); font: 600 var(--fs-11)/1 var(--mono); letter-spacing: .02em; }
 .run-seat__who { grid-area: who; }
 .run-seat__model { grid-area: model; }
-.run-seat__main > i { grid-area: chevron; }
-.run-seat__main { grid-template-areas: "channel who model chevron"; }
-@container run-seats (max-width: 640px) {
-  .run-seat__main {
-    grid-template-columns: 52px minmax(0, 1fr) auto;
-    grid-template-areas:
-      "channel who chevron"
-      "channel model chevron";
-    row-gap: 4px;
-    align-items: start;
-  }
-  .run-seat__channel { padding-top: 3px; }
-  .run-seat__model strong { font-size: var(--fs-11); font-weight: 500; color: var(--text-soft); }
-  .run-seat__main > i { align-self: center; }
-  .run-seat__state { min-width: 0; }
-}
-@container run-seats (max-width: 440px) {
-  .run-seat__badge small { display: none; }
-}
-.run-seat__who,
-.run-seat__model { display: grid; gap: 2px; min-width: 0; }
+.run-seat__main { grid-template-areas: "channel who model"; }
+.run-seat__who { display: grid; gap: 2px; min-width: 0; }
 .run-seat__who strong { overflow: hidden; font-size: var(--fs-13); font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .run-seat__who small,
-.run-seat__model small { overflow: hidden; color: var(--muted); font-size: var(--fs-11); text-overflow: ellipsis; white-space: nowrap; }
-.run-seat__model strong { overflow: hidden; font-size: var(--fs-12); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.run-seat__model small { color: var(--muted); font-size: var(--fs-11); line-height: 1.45; overflow-wrap: anywhere; }
+.run-seat__model strong { display: flex; align-items: flex-start; gap: 6px; min-width: 0; font-size: var(--fs-12); font-weight: 500; line-height: 24px; }
+.run-seat .model-logo-slot { height: 24px; }
+.run-seat__model strong > span:not(.model-logo-slot) { min-width: 0; overflow-wrap: anywhere; }
 .run-seat__main i { color: var(--faint); font-size: var(--fs-15); font-style: normal; }
 
-.run-seat__state { display: grid; justify-items: end; min-width: 168px; }
+.run-seat__state { grid-column: 3; display: grid; justify-items: end; min-width: 90px; max-width: 220px; }
 .run-seat__badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+  display: grid;
+  justify-items: end;
+  gap: 2px;
   max-width: 100%;
-  padding: 3px 9px 3px 7px;
   color: var(--muted);
-  background: var(--surface-soft);
-  border: 1px solid var(--line);
-  border-radius: 999px;
   font-size: var(--fs-11);
   font-style: normal;
-  font-weight: 600;
-  white-space: nowrap;
+  font-weight: 500;
+  line-height: 20px;
 }
-.run-seat__badge i { flex: none; width: 6px; height: 6px; background: var(--faint); border-radius: 50%; }
-.run-seat__badge small { overflow: hidden; color: inherit; font-weight: 500; opacity: 0.75; text-overflow: ellipsis; white-space: nowrap; }
-.run-seat__badge.is-waiting { color: var(--color-text-success); background: var(--color-background-success); border-color: color-mix(in srgb, var(--color-border-success) 55%, transparent); }
-.run-seat__badge.is-waiting i { background: var(--color-text-success); }
-.run-seat__badge.is-working { color: var(--blue); background: var(--blue-soft); border-color: var(--blue-border-soft); }
-.run-seat__badge.is-working i { background: var(--blue); animation: run-pulse 1.6s ease-in-out infinite; }
-.run-seat__badge.is-awaiting { color: var(--amber); background: var(--amber-soft); border-color: var(--amber-border-soft); }
-.run-seat__badge.is-awaiting i { background: var(--amber); animation: run-pulse 1.6s ease-in-out infinite; }
-.run-seat__badge.is-unconfirmed { color: var(--amber); background: var(--amber-soft); border-color: var(--amber-border-soft); }
-.run-seat__badge.is-unconfirmed i { background: var(--amber); }
-.run-seat__badge.is-new { color: var(--accent-deep); background: var(--accent-wash); border-color: var(--accent-border-soft); }
-.run-seat__badge.is-new i { background: var(--accent-deep); }
+.run-seat__badge small { color: var(--muted); font-size: var(--fs-10); font-weight: 400; text-align: right; overflow-wrap: anywhere; }
+.run-seat__badge.is-waiting { color: var(--color-text-success); }
+.run-seat__badge.is-working { color: var(--blue); }
+.run-seat__badge.is-awaiting, .run-seat__badge.is-unconfirmed { color: var(--amber); }
 .run-seat__progress {
   max-width: 260px;
   overflow: hidden;
@@ -791,22 +730,20 @@ html[data-card-transparency="clear"] .run-seat { background: color-mix(in srgb, 
   font-size: var(--fs-11);
   font-style: normal;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .run-seat__progress.is-failed { color: var(--red); }
 .run-seat__progress.is-done { color: var(--color-text-success); }
 
 /* 单独配置：与批次统一配置不同的席位打一枚可撤销的标，× 恢复。中性描边，不与「待创建」的主题色徽标抢眼。 */
 .run-seat__override {
+  grid-column: 2;
   display: inline-flex;
   align-items: center;
   gap: 2px;
   height: 22px;
-  padding: 0 3px 0 8px;
+  padding: 0;
   color: var(--muted);
-  background: var(--surface-soft);
-  border: 1px solid var(--line);
-  border-radius: 999px;
   font-size: var(--fs-11);
   font-style: normal;
   font-weight: 600;
@@ -854,50 +791,49 @@ html[data-card-transparency="clear"] .run-seat { background: color-mix(in srgb, 
 .run-seats__footer {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
   padding-top: 12px;
   border-top: 1px solid var(--line);
 }
-.run-seats__create { display: inline-flex; align-items: center; gap: 12px; min-height: 38px; margin-left: auto; }
+.run-seats__create { min-width: 0; max-width: 100%; display: inline-flex; flex-wrap: wrap; justify-content: end; align-items: center; gap: 8px; min-height: 32px; margin-left: auto; }
 .run-seats__create small { color: var(--muted); font-size: var(--fs-11); text-align: right; }
 .run-seats__settled { display: inline-flex; align-items: center; gap: 6px; }
-.run-seats__settled::before { content: ""; width: 6px; height: 6px; background: var(--color-text-success); border-radius: 50%; }
 
-/* 发起前的两个守护开关：端口自动保持 + 预热探路，左列竖排；说明文字直接可见。 */
-.run-seats__toggles { display: grid; gap: 10px; align-content: center; }
+/* 启动设置用原生 details，保留键盘与读屏语义；重要的重启和探测消耗说明保持可读。 */
+.run-launch-options { min-width: 0; flex: 1 1 240px; interpolate-size: allow-keywords; }
+.run-launch-options > summary { display: flex; align-items: center; gap: 6px; min-height: 32px; color: var(--text-soft); font-size: var(--fs-11); cursor: pointer; list-style: none; }
+.run-launch-options > summary::-webkit-details-marker { display: none; }
+.run-launch-options > summary svg { width: 12px; height: 12px; transform: rotate(-90deg); transition: transform 180ms ease; }
+.run-launch-options[open] > summary svg { transform: none; }
+.run-launch-options > summary small { color: var(--muted); font-size: var(--fs-10); }
+.run-launch-options::details-content { block-size: 0; overflow: clip; transition: block-size 180ms ease, content-visibility 180ms; transition-behavior: allow-discrete; }
+.run-launch-options[open]::details-content { block-size: auto; }
+.run-seats__toggles { display: grid; gap: 10px; align-content: start; padding: 8px 3px 3px; }
 .run-seats__toggles .toggle-switch { align-items: center; gap: 9px; }
 .run-seats__toggles .toggle-switch__text { display: grid; gap: 1px; min-width: 0; }
+.run-guard__copy { min-width: 0; display: grid; gap: 2px; }
 .run-guard__copy strong { color: var(--text-soft); font-size: var(--fs-11); font-weight: 600; line-height: 1.3; }
 .run-guard__copy small { color: var(--muted); font-size: var(--fs-10); font-weight: 400; line-height: 1.35; }
 
-/* 预热探针状态：语义色 pill，与创建按钮同一视觉行。 */
+/* 探测反馈只用文字语义色，不把创建按钮挤进多层胶囊。 */
 .run-warmup-status {
   min-width: 0;
   max-width: 340px;
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  padding: 5px 10px;
   color: var(--muted);
-  background: var(--surface-soft);
-  border: 1px solid var(--line-faint);
-  border-radius: 10px;
   font-size: var(--fs-11);
   line-height: 1.4;
 }
-.run-warmup-status > i { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--muted); }
-.run-warmup-status__text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.run-warmup-status.is-running { color: var(--blue); background: var(--blue-soft); border-color: var(--blue-border-soft); }
-.run-warmup-status.is-running > i { background: var(--blue); animation: run-pulse 1.2s ease-in-out infinite; }
-.run-warmup-status.is-done { color: var(--color-text-success); background: color-mix(in srgb, var(--color-background-success) 55%, transparent); border-color: color-mix(in srgb, var(--color-border-success) 60%, transparent); }
-.run-warmup-status.is-done > i { background: var(--color-text-success); }
-.run-warmup-status.is-slow { color: var(--amber); background: var(--amber-soft); border-color: var(--amber-border-soft); }
-.run-warmup-status.is-slow > i { background: var(--amber); }
-.run-warmup-status.is-failed { color: var(--red); background: var(--red-soft); border-color: var(--red-border); }
-.run-warmup-status.is-failed > i { background: var(--red); }
-.run-seats__create .run-warmup-button { min-height: 38px; padding: 0 14px; }
+.run-warmup-status__text { min-width: 0; overflow-wrap: anywhere; }
+.run-warmup-status.is-running { color: var(--blue); }
+.run-warmup-status.is-done { color: var(--color-text-success); }
+.run-warmup-status.is-slow { color: var(--amber); }
+.run-warmup-status.is-failed { color: var(--red); }
+.run-seats__create :is(.primary-button, .run-warmup-button) { min-height: 32px; padding: 0 12px; font-size: var(--fs-12); }
 
 /* ---------- 确认面 ---------- */
 .run-sheet {
@@ -908,9 +844,8 @@ html[data-card-transparency="clear"] .run-seat { background: color-mix(in srgb, 
   padding: 14px 18px;
   background: var(--surface);
   border: 1px solid var(--amber-border-soft);
-  border-left: 3px solid var(--amber);
   border-radius: 14px;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-hairline);
 }
 .run-sheet__body { display: grid; gap: 4px; min-width: 0; }
 .run-sheet__body strong { font-size: var(--fs-13); font-weight: 650; }
@@ -936,32 +871,17 @@ html[data-card-transparency="clear"] .run-seat { background: color-mix(in srgb, 
 /* ---------- 开始运行（无活跃运行） ---------- */
 .run-start {
   display: grid;
-  justify-items: center;
-  max-width: 760px;
-  margin: 28px auto 0;
-  padding: 40px 32px 30px;
-  text-align: center;
+  justify-items: start;
+  padding: 8px 0;
+  text-align: left;
 }
 /* 与页面同一套"相邻边距"：折叠的插槽（提示条）不留空行。 */
-.run-start > * + * { margin-top: 22px; }
+.run-start > * + * { margin-top: 14px; }
 .run-start > .run-slot { margin-top: 0; }
-.run-start .run-slot__inner > * { margin-top: 22px; }
-.run-start__intro { display: grid; justify-items: center; gap: 8px; }
-.run-start__mark {
-  display: grid;
-  place-items: center;
-  width: 56px;
-  height: 56px;
-  margin-bottom: 6px;
-  overflow: hidden;
-  background: var(--surface-solid);
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  box-shadow: var(--shadow-hairline);
-}
-.run-start__mark img { width: 40px; height: 40px; object-fit: contain; }
-.run-start__intro h1 { margin: 0; font-size: 22px; font-weight: 650; letter-spacing: -0.01em; }
-.run-start__intro p { margin: 0; color: var(--muted); font-size: var(--fs-13); }
+.run-start .run-slot__inner > * { margin-top: 14px; }
+.run-start__intro { display: grid; justify-items: start; gap: 4px; }
+.run-start__intro h1 { margin: 0; font-size: var(--fs-20); font-weight: 650; letter-spacing: -.01em; }
+.run-start__intro p { margin: 0; color: var(--muted); font-size: var(--fs-12); line-height: 1.5; }
 .run-start__intro p strong { color: var(--text); font-weight: 600; }
 /* 归档的旧团队 run 只留一句说明，不再有模式切换 / 团队说明区。 */
 .run-start__intro .run-start__note { max-width: 520px; color: var(--faint); font-size: var(--fs-12); line-height: 1.5; }
@@ -980,22 +900,36 @@ html[data-card-transparency="clear"] .run-seat { background: color-mix(in srgb, 
   .run-batch-config__value.is-swapped, .run-batch-config__value.is-swapped > strong { animation: none; }
   .run-slot, .run-slot__inner > * { transition: none; }
   .pool-groups__history > summary::before, .group-card, .group-card-member__actions, .group-composer__member, .group-composer__lead-pick { transition: none; }
-  .run-state-chip i, .run-seat__badge i, .seat-dot { animation: none; }
+  .seat-dot { animation: none; }
+  .run-launch-options::details-content, .run-launch-options > summary svg { transition: none; }
   .run-page :is(.primary-button, .secondary-button, .run-header__ghost, .run-sheet__confirm, .run-stepper button):active:not(:disabled) { transform: none; }
 }
 
 /* ---------- 响应式（容器查询，以页面宽度为准） ---------- */
-/* 宽：头部一行（信息块 | 控件组），两栏正文。 */
-@container run-page (max-width: 1000px) {
+/* 会话清单列宽来自 subgrid；变窄时先换行，不删模型参数或运行证据。 */
+@container run-seats (max-width: 760px) {
+  .run-seats__list { grid-template-columns: minmax(0, 1fr) auto; }
+  .run-seat__main { grid-template-columns: 52px minmax(0, 1fr); grid-template-areas: "channel who" "channel model"; row-gap: 4px; align-items: start; }
+  .run-seat__channel { padding-top: 3px; }
+  .run-seat__state { grid-column: 2; max-width: 120px; }
+  .run-seat__override { grid-column: 1 / -1; grid-row: 2; justify-self: start; margin-left: 64px; }
+}
+@container run-seats (max-width: 440px) {
+  .run-seats__list { grid-template-columns: minmax(0, 1fr); }
+  .run-seat__state { grid-column: 1; justify-self: start; margin-left: 64px; max-width: none; }
+  .run-seat__badge { display: flex; flex-wrap: wrap; gap: 4px 8px; }
+  .run-seat__badge small { text-align: left; }
+  .run-seat__override { grid-row: auto; }
+}
+@container run-page (max-width: 900px) {
   /* 头部两行：信息块在上，动作组在下。 */
-  .run-header { grid-template-columns: minmax(0, 1fr); row-gap: 14px; }
-  .run-header__controls { justify-content: space-between; }
-  /* 正文单栏：批次面板在上，席位在下。 */
-  .run-body { grid-template-columns: minmax(0, 1fr); }
+  .run-header { grid-template-columns: minmax(0, 1fr); row-gap: 8px; }
+  .run-header__controls { justify-self: stretch; justify-content: end; }
+  .run-panel.is-composing { grid-template-columns: minmax(0, 1fr); }
 }
 @container run-page (max-width: 680px) {
   .run-page__inner { padding: 12px 12px 24px; }
-  .run-header { padding: 16px; }
+  .run-header { padding: 8px 0; }
   .run-header__controls { flex-direction: column; align-items: stretch; gap: 10px; }
   .run-header__actions { justify-content: stretch; }
   .run-header__actions .run-header__ghost { flex: 1 1 0; justify-content: center; }
@@ -1011,7 +945,7 @@ html[data-card-transparency="clear"] .run-seat { background: color-mix(in srgb, 
   .run-warmup-status__text { white-space: normal; }
   .run-field { grid-template-columns: minmax(0, 1fr) auto; }
   .run-field__label { grid-column: 1 / -1; }
-  .run-batch { flex-wrap: wrap; gap: 14px 22px; }
+  .run-batch { gap: 8px 18px; }
   .pool-groups { padding: 16px 16px 14px; }
   .group-card__head { flex-wrap: wrap; }
   .group-card__foot { flex-wrap: wrap; }
@@ -1020,5 +954,5 @@ html[data-card-transparency="clear"] .run-seat { background: color-mix(in srgb, 
   .group-card-member__actions { opacity: 1; }
   .run-sheet { grid-template-columns: minmax(0, 1fr); }
   .run-sheet__actions { justify-content: end; }
-  .run-start { padding: 28px 18px 22px; }
+  .run-start { padding: 8px 0; }
 }

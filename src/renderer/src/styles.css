@@ -202,6 +202,16 @@
   background: var(--app);
 }
 
+/* 大阅读面与关联弹层：16px 主信息 / 14px 辅助信息，避免大卡片配微小文字。
+   只改这些表面的继承令牌，不放大全局顶栏、过程流或统计图。 */
+:is(.run-page, .group-composer, .cursor-model-dialog, .handoff-dialog,
+    .settings-section--cleanup, .settings-section:has(.settings-account-list), .settings-status-strip) {
+  --fs-10: var(--font-text-sm-size);
+  --fs-11: var(--font-text-sm-size);
+  --fs-12: var(--font-text-md-size);
+  --fs-13: var(--font-text-md-size);
+}
+
 @media (prefers-color-scheme: dark) {
   :root { --app-background-image: var(--app-background-dark); }
 }
@@ -305,16 +315,23 @@ body { line-height: var(--font-text-sm-line-height); letter-spacing: 0; }
 
 /* ---------- 通用按钮 ---------- */
 .primary-button, .secondary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
   min-height: 38px;
   padding: 0 15px;
   border-radius: var(--r-md);
   font-size: var(--fs-12);
   font-weight: 600;
+  line-height: 1.25;
+  text-align: center;
   transition: filter 140ms ease, background 140ms ease;
 }
+.button-count { flex: none; font-family: var(--font-numeric); font-size: inherit; font-weight: inherit; font-variant-numeric: tabular-nums; }
 .primary-button { color: #fff; background: var(--accent); border: 0; box-shadow: var(--shadow-brand); }
 .primary-button:hover:not(:disabled) { filter: brightness(1.06); }
-.primary-button:disabled { opacity: 0.55; box-shadow: none; }
+.primary-button:disabled { color: var(--color-text-disabled); background: var(--color-background-secondary); box-shadow: inset 0 0 0 1px var(--color-border-disabled); }
 .secondary-button { color: var(--text-soft); background: var(--surface); border: var(--border-width-regular) solid var(--line-strong); }
 .secondary-button:hover:not(:disabled) { background: var(--surface-soft); }
 
@@ -1835,11 +1852,11 @@ button.workspace-group-chip:focus-visible { outline: 2px solid var(--accent-bord
 .menu-select.is-open .menu-select__button { border-color: var(--accent-border-strong); box-shadow: 0 0 0 3px color-mix(in srgb, var(--anthropic-orange) 12%, transparent); }
 .menu-select__value { min-width: 0; display: inline-flex; align-items: center; gap: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
 .menu-select__value em { color: var(--faint); font-style: normal; }
-.menu-select__chevron { flex: none; width: 7px; height: 7px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(45deg); transition: transform 140ms ease; }
-.menu-select.is-open .menu-select__chevron { transform: rotate(225deg); }
+.menu-select__chevron { flex: none; width: 12px; height: 12px; color: var(--muted); transition: transform 140ms ease; }
+.menu-select.is-open .menu-select__chevron { transform: rotate(180deg); }
 .menu-select__menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 240; min-width: 100%; margin: 0; padding: 5px; list-style: none; background: var(--surface-solid); border: 1px solid var(--line); border-radius: 11px; box-shadow: var(--shadow-3); max-height: 224px; overflow-y: auto; }
 .menu-select__menu.is-portal { position: fixed; min-width: 0; }
-.menu-select__menu li[role="option"] > button { width: 100%; min-height: 30px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 9px; color: var(--text); background: none; border: 0; border-radius: 7px; font-size: var(--fs-10); text-align: left; cursor: pointer; }
+.menu-select__menu li[role="option"] > button { width: 100%; min-height: 30px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 9px; color: var(--text); background: none; border: 0; border-radius: 7px; font-size: var(--font-text-sm-size); text-align: left; cursor: pointer; }
 .menu-select__menu li[role="option"] > button:hover { background: var(--accent-wash); }
 .menu-select__menu li[role="option"] > button.is-selected { color: var(--accent-deep); background: var(--accent-wash); font-weight: 600; }
 .menu-select__menu li[role="option"] > button > span { min-width: 0; display: flex; align-items: center; gap: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -2203,7 +2220,7 @@ button.workspace-group-chip:focus-visible { outline: 2px solid var(--accent-bord
 .cursor-native-process__flow[hidden] { display: none; }
 .cursor-native-process__summary {
   width: 100%; min-height: 36px; display: flex; align-items: center; gap: 10px;
-  padding: 0 2px 10px; color: var(--color-text-tertiary); background: transparent;
+  padding: 5px 2px; color: var(--color-text-tertiary); background: transparent;
   border: 0; border-bottom: 1px solid var(--line-strong); text-align: left;
   font: 500 var(--fs-12)/1.4 var(--font-sans);
 }

@@ -118,6 +118,48 @@ describe('存储清理面板', () => {
     expect(container.querySelector('[role="dialog"]')).toBeNull()
   })
 
+  it('点击项目名称等同于勾选，不执行清理；置忙后名称也不能改变勾选', async () => {
+    const onClean = vi.fn(async () => {})
+    const props = { storageScan: scan(), onScanCursorStorage: vi.fn(async () => {}), onCleanCursorStorage: onClean }
+    await render(props)
+    const name = row('local-history').querySelector<HTMLLabelElement>('.storage-cleanup__title label')!
+    expect(name.htmlFor).toBe(checkbox('local-history').id)
+    await act(async () => name.click())
+    expect(checkbox('local-history').checked).toBe(true)
+    expect(row('local-history').querySelector('.storage-cleanup__blocked')?.textContent).toBe('需要先退出 Cursor')
+    expect(onClean).not.toHaveBeenCalled()
+    await render({ ...props, storageCleanupBusy: true })
+    await act(async () => name.click())
+    expect(checkbox('local-history').checked).toBe(true)
+    expect(checkbox('local-history').disabled).toBe(true)
+  })
+
+  it('未确认 Cursor 进程状态时不预选占用项，路径与完整盘点时间仍能查阅', async () => {
+    await render({ storageScan: scan({ cursorRunning: undefined }), onScanCursorStorage: vi.fn(async () => {}) })
+    expect(checkbox('caches').checked).toBe(false)
+    expect(checkbox('logs').checked).toBe(false)
+    expect(checkbox('chat-history').checked).toBe(false)
+    expect(container.querySelector('.storage-cleanup__running')?.textContent).toContain('无法确认')
+    expect(container.querySelector('.settings-section__title small')?.getAttribute('title')).toBe(scan().userDataRoot)
+    expect(container.querySelector('time')?.getAttribute('datetime')).toBe(new Date(scan().scannedAt).toISOString())
+    expect(container.querySelector('time')?.getAttribute('title')).toBeTruthy()
+    expect(container.querySelectorAll('.storage-cleanup__row')).toHaveLength(8)
+  })
+
+  it('历史体量与范围各显示一次，完整扫描说明可悬停查阅；部分读取警告不被精简', async () => {
+    const fullNote = '数据库 20.9 GB · 1321 个会话 · 298 个候选 · 6 个受拾光保护'
+    const historyScan = scan()
+    historyScan.entries[0] = { ...historyScan.entries[0]!, note: fullNote }
+    const props = { storageScan: historyScan, onScanCursorStorage: vi.fn(async () => {}) }
+    await render(props)
+    const note = row('chat-history').querySelector('.storage-cleanup__note')!
+    expect(note.textContent).toBe(`数据库 ${formatFileSize(historyScan.chatHistory!.fileBytes)} · 1321 个会话`)
+    expect(note.getAttribute('title')).toBe(fullNote)
+    historyScan.entries[0] = { ...historyScan.entries[0]!, partial: true, note: '部分数据无法读取' }
+    await render({ ...props, storageScan: { ...historyScan } })
+    expect(row('chat-history').querySelector('.storage-cleanup__note')?.textContent).toBe('部分数据无法读取')
+  })
+
   it('Cursor 已退出：勾选对话历史后整块转红，确认文案点明永久删除的会话数；压实开关随磁盘空间启用', async () => {
     const onClean = vi.fn(async () => {})
     const closed = scan({ cursorRunning: false }, { compactable: true })

@@ -111,10 +111,12 @@ describe('CursorRuntimeAccountBridge', () => {
     const port = await freePort()
     const bridge = new CursorRuntimeAccountBridge()
     const pending = bridge.serveOnce(payload, { port, key: 'key' }, 50)
+    // 先订阅拒绝断言：并行 UI 走查占用事件循环时，50ms 超时可能早于连线完成。
+    const expectedTimeout = expect(settlesWithin(pending, 2_000)).rejects.toThrow(/没有确认运行时登录态/)
     await new Promise((resolve) => setTimeout(resolve, 10))
     const straggler = await connectSilently(port)
     try {
-      await expect(settlesWithin(pending, 2_000)).rejects.toThrow(/没有确认运行时登录态/)
+      await expectedTimeout
     } finally {
       straggler.destroy()
     }

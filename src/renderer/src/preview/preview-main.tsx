@@ -154,9 +154,14 @@ if (previewRunStatus && initialTeam.activeRun) {
 //（席位形态：全部待命 / 待命+执行中+离线+待确认（CH-2 单独配置了另一模型）/ 各席配置分叉、没有多数 /
 //  已结束 / 会话池里两个协作组 + 一个刚解散的组）。
 const independentScene = (['live', 'mixed', 'spread', 'ended', 'groups'] as const).find((scene) => scene === previewParameters.get('independent'))
+const poolLayoutCase = previewParameters.get('poolLayout')
 if (independentScene && initialTeam.activeRun) {
   const solo = initialTeam.members.find((member) => member.slot.solo === true)!
-  const shapes = independentScene === 'live'
+  const shapes = poolLayoutCase === 'sixteen'
+    ? Array.from({ length: 16 }, () => 'waiting' as const)
+    : poolLayoutCase === 'reference'
+      ? ['offline', 'offline', 'offline'] as const
+      : independentScene === 'live'
     ? ['waiting', 'waiting', 'waiting'] as const
     : independentScene === 'groups'
       ? ['waiting', 'working', 'waiting', 'offline', 'waiting'] as const
@@ -193,6 +198,20 @@ if (independentScene && initialTeam.activeRun) {
             : { ...base, status: 'offline' as const, online: false, waiting: false, connectionPhase: 'cursor_stopped', runtimeEvidence: 'stopped' as const }
     }
   })
+  if (poolLayoutCase === 'long' || poolLayoutCase === 'reference') {
+    const recorded = fableSelection ?? initialTeam.members[0]?.slot.modelSelection
+    for (const member of initialTeam.members) {
+      if (recorded) member.slot.modelSelection = structuredClone(recorded)
+      if (poolLayoutCase === 'long') {
+        member.slot.name = '负责客户端协议适配、桌面集成与跨平台稳定性验证的会话'
+        if (member.slot.modelSelection) {
+          member.slot.modelSelection.modelId = 'recorded-long-model'
+          member.slot.modelSelection.displayName += ' · Long Context Thinking Configuration'
+        }
+      }
+    }
+  }
+  if (poolLayoutCase === 'awaiting' && initialTeam.members[0]?.runtime) initialTeam.members[0].runtime.awaitingUser = true
   if (independentScene === 'groups') {
     // CH-1（lead）+ CH-2（builder）成组「接口重构」；CH-3（lead）+ CH-4（reviewer，已确认离线 → attention）成组「验收」；CH-5 独立。
     const groupRole = (member: typeof solo, groupId: string, templateKey: string, name: string, order: number) => ({
@@ -260,6 +279,17 @@ const state = {
   desktop: structuredClone(desktopSnapshot),
   memory: structuredClone(memorySnapshot),
   team: initialTeam
+}
+// 编辑直播走查独立起一轮，避免通用样例里的已完成回复把运行标记结算为历史。
+if (previewParameters.get('editStream') === '1' && state.desktop.liveProcess?.['2']) {
+  const edit = state.desktop.liveProcess['2'].blocks.find(block => block.id === 'live-edit-stream')
+  state.desktop.liveProcess['2'] = {
+    turn: 'preview-edit-stream', startedAt: previewNow - 1_000, updatedAt: previewNow, generating: true,
+    blocks: edit ? [{ ...edit, startedAt: previewNow - 1_000 }] : []
+  }
+  state.desktop.conversations['2'] = []
+  state.desktop.sessions = state.desktop.sessions.map(session => session.channelId === '2'
+    ? { ...session, status: 'running', online: true, connected: true, waiting: false } : session)
 }
 if (messageFormatPreviewMode) {
   const example = state.desktop.conversations['2']?.find((entry) => entry.id === 'e5')

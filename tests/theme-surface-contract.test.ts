@@ -10,6 +10,35 @@ const run = readFileSync(join(process.cwd(), 'src/renderer/src/run/run.css'), 'u
 const settings = readFileSync(join(process.cwd(), 'src/renderer/src/settings/settings.css'), 'utf8')
 
 describe('theme surface contracts', () => {
+  it('centers shared action labels explicitly and keeps process summary spacing symmetric', () => {
+    const button = styles.match(/\.primary-button, \.secondary-button\s*\{([^}]*)\}/)?.[1] ?? ''
+    expect(button).toContain('display: inline-flex')
+    expect(button).toContain('align-items: center')
+    expect(button).toContain('justify-content: center')
+    expect(button).toContain('line-height: 1.25')
+    expect(styles).toMatch(/\.button-count\s*\{[^}]*font-family:\s*var\(--font-numeric\)/)
+    expect(styles).toMatch(/\.cursor-native-process__summary\s*\{[^}]*padding:\s*5px 2px;/)
+  })
+
+  it('raises reading surfaces and related dialogs to 16px/14px without changing the global scale', () => {
+    const scale = styles.match(/:is\(\.run-page, \.group-composer, \.cursor-model-dialog, \.handoff-dialog,[\s\S]*?\)\s*\{([^}]*)\}/)?.[1] ?? ''
+    expect(scale).toContain('--fs-12: var(--font-text-md-size)')
+    expect(scale).toContain('--fs-11: var(--font-text-sm-size)')
+    expect(styles).toContain('--fs-12: var(--font-text-sm-size)')
+    expect(run).toContain('@container group-composer (max-width: 390px)')
+    expect(lobby).toContain('@media (max-width: 520px)')
+    expect(settings).toContain('min-width: calc(5em + 18px)')
+  })
+
+  it('marks the selected account quietly without a glowing rail or status capsule', () => {
+    expect(settings).not.toContain('.account-row::before')
+    expect(settings).not.toContain('.settings-nav__item.is-active::before')
+    expect(settings).toMatch(/\.account-row\.is-active\s*\{[^}]*background:\s*color-mix\(in srgb, var\(--text\) 4%, transparent\)/)
+    const current = settings.match(/\.account-row__current\s*\{([^}]*)\}/)?.[1] ?? ''
+    expect(current).toContain('display: inline-flex')
+    expect(current).not.toMatch(/\b(background|border|border-radius|box-shadow):/)
+  })
+
   it('keeps floating connection UI opaque even when card opacity is zero', () => {
     expect(styles).toMatch(/\.connection-popover\s*\{[^}]*background:\s*var\(--color-background-primary\)/)
     expect(styles).not.toMatch(/\.connection-popover\s*\{[^}]*background:\s*var\(--surface\)/)

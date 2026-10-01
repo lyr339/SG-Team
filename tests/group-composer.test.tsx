@@ -34,7 +34,7 @@ describe('GroupComposer（建组 / 加人抽屉）', () => {
     return form
   }
   const buttonIn = (scope: ParentNode, label: string): HTMLButtonElement => {
-    const button = [...scope.querySelectorAll<HTMLButtonElement>('button')].find((candidate) => candidate.textContent?.trim() === label)
+    const button = [...scope.querySelectorAll<HTMLButtonElement>('button')].find((candidate) => (candidate.getAttribute('aria-label') ?? candidate.textContent?.trim()) === label)
     if (!button) throw new Error(`button "${label}" not found in: ${[...scope.querySelectorAll('button')].map((b) => b.textContent?.trim()).join(' | ')}`)
     return button
   }
@@ -80,6 +80,8 @@ describe('GroupComposer（建组 / 加人抽屉）', () => {
     expect(nameInput.value).toBe('组 2')
     // 还没选成员：提交不可用。
     expect(buttonIn(drawer(), '建组（0）').disabled).toBe(true)
+    expect(buttonIn(drawer(), '建组（0）').querySelector('.button-count')?.textContent).toBe('0')
+    expect(buttonIn(drawer(), '建组（0）').textContent).toBe('建组0')
 
     // 勾选 CH-2 与 CH-5；名字清空后提交仍不可用。
     await click(memberRows()[0]!.querySelector('input[type="checkbox"]')!)

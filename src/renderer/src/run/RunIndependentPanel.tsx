@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { formatFullClock, formatRelativeClock } from '../format'
 import { RunBatchConfig, type RunBatchConfigProps } from './RunBatchConfig'
-import type { PoolView } from './pool-view'
+import type { PoolSeatState, PoolView } from './pool-view'
 
 export const INDEPENDENT_MIN_SESSIONS = 1
 export const INDEPENDENT_MAX_SESSIONS = 16
@@ -39,8 +39,8 @@ export function RunIndependentPanel({
   onNewBatch,
   modelConfig
 }: RunIndependentPanelProps): React.JSX.Element {
-  const waiting = view.seats.filter((seat) => seat.state === 'waiting').length
-  const working = view.seats.filter((seat) => seat.state === 'working').length
+  const counts: Record<PoolSeatState, number> = { waiting: 0, working: 0, awaiting: 0, offline: 0, unconfirmed: 0 }
+  for (const seat of view.seats) counts[seat.state] += 1
   const ended = view.phase === 'completed'
   // 输入过程中的原始文本：清空、或「1」还没输完成「12」时，不能立刻被钳回去。
   const [typedCount, setTypedCount] = useState<string>()
@@ -57,13 +57,13 @@ export function RunIndependentPanel({
 
   if (composing) {
     return (
-      <section className="run-panel run-panel--independent" aria-label="独立批次配置">
+      <section className="run-panel run-panel--independent is-composing" aria-label="独立批次配置">
         <header className="run-section-head">
           <strong>新批次</strong>
-          <span>每个会话先作为独立席位待命；运行中可随时选几个会话建组协作</span>
+          <span>会话先独立运行，随后可按需建组</span>
         </header>
 
-        <div className="run-field">
+        <div className="run-field run-field--workspace">
           <span className="run-field__label">目标工程</span>
           <div className="run-field__value">
             <strong>{targetWorkspace?.name ?? '等待识别 Cursor 工程'}</strong>
@@ -80,7 +80,7 @@ export function RunIndependentPanel({
 
         <div className="run-field">
           <span className="run-field__label">会话数量</span>
-          <div className="run-field__value"><small>{INDEPENDENT_MIN_SESSIONS}–{INDEPENDENT_MAX_SESSIONS} 个，可直接输入</small></div>
+          <div className="run-field__value"><small>{INDEPENDENT_MIN_SESSIONS}–{INDEPENDENT_MAX_SESSIONS} 个</small></div>
           <div className="run-stepper" role="group" aria-label="会话数量">
             <button type="button" aria-label="减少" disabled={busy || count <= INDEPENDENT_MIN_SESSIONS} onClick={() => stepCount(-1)}>−</button>
             <input
@@ -111,27 +111,31 @@ export function RunIndependentPanel({
   return (
     <section className="run-panel run-panel--independent" aria-label="独立批次">
       <header className="run-section-head">
-        <strong>批次</strong>
-        {view.pool ? (
-          <span title={formatFullClock(ended ? view.pool.updatedAt : view.pool.createdAt)}>
-            {ended ? '结束于' : '创建于'} {formatRelativeClock(ended ? view.pool.updatedAt : view.pool.createdAt)}
-          </span>
-        ) : null}
+        <div className="run-section-head__title">
+          <strong>{ended ? '上次批次' : '当前批次'}</strong>
+          {view.pool ? (
+            <span title={formatFullClock(ended ? view.pool.updatedAt : view.pool.createdAt)}>
+              {ended ? '结束于' : '创建于'} {formatRelativeClock(ended ? view.pool.updatedAt : view.pool.createdAt)}
+            </span>
+          ) : null}
+        </div>
+        <button type="button" className="secondary-button" disabled={busy} onClick={onNewBatch}>
+          {ended ? '新建批次' : '结束并新建批次'}
+        </button>
       </header>
 
       <div className="run-batch">
-        <span className="run-batch__count"><b>{waiting + working}</b><small>/ {view.seats.length} 在岗</small></span>
+        <span className="run-batch__count" title="待命、执行中和等待回答的席位；不含离线或待确认"><b>{counts.waiting + counts.working + counts.awaiting}</b><small>/ {view.seats.length} 在岗</small></span>
         <dl className="run-batch__breakdown">
-          <div><dt>待命</dt><dd>{waiting}</dd></div>
-          <div><dt>执行中</dt><dd>{working}</dd></div>
-          <div><dt>离线</dt><dd>{view.seats.filter((seat) => seat.state === 'offline').length}</dd></div>
-          {view.seats.some((seat) => seat.state === 'unconfirmed') ? (
-            <div><dt>待确认</dt><dd>{view.seats.filter((seat) => seat.state === 'unconfirmed').length}</dd></div>
-          ) : null}
+          <div><dt>待命</dt><dd>{counts.waiting}</dd></div>
+          <div><dt>执行中</dt><dd>{counts.working}</dd></div>
+          {counts.awaiting ? <div><dt>等待回答</dt><dd>{counts.awaiting}</dd></div> : null}
+          <div><dt>离线</dt><dd>{counts.offline}</dd></div>
+          {counts.unconfirmed ? <div><dt>待确认</dt><dd>{counts.unconfirmed}</dd></div> : null}
         </dl>
       </div>
 
-      {/* 运行中的批次：改的是每个席位下一次新建 Composer 的配置；结束后席位只作记录，不再提供。 */}
+      {/* 修改只作用于下次创建；结束后的配置只读展示在清单中。 */}
       {modelConfig && !ended ? <RunBatchConfig {...modelConfig} disabled={busy || modelConfig.disabled} /> : null}
 
       {view.cursorWorkspaceChanged ? (
@@ -139,15 +143,6 @@ export function RunIndependentPanel({
           Cursor 当前打开的不是本批次的工程「{view.workspace?.name}」；补齐会话仍指向本批次工程，新工程请新建批次。
         </p>
       ) : null}
-
-      <footer className="run-panel__actions">
-        <button type="button" className="secondary-button" disabled={busy} onClick={onNewBatch}>
-          {ended ? '新建批次' : '结束并新建批次'}
-        </button>
-        <small className="run-panel__hint">
-          {ended ? '本批次已结束，可以直接开始新批次' : '新批次会替换当前批次；同一工程只保留一个活跃运行'}
-        </small>
-      </footer>
     </section>
   )
 }

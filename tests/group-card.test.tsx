@@ -136,7 +136,7 @@ describe('PoolPage · 协作组卡片网格', () => {
     await render(pool())
     const history = groupsSection().querySelector<HTMLDetailsElement>('.pool-groups__history')
     expect(history).not.toBeNull()
-    expect(history!.querySelector('summary')?.textContent).toContain('1 个已解散的组')
+    expect(history!.querySelector('summary')?.textContent).toContain('已解散 · 1 个组')
     const dissolved = card('文档整理')
     expect(dissolved.classList.contains('is-dissolved')).toBe(true)
     expect(dissolved.querySelector('.group-card__tag')?.textContent).toContain('已解散')

@@ -90,7 +90,7 @@ describe('SessionSidebar 名册多选与浮动条', () => {
   const bar = (): HTMLElement | null => container.querySelector<HTMLElement>('.session-pane__bar')
   function barButton(text: string): HTMLButtonElement | undefined {
     return Array.from(container.querySelectorAll<HTMLButtonElement>('.session-pane__bar button'))
-      .find((button) => button.textContent?.includes(text))
+      .find((button) => (button.getAttribute('aria-label') ?? button.textContent)?.includes(text))
   }
   const pickedChannels = (): string[] => Array.from(
     container.querySelectorAll<HTMLElement>('.session-list__slot.is-picked .session-row')

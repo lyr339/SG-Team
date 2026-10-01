@@ -779,15 +779,16 @@ export function SessionSidebar({
                       ref={removeButtonRef}
                       type="button"
                       className="secondary-button session-pane__bar-button"
+                      aria-label={`移出组（${pickedGrouped.length}）`}
                       disabled={Boolean(blockedLeads.length)}
                       onClick={startRemoval}
                     >
-                      移出组（{pickedGrouped.length}）
+                      <span>移出组</span><span className="button-count" aria-hidden="true">{pickedGrouped.length}</span>
                     </button>
                   ) : (
                     <>
-                      <button type="button" className="primary-button session-pane__bar-button" onClick={createFromPicks}>
-                        建组（{pickedIndependent.length}）
+                      <button type="button" className="primary-button session-pane__bar-button" aria-label={`建组（${pickedIndependent.length}）`} onClick={createFromPicks}>
+                        <span>建组</span><span className="button-count" aria-hidden="true">{pickedIndependent.length}</span>
                       </button>
                       {(groupSources?.length ?? 0) > 0 ? (
                         <MenuSelect

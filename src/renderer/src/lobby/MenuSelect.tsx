@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
+import { ChevronDownIcon } from '../UiIcons'
 
 export interface MenuSelectOption {
   value: string
@@ -94,7 +95,7 @@ export function MenuSelect({ value, options, placeholder = '请选择…', disab
         }}
       >
         <span className="menu-select__value">{selected ? <><i className="menu-select__swatch" aria-hidden="true" />{selected.label}</> : <em>{placeholder}</em>}</span>
-        <i className="menu-select__chevron" aria-hidden="true" />
+        <ChevronDownIcon className="menu-select__chevron" />
       </button>
       {open && menuStyle ? createPortal(
         <ul className="menu-select__menu is-portal" id={menuId} role="listbox" ref={menuRef} style={menuStyle}>

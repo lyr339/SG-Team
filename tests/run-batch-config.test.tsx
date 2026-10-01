@@ -41,8 +41,8 @@ describe('会话配置行 · RunBatchConfig', () => {
     ))
     const strong = container.querySelector('.run-batch-config__value strong')!
     expect(strong.className).toBe('provider-cursor')
-    expect(strong.querySelector('.run-batch-config__swatch')).not.toBeNull()
-    expect(strong.querySelector('span')?.textContent).toBe('Composer 2.5')
+    expect(strong.querySelector('.model-logo-slot[data-provider="cursor"]')).not.toBeNull()
+    expect(strong.querySelector('.run-batch-config__name')?.textContent).toBe('Composer 2.5')
     expect(container.querySelector('.run-batch-config__tag')?.textContent).toBe('Cursor 当前')
     expect(container.querySelector('.run-batch-config__value > small')?.textContent).toBe('Fast · MAX Mode Off · Context 200K · Standard')
     expect(container.querySelector('.run-batch-config__note')).toBeNull()
@@ -155,7 +155,7 @@ describe('会话配置行 · RunBatchConfig', () => {
   it('is inert while Cursor has not written its model catalog (says so instead of pretending to load), and disabled while launching or with no seats', async () => {
     await act(async () => root.render(<RunBatchConfig models={[]} seatCount={3} onSave={() => {}} />))
     expect(container.querySelector('.run-batch-config__value strong')?.textContent).toBe('Cursor 当前模型')
-    expect(container.querySelector('.run-batch-config__value > small')?.textContent).toContain('Cursor 尚未写入模型列表')
+    expect(container.querySelector('.run-batch-config__value > small')?.textContent).toContain('等待 Cursor 写入模型列表')
     expect(container.querySelector('.run-batch-config.is-spread')).toBeNull()
     expect(action().textContent).toBe('修改')
     expect(action().disabled).toBe(true)

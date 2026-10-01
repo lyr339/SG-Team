@@ -29,12 +29,92 @@ const BASE = (process.env.PREVIEW_BASE || 'http://127.0.0.1:5174').replace(/\/+$
 const OUT = resolve(process.env.PREVIEW_OUT || 'preview-screenshots')
 const CDP_PORT = Number(process.env.PREVIEW_CDP_PORT || 9555)
 const ONLY = flag('--only')?.split(',').map((value) => value.trim()).filter(Boolean)
+const AUDIT_ALIGN = args.includes('--audit-align')
+
+/** 走查候选而非自动判罪：Range 看文字实际占位，仍需截图区分多行文案、图标和有意左对齐。 */
+const CONTROL_ALIGNMENT_AUDIT = `(() => {
+  const findings = [], candidates = [], canvas = document.createElement('canvas').getContext('2d')
+  const visible = node => {
+    const rect = node.getBoundingClientRect(), css = getComputedStyle(node)
+    return rect.height > 1 && rect.width > 1 && css.visibility !== 'hidden' && css.clipPath !== 'inset(50%)' && !node.closest('[hidden], [inert]')
+  }
+  const describe = node => node.tagName.toLowerCase() + (node.className ? '.' + String(node.className).trim().split(/\\s+/).join('.') : '')
+  for (const button of document.querySelectorAll('button')) {
+    if (!visible(button) || !button.textContent.trim()) continue
+    const css = getComputedStyle(button), box = button.getBoundingClientRect(), rects = []
+    const walker = document.createTreeWalker(button, NodeFilter.SHOW_TEXT)
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (!node.textContent.trim() || !visible(node.parentElement)) continue
+      const range = document.createRange(); range.selectNodeContents(node)
+      rects.push(...range.getClientRects())
+    }
+    if (!rects.length) continue
+    const top = Math.min(...rects.map(r => r.top)), bottom = Math.max(...rects.map(r => r.bottom))
+    const dy = (top + bottom - box.top - box.bottom) / 2
+    const line = parseFloat(css.lineHeight) || parseFloat(css.fontSize) * 1.4
+    const centered = css.textAlign === 'center' && !button.matches('.run-seat__model') || css.alignItems === 'center'
+    const text = button.textContent.trim()
+    canvas.font = css.fontWeight + ' ' + css.fontSize + ' ' + css.fontFamily
+    const ink = canvas.measureText(text)
+    const opticalDx = (ink.actualBoundingBoxRight - ink.actualBoundingBoxLeft - ink.width) / 2
+    const item = {element:describe(button),text:text.slice(0,48),height:box.height,dy:Math.round(dy*100)/100,opticalDx:Math.round(opticalDx*100)/100,display:css.display,font:css.fontSize,line:css.lineHeight,padding:css.padding}
+    // 预设缩略图的文字本就位于图片下面，不属于单行按钮；不把有意布局当作居中错误。
+    if (centered && bottom-top <= line*1.3 && !button.matches('.appearance-background__tile')) {
+      candidates.push(item)
+      if (Math.abs(dy)>1.5) findings.push(item)
+    }
+    if (button.scrollWidth>button.clientWidth+1 && css.textOverflow!=='ellipsis' && !button.querySelector('.menu-select__value')) findings.push({...item,issue:'overflow'})
+  }
+  return {count:candidates.length,findings,reference:candidates.filter(x=>x.element.includes('primary-button')||x.element.includes('account-row')||x.element.includes('storage-cleanup__button'))}
+})()`
 
 const INSPECTOR_OPEN_KEY = 'sg-team.layout:v1:workspace-inspector:open'
 const INSPECTOR_TAB_KEY = 'sg-team.inspector:active-tab'
 const INSPECTOR_WIDTH_KEY = 'sg-team.layout:v1:shell.workspace-inspector'
 const REVIEW_SCOPE_KEY = 'sg-team.inspector:review-scope:v2'
 const APPEARANCE_KEY = 'shiguang.appearance.v1'
+
+const POOL_LAYOUT_PROBE = `(() => {
+  const page = document.querySelector('.run-page'), body = page.querySelector('.run-body')
+  const groups = page.querySelector('.pool-groups'), panel = page.querySelector('.run-panel'), seats = page.querySelector('.run-seats')
+  if (!CSS.supports('grid-template-columns', 'subgrid')) throw new Error('浏览器不支持共享列布局')
+  for (const node of [page, body, panel, seats, groups, ...page.querySelectorAll('.run-seat')].filter(Boolean)) {
+    if (node.scrollWidth > node.clientWidth + 1) throw new Error(node.className + ' 横向溢出')
+  }
+  const box = body.getBoundingClientRect()
+  if (groups) {
+    const g = groups.getBoundingClientRect()
+    if (Math.abs(g.left - box.left) > 1 || Math.abs(g.right - box.right) > 1) throw new Error('批次与协作组边缘未对齐')
+  }
+  if (panel && seats) {
+    const p = panel.getBoundingClientRect(), s = seats.getBoundingClientRect()
+    if (s.top < p.bottom - 1) throw new Error('批次与清单重叠')
+    const heads = [panel, seats, groups].filter(Boolean).map(n => n.querySelector('.run-section-head strong').getBoundingClientRect().left)
+    if (Math.max(...heads) - Math.min(...heads) > 1) throw new Error('模块标题起笔不一致')
+    const models = [...seats.querySelectorAll('.run-seat__model')].map(n => n.getBoundingClientRect().left)
+    if (models.length && Math.max(...models) - Math.min(...models) > 1) throw new Error('会话模型列未对齐')
+  }
+  const name = page.querySelector('.run-seat__who strong'), detail = page.querySelector('.run-seat__model small')
+  if (name && parseFloat(getComputedStyle(name).fontSize) !== 16) throw new Error('会话正文未采用 16px')
+  if (detail && parseFloat(getComputedStyle(detail).fontSize) !== 14) throw new Error('模型参数未采用 14px')
+  return { width: Math.round(page.getBoundingClientRect().width), seats: page.querySelectorAll('.run-seat').length, aligned: true, bodyFont: name ? 16 : null }
+})()`
+
+const CLEANUP_LAYOUT_PROBE = `(() => {
+  const section = document.querySelector('.settings-section--cleanup')
+  const rows = [...section.querySelectorAll('.storage-cleanup__row')]
+  if (rows.length !== 8) throw new Error('清理项丢失')
+  for (const node of [section, ...rows]) if (node.scrollWidth > node.clientWidth + 1) throw new Error('清理页横向溢出')
+  const head = section.querySelector('.storage-cleanup__headline').getBoundingClientRect()
+  const actions = section.querySelector('.storage-cleanup__actions').getBoundingClientRect()
+  if (actions.top < head.bottom && actions.left < head.right - 1) throw new Error('盘点信息与按钮重叠')
+  const nav = document.querySelector('.settings-nav__item.is-active')
+  if (getComputedStyle(nav, '::before').content !== 'none') throw new Error('导航竖条仍在')
+  if (!section.querySelector('.storage-cleanup__chat-field button') || !section.querySelector('.toggle-switch input')) throw new Error('历史范围或压实选项丢失')
+  const risk = getComputedStyle(section.querySelector('.storage-cleanup__risk'))
+  if (risk.borderTopWidth !== '0px' || risk.backgroundColor !== 'rgba(0, 0, 0, 0)') throw new Error('风险标签仍是胶囊')
+  return { items: rows.length, width: Math.round(section.getBoundingClientRect().width), noOverlap: true }
+})()`
 
 /** 基础存储：右栏展开、CH-2 会话、默认宽度；accent / background 为主题色 / 背景预设 id（缺省拾光橙 / 折光）。 */
 function baseStorage({ tab = 'review', width = 540, cardOpacity = 0.9, colorMode = 'light', scope = 'turn', accent = 'sg-orange', background = 'refraction' } = {}) {
@@ -165,11 +245,14 @@ const GROUPS_GRID_PROBE = `(() => {
 })()`
 
 /** §7 探针（口径更新）：建组抽屉是带背板的模态面——校验抽屉在视口内、背板全覆盖（inspector 在背板之下）。 */
-const COMPOSER_PROBE = `(() => {
+const COMPOSER_PROBE = `(async () => {
   const drawer = document.querySelector('.group-composer')
   if (!drawer) throw new Error('建组抽屉未打开')
+  // 检查落定后的布局，不把滑入动效的中间帧误判为静态溢出。
+  await Promise.all(drawer.getAnimations().map(animation => animation.finished))
   const rect = drawer.getBoundingClientRect()
-  if (rect.right > innerWidth + 0.5 || rect.top < -0.5 || rect.bottom > innerHeight + 0.5) throw new Error('抽屉超出视口')
+  if (rect.right > innerWidth + 0.5 || rect.top < -0.5 || rect.bottom > innerHeight + 0.5) throw new Error('抽屉超出视口: ' + JSON.stringify({right:rect.right,top:rect.top,bottom:rect.bottom,viewport:[innerWidth,innerHeight],transform:getComputedStyle(drawer).transform}))
+  for (const node of [drawer, ...drawer.querySelectorAll('.group-composer__member')]) if (node.scrollWidth > node.clientWidth + 1) throw new Error('建组控件横向溢出')
   const backdrop = document.querySelector('.group-composer-backdrop').getBoundingClientRect()
   if (backdrop.width < innerWidth - 1 || backdrop.height < innerHeight - 1) throw new Error('背板未覆盖视口')
   return { width: Math.round(rect.width), height: Math.round(rect.height) }
@@ -207,11 +290,11 @@ const scenes = [
         await new Promise(resolve => setTimeout(resolve, 220))
         const panel = document.querySelector('.inspector-panel:not(.is-hidden)')
         const title = panel?.querySelector('.inspector-section__header strong')?.getBoundingClientRect()
-        const count = panel?.querySelector('.inspector-section__aside b')?.getBoundingClientRect()
+        const count = panel?.querySelector(id === 'plan' ? '.inspector-plan__count' : '.inspector-section__aside b')?.getBoundingClientRect()
         if (!title || !count) return fail(new Error(id + ' 标题或计数缺失'))
         const shell = document.querySelector('.workspace-inspector').getBoundingClientRect()
         const bar = document.querySelector('.workspace-inspector__bar').getBoundingClientRect()
-        const target = bar.width < shell.width/2 ? document.querySelector('.inspector-tab.is-active').getBoundingClientRect() : title
+        const target = id === 'plan' ? title : bar.width < shell.width/2 ? document.querySelector('.inspector-tab.is-active').getBoundingClientRect() : title
         const delta = count.top + count.height/2 - target.top - target.height/2
         if (Math.abs(delta) > 1.5) return fail(new Error(id + ' 计数与右侧按钮行上下错位: ' + delta))
         result.push({id,centerDelta:Math.round(delta*10)/10})
@@ -565,7 +648,7 @@ const scenes = [
     // 会话池 · 协作组：两个 active 组（「验收」一人已确认离线 → attention 徽标与行内交接 / 移出）
     // + 一个刚解散的组（历史折叠）+ 独立会话；网格不许横向溢出（§7 探针）。
     {
-      name: `run-independent-groups-${suffix}`, run: true, query: 'independent=groups', colorScheme: colorMode, storage: baseStorage({ colorMode }),
+      name: `run-independent-groups-${suffix}`, run: true, height: 1300, query: 'independent=groups', colorScheme: colorMode, storage: baseStorage({ colorMode }),
       actions: [{ label: '组卡片网格不溢出', probe: GROUPS_GRID_PROBE }]
     },
     // 建组抽屉（运行页入口；名册多选走同一个抽屉、预勾通道）：模态背板全覆盖、抽屉在视口内（§7 探针，口径见常量注释）。
@@ -631,7 +714,7 @@ const scenes = [
   {
     name: 'run-new-batch-compose', run: true, query: 'independent=live', colorScheme: 'light', storage: baseStorage(),
     actions: [
-      { eval: `[...document.querySelectorAll('.run-panel__actions button')].find((button) => button.textContent.includes('新建批次'))?.click()` }, { wait: 300 },
+      { click: '.run-panel > .run-section-head .secondary-button' }, { wait: 300 },
       { click: '.run-sheet__confirm' }, { wait: 400 }
     ]
   },
@@ -672,7 +755,113 @@ const scenes = [
       })`
     }, { wait: 40 }]
   },
-  { name: 'run-independent-groups-clear', run: true, query: 'independent=groups', colorScheme: 'light', storage: baseStorage({ cardOpacity: 0 }) },
+  { name: 'run-independent-groups-clear', run: true, height: 1300, query: 'independent=groups', colorScheme: 'light', storage: baseStorage({ cardOpacity: 0 }) },
+  {
+    name: 'alignment-counted-actions-empty', run: true, query: 'independent=groups', colorScheme: 'dark', storage: baseStorage({ colorMode: 'dark' }), clip: '.group-composer__actions',
+    actions: [{ click: '.pool-groups .run-section-head .run-link' }, { wait: 250 }]
+  },
+  {
+    name: 'alignment-counted-actions', run: true, query: 'independent=live&poolLayout=sixteen', width: 1000, height: 850, colorScheme: 'dark', storage: baseStorage({ colorMode: 'dark' }), clip: '.group-composer__actions',
+    actions: [{ click: '.pool-groups .run-section-head .run-link' }, { wait: 250 }, {
+      label: '零个、一位数与两位数计数均居中', probe: `new Promise(async (done, fail) => {
+        try {
+          const submit = document.querySelector('.group-composer__actions .primary-button'), results = []
+          const inputs = [...document.querySelectorAll('.group-composer__member-pick input')]
+          for (const count of [0,1,12]) {
+            for (let n=0;n<count;n++) if (!inputs[n].checked) inputs[n].click()
+            await new Promise(resolve=>requestAnimationFrame(resolve))
+            const label=submit.querySelector('span:not(.button-count)'), number=submit.querySelector('.button-count'), button=submit.getBoundingClientRect()
+            const l=label.getBoundingClientRect(), r=number.getBoundingClientRect()
+            const dx=(l.left+r.right-button.left-button.right)/2
+            if (number.textContent!==String(count) || Math.abs(dx)>1 || Math.abs(l.top+l.height/2-r.top-r.height/2)>1) throw new Error('计数不对齐: '+count)
+            if (submit.disabled!==(count===0)) throw new Error('禁用守卫改变')
+            results.push({count,centerDelta:Math.round(dx*100)/100})
+          }
+          done(results)
+        } catch(error) { fail(error) }
+      })`
+    }]
+  },
+  ...[1440, 380].flatMap(width => ['light', 'dark'].map(colorMode => ({
+    name: `run-group-drawer-type-${width}-${colorMode}`, run: true, query: 'independent=groups', width, height: 650, colorScheme: colorMode, storage: baseStorage({ colorMode }), clip: '.group-composer',
+    actions: [{ click: '.pool-groups .run-section-head .run-link' }, { wait: 300 }, { label: '大字版建组抽屉', probe: COMPOSER_PROBE }]
+  }))),
+  {
+    name: 'run-model-dialog-type-narrow', run: true, query: 'setup=1', width: 380, height: 560, colorScheme: 'light', storage: baseStorage(), clip: '.cursor-model-dialog',
+    actions: [{ click: 'button[aria-label="配置 CH-1 会话"]' }, { wait: 300 }, { label: '模型弹层窄屏重排', probe: `(() => {
+      const dialog = document.querySelector('.cursor-model-dialog'), body = dialog.querySelector('.cursor-model-dialog__body')
+      for (const node of [dialog,body,dialog.querySelector('footer')]) if (node.scrollWidth > node.clientWidth + 1) throw new Error('模型弹层横向溢出')
+      const rect=dialog.getBoundingClientRect()
+      if (rect.top < 0 || rect.bottom > innerHeight + 1) throw new Error('弹层高度超出视口')
+      const foot = dialog.querySelector('footer').getBoundingClientRect(), content = body.getBoundingClientRect()
+      if (content.bottom > foot.top + 1) throw new Error('正文遮挡页脚')
+      if (parseFloat(getComputedStyle(dialog.querySelector('.cursor-model-option > header span')).fontSize) < 14) throw new Error('参数标签仍太小')
+      return {width:Math.round(rect.width),scrollable:body.scrollHeight>body.clientHeight,footerVisible:true}
+    })()` }]
+  },
+  ...['light', 'dark'].map(colorScheme => ({
+    name: `run-reference-ended-${colorScheme}`, run: true, query: 'independent=ended&poolLayout=reference',
+    colorScheme, storage: baseStorage({ colorMode: colorScheme, cardOpacity: 0, background: 'aurora' }),
+    actions: [{ label: '结束批次的配置只读', probe: `(() => {
+      const models = [...document.querySelectorAll('.run-seat__model')]
+      if (models.length !== 3 || models.some(button => !button.disabled || !button.textContent.includes('Claude'))) throw new Error('结束批次的记录缺失或仍可编辑')
+      return { recorded: 3, readOnly: true }
+    })()` }]
+  })),
+  ...[1440, 720, 480].map(width => ({
+    name: `run-long-text-${width}`, run: true, width, height: 1100, query: 'independent=mixed&poolLayout=long',
+    colorScheme: 'dark', storage: baseStorage({ colorMode: 'dark' }),
+    actions: [{ label: '长文本保留并重排', probe: `(() => {
+      const name = document.querySelector('.run-seat__who strong')
+      const model = document.querySelector('.run-seat__model strong')
+      if (name.title.length < 20 || !model.textContent.includes('Long Context Thinking')) throw new Error('长文本场景没有生效')
+      return { nameLength: name.title.length, model: model.textContent }
+    })()` }]
+  })),
+  { name: 'run-sixteen-seats', run: true, height: 1800, query: 'independent=live&poolLayout=sixteen', colorScheme: 'light', storage: baseStorage(), actions: [{ label: '16 个会话均存在', probe: `(() => { if(document.querySelectorAll('.run-seat').length !== 16) throw new Error('会话丢失'); return 16 })()` }] },
+  { name: 'run-awaiting-user', run: true, query: 'independent=live&poolLayout=awaiting', colorScheme: 'light', storage: baseStorage() },
+  {
+    name: 'run-start-options', run: true, query: 'setup=1', colorScheme: 'dark', storage: baseStorage({ colorMode: 'dark' }),
+    actions: [{ label: '启动设置平滑展开、开关可交互', probe: `new Promise((done, fail) => {
+      const options = document.querySelector('.run-launch-options'), samples = []
+      options.querySelector('summary').click()
+      for (const at of [0, 60, 120, 240]) setTimeout(() => {
+        samples.push(options.getBoundingClientRect().height)
+        if (at === 240) {
+          if (!options.open || options.querySelectorAll('.toggle-switch input').length !== 2 || !options.textContent.includes('消耗')) return fail(new Error('启动选项或额度说明缺失'))
+          if (!samples.some(size => size > samples[0] + 1 && size < samples[3] - 1)) return fail(new Error('展开没有中间帧'))
+          done(samples.map(Math.round))
+        }
+      }, at)
+    })` }, { click: '.run-launch-options .toggle-switch:nth-child(2)' }, {
+      label: '模型探测可关闭', probe: `(() => {
+        if (document.querySelector('.run-launch-options .toggle-switch:nth-child(2) input').checked) throw new Error('探测未关闭')
+        return { probeEnabled: false }
+      })()`
+    }]
+  },
+  {
+    name: 'run-narrow-groups-scrolled', run: true, width: 480, height: 850, query: 'independent=groups', colorScheme: 'light', storage: baseStorage(), clip: '.pool-groups',
+    actions: [{ eval: `document.querySelector('.pool-groups').scrollIntoView({block:'start'})` }, { wait: 200 }, {
+      label: '窄屏能滚到协作组与历史', probe: `(() => {
+        const page = document.querySelector('.run-page').getBoundingClientRect(), groups = document.querySelector('.pool-groups').getBoundingClientRect()
+        if (groups.top < page.top - 1 || groups.top > page.bottom - 1) throw new Error('协作组无法滚入视口')
+        if (!document.querySelector('.pool-groups__history summary')) throw new Error('历史入口丢失')
+        return { reachable: true }
+      })()`
+    }]
+  },
+  {
+    name: 'run-options-reduced-motion', run: true, query: 'setup=1', colorScheme: 'light', reducedMotion: true, storage: baseStorage(),
+    actions: [{ click: '.run-launch-options > summary' }, {
+      label: '减少动态效果时关闭高度过渡', probe: `(() => {
+        const options = document.querySelector('.run-launch-options')
+        if (!options.open || getComputedStyle(options, '::details-content').transitionDuration !== '0s') throw new Error('减少动态效果未生效')
+        if ([...options.querySelectorAll('.toggle-switch')].some(node => node.getBoundingClientRect().height < 1)) throw new Error('启动选项未显示')
+        return { motion: 'off', controlsVisible: true }
+      })()`
+    }]
+  },
   // 右上角设置入口：账号与 Cursor。
   ...['accounts', 'import', 'automation', 'aozai', 'maintenance', 'cleanup'].flatMap(group =>
     ['light', 'dark'].map(colorScheme => ({
@@ -735,6 +924,31 @@ const scenes = [
       })()` }
     ]
   })),
+  // 透明背景下切换当前选择（仅预览 mock）：文字、勾标和行状态同步，不残留光刃或胶囊。
+  ...['light', 'dark'].flatMap(colorScheme => [null, 380].map(accountWidth => ({
+    name: `settings-accounts-current-clear-${colorScheme}${accountWidth ? '-380' : ''}`, hash: 'account:accounts',
+    width: 1440, height: 900, colorScheme, reducedMotion: true,
+    storage: baseStorage({ colorMode: colorScheme, cardOpacity: 0, background: 'aurora' }), clip: '.settings-account-list',
+    actions: [
+      ...(accountWidth ? [{ eval: `document.querySelector('.settings-account-list').style.width = '${accountWidth}px'` }] : []),
+      { click: '.account-row:nth-child(2) .account-row__identity' },
+      { label: '当前选择与轻标识', probe: `(() => {
+        const rows = [...document.querySelectorAll('.account-row')]
+        const current = document.querySelector('.account-row__current')
+        if (document.documentElement.dataset.cardTransparency !== 'clear') throw new Error('场景未处于透明模式')
+        if (document.querySelectorAll('.account-row.is-active').length !== 1 || !rows[1].classList.contains('is-active')) throw new Error('当前行未同步')
+        if (!current?.querySelector('svg') || current.textContent !== '当前') throw new Error('当前轻标识缺失')
+        const css = getComputedStyle(current)
+        if (css.borderTopWidth !== '0px' || css.backgroundColor !== 'rgba(0, 0, 0, 0)') throw new Error('当前标识仍是胶囊')
+        if (getComputedStyle(rows[1], '::before').content !== 'none') throw new Error('光刃未移除')
+        for (const row of rows) if (row.scrollWidth > row.clientWidth + 1) throw new Error('账号行横向溢出')
+        const name = rows[1].querySelector('strong').getBoundingClientRect(), mark = current.getBoundingClientRect()
+        if (Math.abs(name.top + name.height / 2 - mark.top - mark.height / 2) > 1) throw new Error('状态与邮箱不居中')
+        return { selected: 2, noOverflow: true, inlineStatus: true }
+      })()` },
+      { click: '.account-row:first-child .account-row__identity' }
+    ]
+  }))),
   // 账号列表的中档容器（会话栏拉宽后内容区 ≈ 611px）：操作上移到邮箱同一行、元信息独占次行——
   // 探针盯：行仍是两行文本的高度、chip 不折行、操作与邮箱同一水平线、无横向溢出。
   {
@@ -841,7 +1055,39 @@ const scenes = [
   { name: 'settings-maintenance-missing-pump', hash: 'account:maintenance', query: 'pump=missing', width: 1440, height: 900, colorScheme: 'light', storage: baseStorage({ colorMode: 'light' }), clip: null },
   // 存储清理：Cursor 已退出（全部可清，默认预选含缓存/日志；高窗一次看全八项）、勾上对话历史后的
   // 红色确认块、无可清理内容的空态。盘点 mock 有 350ms 延迟，动作前先等它落地。
-  { name: 'settings-cleanup-closed-light', hash: 'account:cleanup', query: 'cleanup=closed', width: 1440, height: 1400, colorScheme: 'light', storage: baseStorage({ colorMode: 'light' }), clip: null },
+  ...['light', 'dark'].map(colorScheme => ({
+    name: `settings-cleanup-closed-${colorScheme}`, hash: 'account:cleanup', query: 'cleanup=closed',
+    width: 1440, height: 1200, colorScheme, storage: baseStorage({ colorMode: colorScheme }), clip: '.settings-section--cleanup',
+    actions: [{ wait: 600 }, { label: '清理页排版与功能入口', probe: CLEANUP_LAYOUT_PROBE }]
+  })),
+  ...['light', 'dark'].flatMap(colorScheme => [null, 380].map(sectionWidth => ({
+    name: `settings-cleanup-clear-${colorScheme}${sectionWidth ? '-380' : ''}`, hash: 'account:cleanup', query: 'cleanup=closed',
+    width: 1440, height: sectionWidth ? 2000 : 1400, colorScheme, reducedMotion: Boolean(sectionWidth),
+    storage: baseStorage({ colorMode: colorScheme, cardOpacity: 0, background: 'aurora' }), clip: '.settings-section--cleanup',
+    actions: [
+      { wait: 600 },
+      ...(sectionWidth ? [{ eval: `document.querySelector('.settings-section--cleanup').style.width = '${sectionWidth}px'` }] : []),
+      { label: '透明与窄栏清理页', probe: CLEANUP_LAYOUT_PROBE }
+    ]
+  }))),
+  {
+    name: 'settings-cleanup-result-dark', hash: 'account:cleanup', query: 'cleanup=closed',
+    width: 1440, height: 1200, colorScheme: 'dark',
+    storage: baseStorage({ colorMode: 'dark', cardOpacity: 0, background: 'aurora' }), clip: '.settings-section--cleanup',
+    actions: [
+      { wait: 600 }, { click: '.storage-cleanup__head .is-primary' }, { key: 'Escape', code: 'Escape' },
+      { label: 'Esc 收回清理确认', probe: `(() => {
+        if (document.querySelector('.storage-cleanup__confirm') || document.activeElement !== document.querySelector('.storage-cleanup__head .is-primary')) throw new Error('确认收回或焦点还原失败')
+        return true
+      })()` },
+      { click: '.storage-cleanup__head .is-primary' }, { click: '.storage-cleanup__confirm-actions .is-primary' }, { wait: 1100 },
+      { label: '清理反馈（仅模拟数据）', probe: `(() => {
+        const result = document.querySelector('.storage-cleanup__result[role="status"]')
+        if (!result?.textContent.includes('已清理') || !result.querySelector('[aria-label="收起清理结果"]')) throw new Error('反馈缺失')
+        return { message: result.querySelector('p').textContent }
+      })()` }
+    ]
+  },
   {
     name: 'settings-cleanup-confirm-dark', hash: 'account:cleanup', query: 'cleanup=closed', width: 1440, height: 1400, colorScheme: 'dark', storage: baseStorage({ colorMode: 'dark' }), clip: null,
     actions: [{ wait: 600 }, { click: '[data-item="chat-history"] input[type="checkbox"]' }, { click: '.storage-cleanup__button.is-primary' }, { wait: 120 }]
@@ -1713,9 +1959,16 @@ const scenes = [
   })),
   // 编辑运行态：固定高度尾窗、最新代码行强调、自动贴底（hook v29 streamContent）。
   ...['light', 'dark'].map((colorMode) => ({
-    name: `session-process-edit-stream-${colorMode}`, width: 1440, height: 900, colorScheme: colorMode, storage: railStorage({ colorMode }), clip: '.cursor-native-edit:has(.cursor-native-diff.is-live)',
+    name: `session-process-edit-stream-${colorMode}`, query: 'editStream=1', width: 1440, height: 900, colorScheme: colorMode, storage: railStorage({ colorMode }), clip: ':is(.cursor-native-edit, .cursor-native-group):has(.cursor-native-diff.is-live)',
     actions: [
-      { eval: `document.querySelector('.cursor-native-edit:has(.cursor-native-diff.is-live)').scrollIntoView({ block: 'center' })` },
+      { label: '运行中编辑卡（包括连续编辑分组）', probe: `(() => {
+        const diff = document.querySelector('.cursor-native-diff.is-live')
+        if (!diff) throw new Error('没有运行中代码预览：' + [...document.querySelectorAll('.cursor-native-diff')].map(node=>node.className).join(';'))
+        const card = diff.closest('.cursor-native-edit, .cursor-native-group')
+        if (!card) throw new Error('直播代码不在编辑卡或分组中')
+        card.scrollIntoView({block:'center'})
+        return {card:card.className,live:true}
+      })()` },
       { wait: 150 }
     ]
   })),
@@ -1748,7 +2001,7 @@ for (const scene of scenes) {
     scene.hash = 'run'
     scene.width ??= 1440
     scene.height ??= 900
-    scene.clip ??= '.run-page__inner'
+    if (scene.clip === undefined) scene.clip = '.run-page'
   }
   if (scene.rail) {
     scene.width ??= 1440
@@ -1897,6 +2150,11 @@ async function runActions(cdp, sessionId, actions = []) {
 async function shoot(cdp, scene) {
   const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank' })
   const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true })
+  const exceptions = []
+  const watchExceptions = (message) => {
+    if (message.sessionId === sessionId && message.method === 'Runtime.exceptionThrown') exceptions.push(message.params.exceptionDetails.exception?.description || message.params.exceptionDetails.text)
+  }
+  cdp.listeners.add(watchExceptions)
   try {
     await cdp.send('Page.enable', {}, sessionId)
     await cdp.send('Runtime.enable', {}, sessionId)
@@ -1923,6 +2181,13 @@ async function shoot(cdp, scene) {
     await navigate(cdp, sessionId, `${BASE}/preview.html${scene.query ? `?${scene.query}` : ''}#${scene.hash ?? `sessions:${scene.channel ?? '2'}`}`)
     await sleep(scene.settleMs ?? 900)
     await runActions(cdp, sessionId, scene.actions)
+    if (AUDIT_ALIGN) {
+      const audit = await evaluate(cdp, sessionId, CONTROL_ALIGNMENT_AUDIT)
+      writeFileSync(join(OUT, scene.name + '.alignment.json'), JSON.stringify(audit, null, 2))
+      console.log('  · 对齐候选: ' + JSON.stringify(audit))
+    }
+    if (scene.run) console.log('  · 运行页布局: ' + JSON.stringify(await evaluate(cdp, sessionId, POOL_LAYOUT_PROBE)))
+    if (exceptions.length) throw new Error(`页面未处理异常：${exceptions.join('; ')}`)
     const { data } = await cdp.send('Page.captureScreenshot', { format: 'png' }, sessionId)
     const file = join(OUT, `${scene.name}.png`)
     writeFileSync(file, Buffer.from(data, 'base64'))
@@ -1943,6 +2208,7 @@ async function shoot(cdp, scene) {
       }
     }
   } finally {
+    cdp.listeners.delete(watchExceptions)
     await cdp.send('Target.closeTarget', { targetId }).catch(() => {})
   }
 }

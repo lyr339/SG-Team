@@ -12,7 +12,6 @@ import type {
   TeamGroupLeadInput,
   TeamGroupMemberRef
 } from '../../../shared/desktop-api'
-import { BrandMark } from '../BrandMark'
 import { cursorModelSelectionFromOption, cursorModelSelectionSummary, normalizeCursorModelSelection, sameCursorModelSelection } from '../cursor-model-selection'
 import { describeSelectionSpread, majoritySelection, type RunBatchConfigProps } from './RunBatchConfig'
 import { ConfirmSheet } from './ConfirmSheet'
@@ -220,6 +219,8 @@ export function PoolPage({
     const fallback = (composingIndependent ? inherited : undefined) ?? defaultSelection
     return Object.fromEntries(channels.flatMap((channelId) => {
       const persisted = composingIndependent ? undefined : view.seats.find((seat) => seat.channelId === channelId)?.modelSelection
+      // 已结束批次只显示当时保存的配置，不拿当前 Cursor 默认值或新版目录补成历史事实。
+      if (!composingIndependent && view.phase === 'completed') return persisted ? [[channelId, persisted] as const] : []
       const candidate = drafts[channelId] ?? persisted ?? uniform ?? fallback
       if (!candidate) return []
       const option = cursorModels.find((model) => model.modelId === candidate.modelId)
@@ -228,7 +229,7 @@ export function PoolPage({
       // 由摘要行点明「已不在目录」——不要悄悄换成默认模型再被一次「统一」写死。
       return cursorModels.length ? [[channelId, candidate] as const] : []
     }))
-  }, [composeChannels, composingIndependent, cursorModels, defaultSelection, draftSelections, inherited, runId, view.seats])
+  }, [composeChannels, composingIndependent, cursorModels, defaultSelection, draftSelections, inherited, runId, view.phase, view.seats])
 
   /**
    * 批次的统一配置基线：显式统一过的那份，否则是被多数席位共用的那份（配置中与运行中同一口径）。
@@ -438,15 +439,15 @@ export function PoolPage({
   }) : undefined
 
   const createLabel = composingIndependent
-    ? `创建 ${count} 个独立会话`
-    : `补齐会话（${view.pendingSeats.length}）`
+    ? `创建 ${count} 个会话`
+    : '补齐会话'
   const relevantPlan = agentLaunchPlan && (composingIndependent || !view.pool || agentLaunchPlan.startedAt >= view.pool.createdAt)
     ? agentLaunchPlan
     : undefined
   const isBusy = Boolean(busy) || agentLaunchPlan?.state === 'running'
   const feedback = error || notice
   const feedbackStrip = feedback ? (
-    <p className={`run-feedback${error ? ' is-error' : ''}`} role="status" aria-live="polite">
+    <p className={`run-feedback${error ? ' is-error' : ''}`} role={error ? 'alert' : 'status'} aria-live={error ? 'assertive' : 'polite'}>
       <i aria-hidden="true" />
       <span>{feedback}</span>
       <button type="button" aria-label="关闭提示" onClick={() => { setError(''); setNotice('') }}>×</button>
@@ -461,6 +462,7 @@ export function PoolPage({
       plan={relevantPlan}
       busy={isBusy}
       createLabel={createLabel}
+      createCount={composingIndependent ? undefined : view.pendingSeats.length}
       createBlockedReason={!composingIndependent && view.evidencePending ? '正在确认离线会话的运行状态，确认完成后开放安全重建' : undefined}
       ended={!composingIndependent && view.phase === 'completed'}
       cdpAutoHealEnabled={cdpAutoHealEnabled}
@@ -470,6 +472,7 @@ export function PoolPage({
       onToggleWarmup={onToggleSessionWarmup}
       onRunWarmup={onRunSessionWarmup ? () => void run('warmup', onRunSessionWarmup) : undefined}
       onCreate={composingIndependent ? createIndependentBatch : createPendingSessions}
+      onOpenSession={composingIndependent ? undefined : onOpenSession}
       onModelSave={saveModel}
       onModelSaveAll={saveModelForAll}
       onModelReset={independentBatch && batchModel.uniform ? resetModelToUniform : undefined}
@@ -522,7 +525,7 @@ export function PoolPage({
         <span>
           {activeGroups.length
             ? `${activeGroups.length} 个组 · ${view.ungroupedSeats.length} 个独立会话`
-            : '池内会话默认独立；在左侧名册多选几行即可建组协作'}
+            : ended ? '新批次开始后可建组' : '选择独立会话，按需协作'}
         </span>
         {!ended ? (
           <button
@@ -540,10 +543,10 @@ export function PoolPage({
         <div className="pool-groups__grid">
           {activeGroups.map(groupCard(groupActions))}
         </div>
-      ) : null}
+      ) : <p className="pool-groups__empty">{ended ? '本批次没有协作组。' : '尚未建组，会话可独立运行。'}</p>}
       {dissolvedGroups.length ? (
         <details className="pool-groups__history">
-          <summary>历史（{dissolvedGroups.length} 个已解散的组，保留 24 小时）</summary>
+          <summary title="已解散的协作组保留 24 小时，只读展示">已解散 · {dissolvedGroups.length} 个组</summary>
           <div className="pool-groups__grid">
             {dissolvedGroups.map(groupCard(groupActions))}
           </div>
@@ -558,20 +561,15 @@ export function PoolPage({
         <div className="run-page__inner">
           <section className="run-start" aria-label="开始运行">
             <div className="run-start__intro">
-              <span className="run-start__mark"><BrandMark /></span>
-              <h1>开始一次运行</h1>
-              <p>
-                {detectedWorkspace
-                  ? <>Cursor 当前打开的工程：<strong title={detectedWorkspace.path}>{detectedWorkspace.name}</strong></>
-                  : '先在 Cursor 中打开一个工程，或在下方手动选择。'}
-              </p>
+              <h1>新建会话批次</h1>
+              <p>选择工程、数量与模型，即可创建独立会话。</p>
               {view.archivedLegacyTeam ? (
                 <p className="run-start__note">{view.state.label}：{view.state.hint}</p>
               ) : null}
             </div>
             <RunSlot>{feedbackStrip}</RunSlot>
           </section>
-          <div className="run-body">
+          <div className="run-body" aria-label="批次配置与会话">
             <RunIndependentPanel
               view={view}
               composing
@@ -583,7 +581,7 @@ export function PoolPage({
               onNewBatch={newBatch}
               modelConfig={batchModelConfig}
             />
-            {seats ?? <div className="run-empty">Cursor 工程识别完成后即可配置独立会话。</div>}
+            {seats ?? <div className="run-empty">选择工程后即可配置会话。</div>}
           </div>
         </div>
       </div>
@@ -606,10 +604,10 @@ export function PoolPage({
           <div className="run-banner is-amber" role="status">
             <i aria-hidden="true" />
             <span>
-              正在配置新的独立批次
+              配置新批次
               {view.phase === 'completed'
-                ? '：在下方选好数量与模型后创建。'
-                : '：创建后当前独立批次结束，旧会话在下一次轮询自行退出。'}
+                ? '：选择数量和模型后创建。'
+                : '：创建后替换当前批次，旧会话下次轮询退出。'}
             </span>
             <button type="button" disabled={isBusy} onClick={() => setCompose(null)}>放弃</button>
           </div>
@@ -629,31 +627,18 @@ export function PoolPage({
 
       <RunSlot>{feedbackStrip}</RunSlot>
 
-      <div className="run-body" key={composingIndependent ? 'compose' : 'pool'}>
-        {composingIndependent ? (
-          <RunIndependentPanel
-            view={view}
-            composing
-            targetWorkspace={targetWorkspace}
-            count={count}
-            busy={isBusy}
-            onCountChange={setCount}
-            onChooseWorkspace={chooseIndependentWorkspace}
-            onNewBatch={newBatch}
-            modelConfig={batchModelConfig}
-          />
-        ) : (
-          <RunIndependentPanel
-            view={view}
-            composing={false}
-            count={count}
-            busy={isBusy}
-            onCountChange={setCount}
-            onChooseWorkspace={chooseIndependentWorkspace}
-            onNewBatch={newBatch}
-            modelConfig={batchModelConfig}
-          />
-        )}
+      <div className="run-body" aria-label="批次与会话" key={`${runId ?? 'new'}:${composingIndependent ? 'compose' : 'pool'}`}>
+        <RunIndependentPanel
+          view={view}
+          composing={composingIndependent}
+          targetWorkspace={composingIndependent ? targetWorkspace : undefined}
+          count={count}
+          busy={isBusy}
+          onCountChange={setCount}
+          onChooseWorkspace={chooseIndependentWorkspace}
+          onNewBatch={newBatch}
+          modelConfig={batchModelConfig}
+        />
         {seats}
       </div>
 

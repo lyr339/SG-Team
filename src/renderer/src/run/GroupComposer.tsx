@@ -265,8 +265,8 @@ export function GroupComposer({
 
         <footer className="group-composer__actions">
           <button type="button" className="secondary-button" disabled={busy} onClick={onClose}>取消</button>
-          <button type="submit" className="primary-button" disabled={busy || !canSubmit}>
-            {busy ? '处理中…' : creating ? `建组（${selected.length}）` : `加入（${selected.length}）`}
+          <button type="submit" className="primary-button" disabled={busy || !canSubmit} aria-label={busy ? '处理中…' : `${creating ? '建组' : '加入'}（${selected.length}）`}>
+            {busy ? '处理中…' : <><span>{creating ? '建组' : '加入'}</span><span className="button-count" aria-hidden="true">{selected.length}</span></>}
           </button>
         </footer>
       </form>

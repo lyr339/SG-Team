@@ -13,7 +13,7 @@ import {
 import { formatFileSize } from '../../../shared/format-file-size'
 import { MenuSelect } from '../lobby/MenuSelect'
 import { ToggleSwitch } from '../lobby/ToggleSwitch'
-import { formatFullClock } from '../format'
+import { formatFullClock, formatRelativeClock } from '../format'
 import type { SettingsPageProps } from './settings-view'
 import { SettingsSection } from './SettingsSection'
 
@@ -36,7 +36,7 @@ function defaultSelection(scan: CursorStorageScan): Set<CursorStorageItemId> {
 
 function runningLabel(scan: CursorStorageScan): { text: string; tone: 'ok' | 'warn' | 'muted' } {
   if (scan.cursorRunning === true) return { text: 'Cursor 正在运行 · 标「需退出」的项要先退出 Cursor', tone: 'warn' }
-  if (scan.cursorRunning === false) return { text: 'Cursor 已退出 · 全部项都可以清理', tone: 'ok' }
+  if (scan.cursorRunning === false) return { text: 'Cursor 已退出 · 无进程占用限制', tone: 'ok' }
   return { text: '无法确认 Cursor 是否在运行 · 需退出的项暂不可清理', tone: 'muted' }
 }
 
@@ -59,6 +59,9 @@ function CleanupRow({ spec, entry, scan, selected, blockedReason, disabled, onTo
   const bytes = entry?.bytes ?? 0
   const sizeText = spec.id === 'chat-history' && bytes > 0 ? `约 ${formatFileSize(bytes)}` : bytes > 0 ? formatFileSize(bytes) : '—'
   const lockNeeded = spec.needsCursorClosed && !spec.diagnostic && scan.cursorRunning !== false
+  const history = spec.id === 'chat-history' && !entry?.partial ? scan.chatHistory : undefined
+  // 范围与保护数量已在下方控件旁显示；此处只留数据库体量，全量扫描说明仍可悬停查阅。
+  const note = history ? `数据库 ${formatFileSize(history.fileBytes)} · ${history.indexedCount} 个会话` : entry?.note
   return (
     <li className={`storage-cleanup__row ${tone}`.trim()} data-item={spec.id}>
       <label className="storage-cleanup__pick">
@@ -66,6 +69,7 @@ function CleanupRow({ spec, entry, scan, selected, blockedReason, disabled, onTo
           <i className="storage-cleanup__pick-placeholder" aria-hidden="true" />
         ) : (
           <input
+            id={`storage-cleanup-${spec.id}`}
             type="checkbox"
             /* 重新盘点后失去可清理内容的项不再显示为「勾着但禁用」：勾选态只反映会被执行的事实。 */
             checked={selected && cleanable}
@@ -77,13 +81,13 @@ function CleanupRow({ spec, entry, scan, selected, blockedReason, disabled, onTo
       </label>
       <div className="storage-cleanup__copy">
         <div className="storage-cleanup__title">
-          <strong>{spec.label}</strong>
+          {spec.diagnostic ? <strong>{spec.label}</strong> : <label htmlFor={`storage-cleanup-${spec.id}`}><strong>{spec.label}</strong></label>}
           <em className={`storage-cleanup__risk is-${spec.risk}`}>{cursorStorageRiskLabel(spec.risk)}</em>
           {lockNeeded ? <em className="storage-cleanup__lock">需退出 Cursor</em> : null}
           {entry?.partial ? <em className="storage-cleanup__partial" title="有读不到的部分，体量偏小">部分</em> : null}
         </div>
         <p className="storage-cleanup__summary">{spec.summary}</p>
-        {entry?.note ? <p className="storage-cleanup__note">{entry.note}</p> : null}
+        {note ? <p className="storage-cleanup__note" title={entry?.note}>{note}</p> : null}
         {selected && !spec.diagnostic ? <p className="storage-cleanup__loss">清掉后：{spec.loss}</p> : null}
         {blocked && selected ? <p className="storage-cleanup__blocked" role="status">{blockedReason}</p> : null}
         {children}
@@ -170,20 +174,23 @@ export function SettingsCleanup({
 
   return (
     <SettingsSection
-      title="存储清理"
+      className="settings-section--cleanup"
+      title="本机数据"
       description={storageScan?.userDataRoot ?? 'Cursor 用户数据目录'}
       descriptionTitle={storageScan?.userDataRoot}
-      aside={storageScan ? <span className="settings-section__meta">盘点于 {formatFullClock(storageScan.scannedAt)}</span> : undefined}
+      aside={storageScan ? <time className="settings-section__meta" dateTime={new Date(storageScan.scannedAt).toISOString()} title={formatFullClock(storageScan.scannedAt)}>盘点 · {formatRelativeClock(storageScan.scannedAt)}</time> : undefined}
     >
       <div className="storage-cleanup">
         <header className="storage-cleanup__head">
           <div className="storage-cleanup__headline">
-            {/* 空态眉题用「盘点结果」：「可清理：没有可清理的内容」连读矛盾。 */}
-            <span className="storage-cleanup__eyebrow">{storageScanBusy ? '正在盘点…' : !storageScan ? '尚未盘点' : storageScan.totalBytes > 0 ? '可清理' : '盘点结果'}</span>
-            <b className={`storage-cleanup__total${storageScan && storageScan.totalBytes === 0 ? ' is-empty' : ''}`}>
-              {!storageScan ? '—' : storageScan.totalBytes > 0 ? `约 ${formatFileSize(storageScan.totalBytes)}` : '没有可清理的内容'}
-            </b>
-            {running ? <span className={`storage-cleanup__running is-${running.tone}`}><i aria-hidden="true" />{running.text}</span> : null}
+            <div className="storage-cleanup__amount">
+              {/* 空态眉题用「盘点结果」：「可清理：没有可清理的内容」连读矛盾。 */}
+              <span className="storage-cleanup__eyebrow">{storageScanBusy ? '正在盘点…' : !storageScan ? '尚未盘点' : storageScan.totalBytes > 0 ? '可清理' : '盘点结果'}</span>
+              <b className={`storage-cleanup__total${storageScan && storageScan.totalBytes === 0 ? ' is-empty' : ''}`}>
+                {!storageScan ? '—' : storageScan.totalBytes > 0 ? `约 ${formatFileSize(storageScan.totalBytes)}` : '没有可清理的内容'}
+              </b>
+            </div>
+            {running ? <span className={`storage-cleanup__running is-${running.tone}`}>{running.text}</span> : null}
           </div>
           <div className="storage-cleanup__actions">
             <button type="button" className="storage-cleanup__button" disabled={busy} onClick={() => rescan()}>
@@ -232,14 +239,21 @@ export function SettingsCleanup({
 
         {storageCleanupResult && storageCleanupResult !== dismissedResult ? (
           <div className={storageCleanupResult.ok ? 'storage-cleanup__result is-ok' : 'storage-cleanup__result is-error'} role={storageCleanupResult.ok ? 'status' : 'alert'}>
-            <p>{storageCleanupResult.message}</p>
-            {storageCleanupResult.skipped.length ? (
-              <ul>
-                {storageCleanupResult.skipped.map((item) => (
-                  <li key={item.id}>{CURSOR_STORAGE_CATALOG.find((spec) => spec.id === item.id)?.label ?? item.id}：{item.reason}</li>
-                ))}
-              </ul>
-            ) : null}
+            <svg className="storage-cleanup__result-icon" viewBox="0 0 16 16" aria-hidden="true">
+              {storageCleanupResult.ok
+                ? <path d="m3.5 8 3 3 6-6" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                : <path d="M8 3.5v5M8 11.5v.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />}
+            </svg>
+            <div className="storage-cleanup__result-copy">
+              <p>{storageCleanupResult.message}</p>
+              {storageCleanupResult.skipped.length ? (
+                <ul>
+                  {storageCleanupResult.skipped.map((item) => (
+                    <li key={item.id}>{CURSOR_STORAGE_CATALOG.find((spec) => spec.id === item.id)?.label ?? item.id}：{item.reason}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
             <button type="button" className="storage-cleanup__result-dismiss" aria-label="收起清理结果" onClick={() => setDismissedResult(storageCleanupResult)}>×</button>
           </div>
         ) : null}

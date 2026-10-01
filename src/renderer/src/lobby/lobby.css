@@ -90,13 +90,13 @@
 .cursor-model-option > div > button { min-height: 31px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; color: var(--muted); background: transparent; border: 1px solid transparent; border-radius: 8px; font-size: var(--fs-10); font-weight: 600; transition: color 130ms ease, background 130ms ease, border-color 130ms ease, box-shadow 130ms ease; }
 .cursor-model-option > div > button:hover:not(:disabled) { color: var(--text); background: var(--surface-solid); border-color: var(--color-border-tertiary); }
 .cursor-model-option > div > button.is-active { color: var(--accent-deep); background: var(--surface-solid); border-color: var(--accent-border); box-shadow: var(--shadow-hairline); }
-.cursor-model-option > div > button i { padding: 2px 5px; color: var(--color-text-warning); background: var(--color-background-warning); border-radius: 5px; font-size: 9px; font-style: normal; font-weight: 600; }
+.cursor-model-option > div > button i { padding: 2px 5px; color: var(--color-text-warning); background: var(--color-background-warning); border-radius: 5px; font-size: 12px; font-style: normal; font-weight: 600; }
 .cursor-model-option > div > button:disabled { opacity: .5; }
 .cursor-model-dialog__fixed > b { min-height: 36px; display: flex; align-items: center; padding: 0 9px; color: var(--text-soft); background: var(--color-background-secondary); border: var(--border-width-regular) solid var(--color-border-tertiary); border-radius: 8px; font: 600 var(--fs-10)/1 var(--mono); }
 .cursor-model-dialog__max-mode { min-height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 10px; background: var(--color-background-secondary); border: 1px solid var(--color-border-tertiary); border-radius: 11px; }
 .cursor-model-dialog__max-mode > span { min-width: 0; display: grid; gap: 2px; }
 .cursor-model-dialog__max-mode b { color: var(--text); font-size: var(--fs-10); }
-.cursor-model-dialog__max-mode small { color: var(--muted); font-size: 10px; }
+.cursor-model-dialog__max-mode small { color: var(--muted); font-size: var(--fs-10); }
 .cursor-model-dialog__error { margin: 0; padding: 8px 10px; color: var(--red); background: var(--red-soft); border: var(--border-width-regular) solid var(--red-border-soft); border-radius: 8px; font-size: var(--fs-10); font-style: normal; }
 .cursor-model-dialog__linked { margin: 0 !important; padding: 8px 10px !important; color: var(--color-text-info) !important; background: var(--color-background-info); border: 1px solid var(--color-border-info) !important; border-radius: 9px; font-size: var(--fs-10); line-height: 1.45; }
 .cursor-model-dialog__body > p { margin: 2px 0 0; padding-top: 10px; color: var(--faint); border-top: var(--border-width-regular) solid var(--line-faint); font-size: var(--fs-10); line-height: 1.5; }
@@ -110,6 +110,12 @@
 .cursor-model-dialog > footer .toggle-switch input:checked ~ .toggle-switch__text { color: var(--accent-deep); }
 /* 统一配置弹层：标题眉标换成主题色，一眼区分「这是改全部」。 */
 .cursor-model-dialog.is-all > header small { color: var(--accent-deep); font-weight: 600; }
+@media (max-width: 520px) {
+  .cursor-model-dialog__model, .cursor-model-dialog__fixed { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .cursor-model-dialog > footer { flex-wrap: wrap; gap: 8px; }
+  .cursor-model-dialog > footer .toggle-switch { flex: 1 1 100%; }
+  .cursor-model-dialog > footer .toggle-switch__text { white-space: normal; overflow: visible; }
+}
 /* ---------- Cursor 账号维护 ---------- */
 .lobby-account {
   min-height: 0;

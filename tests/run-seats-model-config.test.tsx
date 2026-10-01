@@ -338,9 +338,11 @@ describe('run seats · per-session model config', () => {
           onModelSave={() => {}}
         />
       ))
-      await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="配置 CH-2 会话"]')!.click())
-      expect(document.querySelector('[role="dialog"] footer .toggle-switch')).toBeNull()
-      await act(async () => document.querySelector<HTMLButtonElement>('button[aria-label="关闭会话配置"]')!.click())
+      const historical = container.querySelector<HTMLButtonElement>('button[aria-label="配置 CH-2 会话"]')!
+      expect(historical.disabled).toBe(true)
+      await act(async () => historical.click())
+      expect(document.querySelector('[role="dialog"]')).toBeNull()
+      expect(container.querySelector('.run-seat__model strong')?.textContent).toBe(opus.displayName)
     })
   })
 
