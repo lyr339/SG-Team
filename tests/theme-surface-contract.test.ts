@@ -11,6 +11,12 @@ const settings = readFileSync(join(process.cwd(), 'src/renderer/src/settings/set
 const update = readFileSync(join(process.cwd(), 'src/renderer/src/settings/update.css'), 'utf8')
 
 describe('theme surface contracts', () => {
+  it('does not apply text-action padding to the account overflow icon button', () => {
+    expect(settings).toMatch(/\.account-row__actions > button:not\(\.account-actions-menu__trigger\)\s*\{[^}]*padding-inline:\s*9px/)
+    expect(settings).not.toMatch(/\.account-row__actions > button\s*\{/)
+    expect(settings).toMatch(/\.account-actions-menu__trigger\s*\{[^}]*place-items:\s*center[^}]*padding:\s*0/)
+  })
+
   it('centres time controls and uses one compositor-only sweep for enabled primary actions', () => {
     expect(styles).toMatch(/\.stepper-field__value\s*\{[^}]*justify-content:\s*center[^}]*align-items:\s*center/)
     expect(styles).toMatch(/\.stepper-field__value input\s*\{[^}]*field-sizing:\s*content/)

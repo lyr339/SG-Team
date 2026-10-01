@@ -65,6 +65,20 @@ const CONTROL_ALIGNMENT_AUDIT = `(() => {
     }
     if (button.scrollWidth>button.clientWidth+1 && css.textOverflow!=='ellipsis' && !button.querySelector('.menu-select__value')) findings.push({...item,issue:'overflow'})
   }
+  for (const button of document.querySelectorAll('.account-actions-menu__trigger:not(.is-busy)')) {
+    if (!visible(button)) continue
+    const icon = button.querySelector('svg').getBoundingClientRect(), box = button.getBoundingClientRect()
+    const dx = (icon.left + icon.right - box.left - box.right) / 2, dy = (icon.top + icon.bottom - box.top - box.bottom) / 2
+    if (Math.abs(dx) > .5 || Math.abs(dy) > .5) throw new Error('账号更多图标不居中：' + JSON.stringify({ dx, dy }))
+  }
+  const batch = document.querySelector('.run-new-batch')
+  if (batch && visible(batch)) {
+    const box = batch.getBoundingClientRect(), icon = batch.querySelector('svg').getBoundingClientRect()
+    const range = document.createRange(); range.selectNodeContents(batch.lastChild)
+    const text = range.getBoundingClientRect(), dx = (icon.left + text.right - box.left - box.right) / 2
+    const dy = (text.top + text.bottom - box.top - box.bottom) / 2
+    if (Math.abs(dx) > .5 || Math.abs(dy) > .5) throw new Error('新建批次的图文组合不居中：' + JSON.stringify({ dx, dy }))
+  }
   return {count:candidates.length,findings,reference:candidates.filter(x=>x.element.includes('primary-button')||x.element.includes('account-row')||x.element.includes('storage-cleanup__button'))}
 })()`
 

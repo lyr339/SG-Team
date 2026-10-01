@@ -426,7 +426,7 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
   gap: 4px;
 }
 
-.account-row__actions > button {
+.account-row__actions > button:not(.account-actions-menu__trigger) {
   min-height: 28px;
   padding-inline: 9px;
   font-size: var(--fs-10);
@@ -497,7 +497,7 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
 .account-actions-menu__trigger.is-open { color: var(--text); background: var(--accent-wash); }
 /* 有动作在跑：触发器改显进度文案，按文字宽度撑开。 */
 .account-actions-menu__trigger.is-busy { width: auto; padding: 0 7px; color: var(--accent); opacity: 0.85; }
-.account-actions-menu__glyph { width: 15px; height: 15px; }
+.account-actions-menu__glyph { display: block; width: 15px; height: 15px; }
 
 .account-actions-menu {
   z-index: 240;
