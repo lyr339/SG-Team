@@ -988,6 +988,22 @@ const scenes = [
     ]
   },
   // 自动化运行卡：每个相位一张整页 + 一张卡片特写（空闲态已在 settings-automation-* 覆盖）。
+  ...['light', 'dark'].flatMap(colorMode => [false, true].map(narrow => ({
+    name: `settings-timer-controls-${colorMode}${narrow ? '-narrow' : ''}`, hash: 'account:automation', query: 'automation=done',
+    width: 1440, height: 1200, colorScheme: colorMode, storage: baseStorage({ colorMode }), clip: '.settings-automation',
+    actions: [
+      ...(narrow ? [{ eval: `document.querySelector('.settings-automation').closest('.settings-section').style.width='380px'` }] : []),
+      { label: '三个倒计时设置同一尺寸并居中', probe: `(() => {
+        const fields = [...document.querySelectorAll('.stepper-field')]
+        if (fields.length !== 3) throw new Error('倒计时设置丢失')
+        for (const field of fields) {
+          const box = field.getBoundingClientRect(), value = field.querySelector('.stepper-field__value').getBoundingClientRect()
+          if (field.scrollWidth > field.clientWidth + 1 || Math.abs(box.left + box.right - value.left - value.right) > 1 || Math.abs(box.top + box.bottom - value.top - value.bottom) > 1) throw new Error('倒计时控件溢出或没有居中')
+        }
+        return fields.map(node => ({ width: node.getBoundingClientRect().width, value: node.querySelector('input').value }))
+      })()` }
+    ]
+  }))),
   ...['countdown', 'processing', 'hardening-countdown', 'importing', 'deleting', 'cleaning', 'done', 'failed', 'cancelled'].flatMap(phase =>
     ['light', 'dark'].map(colorScheme => ({
       name: `settings-automation-run-${phase}-${colorScheme}`, hash: 'account:automation', query: `automation=${phase}`,
@@ -1150,8 +1166,10 @@ const scenes = [
         if (badge) {
           const head = badge.closest('.settings-section__head').getBoundingClientRect()
           const box = badge.getBoundingClientRect()
-          if (box.top < head.top || box.bottom > head.bottom) throw new Error('胶囊出了区块头')
-          if (box.height > 22) throw new Error('胶囊折行了：' + badge.textContent)
+          if (box.top < head.top || box.bottom > head.bottom) throw new Error('状态字出了区块头')
+          if (box.height > 22) throw new Error('状态字折行了：' + badge.textContent)
+          const css = getComputedStyle(badge)
+          if (css.borderTopWidth !== '0px' || css.backgroundColor !== 'rgba(0, 0, 0, 0)') throw new Error('更新状态仍有胶囊外壳')
         }
         return { title: title.textContent, badge: badge ? badge.textContent : null, actions: actions ? actions.querySelectorAll('button').length : 0, rows: document.querySelectorAll('.app-update .settings-row').length }
       })()` }]

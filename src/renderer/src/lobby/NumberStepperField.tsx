@@ -82,7 +82,7 @@ export function NumberStepperField({ value, min, max, step, unit, disabled, onCh
   const atMax = alignedValue >= clampToStep(max, min, max, step)
 
   return (
-    <span className={`stepper-field${disabled ? ' is-disabled' : ''}`}>
+    <span className={`stepper-field${disabled ? ' is-disabled' : ''}`} role="group" aria-label={label}>
       <button
         type="button"
         className="stepper-field__btn"
@@ -97,7 +97,7 @@ export function NumberStepperField({ value, min, max, step, unit, disabled, onCh
           if (event.detail === 0) stepOnce(-1)
         }}
       >
-        −
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 10h10" /></svg>
       </button>
       <span className="stepper-field__value">
         <input
@@ -152,7 +152,7 @@ export function NumberStepperField({ value, min, max, step, unit, disabled, onCh
           if (event.detail === 0) stepOnce(1)
         }}
       >
-        +
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 10h10M10 5v10" /></svg>
       </button>
     </span>
   )

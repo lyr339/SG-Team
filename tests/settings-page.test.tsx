@@ -472,7 +472,7 @@ describe('SettingsPage', () => {
     expect(html).toContain('aria-current="step"')
     // 倒计时 = 当前节点上的进度环 + 说明行里的整秒读数；旧的 6.5 / 6.5s 与「（可取消）」不再出现
     expect(html).toMatch(/automation-run__node is-running has-countdown"[\s\S]*?class="automation-run__ring"/)
-    expect(html).toMatch(/automation-run__stage-detail" aria-live="polite">7 秒后开始处理当前账号</)
+    expect(html).toMatch(/automation-run__stage-detail is-countdown" aria-live="polite">7 秒后开始处理当前账号</)
     expect(html).not.toContain('6.5s')
     expect(html).not.toContain('6.5 秒')
     expect(html).not.toContain('（可取消）')

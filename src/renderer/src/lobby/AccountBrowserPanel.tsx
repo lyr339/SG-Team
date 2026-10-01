@@ -11,7 +11,7 @@ interface AccountBrowserPanelProps {
   profilesMessage?: string
   apiKeyStatus?: { saved: boolean; maskedKey?: string }
   onSettingsChange: (settings: AccountAutomationSettings) => void
-  onRefreshProfiles?: () => void
+  onRefreshProfiles?: () => void | Promise<void>
   onSaveApiKey?: (key: string) => Promise<void>
   /** 一键清理：选定 profile 的 Cursor 站点数据 + Roxy 本地/云端缓存 + 指纹轮换。 */
   onCleanupEnvironment?: () => Promise<void>
@@ -46,6 +46,8 @@ export function AccountBrowserPanel({
 }: AccountBrowserPanelProps): React.JSX.Element {
   const [keyInput, setKeyInput] = useState('')
   const [keySaving, setKeySaving] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+  const refreshInFlight = useRef(false)
   // 已保存 Key 时默认只回显掩码；「更换」切到输入态，保存成功 / 取消 / 掩码刷新即退出。
   const [keyEditing, setKeyEditing] = useState(false)
   const keySaved = apiKeyStatus?.saved === true && Boolean(apiKeyStatus.maskedKey)
@@ -61,6 +63,19 @@ export function AccountBrowserPanel({
   useEffect(() => { setCleanupArmed(false); setCleanupNote('') }, [settings.bitProfileId, settings.browserHost])
   const host = settings.browserHost ?? 'fingerprint'
   const selectedProfile = profiles?.find((profile) => profile.id === settings.bitProfileId)
+  const refreshProfiles = async (): Promise<void> => {
+    if (disabled || refreshInFlight.current || !onRefreshProfiles) return
+    refreshInFlight.current = true
+    setRefreshing(true)
+    try {
+      await onRefreshProfiles()
+    } catch {
+      // 获取失败由父级 profilesMessage 呈现；动效只负责真实在途状态。
+    } finally {
+      refreshInFlight.current = false
+      setRefreshing(false)
+    }
+  }
   const commitPort = (): void => {
     const port = Number(portInput)
     if (Number.isInteger(port) && port >= 1 && port <= 65_535) {
@@ -177,7 +192,7 @@ export function AccountBrowserPanel({
                   onChange={(value) => onSettingsChange({ ...settings, bitProfileId: value || undefined })}
                 />
                 {onRefreshProfiles ? (
-                  <button type="button" className="account-browser__refresh" disabled={disabled} title="重新获取窗口列表" aria-label="刷新指纹浏览器窗口" onClick={onRefreshProfiles}>
+                  <button type="button" className={`account-browser__refresh${refreshing ? ' is-refreshing' : ''}`} disabled={disabled || refreshing} aria-busy={refreshing} title={refreshing ? '正在获取窗口列表…' : '重新获取窗口列表'} aria-label={refreshing ? '正在刷新指纹浏览器窗口' : '刷新指纹浏览器窗口'} onClick={() => void refreshProfiles()}>
                     <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M15.7 7A6.2 6.2 0 1 0 16 12.2M15.7 3.8V7h-3.2" /></svg>
                   </button>
                 ) : null}

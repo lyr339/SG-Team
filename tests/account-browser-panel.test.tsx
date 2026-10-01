@@ -21,6 +21,29 @@ describe('AccountBrowserPanel', () => {
     container.remove()
   })
 
+  it('refresh feedback follows the real request, prevents duplicate clicks, and stops on failure', async () => {
+    let reject!: (error: Error) => void
+    let finish!: () => void
+    let calls = 0
+    const onRefreshProfiles = () => { calls++; return new Promise<void>((done, fail) => { finish = done; reject = fail }) }
+    await act(async () => root.render(<AccountBrowserPanel settings={DEFAULT_ACCOUNT_AUTOMATION_SETTINGS} disabled={false} isWindows={false} providerLabel="Roxy" onSettingsChange={() => {}} onRefreshProfiles={onRefreshProfiles} />))
+    const button = container.querySelector<HTMLButtonElement>('.account-browser__refresh')!
+    await act(async () => { button.click(); button.click() })
+    expect(calls).toBe(1)
+    expect(button.disabled).toBe(true)
+    expect(button.getAttribute('aria-busy')).toBe('true')
+    expect(button.classList.contains('is-refreshing')).toBe(true)
+    await act(async () => { reject(new Error('列表获取失败')) })
+    expect(button.disabled).toBe(false)
+    expect(button.getAttribute('aria-busy')).toBe('false')
+    expect(button.classList.contains('is-refreshing')).toBe(false)
+    await act(async () => button.click())
+    expect(calls).toBe(2)
+    await act(async () => finish())
+    expect(button.disabled).toBe(false)
+    expect(button.getAttribute('aria-busy')).toBe('false')
+  })
+
   it('renders the environment cleanup action with two-click confirmation and result feedback', async () => {
     const cleanupCalls: number[] = []
     function Harness(): React.JSX.Element {

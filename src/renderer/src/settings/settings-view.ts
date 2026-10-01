@@ -189,7 +189,7 @@ export interface SettingsPageProps {
   bitProfiles?: Array<{ id: string; name: string; seq?: number }>
   /** 窗口列表获取失败提示（客户端未运行等）。 */
   bitProfilesMessage?: string
-  onRefreshBitProfiles?: () => void
+  onRefreshBitProfiles?: () => void | Promise<void>
   /** Roxy API Key 状态（指纹浏览器统一 Roxy，未保存 Key 时展示输入框）。 */
   roxyApiKeyStatus?: { saved: boolean; maskedKey?: string }
   onSaveRoxyApiKey?: (key: string) => Promise<void>

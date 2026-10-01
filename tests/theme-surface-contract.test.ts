@@ -11,6 +11,18 @@ const settings = readFileSync(join(process.cwd(), 'src/renderer/src/settings/set
 const update = readFileSync(join(process.cwd(), 'src/renderer/src/settings/update.css'), 'utf8')
 
 describe('theme surface contracts', () => {
+  it('centres time controls and uses one compositor-only sweep for enabled primary actions', () => {
+    expect(styles).toMatch(/\.stepper-field__value\s*\{[^}]*justify-content:\s*center[^}]*align-items:\s*center/)
+    expect(styles).toMatch(/\.stepper-field__value input\s*\{[^}]*field-sizing:\s*content/)
+    const sheen = styles.match(/@keyframes shiguang-button-sheen\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
+    expect(sheen).toContain('transform: translateX')
+    expect(sheen).not.toMatch(/\b(left|width):/)
+    expect(styles).toContain(':not([aria-busy="true"])::after')
+    const badge = update.match(/\.app-update__badge\s*\{([^}]*)\}/)?.[1] ?? ''
+    expect(badge).toContain('background: transparent')
+    expect(badge).toContain('border: 0')
+  })
+
   it('insets the seat hover surface without moving shared columns and centres update notice contents', () => {
     expect(run).toMatch(/\.run-seat\s*\{[^}]*padding:\s*4px 8px/)
     expect(run).toMatch(/\.run-seat::before\s*\{[^}]*inset:\s*4px 0[^}]*border-radius:\s*9px[^}]*pointer-events:\s*none/)
@@ -178,8 +190,9 @@ describe('theme surface contracts', () => {
     expect(controls).toMatch(/select:not\(\[multiple\]\):focus\s*\{[^}]*var\(--accent-border-strong\)/)
     // 运行页只用共享的 .primary-button（信号橙）。确认面的按钮不是主按钮样式：可收回的动作（移出成员）
     // 用主操作色，做了回不来的（解散 / 结束 / 新建批次）由 is-danger 切成红色——红只表破坏性，不作装饰。
-    expect(styles).toMatch(/\.primary-button\s*\{[^}]*background:\s*var\(--accent\)/)
-    expect(run).toMatch(/\.run-sheet__confirm\s*\{[^}]*background:\s*var\(--accent\)/)
+    expect(styles).toMatch(/\.primary-button\s*\{[^}]*background:\s*var\(--action-primary-bg\)/)
+    expect(styles).toContain('--action-primary-bg: color-mix(in srgb, var(--accent) 64%, #171b24)')
+    expect(run).toMatch(/\.run-sheet__confirm\s*\{[^}]*background:\s*var\(--action-primary-bg\)/)
     expect(run).toMatch(/\.run-sheet__confirm\.is-danger\s*\{[^}]*background:\s*var\(--red\)/)
     expect(run).toMatch(/\.run-header__ghost\.is-danger\s*\{[^}]*color:\s*var\(--red\)/)
     expect(run).not.toContain('.lobby-command__primary')

@@ -1,34 +1,35 @@
 /* ---------- 设置 › 软件更新 ---------- */
 /* 版本状态与 Cursor 维护页同一语言：settings-row 直接住在区块正文里（不再套一层卡），hairline 分隔；
-   状态色只落在区块头的胶囊、进度条与主按钮上，标签与正文保持炭色。 */
+   状态色只落在区块头的状态字、进度条与主按钮上，标签与正文保持炭色。 */
 
 /* 两个容器都直接住在 settings-section__body（自带 12/14 内边距）里：自己不再加一层，否则双重内缩。 */
 .app-update { min-width: 0; display: grid; gap: 6px; }
 
-/* 区块头右侧的状态胶囊：与存储清理页的风险胶囊同一外形（18px 高、全圆角、文字色 + 极淡底）。状态色只在这里。 */
+/* 状态是文字，不是按钮：去掉胶囊外壳，仅在真实忙态保留细环。 */
 .app-update__badge {
   display: inline-flex;
   align-items: center;
-  height: 18px;
-  padding: 0 7px;
+  min-height: 22px;
+  gap: 6px;
+  padding: 0;
   color: var(--muted);
-  background: var(--surface-soft);
-  border: 1px solid var(--line-faint);
-  border-radius: var(--border-radius-full);
-  font-size: var(--fs-10);
-  font-weight: 600;
-  line-height: 1;
+  background: transparent;
+  border: 0;
+  font-size: var(--font-text-sm-size);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.3;
   white-space: nowrap;
 }
-.app-update__badge.is-accent { color: var(--accent-deep); background: var(--accent-wash); border-color: var(--accent-border); }
-.app-update__badge.is-success { color: var(--color-text-success); background: var(--color-background-success); border-color: color-mix(in srgb, var(--color-text-success) 30%, transparent); }
-.app-update__badge.is-info { color: var(--color-text-info); background: var(--color-background-info); border-color: var(--color-border-info); }
-.app-update__badge.is-danger { color: var(--red); background: var(--red-soft); border-color: var(--red-border); }
-/* 忙态胶囊（检查 / 下载 / 安装 / 回滚）：文字前一枚细环在转，代替原来会脉冲的圆点。 */
+.app-update__badge.is-accent { color: var(--accent-deep); }
+.app-update__badge.is-success { color: var(--color-text-success); }
+.app-update__badge.is-info { color: var(--color-text-info); }
+.app-update__badge.is-danger { color: var(--red); }
+/* 忙态（检查 / 下载 / 安装 / 回滚）：文字前的细环只表示真实在途任务。 */
 .app-update__badge.is-info::before {
   content: '';
-  width: 9px; height: 9px;
-  margin-right: 6px;
+  width: 10px; height: 10px;
+  flex: none;
   border: 1.5px solid currentColor;
   border-right-color: transparent;
   border-radius: 50%;

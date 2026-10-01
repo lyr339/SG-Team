@@ -1279,7 +1279,7 @@ export function App(): React.JSX.Element {
         .catch(() => {})
     },
     onRefreshBitProfiles: () => {
-      void window.sgDesktop.listAccountAutomationBitProfiles()
+      return window.sgDesktop.listAccountAutomationBitProfiles()
         .then((result) => {
           if (result.ok) {
             setBitProfiles(result.profiles ?? [])

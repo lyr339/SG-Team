@@ -1001,6 +1001,11 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
 /* 子组控件：固定紧凑宽度，全部右缘对齐。 */
 .settings-row--sub .menu-select { width: 216px; justify-self: end; }
 .settings-row--sub .menu-select__button { min-height: 29px; background: var(--surface-pure); box-shadow: none; }
+.settings-subgroup:has(.stepper-field) { padding-left: 0; }
+.settings-subgroup:has(.stepper-field)::before { content: none; }
+.settings-row--sub:has(.stepper-field) { min-height: 50px; }
+.settings-row--sub:has(.stepper-field) .settings-row__label { font-size: var(--font-text-sm-size); }
+.automation-run__stage-detail.is-countdown { font-size: var(--font-text-sm-size); font-weight: 600; font-variant-numeric: tabular-nums; }
 
 /* 同级设置块之间的 hairline 分隔。 */
 .settings-row--divided { margin-top: 2px; border-top: 1px solid var(--line-faint); }

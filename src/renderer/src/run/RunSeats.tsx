@@ -228,7 +228,7 @@ export function RunSeats({
       ) : null}
       {cdpAutoHealEvent?.phase === 'countdown' ? (
         <div className="run-seats__cdp is-countdown" role="alert">
-          <span>检测到 Cursor 未启用会话创建端口，{countdownLeft} 秒后将自动重启并打开当前工作区。</span>
+          <span>检测到 Cursor 未启用会话创建端口，<b className="countdown-value">{countdownLeft}</b> 秒后将自动重启并打开当前工作区。</span>
           <button type="button" className="secondary-button" onClick={onCancelCountdown}>取消本次自动重启</button>
         </div>
       ) : null}

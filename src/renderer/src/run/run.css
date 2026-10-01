@@ -270,13 +270,13 @@ html[data-card-transparency="clear"] :is(.run-body, .pool-groups) {
   gap: 7px;
   padding-inline: 12px;
   color: #fff;
-  background: color-mix(in srgb, var(--accent) 72%, #171b24);
+  background: var(--action-primary-bg);
   border-color: var(--accent-border-strong);
   border-radius: 9px;
   box-shadow: inset 0 1px 0 rgb(255 255 255 / .12);
 }
 .run-new-batch svg { width: 16px; height: 16px; flex: none; }
-.run-panel .run-section-head > .run-new-batch:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 68%, #171b24); }
+.run-panel .run-section-head > .run-new-batch:hover:not(:disabled) { background: var(--action-primary-hover-bg); }
 .run-panel .run-section-head > .run-new-batch:disabled { color: var(--color-text-disabled); background: var(--color-background-secondary); border-color: var(--color-border-disabled); box-shadow: none; }
 /* 清单以自身宽度决定换行，不删模型参数或运行证据。 */
 .run-seats { container: run-seats / inline-size; }
@@ -874,7 +874,7 @@ button.group-card-member__who:hover { background: var(--surface-soft); }
   min-height: 34px;
   padding: 0 14px;
   color: #fff;
-  background: var(--accent);
+  background: var(--action-primary-bg);
   border: 0;
   border-radius: var(--r-md);
   font-size: var(--fs-12);
@@ -882,7 +882,7 @@ button.group-card-member__who:hover { background: var(--surface-soft); }
   transition: filter 140ms ease;
 }
 .run-sheet__confirm.is-danger { background: var(--red); }
-.run-sheet__confirm:hover:not(:disabled) { filter: brightness(1.08); }
+.run-sheet__confirm:hover:not(:disabled):not(.is-danger) { background: var(--action-primary-hover-bg); }
 .run-sheet__confirm:disabled { opacity: 0.55; }
 
 /* ---------- 开始运行（无活跃运行） ---------- */

@@ -95,7 +95,7 @@ export function AutomationRunCard({ run, settings, onCancel }: AutomationRunCard
             <StageNode state={stage.state} countdown={stage.countdown} />
             <span className="automation-run__stage-title">{stage.title}</span>
             <span
-              className="automation-run__stage-detail"
+              className={`automation-run__stage-detail${stage.countdown ? ' is-countdown' : ''}`}
               role={stage.state === 'failed' ? 'alert' : undefined}
               aria-live={stage.state === 'running' ? 'polite' : undefined}
             >{stage.detail}</span>
