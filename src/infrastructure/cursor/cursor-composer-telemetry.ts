@@ -19,6 +19,7 @@ import type {
 } from '../../domain/agent-session'
 import { badgesFromParameters, contextTokensFromValue, readableParameterValue } from '../../shared/model-badges'
 import { cursorUserDataRoot } from './cursor-install-paths'
+import { readCursorComposerHeadersJson } from './cursor-composer-headers'
 import { sanitizeModelDisplayText } from '../../domain/model-output-sanitizer'
 import type {
   CursorModelOption,
@@ -41,7 +42,6 @@ import type { ProcessBlock } from '../../domain/conversation-entry'
 import type { SessionTranscriptLocation } from '../../domain/session-handoff'
 import { isCursorInternalToolName } from './cursor-cdp-session-creator'
 
-const COMPOSER_HEADERS_KEY = 'composer.composerHeaders'
 const APPLICATION_USER_KEY = 'src.vs.platform.reactivestorage.browser.reactiveStorageServiceImpl.persistentStorage.applicationUser'
 const MAX_HEADERS_BYTES = 32 * 1024 * 1024
 const MAX_APPLICATION_USER_BYTES = 64 * 1024 * 1024
@@ -442,20 +442,31 @@ interface ComposerModelState {
  * applicationUser（~400KB，含 38 条模型目录）原文未变时复用上次解析结果：
  * 它随 Cursor 偏好变化而变，与会话写入无关，逐拍重新 JSON.parse 纯属浪费。
  */
-let modelStateCache: { json: string; state: ComposerModelState } | undefined
+let modelStateCache: { json: string; catalog?: string; state: ComposerModelState } | undefined
 
 function readComposerModelState(database: DatabaseSync): ComposerModelState {
   try {
-    const row = database.prepare(
-      'SELECT value FROM ItemTable WHERE key = ?'
-    ).get(APPLICATION_USER_KEY) as { value?: unknown } | undefined
-    const json = sqliteText(row?.value)
-    if (!json || Buffer.byteLength(json, 'utf8') > MAX_APPLICATION_USER_BYTES) return { models: [] }
-    if (modelStateCache?.json === json) return modelStateCache.state
+    const read = database.prepare('SELECT value FROM ItemTable WHERE key = ?')
+    const stored = sqliteText(read.get(APPLICATION_USER_KEY)?.value)
+    const json = stored || '{}'
+    if (Buffer.byteLength(json, 'utf8') > MAX_APPLICATION_USER_BYTES) return { models: [] }
+    const ownCatalogEnabled = ['true', '1'].includes(sqliteText(read.get('cursor.modelCatalogOwnKey.gateEnabled')?.value) ?? '')
+    const catalog = ownCatalogEnabled ? sqliteText(read.get('cursor.modelCatalog.v1')?.value) : undefined
+    if (catalog && Buffer.byteLength(catalog, 'utf8') > MAX_APPLICATION_USER_BYTES) return { models: [] }
+    if (modelStateCache?.json === json && modelStateCache.catalog === catalog) return modelStateCache.state
     const value = JSON.parse(json)
     const root = recordOf(value)
-    const state: ComposerModelState = { profile: parseComposerProfile(value), models: parseCursorModels(value), root }
-    modelStateCache = { json, state }
+    // 3.21.12 can persist the model catalog under its own key while applicationUser still has only Auto.
+    // Native code hydrates that catalog when the gate is enabled; don't let its migration erase saved choices.
+    let effectiveRoot = root
+    if (catalog) {
+      try {
+        const own = JSON.parse(catalog)
+        if (Array.isArray(own) && own.length) effectiveRoot = { ...root, availableDefaultModels2: own }
+      } catch { /* Preserve a valid applicationUser catalog during a partial write. */ }
+    }
+    const state: ComposerModelState = { profile: parseComposerProfile(effectiveRoot), models: parseCursorModels(effectiveRoot), root: effectiveRoot }
+    modelStateCache = { json, catalog, state }
     return state
   } catch {
     // Composer headers remain useful even if Cursor changes or is midway
@@ -1257,6 +1268,34 @@ function bindingCandidates(
   return [...exact, ...fallback]
 }
 
+/** Native persisted opening bubble is authoritative even before transcript export catches up. */
+function withPersistedLaunchMarkers(database: DatabaseSync, composers: ParsedComposer[], bindings: RuntimeBinding[]): ParsedComposer[] {
+  const unbound = bindings.filter((binding) => !binding.composerId)
+  if (!unbound.length) return composers
+  const oldest = Math.min(...unbound.map((binding) => binding.installedAt)) - FALLBACK_BINDING_CLOCK_SKEW_MS
+  const occupied = new Set(bindings.flatMap((binding) => binding.composerId ? [binding.composerId] : []))
+  try {
+    const headers = database.prepare("SELECT json_extract(value, '$.fullConversationHeadersOnly') headers FROM cursorDiskKV WHERE key = ?")
+    const body = database.prepare("SELECT json_extract(value, '$.text') text FROM cursorDiskKV WHERE key = ?")
+    return composers.map((composer) => {
+      const id = composer.telemetry.composerId
+      if (occupied.has(id) || (composer.telemetry.createdAt !== undefined && composer.telemetry.createdAt < oldest)) return composer
+      try {
+        const raw = sqliteText(headers.get(`composerData:${id}`)?.headers)
+        if (!raw || Buffer.byteLength(raw, 'utf8') > MAX_HEADERS_BYTES) return composer
+        const list = JSON.parse(raw)
+        const human = Array.isArray(list) ? list.find((item) => item?.type === 1 && typeof item.bubbleId === 'string') : undefined
+        if (!human || !SAFE_COMPOSER_ID.test(human.bubbleId)) return composer
+        const text = sqliteText(body.get(`bubbleId:${id}:${human.bubbleId}`)?.text)
+        if (!text || Buffer.byteLength(text, 'utf8') > MAX_TRANSCRIPT_HEAD_BYTES) return composer
+        const markers = [...text.matchAll(new RegExp(BINDING_MARKER_PATTERN.source, 'g'))].map((match) => match[0])
+        // Exact markers only: never infer a seat from a name/channel number in ordinary conversation text.
+        return markers.length ? { ...composer, bindingText: `${composer.bindingText}\n${markers.join('\n')}` } : composer
+      } catch { return composer }
+    })
+  } catch { return composers }
+}
+
 export class CursorComposerTelemetryReader implements CursorComposerTelemetrySource {
   private readonly paths: CursorComposerTelemetryPaths
   private readonly now: () => number
@@ -1612,10 +1651,7 @@ export class CursorComposerTelemetryReader implements CursorComposerTelemetrySou
       // 复用只读连接（WAL 读事务可见新提交），替代每轮对 20GB 库新开/关闭。
       const database = this.acquireDatabase()
       const modelState = readComposerModelState(database)
-      const row = database.prepare(
-        'SELECT value FROM ItemTable WHERE key = ?'
-      ).get(COMPOSER_HEADERS_KEY) as { value?: unknown } | undefined
-      const json = sqliteText(row?.value)
+      const json = readCursorComposerHeadersJson(database)
       if (!json) {
         return this.cacheSnapshotRun(fingerprint, normalizedWorkspace, bindingsKey, activitiesKey, {
           ...emptyCursorTelemetrySnapshot('unavailable', 'Cursor 尚未生成会话遥测'),
@@ -1671,7 +1707,7 @@ export class CursorComposerTelemetryReader implements CursorComposerTelemetrySou
           knownIds.add(id)
         }
       }
-      const allComposers = [...parsed, ...hydrated]
+      const allComposers = withPersistedLaunchMarkers(database, [...parsed, ...hydrated], bindings)
       const persistentDetails = readComposerPersistentDetails(
         database,
         modelState.root,

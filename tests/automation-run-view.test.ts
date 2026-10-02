@@ -91,6 +91,20 @@ describe('automationRunView · 活跃相位', () => {
 })
 
 describe('automationRunView · 终态', () => {
+  it('processing-only completion marks hardening and cleanup as skipped, not falsely completed', () => {
+    const view = automationRunView({ run: runFor({ phase: 'done', postProcessingEnabled: false, message: '仅处理完成' }),
+      lastActivePhase: 'processing', countdownTotalSec: totals })
+    expect(states(view)).toEqual(['done', 'done', 'skipped', 'skipped'])
+    expect(view.handover).toBeUndefined()
+    expect(view.summary).toBe('仅处理完成')
+  })
+  it('uses the run snapshot for mode and countdowns instead of updated settings', () => {
+    const view = automationRunView({ run: runFor({ phase: 'countdown', remainingSec: 3, postProcessingEnabled: false,
+      countdownTotalSec: { beforeProcess: 5, beforeHardening: 6 } }), lastActivePhase: null,
+      countdownTotalSec: { beforeProcess: 60, beforeHardening: 60 } })
+    expect(states(view)).toEqual(['running', 'waiting', 'skipped', 'skipped'])
+    expect(view.stages[0]?.countdown?.totalSec).toBe(5)
+  })
   it('完成：四步全部完成，总结进摘要，耗时可读', () => {
     const view = automationRunView({
       run: runFor({ phase: 'done', message: '自动化完成：已处理', startedAt: 1_000, finishedAt: 43_000 }),

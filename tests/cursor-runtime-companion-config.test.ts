@@ -24,7 +24,7 @@ describe('CursorRuntimeCompanionConfig', () => {
     expect(result.source).toContain('const zP=51824,zK="new-key"')
     const encoded = result.source.match(/ZMO_SWITCH_CONFIG:([A-Za-z0-9+/=]+)/)?.[1]
     expect(JSON.parse(Buffer.from(encoded!, 'base64').toString('utf8'))).toEqual({
-      port: 51_824, key: 'new-key', revision: 2
+      port: 51_824, key: 'new-key', revision: 1, endpointRevision: 1
     })
   })
 

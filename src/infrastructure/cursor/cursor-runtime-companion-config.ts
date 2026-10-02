@@ -4,6 +4,7 @@ import { writeStoreFileSync } from '../fs/store-file'
 import { cursorWorkbenchBundleCandidates, locateCursorWorkbenchBundle } from './cursor-install-paths'
 import { appRootOfBundle, syncProductChecksum } from './cursor-switch-pump-installer'
 import { WINDOWS_POWERSHELL_PROBE_TIMEOUT_MS, resolveWindowsCursorWorkbench } from './cursor-windows-launch'
+import { cursorRuntimeBackupPath } from './cursor-compatibility'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 
@@ -28,6 +29,7 @@ interface SwitchConfig {
   port: number
   key: string
   revision?: number
+  endpointRevision?: number
 }
 
 const CONFIG_PATTERN = /\/\*ZMO_SWITCH_CONFIG:([A-Za-z0-9+/=]+)\*\//
@@ -41,7 +43,9 @@ export function rewriteCursorRuntimeCompanion(
   if (previousPort === input.port && config.key === input.key) {
     return { source, changed: false, previousPort }
   }
-  const nextConfig: SwitchConfig = { ...config, port: input.port, key: input.key, revision: (config.revision ?? 1) + 1 }
+  // revision is the pump TEMPLATE version, not the number of cold switches. Incrementing it here
+  // makes the installer reject its own still-current pump immediately after changing an endpoint.
+  const nextConfig: SwitchConfig = { ...config, port: input.port, key: input.key, endpointRevision: (config.endpointRevision ?? 0) + 1 }
   const encoded = Buffer.from(JSON.stringify(nextConfig), 'utf8').toString('base64')
   const rewritten = source
     .replace(CONFIG_PATTERN, `/*ZMO_SWITCH_CONFIG:${encoded}*/`)
@@ -98,7 +102,7 @@ export class CursorRuntimeCompanionConfig {
     const current = readFileSync(bundlePath, 'utf8')
     const rewritten = rewriteCursorRuntimeCompanion(current, input)
     if (!rewritten.changed) return { changed: false, previousPort: rewritten.previousPort }
-    const backup = `${bundlePath}.sg-runtime-switch-backup`
+    const backup = cursorRuntimeBackupPath(bundlePath)
     if (!existsSync(backup)) copyFileSync(bundlePath, backup)
     writeStoreFileSync(bundlePath, rewritten.source, { temporaryPath: `${bundlePath}.sg-runtime-switch.tmp` })
     try {

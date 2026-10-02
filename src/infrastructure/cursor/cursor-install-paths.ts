@@ -11,6 +11,12 @@ function pathFor(platform: NodeJS.Platform): typeof posix | typeof win32 {
   return platform === 'win32' ? win32 : posix
 }
 
+/** <appRoot>/out/vs/workbench/workbench.desktop.main.js → <appRoot>. */
+export function appRootOfBundle(bundlePath: string): string {
+  const { dirname } = /^[a-zA-Z]:\\|^\\\\/.test(bundlePath) ? win32 : posix
+  return dirname(dirname(dirname(dirname(bundlePath))))
+}
+
 /**
  * Cursor 用户数据目录（state.vscdb / settings.json / workspaceStorage 所在）：
  * mac ~/Library/Application Support/Cursor；win %APPDATA%\Cursor；linux $XDG_CONFIG_HOME/Cursor。

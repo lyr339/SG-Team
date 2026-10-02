@@ -32,7 +32,7 @@ export interface AccountAutomationServiceDeps {
   /** 自动化预热入口：只兑换票据，commit 才触碰 Cursor 运行态。 */
   prepareLiveSwitch?: (accountId: string) => Promise<{ commit(): Promise<LiveSwitchResult> }>
   /** 选接手账号（排除当前处理号；updatedAt 最新优先）；无可接手号返回 undefined。 */
-  pickNextAccount?: (excludeId: string) => string | undefined
+  pickNextAccount?: (excludeId: string, preferredAccountId?: string) => string | undefined
   /**
    * 页内秒级通道（首选）：页面刷新 + token 轮换完成后直接在浏览器会话内删除官网账号——
    * 删除不需要 token 值，绕开 cookie 落盘等待（~20s → ~3s）。
@@ -255,10 +255,10 @@ export class AccountAutomationService {
    * 服务商处理开始时预热接手票据（不触碰 Cursor 运行态）：开关关闭、能力未装配
    * 或没有接手号时跳过；目标账号在这里冻结，后续不随列表变化漂移。
    */
-  private prepareLiveSwitch(processedAccountId: string, runSeq: number): LiveSwitchPreparation | undefined {
-    if (this.getSettings().seamlessHandoverEnabled === false) return undefined
+  private prepareLiveSwitch(processedAccountId: string, runSeq: number, settings: AccountAutomationSettings): LiveSwitchPreparation | undefined {
+    if (settings.seamlessHandoverEnabled === false) return undefined
     if ((!this.deps.prepareLiveSwitch && !this.deps.liveSwitch) || !this.deps.pickNextAccount) return undefined
-    const nextId = this.deps.pickNextAccount(processedAccountId)
+    const nextId = this.deps.pickNextAccount(processedAccountId, settings.seamlessHandoverAccountId)
     if (!nextId) return undefined
     const targetLabel = this.deps.accounts.list().find((account) => account.id === nextId)?.label ?? nextId
     this.setRun({
@@ -471,14 +471,18 @@ export class AccountAutomationService {
     this.running = true
     this.cancelRequested = false
     const startedAt = this.now()
+    let postProcessingEnabled = true
     try {
-      const settings = this.getSettings()
+      const settings = structuredClone(this.getSettings())
+      postProcessingEnabled = settings.postProcessingEnabled !== false
       const processing = this.deps.processingProviders.require(settings.processingProvider)
       const provider = processing.service
       this.setRun({
         phase: 'countdown',
         planId,
         processingProvider: provider.id,
+        postProcessingEnabled,
+        countdownTotalSec: { beforeProcess: settings.delaySec, beforeHardening: settings.postProcessDelaySec },
         startedAt,
         finishedAt: undefined,
         handover: undefined,
@@ -501,10 +505,10 @@ export class AccountAutomationService {
         }
         // 消耗卡密前的最后一道闸：浏览器会话必须可读且与拾光凭据一致——
         // 否则会把已失效/错误账号的 token 提交给所选服务，失败还浪费一次排查时间
-        if (this.deps.readBrowserToken && !(stage === 'recheck' && this.getSettings().preflightRecheckEnabled === false)) {
+        if (postProcessingEnabled && this.deps.readBrowserToken && !(stage === 'recheck' && settings.preflightRecheckEnabled === false)) {
           // 会话来源描述：指纹宿主精确到「账号绑定窗口 / 默认窗口」，外部宿主为系统浏览器。
           // 绑定语义让报错能指到具体窗口与修法，而不是泛泛的「重新导入」。
-          const host = this.getSettings().browserHost ?? 'fingerprint'
+          const host = settings.browserHost ?? 'fingerprint'
           const bound = Boolean(active.fingerprintProfileId)
           const sessionSource = host === 'external'
             ? '系统浏览器会话'
@@ -533,6 +537,7 @@ export class AccountAutomationService {
         return undefined
       }
       const earlyIssue = await preflight('early')
+      if (this.runSeq !== mySeq) return
       if (earlyIssue) {
         this.setRun({ phase: 'failed', message: earlyIssue, remainingSec: undefined, finishedAt: this.now() })
         return
@@ -551,6 +556,7 @@ export class AccountAutomationService {
       })
       if (beforeProcess !== 'completed') return
       const issue = await preflight('recheck')
+      if (this.runSeq !== mySeq) return
       if (issue) {
         this.setRun({ phase: 'failed', message: issue, finishedAt: this.now() })
         return
@@ -566,7 +572,7 @@ export class AccountAutomationService {
       const previousToken = this.deps.accounts.credential(account.id)
       // 目标在本轮固定；票据兑换与服务商请求并行。预热不触碰 Cursor，只有退款
       // 成功后的 startLiveSwitch 才提交运行态写票。
-      const liveSwitchPreparation = this.prepareLiveSwitch(account.id, mySeq)
+      const liveSwitchPreparation = postProcessingEnabled ? this.prepareLiveSwitch(account.id, mySeq, settings) : undefined
       const processed = await provider.processToken(
         previousToken,
         (_state, message) => {
@@ -581,6 +587,13 @@ export class AccountAutomationService {
           handover: undefined,
           finishedAt: this.now()
         })
+        return
+      }
+
+      if (!postProcessingEnabled) {
+        // Never create a handover promise, touch browser credentials, or enter deletion/cleanup here.
+        this.setRun({ phase: 'done', message: `${provider.label}处理已完成；后续操作未执行，本地账号记录已保留`,
+          remainingSec: undefined, handover: undefined, finishedAt: this.now() })
         return
       }
 
@@ -726,7 +739,7 @@ export class AccountAutomationService {
         this.running = false
         // 一轮结束即清理浏览器通道（关窗断连；cookie 保留在 profile）。
         // 被新一轮取代时不清理——新轮的 preflight 可能已复用同一通道。
-        await this.deps.inBrowserDeleter?.dispose?.().catch(() => {})
+        if (postProcessingEnabled) await this.deps.inBrowserDeleter?.dispose?.().catch(() => {})
       }
     }
   }

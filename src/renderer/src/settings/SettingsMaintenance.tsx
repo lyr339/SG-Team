@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { ToggleSwitch } from '../lobby/ToggleSwitch'
 import type { SettingsPageProps } from './settings-view'
 import { isActiveAutomationPhase } from './settings-view'
@@ -9,7 +9,7 @@ type MaintenanceProps = Pick<SettingsPageProps,
   | 'onSetCursorAutoUpdateDisabled' | 'onSetModelDataPolicyAutoAcknowledge'
   | 'automationSettings' | 'automationRun'
   | 'switchPumpStatus' | 'switchPumpBusy' | 'switchPumpFeedback'
-  | 'onEnsureSwitchPump' | 'onRemoveSwitchPump'
+  | 'onEnsureSwitchPump' | 'onRemoveSwitchPump' | 'onRefreshSwitchPumpStatus'
 >
 
 function updateModeLabel(mode: string | undefined, disabled: boolean): string {
@@ -35,18 +35,31 @@ export function SettingsMaintenance({
   switchPumpBusy = false,
   switchPumpFeedback,
   onEnsureSwitchPump,
-  onRemoveSwitchPump
+  onRemoveSwitchPump,
+  onRefreshSwitchPumpStatus
 }: MaintenanceProps): React.JSX.Element | null {
   const [policyBusy, setPolicyBusy] = useState(false)
   const [policyFeedback, setPolicyFeedback] = useState<{ ok: boolean; message: string }>()
+  const [detectBusy, setDetectBusy] = useState(false)
+  const [detectError, setDetectError] = useState('')
+  const detectVersion = useCallback(async (): Promise<void> => {
+    if (!onRefreshSwitchPumpStatus) return
+    setDetectBusy(true); setDetectError('')
+    try { await onRefreshSwitchPumpStatus() }
+    catch (reason) { setDetectError(reason instanceof Error ? reason.message : String(reason)) }
+    finally { setDetectBusy(false) }
+  }, [onRefreshSwitchPumpStatus])
+  // Check again when entering maintenance: Cursor may have been upgraded since Shiguang started.
+  useEffect(() => { void detectVersion() }, [detectVersion])
   const phase = automationRun?.phase ?? 'idle'
+  const compatibility = switchPumpStatus?.compatibility
 
   const externalCompatiblePump = switchPumpStatus?.kind === 'installed' && switchPumpStatus.managed === false
   const pumpInstalled = switchPumpStatus?.kind === 'installed'
   const pumpPort = switchPumpStatus?.config?.port
   // 切号补丁建模为开关：开 = 无感换号能力已就位。两种不可操作态用禁用表达——
   // 外部工具管理的兼容补丁（开态禁用：拾光只复用，不卸载）与不支持的版本（关态禁用）。
-  const pumpDisabled = switchPumpBusy
+  const pumpDisabled = switchPumpBusy || detectBusy
     || externalCompatiblePump
     || switchPumpStatus?.kind === 'unsupported'
     || switchPumpStatus?.kind === 'unavailable'
@@ -56,7 +69,7 @@ export function SettingsMaintenance({
     : externalCompatiblePump
       ? `已安装（端口 ${pumpPort ?? '—'}）；由其他工具管理，拾光只复用、不覆盖或卸载`
       : pumpInstalled
-        ? `已安装（端口 ${pumpPort ?? '—'}）；运行中的 Cursor 已具备无感换号能力`
+        ? `已安装（端口 ${pumpPort ?? '—'}）；安装或更新后需重启 Cursor 才生效`
         : switchPumpStatus?.kind === 'not-installed'
           ? switchPumpStatus.managed
             ? '补丁需要更新；重新安装后重启一次 Cursor 即可启用无感换号'
@@ -76,6 +89,19 @@ export function SettingsMaintenance({
       descriptionTitle={cursorUpdatePreferences?.settingsPath}
     >
       <div className="settings-maintenance">
+        {onEnsureSwitchPump ? (
+          <div className="settings-row cursor-maintenance__compatibility">
+            <div className="settings-row__copy">
+              <span className="settings-row__label">{compatibility?.version ? `Cursor ${compatibility.version}` : 'Cursor 版本'}</span>
+              <span className="settings-row__hint">{detectBusy ? '正在检测当前安装…' : compatibility?.detail ?? '自动识别当前安装；支持 3.6.31、3.21.12'}</span>
+            </div>
+            {onRefreshSwitchPumpStatus ? (
+              <button type="button" className="cursor-maintenance__button" disabled={detectBusy || switchPumpBusy}
+                aria-busy={detectBusy} onClick={() => void detectVersion()}>{detectBusy ? '检测中…' : '重新检测'}</button>
+            ) : null}
+          </div>
+        ) : null}
+        {detectError ? <p className="cursor-maintenance__error" role="alert">{detectError}</p> : null}
         {onSetCursorAutoUpdateDisabled && cursorUpdatePreferences ? (
           <div className="settings-row">
             <div className="settings-row__copy">
@@ -132,18 +158,25 @@ export function SettingsMaintenance({
               <span className="settings-row__label">切号补丁（无感换号）</span>
               <span className="settings-row__hint">{switchPumpHint}</span>
             </div>
-            <ToggleSwitch
-              checked={pumpInstalled}
-              disabled={pumpDisabled}
-              label="切号补丁（无感换号）"
-              onChange={(checked) => {
-                if (checked) void onEnsureSwitchPump()
-                else void onRemoveSwitchPump?.()
-              }}
-            />
+            <div className="cursor-maintenance__controls">
+              {pumpInstalled && switchPumpStatus?.profileRefreshReady === false ? (
+                <button type="button" className="cursor-maintenance__button" disabled={switchPumpBusy || detectBusy}
+                  onClick={() => void onEnsureSwitchPump()}>补全资料刷新</button>
+              ) : null}
+              <ToggleSwitch
+                checked={pumpInstalled}
+                disabled={pumpDisabled}
+                label="切号补丁（无感换号）"
+                onChange={(checked) => {
+                  if (checked) void onEnsureSwitchPump()
+                  else void onRemoveSwitchPump?.()
+                }}
+              />
+            </div>
           </div>
         ) : null}
-        {switchPumpStatus?.message && (switchPumpStatus.kind === 'unsupported' || switchPumpStatus.kind === 'unavailable') ? (
+        {switchPumpStatus?.message && switchPumpStatus.message !== compatibility?.detail
+          && (switchPumpStatus.kind === 'unsupported' || switchPumpStatus.kind === 'unavailable') ? (
           <p className="cursor-maintenance__hint">{switchPumpStatus.message}</p>
         ) : null}
         {switchPumpFeedback ? (

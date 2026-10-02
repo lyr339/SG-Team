@@ -197,10 +197,14 @@ export function automationRunView(input: {
     statusLabel: TONE_LABEL[tone],
     cancellable: false,
     durationText: automationDurationText(run),
-    handover: handoverView(run)
+    handover: run.postProcessingEnabled === false ? undefined : handoverView(run)
   }
 
   if (run.phase === 'done') {
+    if (run.postProcessingEnabled === false) {
+      return { ...base, handover: undefined, stages: [stageView('prepare', 'done'), stageView('process', 'done'),
+        stageView('harden', 'skipped', '本轮未启用后续操作'), stageView('finish', 'skipped', '账号记录与浏览器环境保留')], summary: run.message }
+    }
     return { ...base, stages: AUTOMATION_STAGE_ORDER.map((key) => stageView(key, 'done')), summary: run.message }
   }
 
@@ -221,7 +225,7 @@ export function automationRunView(input: {
     return { ...base, stages: AUTOMATION_STAGE_ORDER.map((key) => stageView(key, 'waiting')) }
   }
 
-  const current = runningStage(run.phase, run, countdownTotalSec)
+  const current = runningStage(run.phase, run, run.countdownTotalSec ?? countdownTotalSec)
   return {
     ...base,
     cancellable: current.cancellable,
@@ -231,6 +235,7 @@ export function automationRunView(input: {
       detail: current.detail,
       countdown: current.countdown,
       after: 'waiting'
-    })
+    }).map((stage) => run.postProcessingEnabled === false && (stage.key === 'harden' || stage.key === 'finish')
+      ? stageView(stage.key, 'skipped', '本轮未启用后续操作') : stage)
   }
 }

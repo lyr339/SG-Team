@@ -1825,6 +1825,18 @@ describe('hook v26：工具呈现与 ask_question 结构化载荷', () => {
     return frames[0] ?? {}
   }
 
+  it('3.21.12 InteractionQuery questions without a toolCall wrapper retain their question UI and waiting state', async () => {
+    const data = composerData({ questionStatus: 'pending', blocking: true })
+    const question = data.conversationMap['question-1'].toolFormerData
+    // Real 3.21.12 AskQuestionQueryHandler creates a bubble without the toolCall wrapper.
+    delete (question as { toolCall?: unknown }).toolCall
+    const frame = await frameFor(data)
+    const item = frame.process.items.find((item: Record<string, unknown>) => item.toolKind === 'question')
+    expect(item).toMatchObject({ toolName: 'ask_question', toolKind: 'question', status: 'running', question: { status: 'pending' } })
+    expect(item.question.questions[0].id).toBe('direction')
+    expect(frame.awaitingUser).toBe(true)
+  })
+
   it('presents tools the way Cursor does: description as title, program names / line ranges / diff stats as hints', async () => {
     const frame = await frameFor(composerData({ questionStatus: 'pending', blocking: true }))
     const items = (frame.process as { items: Array<Record<string, any>> }).items

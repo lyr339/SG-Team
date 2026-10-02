@@ -1,3 +1,4 @@
+import { useRef, useState } from 'react'
 import {
   ACCOUNT_AUTOMATION_DELAY_MAX_SEC,
   ACCOUNT_AUTOMATION_DELAY_MIN_SEC,
@@ -42,6 +43,21 @@ export function SettingsAutomation({
   const phase = automationRun?.phase ?? 'idle'
   const automationControlsReady = providerReady && Boolean(automationSettings) && Boolean(onSaveAutomationSettings)
   const active = isActiveAutomationPhase(phase)
+  const [savingBoundary, setSavingBoundary] = useState(false)
+  const [boundaryError, setBoundaryError] = useState('')
+  const boundarySaving = useRef(false)
+  const postProcessingEnabled = automationSettings?.postProcessingEnabled !== false
+  const postProcessingOpen = automationSettings?.enabled === true && postProcessingEnabled
+  const saveBoundary = async (enabled: boolean): Promise<void> => {
+    if (!automationSettings || !onSaveAutomationSettings || boundarySaving.current || processingBusy || active) return
+    boundarySaving.current = true
+    setSavingBoundary(true); setBoundaryError('')
+    try {
+      const saved = await onSaveAutomationSettings({ ...automationSettings, postProcessingEnabled: enabled })
+      if (saved === false) setBoundaryError('后续操作设置未保存，请重试')
+    } catch (reason) { setBoundaryError(reason instanceof Error ? reason.message : String(reason)) }
+    finally { boundarySaving.current = false; setSavingBoundary(false) }
+  }
   const activeAccount = accounts.find((account) => account.active)
   const handoverCandidates = accounts.filter((account) => !account.active)
   const preferredHandoverId = automationSettings?.seamlessHandoverAccountId
@@ -50,7 +66,7 @@ export function SettingsAutomation({
     ? preferredHandoverId ?? ''
     : ''
   // 展开区可见性与父级联动：自动化关闭时整个参数区折叠，嵌套的接手账号区亦不标记展开。
-  const handoverOpen = automationSettings?.enabled === true && automationSettings.seamlessHandoverEnabled !== false
+  const handoverOpen = postProcessingOpen && automationSettings?.seamlessHandoverEnabled !== false
   // 升级 Pro 账单资料：存储层恒归一为完整结构（编辑中途空串原样保留），缺省给整套默认。
   const checkoutProfile = automationSettings?.checkoutProfile ?? DEFAULT_CURSOR_CHECKOUT_PROFILE
   const checkoutIssue = cursorCheckoutProfileIssue(checkoutProfile)
@@ -62,29 +78,29 @@ export function SettingsAutomation({
   return (
     <>
       {automationRun && phase !== 'idle' ? (
-        <AutomationRunCard run={automationRun} settings={automationSettings} onCancel={onCancelAutomation} />
+        <AutomationRunCard key={automationRun.planId ?? automationRun.startedAt} run={automationRun} settings={automationSettings} onCancel={onCancelAutomation} />
       ) : null}
 
       <SettingsSection
         title="自动化"
-        description="会话创建全部提交成功后，自动处理当前账号并按需接续到下一账号。"
+        description="会话创建后自动处理账号，后续操作可单独关闭。"
       >
         {automationControlsReady && automationSettings && onSaveAutomationSettings ? (
           <div className="account-automation settings-automation">
             <div className="settings-row">
               <div className="settings-row__copy">
                 <span className="settings-row__label">会话创建后自动处理账号</span>
-                <span className="settings-row__hint">处理完成后秒级加固账号（不可撤销），必要时自动刷新会话获取新 Token</span>
+                <span className="settings-row__hint">会话全部提交成功后，按倒计时执行{providerLabel}处理</span>
               </div>
               <ToggleSwitch
                 checked={automationSettings.enabled}
-                disabled={processingBusy || active}
+                disabled={processingBusy || active || savingBoundary}
                 label="会话创建后自动处理账号"
                 onChange={(enabled) => onSaveAutomationSettings({ ...automationSettings, enabled })}
               />
             </div>
 
-            <div className={`settings-collapse${automationSettings.enabled ? ' is-open' : ''}`}>
+            <div className={`settings-collapse${automationSettings.enabled ? ' is-open' : ''}`} inert={!automationSettings.enabled}>
               <div className="settings-collapse__inner">
                 <div className="settings-subgroup">
                   <div className="settings-row settings-row--sub">
@@ -98,106 +114,126 @@ export function SettingsAutomation({
                       max={ACCOUNT_AUTOMATION_DELAY_MAX_SEC}
                       step={0.5}
                       unit="秒"
-                      disabled={processingBusy}
+                      disabled={processingBusy || active || savingBoundary}
                       label={`${providerLabel}处理前倒计时秒数`}
                       onChange={(delaySec) => onSaveAutomationSettings({ ...automationSettings, delaySec })}
                     />
                   </div>
-                  <div className="settings-row settings-row--sub">
-                    <div className="settings-row__copy">
-                      <span className="settings-row__label">加固前倒计时</span>
-                      <span className="settings-row__hint">处理完成后等待，随后秒级加固账号</span>
-                    </div>
-                    <NumberStepperField
-                      value={automationSettings.postProcessDelaySec}
-                      min={ACCOUNT_AUTOMATION_DELAY_MIN_SEC}
-                      max={ACCOUNT_AUTOMATION_DELAY_MAX_SEC}
-                      step={0.5}
-                      unit="秒"
-                      disabled={processingBusy}
-                      label={`${providerLabel}完成后账号加固前倒计时秒数`}
-                      onChange={(postProcessDelaySec) => onSaveAutomationSettings({ ...automationSettings, postProcessDelaySec })}
-                    />
-                  </div>
                 </div>
 
-                <div className="settings-row settings-row--divided">
+                <div className="settings-row settings-row--divided settings-automation__post-boundary">
                   <div className="settings-row__copy">
-                    <span className="settings-row__label">倒计时后复核会话</span>
-                    <span className="settings-row__hint">倒计时结束时再读一次浏览器会话，期间改动会被拦截；关闭可省去一次会话读取（连/开窗）</span>
+                    <span className="settings-row__label">处理后执行后续操作</span>
+                    <span className="settings-row__hint">{savingBoundary ? '正在保存…' : postProcessingEnabled
+                      ? '加固与清场不可撤销；无感切换按下方设置执行'
+                      : `仅执行${providerLabel}处理，保留账号记录；不换号、不加固、不清场`}</span>
                   </div>
-                  <ToggleSwitch
-                    checked={automationSettings.preflightRecheckEnabled !== false}
-                    disabled={processingBusy || active}
-                    label="倒计时后复核会话"
-                    onChange={(preflightRecheckEnabled) => onSaveAutomationSettings({ ...automationSettings, preflightRecheckEnabled })}
-                  />
+                  <ToggleSwitch checked={postProcessingEnabled} disabled={processingBusy || active || savingBoundary}
+                    label="处理后执行后续操作" title="关闭会同时跳过换号票据准备、Token 刷新、官网账号删除和浏览器清场"
+                    onChange={(enabled) => void saveBoundary(enabled)} />
                 </div>
+                {boundaryError ? <p className="cursor-maintenance__error" role="alert">{boundaryError}</p> : null}
+                {!postProcessingEnabled ? <p className="account-automation__follow">仅保留本地记录，不代表原 Token 仍有效；处理服务可能使登录态失效。</p> : null}
 
-                <div className="settings-row settings-row--divided">
-                  <div className="settings-row__copy">
-                    <span className="settings-row__label">处理完成后无感切换</span>
-                    <span className="settings-row__hint">不重启 Cursor，接续到下一可用账号</span>
-                  </div>
-                  <ToggleSwitch
-                    checked={automationSettings.seamlessHandoverEnabled !== false}
-                    disabled={processingBusy || active}
-                    label="处理完成后无感切换"
-                    title={`${providerLabel}处理成功后，经切号补丁把运行中的 Cursor 直接换到指定接手账号（不换机器码、不中断会话）`}
-                    onChange={(seamlessHandoverEnabled) => onSaveAutomationSettings({ ...automationSettings, seamlessHandoverEnabled })}
-                  />
-                </div>
-
-                <div className={`settings-collapse${handoverOpen ? ' is-open' : ''}`}>
+                <div className={`settings-collapse settings-automation__post-options${postProcessingOpen ? ' is-open' : ''}`} inert={!postProcessingOpen}>
                   <div className="settings-collapse__inner">
-                    <div className="settings-subgroup">
-                      <div className="settings-row settings-row--sub">
-                        <div className="settings-row__copy">
-                          <span className="settings-row__label">接手账号</span>
-                          <span className="settings-row__hint">不指定时自动接续最近可用的账号</span>
-                        </div>
-                        <MenuSelect
-                          value={effectivePreferredId}
-                          disabled={processingBusy || active || handoverCandidates.length === 0}
-                          ariaLabel="自动化无感换号接手账号"
-                          options={[
-                            { value: '', label: `自动${handoverTarget ? ` · ${handoverTarget.label}` : ' · 暂无可用账号'}` },
-                            ...handoverCandidates.map((account) => ({ value: account.id, label: account.label }))
-                          ]}
-                          onChange={(value) => onSaveAutomationSettings({
-                            ...automationSettings,
-                            seamlessHandoverAccountId: value || undefined
-                          })}
-                        />
+                    <div className="settings-row settings-row--sub">
+                      <div className="settings-row__copy">
+                        <span className="settings-row__label">加固前倒计时</span>
+                        <span className="settings-row__hint">处理完成后等待，随后秒级加固账号</span>
                       </div>
-                      <div className="settings-row settings-row--sub">
-                        <div className="settings-row__copy">
-                          <span className="settings-row__label">切换前等待</span>
-                          <span className="settings-row__hint">处理成功后等待再热切运行中的 Cursor；0 = 立即。等待期间取消自动化则不再切换；等待长于加固倒计时时，切换会发生在旧号删除之后</span>
+                      <NumberStepperField
+                        value={automationSettings.postProcessDelaySec}
+                        min={ACCOUNT_AUTOMATION_DELAY_MIN_SEC}
+                        max={ACCOUNT_AUTOMATION_DELAY_MAX_SEC}
+                        step={0.5}
+                        unit="秒"
+                        disabled={processingBusy || active || savingBoundary}
+                        label={`${providerLabel}完成后账号加固前倒计时秒数`}
+                        onChange={(postProcessDelaySec) => onSaveAutomationSettings({ ...automationSettings, postProcessDelaySec })}
+                      />
+                    </div>
+
+                    <div className="settings-row settings-row--divided">
+                      <div className="settings-row__copy">
+                        <span className="settings-row__label">倒计时后复核会话</span>
+                        <span className="settings-row__hint">倒计时结束时再读一次浏览器会话，期间改动会被拦截；关闭可省去一次会话读取（连/开窗）</span>
+                      </div>
+                      <ToggleSwitch
+                        checked={automationSettings.preflightRecheckEnabled !== false}
+                        disabled={processingBusy || active || savingBoundary}
+                        label="倒计时后复核会话"
+                        onChange={(preflightRecheckEnabled) => onSaveAutomationSettings({ ...automationSettings, preflightRecheckEnabled })}
+                      />
+                    </div>
+
+                    <div className="settings-row settings-row--divided">
+                      <div className="settings-row__copy">
+                        <span className="settings-row__label">处理完成后无感切换</span>
+                        <span className="settings-row__hint">不重启 Cursor，接续到下一可用账号</span>
+                      </div>
+                      <ToggleSwitch
+                        checked={automationSettings.seamlessHandoverEnabled !== false}
+                        disabled={processingBusy || active || savingBoundary}
+                        label="处理完成后无感切换"
+                        title={`${providerLabel}处理成功后，经切号补丁把运行中的 Cursor 直接换到指定接手账号（不换机器码、不中断会话）`}
+                        onChange={(seamlessHandoverEnabled) => onSaveAutomationSettings({ ...automationSettings, seamlessHandoverEnabled })}
+                      />
+                    </div>
+
+                    <div className={`settings-collapse${handoverOpen ? ' is-open' : ''}`} inert={!handoverOpen}>
+                      <div className="settings-collapse__inner">
+                        <div className="settings-subgroup">
+                          <div className="settings-row settings-row--sub">
+                            <div className="settings-row__copy">
+                              <span className="settings-row__label">接手账号</span>
+                              <span className="settings-row__hint">不指定时自动接续最近可用的账号</span>
+                            </div>
+                            <MenuSelect
+                              key={handoverOpen ? 'handover-open' : 'handover-closed'}
+                              value={effectivePreferredId}
+                              disabled={!handoverOpen || processingBusy || active || savingBoundary || handoverCandidates.length === 0}
+                              ariaLabel="自动化无感换号接手账号"
+                              options={[
+                                { value: '', label: `自动${handoverTarget ? ` · ${handoverTarget.label}` : ' · 暂无可用账号'}` },
+                                ...handoverCandidates.map((account) => ({ value: account.id, label: account.label }))
+                              ]}
+                              onChange={(value) => onSaveAutomationSettings({
+                                ...automationSettings,
+                                seamlessHandoverAccountId: value || undefined
+                              })}
+                            />
+                          </div>
+                          <div className="settings-row settings-row--sub">
+                            <div className="settings-row__copy">
+                              <span className="settings-row__label">切换前等待</span>
+                              <span className="settings-row__hint">处理成功后等待再热切运行中的 Cursor；0 = 立即。等待期间取消自动化则不再切换；等待长于加固倒计时时，切换会发生在旧号删除之后</span>
+                            </div>
+                            <NumberStepperField
+                              value={automationSettings.handoverDelaySec ?? 0}
+                              min={0}
+                              max={ACCOUNT_AUTOMATION_DELAY_MAX_SEC}
+                              step={0.5}
+                              unit="秒"
+                              disabled={processingBusy || active || savingBoundary}
+                              label="无感切换前等待秒数"
+                              onChange={(handoverDelaySec) => onSaveAutomationSettings({ ...automationSettings, handoverDelaySec })}
+                            />
+                          </div>
                         </div>
-                        <NumberStepperField
-                          value={automationSettings.handoverDelaySec ?? 0}
-                          min={0}
-                          max={ACCOUNT_AUTOMATION_DELAY_MAX_SEC}
-                          step={0.5}
-                          unit="秒"
-                          disabled={processingBusy || active}
-                          label="无感切换前等待秒数"
-                          onChange={(handoverDelaySec) => onSaveAutomationSettings({ ...automationSettings, handoverDelaySec })}
-                        />
                       </div>
                     </div>
+
+                    <p className="account-automation__follow">
+                      执行浏览器：{automationBrowserFollowText({
+                        browserHost: automationSettings.browserHost,
+                        accounts,
+                        defaultProfileId: automationSettings.bitProfileId,
+                        profiles: bitProfiles
+                      })}
+                    </p>
                   </div>
                 </div>
-
-                <p className="account-automation__follow">
-                  执行浏览器：{automationBrowserFollowText({
-                    browserHost: automationSettings.browserHost,
-                    accounts,
-                    defaultProfileId: automationSettings.bitProfileId,
-                    profiles: bitProfiles
-                  })}
-                </p>
               </div>
             </div>
           </div>

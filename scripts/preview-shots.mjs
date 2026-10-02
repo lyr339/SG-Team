@@ -1042,6 +1042,24 @@ const scenes = [
       width: 1440, height: 900, colorScheme, storage: baseStorage({ colorMode: colorScheme }), clip: '.automation-run'
     }))
   ),
+  ...['light', 'dark'].flatMap(colorMode => [false, true].map(done => ({
+    name: `settings-processing-only-${done ? 'done-' : ''}${colorMode}`, hash: 'account:automation',
+    query: `postProcessing=off${done ? '&automation=done' : ''}`, width: 1440, height: 900,
+    colorScheme: colorMode, storage: baseStorage({ colorMode }), clip: done ? '.automation-run' : '.settings-automation',
+    actions: [{ wait: 350 }, { label: '仅处理模式布局与未执行阶段', probe: `(() => {
+      const row = document.querySelector('.settings-automation__post-boundary'), box = row.getBoundingClientRect()
+      const copy = row.querySelector('.settings-row__copy').getBoundingClientRect()
+      const toggle = row.querySelector('.toggle-switch').getBoundingClientRect()
+      const options = document.querySelector('.settings-automation__post-options')
+      if (!options.inert || options.getBoundingClientRect().height > 1) throw new Error('后续操作未正确折叠')
+      if (row.querySelector('input').checked || copy.right > toggle.left || toggle.right > box.right + 1) throw new Error('模式开关状态或横向布局错误')
+      if (Math.abs(copy.top + copy.bottom - toggle.top - toggle.bottom) > 1) throw new Error('开关与说明不居中')
+      const stages = [...document.querySelectorAll('.automation-run__stage')]
+      if (stages.length && (stages.filter(s => s.classList.contains('is-skipped')).length !== 2
+        || stages.filter(s => s.classList.contains('is-done')).length !== 2)) throw new Error('未执行阶段误报完成')
+      return { boundaryAligned: true, downstreamCollapsed: true, stageCount: stages.length }
+    })()` }]
+  }))),
   ...['light', 'dark'].flatMap(colorMode => [1180, 1440, 380].map(width => ({
     name: `settings-roxy-key-${width}-${colorMode}`, hash: 'account:import',
     width: Math.max(1180, width), height: 900, colorScheme: colorMode,

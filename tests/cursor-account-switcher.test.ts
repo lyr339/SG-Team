@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, win32 } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -17,6 +17,7 @@ import type {
 } from '../src/infrastructure/cursor/cursor-runtime-account-bridge'
 import type { CursorDesktopTokenExchangePort } from '../src/infrastructure/cursor/cursor-desktop-token-exchanger'
 import { CursorRuntimeCompanionConfig } from '../src/infrastructure/cursor/cursor-runtime-companion-config'
+import { appRootOfBundle } from '../src/infrastructure/cursor/cursor-install-paths'
 
 /** 与切换器内部的 reactiveStorage 持久层键保持一致（未导出，测试侧镜像）。 */
 const APPLICATION_USER_KEY = 'src.vs.platform.reactivestorage.browser.reactiveStorageServiceImpl.persistentStorage.applicationUser'
@@ -58,11 +59,22 @@ interface Fixture {
 
 let fixture: Fixture
 
+function companionBundle(bundlePath: string, version = '3.6.31', source?: string): void {
+  mkdirSync(dirname(bundlePath), { recursive: true })
+  const config = Buffer.from(JSON.stringify({ port: 51_824, key: 'old-key' })).toString('base64')
+  writeFileSync(bundlePath, source ?? `/*ZMO_SWITCH_CONFIG:${config}*/const zP=51824,zK="old-key"`)
+  const root = appRootOfBundle(bundlePath)
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ version }))
+  writeFileSync(join(root, 'product.json'), JSON.stringify({ version }))
+}
+
 beforeEach(() => {
   const root = mkdtempSync(join(tmpdir(), 'sg-account-switcher-'))
   const stateDbPath = join(root, 'state.vscdb')
   const storageJsonPath = join(root, 'storage.json')
   const machineIdPath = join(root, 'machineid')
+  const bundlePath = join(root, 'Cursor.app', 'Contents', 'Resources', 'app', 'out', 'vs', 'workbench', 'workbench.desktop.main.js')
+  companionBundle(bundlePath)
 
   const db = new DatabaseSync(stateDbPath)
   db.exec('CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value)')
@@ -78,6 +90,8 @@ beforeEach(() => {
   seed.run('cursorai/serverConfig', '{"bugConfigResponse":{}}')
   seed.run('aiSettings', '{}')
   seed.run('isUsagePricingEnabled', 'true')
+  seed.run('cursor.modelCatalog.v1', '[{"name":"old-account-model"}]')
+  seed.run('cursor.modelCatalog.privateInference.v1', '{"defaultModelId":"old-private-model"}')
   db.close()
   // storage.json 带 4 个遥测键 + 一个无关键（必须保留）
   writeFileSync(storageJsonPath, JSON.stringify({
@@ -129,6 +143,7 @@ beforeEach(() => {
       execFn,
       sleep: async () => { advanceClock() },
       now: () => fakeNow,
+      locateRuntimeBundle: async () => bundlePath,
       ...options
     }),
     input: (overrides) => ({
@@ -141,6 +156,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  rmSync(fixture.root, { recursive: true, force: true })
   fixture = undefined as unknown as Fixture
 })
 
@@ -154,6 +170,19 @@ function itemTableValue(path: string, key: string): unknown {
 }
 
 describe('CursorAccountSwitcher', () => {
+  it.each(['3.6.31', '3.21.12', '3.22.0'])('macOS %s: missing or unsupported Companion stops before exchange, process exit and account writes', async (version) => {
+    const path = join(fixture.root, 'mac-upgraded', 'app', 'out', 'vs', 'workbench', 'workbench.desktop.main.js')
+    companionBundle(path, version, 'plain Cursor bundle')
+    let exchanged = false
+    await expect(fixture.switcherFor({
+      locateRuntimeBundle: async () => path,
+      tokenExchanger: { resolve: async () => { exchanged = true; throw new Error('must not exchange') } },
+      runtimeBridge: { applyAfterLaunch: async () => { throw new Error('must not reach bridge') } }
+    }).switchAccount(fixture.input())).rejects.toThrow(/切换前检查/)
+    expect(exchanged).toBe(false)
+    expect(fixture.calls).toEqual([])
+    expect(itemTableValue(fixture.stateDbPath, 'cursorAuth/accessToken')).toEqual({ value: 'old-token' })
+  })
   it('kills Cursor deterministically before touching the database, then writes auth + machine identity', async () => {
     const result = await fixture.switcherFor().switchAccount(fixture.input())
 
@@ -185,7 +214,8 @@ describe('CursorAccountSwitcher', () => {
 
     // 痕迹与陈旧缓存清理
     for (const key of ['cursorai/serverConfig', 'aiSettings', 'isUsagePricingEnabled',
-      'cursor.accessToken', 'cursorAuth/stripeMembershipType', 'cursorAuth/onboardingDate']) {
+      'cursor.accessToken', 'cursorAuth/stripeMembershipType', 'cursorAuth/onboardingDate',
+      'cursor.modelCatalog.v1', 'cursor.modelCatalog.privateInference.v1']) {
       expect(itemTableValue(fixture.stateDbPath, key)).toBeUndefined()
     }
 
@@ -218,6 +248,7 @@ describe('CursorAccountSwitcher', () => {
       .toEqual({ value: 'auth0|user_new' })
     expect(itemTableValue(fixture.stateDbPath, 'cursorAuth/cachedUserId'))
       .toEqual({ value: 'auth0|user_new' })
+    expect(fixture.calls.some((call) => call.startsWith(`open -a ${join(fixture.root, 'Cursor.app')}`))).toBe(true)
   })
 
   it('exchanges browser type=web before killing Cursor and only writes/sends the IDE session token', async () => {
@@ -383,9 +414,7 @@ describe('CursorAccountSwitcher', () => {
 
   it('windows: 自定义安装的 bundle 在退出前定位，Companion 与重启用同一份安装', async () => {
     const bundlePath = join(fixture.root, 'D-drive', 'Cursor', 'resources', 'app', 'out', 'vs', 'workbench', 'workbench.desktop.main.js')
-    mkdirSync(dirname(bundlePath), { recursive: true })
-    const config = Buffer.from(JSON.stringify({ port: 51_824, key: 'old-key' })).toString('base64')
-    writeFileSync(bundlePath, `/*ZMO_SWITCH_CONFIG:${config}*/const zP=51824,zK="old-key"`)
+    companionBundle(bundlePath)
     let alive = true
     const order: string[] = []
     const result = await fixture.switcherFor({
@@ -419,8 +448,7 @@ describe('CursorAccountSwitcher', () => {
     for (const source of [undefined, 'plain Cursor bundle']) {
       const bundlePath = join(fixture.root, 'custom', 'resources', 'app', 'out', 'vs', 'workbench', 'workbench.desktop.main.js')
       if (source) {
-        mkdirSync(dirname(bundlePath), { recursive: true })
-        writeFileSync(bundlePath, source)
+        companionBundle(bundlePath, '3.6.31', source)
       }
       const calls: string[] = []
       await expect(fixture.switcherFor({
@@ -448,9 +476,7 @@ describe('CursorAccountSwitcher', () => {
 
   it('windows: Companion 写入阶段失败时先复活旧账号，不提前把新票据写入数据库', async () => {
     const bundlePath = join(fixture.root, 'custom', 'resources', 'app', 'out', 'vs', 'workbench', 'workbench.desktop.main.js')
-    mkdirSync(dirname(bundlePath), { recursive: true })
-    const config = Buffer.from(JSON.stringify({ port: 51_824, key: 'old-key' })).toString('base64')
-    writeFileSync(bundlePath, `/*ZMO_SWITCH_CONFIG:${config}*/const zP=51824,zK="old-key"`)
+    companionBundle(bundlePath)
     let alive = true
     const calls: string[] = []
     await expect(fixture.switcherFor({

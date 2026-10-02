@@ -18,6 +18,9 @@ import {
   locateCursorRuntimeCompanionBundle
 } from './cursor-runtime-companion-config'
 import { isCursorMainProcessRunning } from './cursor-process-probe'
+import { readCursorCompatibility } from './cursor-compatibility'
+import { appRootOfBundle } from './cursor-install-paths'
+import { macBundlePathFromAppRoot } from './cursor-switch-pump-installer'
 import {
   cursorWindowsStartCommand,
   defaultProcessExecFile,
@@ -77,6 +80,7 @@ export class CursorAccountSwitcher {
   private inFlight?: Promise<CursorAccountSwitchResult>
   /** Windows：终止前记下正在运行的 Cursor 路径，重新拉起时优先用它（Program Files 安装无 App Paths）。 */
   private windowsRunningExecutable?: string
+  private macApplicationPath?: string
 
   constructor(private readonly options: {
     stateDatabasePath?: string
@@ -153,6 +157,7 @@ export class CursorAccountSwitcher {
 
   private async switchAccountOnce(input: CursorAccountSwitchInput): Promise<CursorAccountSwitchResult> {
     this.windowsRunningExecutable = undefined
+    this.macApplicationPath = undefined
     const rawToken = input.token.trim()
     if (rawToken.length < 8 || rawToken.length > 8_192) throw new Error('Cursor Token 长度无效')
     // 网页登录/浏览器导入链路保存的是 WorkosCursorSessionToken（user_xxx::eyJ...）；
@@ -165,16 +170,16 @@ export class CursorAccountSwitcher {
       throw new Error(`Cursor 配置文件不存在：${stateDbPath}。请先启动一次 Cursor 客户端。`)
     }
 
+    // Cheap local compatibility checks first, on both platforms: never exchange tickets or exit
+    // the editor only to discover that an upgrade removed the required Companion.
+    const runtimeBundlePath = await this.preflightRuntimeBundle()
+
     // 浏览器导入拿到的是 type=web，会让 Cursor 设置页显示已登录/Pro，但 AI 后端拒绝。
     // 在杀进程和改库之前，先按 Cursor 自身 PKCE 流程兑换 type=session；
     // 兑换失败保持 Cursor 与本地数据库原样（零副作用失败）。
     const tokens = await (this.options.tokenExchanger ?? new CursorDesktopTokenExchanger())
       .resolve(rawToken, stateDbPath)
     const token = tokens.accessToken
-
-    // Windows 自定义安装不在三个默认目录内。退出前锁定正在运行的那份安装，
-    // 同一路径交给 Companion 改写与重启；路径/补丁有问题就在杀进程、写库之前停下。
-    const runtimeBundlePath = await this.preflightWindowsRuntimeBundle()
 
     // ① 确定性退出：不确认死透不动数据库（旧路径卡死根因）。
     const killedCursor = await this.killCursor()
@@ -294,21 +299,27 @@ export class CursorAccountSwitcher {
     return true
   }
 
-  private async preflightWindowsRuntimeBundle(): Promise<string | undefined> {
-    if (this.platform() !== 'win32' || !this.options.runtimeBridge) return undefined
+  private async preflightRuntimeBundle(): Promise<string | undefined> {
+    if (!this.options.runtimeBridge) return undefined
     const bundlePath = await (this.options.locateRuntimeBundle?.()
-      ?? locateCursorRuntimeCompanionBundle('win32', this.probeExec))
+      ?? locateCursorRuntimeCompanionBundle(this.platform(), this.probeExec))
     if (!bundlePath) {
-      throw new Error(`切换前未定位到 Cursor 主程序 bundle（已查找：${cursorWorkbenchBundleCandidates('win32').join('；')}）。Cursor 与本地账号状态均未改动`)
+      throw new Error(`切换前未定位到 Cursor 主程序 bundle（已查找：${cursorWorkbenchBundleCandidates(this.platform()).join('；')}）。Cursor 与本地账号状态均未改动`)
     }
     try {
+      const compatibility = readCursorCompatibility(bundlePath)
+      if (compatibility.state !== 'supported') throw new Error(compatibility.detail)
       new CursorRuntimeCompanionConfig(bundlePath).validate()
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
       throw new Error(`切换前检查 Cursor 主程序 bundle 失败（${bundlePath}）：${detail}。Cursor 与本地账号状态均未改动`)
     }
     // bundle 与重新拉起的 exe 必须来自同一安装；自定义盘符/目录同样一键完成。
-    this.windowsRunningExecutable = cursorExecutableFromRuntimeBundle(bundlePath)
+    if (this.platform() === 'win32') this.windowsRunningExecutable = cursorExecutableFromRuntimeBundle(bundlePath)
+    if (this.platform() === 'darwin') {
+      this.macApplicationPath = macBundlePathFromAppRoot(appRootOfBundle(bundlePath))
+      if (!this.macApplicationPath) throw new Error('检查通过的 Cursor bundle 不属于有效的 macOS 应用；未退出或改写账号')
+    }
     return bundlePath
   }
 
@@ -327,7 +338,7 @@ export class CursorAccountSwitcher {
       if (this.platform() === 'darwin') {
         const port = this.options.cdpPort?.()
         const workspace = this.validWorkspacePath(this.options.workspacePath?.())
-        const args = ['-a', 'Cursor']
+        const args = ['-a', this.macApplicationPath ?? 'Cursor']
         if (workspace) args.push(workspace)
         if (port) {
           args.push(
@@ -652,6 +663,9 @@ const TRACE_DELETE_KEYS = [
   'cursorai/serverConfig',
   'cursorupdate.lastUpdatedAndShown.version',
   'isUsagePricingEnabled',
+  // 3.21.12 keeps account-dependent model catalogs outside applicationUser when the gate is on.
+  'cursor.modelCatalog.v1',
+  'cursor.modelCatalog.privateInference.v1',
   'lastUpgradeToProNotificationTime',
   'releaseNotes/lastVersion'
 ] as const

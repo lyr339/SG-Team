@@ -38,6 +38,8 @@ interface HarnessOptions {
   delaySec?: number
   /** 加固前第二段倒计时（缺省回落 delaySec，与旧设置迁移语义一致）。 */
   postProcessDelaySec?: number
+  postProcessingEnabled?: boolean
+  onProcess?: () => void | Promise<void>
   cardSaved?: boolean
   processingProvider?: ProcessingProviderId
   accounts?: FakeAccount[]
@@ -48,6 +50,7 @@ interface HarnessOptions {
   /** 按调用次序返回的浏览器 token 队列（早查/复检分叉场景）；队列空后回退 readBrowserToken。 */
   readBrowserTokenQueue?: string[]
   readBrowserTokenError?: string
+  readBrowser?: () => Promise<string>
   /** 倒计时后复检开关（仅 false 时注入落盘；缺省 = 开启）。 */
   preflightRecheckEnabled?: boolean
   deleteResult?: DeleteResultSpec
@@ -75,6 +78,7 @@ function createHarness(options: HarnessOptions = {}) {
     delaySec: options.delaySec ?? 7,
     processingProvider: options.processingProvider ?? 'aozai',
     seamlessHandoverEnabled: options.seamlessHandoverEnabled ?? true,
+    ...(options.postProcessingEnabled === false ? { postProcessingEnabled: false } : {}),
     ...(options.postProcessDelaySec !== undefined ? { postProcessDelaySec: options.postProcessDelaySec } : {}),
     ...(options.handoverDelaySec !== undefined ? { handoverDelaySec: options.handoverDelaySec } : {}),
     ...(options.preflightRecheckEnabled === false ? { preflightRecheckEnabled: false } : {})
@@ -100,6 +104,7 @@ function createHarness(options: HarnessOptions = {}) {
   const liveSwitchCalls: string[] = []
   const liveSwitchOrder: string[] = []
   const providerRequireCalls: ProcessingProviderId[] = []
+  const readBrowserCalls: number[] = []
 
   const service = new AccountAutomationService({
     settings: store,
@@ -119,6 +124,7 @@ function createHarness(options: HarnessOptions = {}) {
               liveSwitchOrder.push('process')
               processCalls.push(token)
               processOptions.push(processOptionsArg)
+              await options.onProcess?.()
               return { providerId, ...(options.processResult ?? { ok: true, message: '处理完成', balance: { unit: 'points', remaining: 45 } }) }
             },
             warmup: async () => { warmupCalls.push(1) }
@@ -159,9 +165,11 @@ function createHarness(options: HarnessOptions = {}) {
       if (previousToken !== activeToken) throw new Error('previousToken 未正确传递')
       return options.browserToken ?? 'new-token-from-browser'
     },
-    ...(options.readBrowserToken !== undefined || options.readBrowserTokenError !== undefined || options.readBrowserTokenQueue !== undefined
+    ...(options.readBrowser !== undefined || options.readBrowserToken !== undefined || options.readBrowserTokenError !== undefined || options.readBrowserTokenQueue !== undefined
       ? {
           readBrowserToken: async () => {
+            readBrowserCalls.push(1)
+            if (options.readBrowser) return options.readBrowser()
             if (options.readBrowserTokenError) throw new Error(options.readBrowserTokenError)
             const queued = options.readBrowserTokenQueue?.shift()
             return queued ?? options.readBrowserToken ?? ''
@@ -262,6 +270,7 @@ function createHarness(options: HarnessOptions = {}) {
     liveSwitchCalls,
     liveSwitchOrder,
     providerRequireCalls,
+    readBrowserCalls,
     cleanup: () => rmSync(dir, { recursive: true, force: true })
   }
 }
@@ -279,6 +288,105 @@ async function waitForTerminal(service: AccountAutomationService, maxPolls = 1_0
 describe('AccountAutomationService', () => {
   let cleanup = (): void => {}
   afterEach(() => cleanup())
+
+  it.each(['aozai', 'henxin'] as const)('processing-only %s never starts browser, handover, credential refresh, deletion or cleanup', async (processingProvider) => {
+    const harness = createHarness({ postProcessingEnabled: false, processingProvider,
+      readBrowserTokenError: 'must not read browser', inBrowser: { kind: 'deleted' }, nextAccountId: 'spare',
+      prepareLiveSwitch: async () => { throw new Error('must not prepare tickets') },
+      liveSwitch: async () => { throw new Error('must not switch') } })
+    cleanup = harness.cleanup
+    harness.service.onAllSessionsTriggered('processing-only')
+    const run = await waitForTerminal(harness.service)
+    expect(run).toMatchObject({ phase: 'done', postProcessingEnabled: false, message: expect.stringContaining('后续操作未执行') })
+    expect(run.handover).toBeUndefined()
+    expect(harness.processCalls).toEqual(['old-token'])
+    expect(harness.accounts[0]).toMatchObject({ active: true, token: 'old-token' })
+    expect(harness.accounts[0]?.removed).not.toBe(true)
+    for (const calls of [harness.readBrowserCalls, harness.liveSwitchCalls, harness.replacedTokens, harness.deleteCalls,
+      harness.refreshCalls, harness.prepareCalls, harness.fastDeleteCalls, harness.clearSiteDataCalls, harness.finalizeCalls, harness.disposeCalls]) {
+      expect(calls).toEqual([])
+    }
+    expect(harness.liveSwitchOrder).toEqual(['process'])
+    expect(harness.runMessages.some((message) => /加固|新 Token|清场/.test(message))).toBe(false)
+  })
+
+  it('processing-only failure preserves the account and never falls through to hardening', async () => {
+    const harness = createHarness({ postProcessingEnabled: false, processResult: { ok: false, message: 'service rejected' },
+      inBrowser: { kind: 'deleted' }, nextAccountId: 'spare', liveSwitch: async () => ({ switched: true }) })
+    cleanup = harness.cleanup
+    harness.service.onAllSessionsTriggered('processing-only-failure')
+    expect(await waitForTerminal(harness.service)).toMatchObject({ phase: 'failed', postProcessingEnabled: false })
+    expect(harness.deleteCalls).toEqual([]); expect(harness.fastDeleteCalls).toEqual([])
+    expect(harness.liveSwitchCalls).toEqual([]); expect(harness.disposeCalls).toEqual([])
+    expect(harness.accounts[0]?.removed).not.toBe(true)
+  })
+
+  it('processing-only still checks local runtime identity and the provider credential before processing', async () => {
+    const harness = createHarness({ postProcessingEnabled: false, verifyCursorRuntime: { ok: false, reason: 'identity mismatch' } })
+    cleanup = harness.cleanup
+    harness.service.onAllSessionsTriggered('processing-only-identity')
+    expect(await waitForTerminal(harness.service)).toMatchObject({ phase: 'failed', message: 'identity mismatch' })
+    expect(harness.processCalls).toEqual([])
+    const noCard = createHarness({ postProcessingEnabled: false, cardSaved: false })
+    try {
+      noCard.service.onAllSessionsTriggered('processing-only-no-card')
+      expect((await waitForTerminal(noCard.service)).phase).toBe('failed')
+      expect(noCard.processCalls).toEqual([])
+    } finally { noCard.cleanup() }
+  })
+
+  it('freezes the boundary for this round, then applies changed settings to the next plan; duplicate events do not reprocess', async () => {
+    const harness = createHarness({ postProcessingEnabled: false,
+      onProcess: () => { harness.store.save({ ...harness.store.load(), postProcessingEnabled: true }) } })
+    cleanup = harness.cleanup
+    harness.service.onAllSessionsTriggered('frozen-boundary-1')
+    expect(await waitForTerminal(harness.service)).toMatchObject({ phase: 'done', postProcessingEnabled: false })
+    expect(harness.deleteCalls).toEqual([])
+    harness.service.onAllSessionsTriggered('frozen-boundary-1')
+    expect(harness.processCalls).toHaveLength(1)
+    harness.service.onAllSessionsTriggered('frozen-boundary-2')
+    expect(await waitForTerminal(harness.service)).toMatchObject({ phase: 'done', postProcessingEnabled: true })
+    expect(harness.processCalls).toHaveLength(2)
+    expect(harness.deleteCalls).toEqual(['old-token'])
+  })
+
+  it('turning the boundary off during a full run does not silently change an already frozen execution plan', async () => {
+    const harness = createHarness({ onProcess: () => {
+      harness.store.save({ ...harness.store.load(), postProcessingEnabled: false, postProcessDelaySec: 60 })
+    } })
+    cleanup = harness.cleanup
+    harness.service.onAllSessionsTriggered('full-frozen-boundary')
+    const run = await waitForTerminal(harness.service)
+    expect(run.postProcessingEnabled).toBe(true)
+    expect(run.countdownTotalSec).toEqual({ beforeProcess: 7, beforeHardening: 7 })
+    expect(harness.deleteCalls).toEqual(['old-token'])
+    expect(harness.accounts[0]?.removed).toBe(true)
+  })
+
+  it('processing-only can be cancelled before the provider request, with no deferred post actions', async () => {
+    const harness = createHarness({ postProcessingEnabled: false })
+    cleanup = harness.cleanup
+    harness.service.onAllSessionsTriggered('processing-only-cancel')
+    harness.service.cancel()
+    expect((await waitForTerminal(harness.service)).phase).toBe('cancelled')
+    expect(harness.processCalls).toEqual([]); expect(harness.deleteCalls).toEqual([])
+  })
+
+  it('a superseded browser preflight cannot overwrite the newer processing-only run or close its resources', async () => {
+    let resolveOld!: (token: string) => void
+    const harness = createHarness({ readBrowser: () => new Promise((resolve) => { resolveOld = resolve }), inBrowser: { kind: 'deleted' } })
+    cleanup = harness.cleanup
+    harness.service.onAllSessionsTriggered('old-browser-preflight')
+    expect(harness.readBrowserCalls).toHaveLength(1)
+    harness.service.saveSettings({ ...harness.service.getSettings(), postProcessingEnabled: false })
+    harness.service.onAllSessionsTriggered('new-processing-only')
+    expect(await waitForTerminal(harness.service)).toMatchObject({ phase: 'done', planId: 'new-processing-only' })
+    resolveOld('wrong-browser-token')
+    for (let i = 0; i < 12; i++) await Promise.resolve()
+    expect(harness.service.getRun()).toMatchObject({ phase: 'done', planId: 'new-processing-only' })
+    expect(harness.processCalls).toHaveLength(1)
+    expect(harness.deleteCalls).toEqual([]); expect(harness.disposeCalls).toEqual([])
+  })
 
   it('删除成功后走 finalize 收尾事务；清场异常降级为收尾提示不阻断 done', async () => {
     const harness = createHarness({

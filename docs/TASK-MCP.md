@@ -124,6 +124,22 @@ record_reply({ channel_id: '2', session?: '<seat token>', content, title? })
 
 Presence phases seen by the desktop: `waiting` / `keepalive` / `processing` / `need_reply_sync` (protocol), `cursor_stopped` / `tool_aborted` (explicit termination), `retired` (scope moved to another run; explicit stop until new life evidence), `reviving` (transition after a heartbeat or CDP activity revives a stopped phase).
 
+### Cursor compatibility
+
+- The account switch patch auto-selects the audited **3.6.31** or **3.21.12** release from metadata beside the selected Workbench. The maintenance page displays that release; installation is still an explicit user action. Unknown versions, conflicting metadata and ambiguous patch anchors fail closed without modifying Cursor. No manual version override bypasses those checks.
+- Workbench syntax is parsed as genuine ESM in an isolated Node process; imports are neither stripped nor executed. Profile refresh is a checked independent hook, not a silently skipped optional success. Original-bundle backups are release-specific, so an upgrade cannot reuse the other release's original.
+- Cursor 3.21.12 defaults to a **120-second idle timeout** with progress resets and a one-hour total limit. `check_messages` keeps its five-minute business keepalive, sending a request-correlated `notifications/progress` every 30 seconds when the client supplies a progress token. These notifications do not return a tool result, increment the channel turn counter or request another model turn. Cancellation/delivery releases the heartbeat and poll listeners.
+- Cold switching checks the selected installation before ticket exchange or editor exit on both macOS and Windows. Batch creation verifies the submitted human text and native errors; a resolved native promise alone is not a launch receipt. Explicit model persistence takes the Composer ID, not its handle.
+- 3.21.12 moves the global Composer index into the `composerHeaders` table (with `composer.composerHeaders.version`), and can move models into `cursor.modelCatalog.v1`. Telemetry and cleanup share the dual-format header reader; native version sentinels invalidate its cache. New-session binding can use the exact marker in the persisted opening human bubble before transcript export catches up; it still rejects ambiguous/stale markers and never guesses from later user text.
+- 3.21.12 questionnaires must be accepted via the pending ToolFormer decision after persisting the draft. Sending a follow-up before accepting cancels them. The old 3.6.31 fallback stays separate. Explicit comments are submitted only after the answer is accepted; generated summaries do not interrupt the new native flow. The stream hook handles the new InteractionQuery-shaped question bubbles (without `toolCall`) and plan creation.
+- Endpoint changes during cold switching increment a separate endpoint revision, not the pump template revision. A cold switch therefore cannot accidentally disable the next hot switch. macOS restart targets the same checked `.app` instead of a possibly different LaunchServices installation.
+
+### Automation: processing-only boundary
+
+The automation master switch still controls the post-session trigger. `postProcessingEnabled: false` stops the same execution chain after the selected provider finishes: no browser preflight or connection, handover ticket preparation, hot switch, second countdown, token refresh/replacement, account deletion/removal, or browser cleanup/disposal. Provider credentials and local Cursor/account identity checks still run. Missing settings preserve the old complete chain, and disabling this boundary does not erase saved delays or handover preferences.
+
+The boundary, provider, handover preference and countdown totals are frozen per run. Changing settings only changes the next run. The run card marks downstream steps as skipped rather than completed; processing errors remain errors, and retaining a local account record does not promise its old token is still valid. Manual provider processing, manual account switching and manual browser cleanup remain independent controls. No additional workflow engine or duplicate automation implementation is introduced.
+
 ## Workflow contract
 
 ```text

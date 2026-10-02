@@ -214,7 +214,8 @@ export interface SettingsPageProps {
   cursorUpdateError?: string
   onSetCursorAutoUpdateDisabled?: (disabled: boolean) => Promise<void>
   onSetModelDataPolicyAutoAcknowledge?: (enabled: boolean) => Promise<{ message: string }>
-  onSaveAutomationSettings?: (settings: AccountAutomationSettings) => void
+  /** Awaitable for toggles; false means the authoritative save failed. Legacy sync callbacks remain valid. */
+  onSaveAutomationSettings?: (settings: AccountAutomationSettings) => void | Promise<void | boolean>
   onCancelAutomation?: () => void
   /** 无感换号（热切）：不重启 Cursor 直接把运行态切到指定账号；结果经账号区消息条呈现。 */
   onSwitchLiveAccount?: (accountId: string) => Promise<void>
@@ -222,7 +223,7 @@ export interface SettingsPageProps {
   switchPumpStatus?: CursorSwitchPumpStatus
   switchPumpBusy?: boolean
   switchPumpFeedback?: { ok: boolean; message: string }
-  onRefreshSwitchPumpStatus?: () => void
+  onRefreshSwitchPumpStatus?: () => Promise<void>
   onEnsureSwitchPump?: () => Promise<void>
   onRemoveSwitchPump?: () => Promise<void>
   /** 存储清理页：盘点结果、进行中状态、上次清理结果与三个动作。 */

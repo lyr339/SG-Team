@@ -256,10 +256,9 @@ export const CHANNEL_POLL_INTERVAL_MS = 1_000
  * 曾对齐插件默认 60s。每次 keepalive 返回都要让模型再想一轮、再发一次工具调用，
  * 纯待命席位因此每个周期长 4–5 个气泡（Cursor 单会话体积随之线性增长，每次写入更慢）；
  * 拉长窗口按比例减慢这一增长，而消息投递延迟不变（队列每秒轮询、到达即刻返回）。
- * 上限依据（2026-09-13 只读核对 Cursor 的 cursor-mcp 扩展 bundle，SDK 1.25.1）：
- * `client.callTool(..., { timeout: 36e5 })` —— 每次工具调用 1 小时超时，未开
- * resetTimeoutOnProgress、无 maxTotalTimeout，workbench 侧调用链只有 abort 信号没有更短的
- * 定时器。5 分钟留有 12 倍余量；可用环境变量 SG_TEAM_KEEPALIVE_MS 覆盖（见 resolveKeepaliveTimeoutMs）。
+ * Cursor 3.6.31 的工具超时为 1 小时；3.21.12 默认空闲 120s、总上限仍为 1 小时。
+ * 工具层每 30s 按客户端 progressToken 发送协议 progress，延长当前请求的空闲计时，
+ * 不唤醒模型、不增加气泡。这里仍保留 5 分钟业务 keepalive；环境变量可覆盖。
  */
 export const CHANNEL_KEEPALIVE_TIMEOUT_MS = 5 * 60_000
 

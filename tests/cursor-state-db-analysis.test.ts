@@ -96,6 +96,33 @@ const SEEDS: ComposerSeed[] = [
   { id: 'orphan-dddd', updatedAt: NOW - 300 * DAY, bubbles: ['o1'], unindexed: true }
 ]
 
+describe('3.21.12 migrated Composer headers', () => {
+  it('analyzes and prunes migrated headers together with their KV rows, keeping protected and recent chats', () => {
+    const root = mkdtempSync(join(tmpdir(), 'sg-cursor-table-index-'))
+    const path = join(root, 'state.vscdb')
+    seedDatabase(path, SEEDS)
+    const db = new DatabaseSync(path)
+    try {
+      const raw = db.prepare('SELECT value FROM ItemTable WHERE key=?').get(GLOBAL_COMPOSER_HEADERS_KEY)!.value as string
+      const headers = JSON.parse(raw).allComposers as Array<{ composerId: string }>
+      db.exec('CREATE TABLE composerHeaders (composerId TEXT PRIMARY KEY, value TEXT)')
+      for (const header of headers) db.prepare('INSERT INTO composerHeaders VALUES (?, ?)').run(header.composerId, JSON.stringify(header))
+      db.prepare('DELETE FROM ItemTable WHERE key=?').run(GLOBAL_COMPOSER_HEADERS_KEY)
+      db.prepare('INSERT INTO ItemTable VALUES (?, ?)').run('composer.composerHeaders.version', 'native-table')
+    } finally { db.close() }
+    const analysis = analyzeCursorStateDatabase({ databasePath: path, olderThanDays: 30, protectedComposerIds: ['old-protect'], now: NOW })
+    expect(analysis.candidateIds.sort()).toEqual(['old-aaaaaaa', 'old-bbbbbbb'])
+    const result = pruneCursorStateDatabase({ databasePath: path, composerIds: analysis.candidateIds })
+    expect(result.removedComposers).toBe(2)
+    const after = new DatabaseSync(path, { readOnly: true })
+    try {
+      expect(readGlobalComposerHeaders(after).map((header) => header.composerId).sort()).toEqual(['old-project', 'old-protect', 'recent-cccc'])
+      expect(after.prepare('SELECT 1 FROM cursorDiskKV WHERE key=?').get('composerData:old-aaaaaaa')).toBeUndefined()
+      expect(after.prepare('SELECT 1 FROM cursorDiskKV WHERE key=?').get('agentKv:blob:sha-1')).toBeDefined()
+    } finally { after.close() }
+  })
+})
+
 function fixture(options: { headersAsBlob?: boolean } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'sg-cursor-state-db-'))
   const databasePath = join(root, 'state.vscdb')

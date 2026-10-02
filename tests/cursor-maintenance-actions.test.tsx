@@ -162,4 +162,42 @@ describe('Cursor 本机维护操作', () => {
     expect(hints.some((text) => text?.includes('已关闭'))).toBe(true)
     expect(container.textContent).not.toContain('none')
   })
+
+  it('shows the detected release and re-detects without installing or restarting Cursor', async () => {
+    const refresh = vi.fn(async () => {})
+    const install = vi.fn(async () => {})
+    await act(async () => root.render(<LobbyAccountTile {...props({
+      switchPumpStatus: { kind: 'not-installed', message: '未安装', compatibility: {
+        state: 'supported', version: '3.21.12', adapter: '3.21.12', detail: '自动适配 3.21.12；安装后需重启 Cursor'
+      } },
+      onRefreshSwitchPumpStatus: refresh, onEnsureSwitchPump: install
+    })} />))
+    const row = container.querySelector('.cursor-maintenance__compatibility')!
+    expect(row.textContent).toContain('Cursor 3.21.12')
+    expect(refresh).toHaveBeenCalledTimes(1)
+    await act(async () => row.querySelector<HTMLButtonElement>('button')!.click())
+    expect(refresh).toHaveBeenCalledTimes(2)
+    expect(install).not.toHaveBeenCalled()
+  })
+
+  it('disables patching unknown releases and keeps profile completion on the patch row only', async () => {
+    const install = vi.fn(async () => {})
+    await act(async () => root.render(<LobbyAccountTile {...props({
+      switchPumpStatus: { kind: 'unsupported', message: '暂未适配', compatibility: {
+        state: 'unsupported', version: '3.22.0', detail: '暂未适配 Cursor 3.22.0'
+      } }, onEnsureSwitchPump: install
+    })} />))
+    expect(container.querySelector<HTMLInputElement>('input[aria-label="切号补丁（无感换号）"]')!.disabled).toBe(true)
+    expect(container.textContent).toContain('Cursor 3.22.0')
+    await act(async () => root.render(<LobbyAccountTile {...props({
+      switchPumpStatus: { kind: 'installed', managed: true, profileRefreshReady: false, message: '需补全' },
+      onEnsureSwitchPump: install, onRemoveSwitchPump: async () => {}, onSetCursorAutoUpdateDisabled: async () => {}
+    })} />))
+    const patch = container.querySelector('.cursor-maintenance__switch-pump')!
+    const completion = patch.querySelector<HTMLButtonElement>('button')!
+    expect(completion.textContent).toBe('补全资料刷新')
+    await act(async () => completion.click())
+    expect(install).toHaveBeenCalledTimes(1)
+    expect(container.querySelector('input[aria-label="关闭 Cursor 自动更新"]')!.closest('.settings-row')!.querySelector('button')).toBeNull()
+  })
 })
