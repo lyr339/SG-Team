@@ -65,7 +65,8 @@ beforeEach(() => {
   const machineIdPath = join(root, 'machineid')
 
   const db = new DatabaseSync(stateDbPath)
-  db.exec('CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value)')
+  // Seed in one transaction rather than one Windows disk flush per inserted key.
+  db.exec('CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value); BEGIN IMMEDIATE')
   const seed = db.prepare('INSERT INTO ItemTable (key, value) VALUES (?, ?)')
   seed.run('cursorAuth/accessToken', 'old-token')
   seed.run('cursorAuth/refreshToken', 'old-token')
@@ -78,6 +79,7 @@ beforeEach(() => {
   seed.run('cursorai/serverConfig', '{"bugConfigResponse":{}}')
   seed.run('aiSettings', '{}')
   seed.run('isUsagePricingEnabled', 'true')
+  db.exec('COMMIT')
   db.close()
   // storage.json 带 4 个遥测键 + 一个无关键（必须保留）
   writeFileSync(storageJsonPath, JSON.stringify({
