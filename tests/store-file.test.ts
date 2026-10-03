@@ -7,6 +7,14 @@ import { quarantineStoreFileSync, readStoreJsonSync, writeStoreFileSync } from '
 const freshDir = () => mkdtempSync(join(tmpdir(), 'sg-store-file-'))
 
 describe('writeStoreFileSync', () => {
+  it('原样保存恢复快照字节，不把无效 UTF-8 或空文件转换成文本', () => {
+    const path = join(freshDir(), 'snapshot')
+    const bytes = new Uint8Array([0xef, 0xbb, 0xbf, 0x00, 0xff, 0xc3])
+    writeStoreFileSync(path, bytes)
+    expect(readFileSync(path)).toEqual(Buffer.from(bytes))
+    writeStoreFileSync(path, new Uint8Array())
+    expect(readFileSync(path)).toHaveLength(0)
+  })
   it('fsync 落盘并原子替换，自动建目录，不留临时文件', () => {
     const path = join(freshDir(), 'nested', 'store.json')
     writeStoreFileSync(path, '{"version":1}\n', { mode: 0o600 })

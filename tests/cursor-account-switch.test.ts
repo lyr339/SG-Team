@@ -30,6 +30,14 @@ function successResult(): CursorAccountSwitchResult {
   }
 }
 
+async function confirmResult(
+  result: CursorAccountSwitchResult,
+  commit?: (result: Readonly<CursorAccountSwitchResult>) => void | Promise<void>
+): Promise<CursorAccountSwitchResult> {
+  await commit?.(result)
+  return result
+}
+
 interface SwitchSpy {
   calls: CursorAccountSwitchInput[]
   result: () => CursorAccountSwitchResult
@@ -58,6 +66,32 @@ function vaultWithTwoAccounts(): { vault: CursorAccountVault; firstId: string; s
 }
 
 describe('switchCursorAccountWithVault（vault 与 switcher 时序契约）', () => {
+  it('does not commit a target whose saved credential changed during native switching', async () => {
+    const { vault, firstId, secondId } = vaultWithTwoAccounts()
+    await expect(switchCursorAccountWithVault({ vault,
+      switcher: { switchAccount: async (_input, commit) => {
+        vault.replaceToken(secondId, 'updated-token-00000000')
+        return confirmResult(successResult(), commit)
+      } }
+    }, secondId)).rejects.toThrow('凭据在切换期间已改变')
+    expect(vault.list().find(account=>account.active)?.id).toBe(firstId)
+    expect(vault.credential(secondId)).toBe('updated-token-00000000')
+  })
+  it('does not report success if a malformed backend skipped selection commit', async () => {
+    const { vault, firstId, secondId } = vaultWithTwoAccounts()
+    await expect(switchCursorAccountWithVault({ vault, switcher: { switchAccount: async () => successResult() } }, secondId))
+      .rejects.toThrow('未提交活跃账号')
+    expect(vault.list().find(account=>account.active)?.id).toBe(firstId)
+  })
+  it.each([
+    { switched: false }, { runtimeVerified: false }, { relaunchMode: 'failed' as const }
+  ])('refuses unverified switch receipts without changing the active account: %j', async (invalid) => {
+    const { vault, firstId, secondId } = vaultWithTwoAccounts()
+    await expect(switchCursorAccountWithVault({ vault,
+      switcher: { switchAccount: async (_input, commit) => confirmResult({ ...successResult(), ...invalid }, commit) }
+    }, secondId)).rejects.toThrow('尚未确认')
+    expect(vault.list().find(account => account.active)?.id).toBe(firstId)
+  })
   it('syncs the vault active account only after a successful switch', async () => {
     const { vault, firstId, secondId } = vaultWithTwoAccounts()
     const spy = switchSpy(successResult)
@@ -66,11 +100,11 @@ describe('switchCursorAccountWithVault（vault 与 switcher 时序契约）', ()
     const result = await switchCursorAccountWithVault(
       {
         vault,
-        switcher: { switchAccount: async (input) => {
+        switcher: { switchAccount: async (input, commit) => {
           spy.calls.push(input)
           // 切换进行中 active 仍指向原账号（失败可回退的时序保证）
           expect(vault.list().find((account) => account.active)?.id).toBe(firstId)
-          return spy.result()
+          return confirmResult(spy.result(), commit)
         } },
         suppressCdpAutoHeal: () => { suppressed += 1 }
       },
@@ -90,7 +124,7 @@ describe('switchCursorAccountWithVault（vault 与 switcher 时序契约）', ()
     expect(vault.list().find((account) => account.id === firstId)?.pendingMachineAlign).toBe(true)
     await switchCursorAccountWithVault({
       vault,
-      switcher: { switchAccount: async () => successResult() }
+      switcher: { switchAccount: async (_input, commit) => confirmResult(successResult(), commit) }
     }, secondId)
     expect(vault.list().find((account) => account.active)?.id).toBe(secondId)
     expect(vault.list().some((account) => account.pendingMachineAlign)).toBe(false)
@@ -125,9 +159,9 @@ describe('switchCursorAccountWithVault（vault 与 switcher 时序契约）', ()
     const run = (index: number) => switchCursorAccountWithVault(
       {
         vault,
-        switcher: { switchAccount: async (input) => {
+        switcher: { switchAccount: async (input, commit) => {
           spy.calls.push(input)
-          return successResult()
+          return confirmResult(successResult(), commit)
         } },
         generateIdentity: () => fixed
       },
@@ -152,9 +186,9 @@ describe('switchCursorAccountWithVault（vault 与 switcher 时序契约）', ()
     await expect(switchCursorAccountWithVault(
       {
         vault: unreadable,
-        switcher: { switchAccount: async (input) => {
+        switcher: { switchAccount: async (input, commit) => {
           spy.calls.push(input)
-          return successResult()
+          return confirmResult(successResult(), commit)
         } }
       },
       firstId
@@ -174,9 +208,9 @@ describe('switchCursorAccountWithVault（vault 与 switcher 时序契约）', ()
     await switchCursorAccountWithVault(
       {
         vault,
-        switcher: { switchAccount: async (input) => {
+        switcher: { switchAccount: async (input, commit) => {
           spy.calls.push(input)
-          return successResult()
+          return confirmResult(successResult(), commit)
         } }
       },
       account!.id

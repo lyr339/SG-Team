@@ -104,6 +104,7 @@ export function registerCursorAccountIpc(
     workspacePath: options.workspacePath,
     runtimeBridge: new CursorRuntimeAccountBridge(),
     tokenExchanger: new CursorDesktopTokenExchanger(),
+    beforeRecovery: options.suppressCdpAutoHeal,
     ...(options.switchMutex ? { switchMutex: options.switchMutex } : {})
   })
   const browserReader = new CursorBrowserTokenReader()

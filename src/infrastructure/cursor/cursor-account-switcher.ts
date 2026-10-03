@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { DatabaseSync } from 'node:sqlite'
 import { platform } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -21,6 +21,7 @@ import { isCursorMainProcessRunning } from './cursor-process-probe'
 import { readCursorCompatibility } from './cursor-compatibility'
 import { appRootOfBundle } from './cursor-install-paths'
 import { macBundlePathFromAppRoot } from './cursor-switch-pump-installer'
+import { CursorAccountSwitchBackup } from './cursor-account-switch-backup'
 import {
   cursorWindowsStartCommand,
   defaultProcessExecFile,
@@ -32,8 +33,6 @@ const execFileAsync = promisify(execFile)
 
 /** 主进程死亡后、写库前的静置时长（孤儿 Helper/utility 进程 flush 收尾窗口）。 */
 const POST_EXIT_SETTLE_MS = 1_200
-
-type CursorStateValue = string | number | bigint | Uint8Array | null
 
 export interface CursorAccountSwitchInput {
   /** 目标账号 Token：允许 cursor.com type=web JWT，切换前会兑换为 IDE type=session JWT。 */
@@ -50,12 +49,12 @@ export interface CursorAccountSwitchResult {
   switched: boolean
   /** 切换前 Cursor 是否在运行（true = 本轮执行了终止链）。 */
   killedCursor: boolean
-  /** 拉起结果：cdp = 带调试端口、plain = 普通拉起、failed = 拉起失败（登录态已写入）。 */
+  /** 拉起结果；failed 保留用于旧回执，当前实现会恢复状态并抛错，不返回半成功。 */
   relaunchMode: 'cdp' | 'plain' | 'failed'
   /** CDP 端口是否在时限内就绪（仅 relaunchMode=cdp 时存在；false = 会话创建需再等或手动重启）。 */
   cdpPortReady?: boolean
   machineIdentityApplied: boolean
-  /** 逻辑备份目录（备份失败时缺省）。 */
+  /** 逻辑备份目录（旧回执可缺省；当前实现要求完整备份先于第一次写入）。 */
   backupDir?: string
   tokenExpiresAt?: number
   tokenExpired?: boolean
@@ -108,6 +107,8 @@ export class CursorAccountSwitcher {
     tokenExchanger?: CursorDesktopTokenExchangePort
     /** 冷热切换互斥锁（热切持锁期间冷切换必须拒绝，防写库竞争/进程误杀）。 */
     switchMutex?: { withLock<T>(name: string, fn: () => Promise<T>): Promise<T> }
+    /** Refresh the existing watchdog suppression before stopping a partially launched editor. */
+    beforeRecovery?: () => void
   } = {}) {}
 
   private get platform(): () => NodeJS.Platform {
@@ -141,10 +142,13 @@ export class CursorAccountSwitcher {
     return this.options.now ?? Date.now
   }
 
-  async switchAccount(input: CursorAccountSwitchInput): Promise<CursorAccountSwitchResult> {
+  async switchAccount(
+    input: CursorAccountSwitchInput,
+    commitSelection?: (result: Readonly<CursorAccountSwitchResult>) => void | Promise<void>
+  ): Promise<CursorAccountSwitchResult> {
     const body = () => {
       if (this.inFlight) throw new Error('账号切换正在进行，请等待当前操作完成')
-      const operation = this.switchAccountOnce(input)
+      const operation = this.switchAccountOnce(input, commitSelection)
       this.inFlight = operation
       return operation.finally(() => {
         if (this.inFlight === operation) this.inFlight = undefined
@@ -155,7 +159,10 @@ export class CursorAccountSwitcher {
     return this.options.switchMutex ? this.options.switchMutex.withLock('切换并重启', body) : body()
   }
 
-  private async switchAccountOnce(input: CursorAccountSwitchInput): Promise<CursorAccountSwitchResult> {
+  private async switchAccountOnce(
+    input: CursorAccountSwitchInput,
+    commitSelection?: (result: Readonly<CursorAccountSwitchResult>) => void | Promise<void>
+  ): Promise<CursorAccountSwitchResult> {
     this.windowsRunningExecutable = undefined
     this.macApplicationPath = undefined
     const rawToken = input.token.trim()
@@ -183,28 +190,33 @@ export class CursorAccountSwitcher {
 
     // ① 确定性退出：不确认死透不动数据库（旧路径卡死根因）。
     const killedCursor = await this.killCursor()
-    // 主进程死亡 ≠ 孤儿 Helper/utility 进程停止 flush state.vscdb（Chromium 收尸有
-    // 窗口）；写库前静置，关闭最后一格写竞争窗口。
-    if (killedCursor) await this.sleep(POST_EXIT_SETTLE_MS)
+    let backup: CursorAccountSwitchBackup | undefined
+    let writeStarted = false
+    try {
+      // 主进程死亡 ≠ 孤儿 Helper/utility 进程停止 flush；写库前静置。
+      if (killedCursor) await this.sleep(POST_EXIT_SETTLE_MS)
 
-    // ② 逻辑备份（Cursor 已死，读库无竞争；恒为 KB 级，不复制可能巨大的主库文件）。
-    const backupDir = this.backupTouchedState(stateDbPath)
-    const writeAccountState = (): void => {
-      this.applyDatabaseState(stateDbPath, tokens, input)
-      this.applyStorageJson(input.identity)
-      this.applyMachineIdFile(input.identity.machineGuid)
-    }
+      // 严格备份：任何旧值不可读/备份不完整，都在第一次写入之前中止。
+      backup = CursorAccountSwitchBackup.capture({
+        database: stateDbPath,
+        storage: this.resolveStorageJsonPath(),
+        machineId: this.resolveMachineIdPath()
+      }, [...AUTH_UPSERT_KEYS, ...TRACE_DELETE_KEYS, ...STALE_DELETE_KEYS, APPLICATION_USER_KEY], this.now(),
+      { key: APPLICATION_USER_KEY, fields: APPLICATION_USER_ACCOUNT_TRACE_FIELDS })
+      const writeAccountState = (): void => {
+        // Mark before the first write: a later file failure must undo the committed SQLite transaction.
+        writeStarted = true
+        this.applyDatabaseState(stateDbPath, tokens, input)
+        this.applyStorageJson(input.identity)
+        this.applyMachineIdFile(input.identity.machineGuid)
+      }
 
-    // ③ Companion 改写先于账号落库：若 Windows 自定义安装没有写权限，
-    // 此时仍是旧账号；先复活 Cursor，绝不留下“数据库新号、拾光旧号”的半切换。
-    // ④ 拉起后必须再走 Cursor 内部 authenticationService：仅离线改库会在启动阶段
-    // 被旧运行时状态覆盖。Companion 回执同时证明目标 Token 已被当前进程读回并 flush。
-    const userId = decodeJwtSubject(token)
-    let relaunchMode: CursorAccountSwitchResult['relaunchMode']
-    let runtimeVerified = false
-    if (this.options.runtimeBridge) {
-      let launched = false
-      try {
+      // Companion 改写先于账号落库；权限失败时旧账号尚未改动。
+      // 成功必须同时具备原生回执和 flush 后读回，不能把离线写库当作运行态证明。
+      const userId = decodeJwtSubject(token)
+      let relaunchMode: CursorAccountSwitchResult['relaunchMode']
+      let runtimeVerified = false
+      if (this.options.runtimeBridge) {
         const applied = await this.options.runtimeBridge.applyAfterLaunch({
           accessToken: token,
           refreshToken: tokens.refreshToken,
@@ -215,7 +227,6 @@ export class CursorAccountSwitcher {
           writeAccountState()
           const mode = await this.launchCursor()
           if (mode === 'failed') throw new Error('Cursor 拉起失败，运行时账号尚未切换')
-          launched = true
           return mode
         }, runtimeBundlePath)
         relaunchMode = applied.launchResult
@@ -224,36 +235,62 @@ export class CursorAccountSwitcher {
         }
         this.verifyDatabaseAccount(stateDbPath, userId, tokens.runtimeType)
         runtimeVerified = true
-      } catch (error) {
-        // prepareCompanion / 写库 / 拉起任一阶段出错且 Cursor 仍未复活时，尽力恢复编辑器。
-        if (killedCursor && !launched) await this.launchCursor()
-        throw error
-      }
-    } else {
-      try {
+      } else {
         writeAccountState()
-      } catch (error) {
-        if (killedCursor) await this.launchCursor()
-        throw error
+        relaunchMode = await this.launchCursor()
+        if (relaunchMode === 'failed') throw new Error('Cursor 拉起失败，运行时账号尚未切换')
       }
-      relaunchMode = await this.launchCursor()
-    }
-    const cdpPortReady = relaunchMode === 'cdp'
-      ? await this.waitForCdpPort(this.options.cdpPort?.())
-      : undefined
+      const cdpPortReady = relaunchMode === 'cdp'
+        ? await this.waitForCdpPort(this.options.cdpPort?.())
+        : undefined
 
-    const expiresAt = decodeJwtExpiry(token)
-    return {
-      switched: true,
-      killedCursor,
-      relaunchMode,
-      cdpPortReady,
-      machineIdentityApplied: true,
-      backupDir,
-      tokenExpiresAt: expiresAt,
-      tokenExpired: expiresAt !== undefined ? expiresAt * 1000 <= this.now() : undefined,
-      runtimeVerified
+      const expiresAt = decodeJwtExpiry(token)
+      const result: CursorAccountSwitchResult = {
+        switched: true,
+        killedCursor,
+        relaunchMode,
+        cdpPortReady,
+        machineIdentityApplied: true,
+        backupDir: backup.directory,
+        tokenExpiresAt: expiresAt,
+        tokenExpired: expiresAt !== undefined ? expiresAt * 1000 <= this.now() : undefined,
+        runtimeVerified
+      }
+      // Keep the Vault commit inside the same mutex and recovery window as the Cursor state writes.
+      await commitSelection?.(result)
+      return result
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      const recovery = await this.recoverFailedSwitch(backup, writeStarted, killedCursor)
+      throw new Error(`${detail}；${recovery}`, { cause: error })
     }
+  }
+
+  /** Never infer runtime success from the target token we wrote ourselves; absent/rejected ACK rolls back. */
+  private async recoverFailedSwitch(
+    backup: CursorAccountSwitchBackup | undefined,
+    writeStarted: boolean,
+    originallyRunning: boolean
+  ): Promise<string> {
+    let stopped = false
+    try {
+      if (writeStarted) {
+        if (!backup) throw new Error('没有完整的切换备份，拒绝猜测旧登录态')
+        this.options.beforeRecovery?.()
+        await this.killCursor()
+        await this.sleep(POST_EXIT_SETTLE_MS)
+        if (await this.cursorRunning()) throw new Error('Cursor 在恢复窗口内再次启动，已停止写回以避免竞争')
+        stopped = true
+        backup.restore()
+      }
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error)
+      return `账号状态恢复未完成（${reason}）；${stopped ? '未重新拉起 Cursor' : '未继续写回或拉起 Cursor'}${backup ? `；备份：${backup.directory}` : ''}`
+    }
+    const state = writeStarted ? '已恢复切换前的登录态与机器码' : '登录态与机器码未改动'
+    if (!originallyRunning) return `${state}，Cursor 保持关闭`
+    const mode = await this.launchCursor()
+    return `${state}；${mode === 'failed' ? 'Cursor 重新打开失败，可从原安装再次打开' : '已按原安装重新打开 Cursor'}`
   }
 
   // ── 进程生命周期 ────────────────────────────────────────────────
@@ -439,63 +476,6 @@ export class CursorAccountSwitcher {
 
   // ── 备份与写入 ──────────────────────────────────────────────────
 
-  /** 逻辑备份全部将被改写/删除的键 + storage.json / machineid 原文件。 */
-  private backupTouchedState(stateDbPath: string): string | undefined {
-    try {
-      const backupDir = join(dirname(stateDbPath), 'backups', `account-switch-${this.now()}`)
-      mkdirSync(backupDir, { recursive: true })
-      // applicationUser 现为外科手术式改写（不再整删），必须进备份集。
-      const touched: string[] = [...new Set([...AUTH_UPSERT_KEYS, ...TRACE_DELETE_KEYS, ...STALE_DELETE_KEYS, APPLICATION_USER_KEY])]
-      const rows = this.readItemTable(stateDbPath, touched)
-      const keyBackup = new DatabaseSync(join(backupDir, 'itemtable.sqlite3'))
-      try {
-        keyBackup.exec(`
-          CREATE TABLE backup_meta (source_path TEXT NOT NULL, created_at INTEGER NOT NULL);
-          CREATE TABLE item_table_backup (key TEXT PRIMARY KEY, value, existed INTEGER NOT NULL CHECK (existed IN (0, 1)));
-        `)
-        keyBackup.prepare('INSERT INTO backup_meta (source_path, created_at) VALUES (?, ?)')
-          .run(stateDbPath, this.now())
-        const insert = keyBackup.prepare(
-          'INSERT INTO item_table_backup (key, value, existed) VALUES (?, ?, ?)'
-        )
-        for (const key of touched) {
-          const row = rows.find((candidate) => candidate.key === key)
-          insert.run(key, row ? row.value : null, row ? 1 : 0)
-        }
-      } finally {
-        keyBackup.close()
-      }
-      const storageJsonPath = this.resolveStorageJsonPath()
-      if (existsSync(storageJsonPath)) copyFileSync(storageJsonPath, join(backupDir, 'storage.json'))
-      const machineIdPath = this.resolveMachineIdPath()
-      if (existsSync(machineIdPath)) copyFileSync(machineIdPath, join(backupDir, 'machineid'))
-      return backupDir
-    } catch {
-      // 备份失败不阻断切换（键值均为可再生或用户可重录数据）。
-      return undefined
-    }
-  }
-
-  private readItemTable(stateDbPath: string, keys: string[]): { key: string; value: CursorStateValue }[] {
-    let db: DatabaseSync | undefined
-    try {
-      // 读写模式打开：Cursor 被 SIGKILL 兜底后 WAL 可能残留未检查点帧，
-      // readOnly 连接无法创建 -shm 做恢复，会读空集导致备份失真。
-      db = new DatabaseSync(stateDbPath, { timeout: 2_000 })
-      const placeholders = keys.map(() => '?').join(', ')
-      return db.prepare(`SELECT key, value FROM ItemTable WHERE key IN (${placeholders})`)
-        .all(...keys) as { key: string; value: CursorStateValue }[]
-    } catch {
-      return []
-    } finally {
-      try {
-        db?.close()
-      } catch {
-        // ignore
-      }
-    }
-  }
-
   /** 认证 + 机器码 + 痕迹清理，单事务原子落库（Cursor 已死，独占无竞争）。 */
   private applyDatabaseState(
     stateDbPath: string,
@@ -614,12 +594,7 @@ export class CursorAccountSwitcher {
 
   /** machineid 文件与 state.vscdb 的 storage.serviceMachineId 恒同值（实证）。 */
   private applyMachineIdFile(machineGuid: string): void {
-    const path = this.resolveMachineIdPath()
-    try {
-      writeStoreFileSync(path, machineGuid)
-    } catch {
-      // 文件不可写不阻断（storage.serviceMachineId 已落库）。
-    }
+    writeStoreFileSync(this.resolveMachineIdPath(), machineGuid)
   }
 
   /** Companion flush 后再次从 Cursor 主库验证目标账号，杜绝“按钮报成功但仍是旧号”。 */

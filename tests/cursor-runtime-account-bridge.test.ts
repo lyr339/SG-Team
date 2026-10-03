@@ -6,13 +6,16 @@ import {
   type CursorRuntimeSwitchPayload
 } from '../src/infrastructure/cursor/cursor-runtime-account-bridge'
 
-async function freePort(): Promise<number> {
-  const server = createServer()
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
-  const address = server.address()
-  const port = typeof address === 'object' && address ? address.port : 0
-  await new Promise<void>((resolve) => server.close(() => resolve()))
-  return port
+async function freePort(maxPort = 65_535): Promise<number> {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const server = createServer()
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    const port = typeof address === 'object' && address ? address.port : 0
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+    if (port > 0 && port <= maxPort) return port
+  }
+  throw new Error(`未取得 <= ${maxPort} 的测试端口`)
 }
 
 /** 一条已建立、还没送出任何字节的连接（刚 accept 的补丁轮询在服务端就是这个样子）。 */
@@ -199,7 +202,7 @@ describe('CursorRuntimeAccountBridge', () => {
   })
 
   it('skips an occupied legacy port, prepares the companion for the selected port and completes', async () => {
-    const occupiedPort = await freePort()
+    const occupiedPort = await freePort(65_534)
     const blocker = createServer()
     await new Promise<void>((resolve) => blocker.listen(occupiedPort, '127.0.0.1', resolve))
     const prepared: Array<{ port: number; key: string }> = []
@@ -255,7 +258,7 @@ describe('CursorRuntimeAccountBridge', () => {
   })
 
   it('windows: the cold-switch range scan skips reserved (EACCES) ports like occupied ones and keeps the companion on the selected port', async () => {
-    const reservedPort = await freePort()
+    const reservedPort = await freePort(65_534)
     const prepared: Array<{ port: number; key: string }> = []
     const key = 'range-key'
     const bridge = new CursorRuntimeAccountBridge({
