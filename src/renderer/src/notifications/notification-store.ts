@@ -2,7 +2,7 @@ import type { SgDesktopApi } from '../../../shared/desktop-api'
 import { DEFAULT_NOTIFICATION_PREFERENCES, notificationIsUnread, type NotificationPreferences, type NotificationPush, type NotificationRecord, type NotificationSummary } from '../../../domain/notification'
 
 export type NotificationApi = Pick<SgDesktopApi, 'getNotificationPage' | 'readNotification' | 'readAllNotifications' | 'archiveNotification' | 'clearReadNotifications' | 'getNotificationPreferences' | 'saveNotificationPreferences' | 'onNotificationChanged'>
-export interface ToastCandidate { key: string; record: NotificationRecord; expiresAt: number }
+export interface ToastCandidate { key: string; record: NotificationRecord; expiresAt: number; grouped?: boolean }
 interface StoreSnapshot {
   summary: NotificationSummary
   preferences: NotificationPreferences
@@ -87,7 +87,9 @@ export class NotificationStore {
     const preferences = this.state.preferences
     if (!preferences.enabled || preferences.quiet || preferences.mutedCategories.includes(record.category)) return
     const candidates = this.state.toasts.filter(item => item.expiresAt > this.now() && item.record.id !== record.id)
-    this.patch({ toasts: [...candidates, { key: announcement.id, record, expiresAt: announcement.expiresAt }].slice(-8) })
+    const group = announcement.group
+    const displayed = group ? { ...record, source: group.source, title: group.title, detail: group.detail, target: group.target, tone: group.tone ?? record.tone } : record
+    this.patch({ toasts: [...candidates, { key: announcement.id, record: displayed, expiresAt: announcement.expiresAt, ...(group ? { grouped: true } : {}) }].slice(-8) })
   }
   dismissToast(key: string): void { this.patch({ toasts: this.state.toasts.filter(item => item.key !== key) }) }
   async refresh(): Promise<void> {

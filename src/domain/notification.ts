@@ -12,6 +12,7 @@ export interface NotificationScope {
   slotId?: string
   sessionId?: string
   generation?: string
+  bindingGeneration?: string
   channelId?: string
   composerId?: string
   accountId?: string
@@ -93,6 +94,12 @@ export interface NotificationChange {
 }
 
 export interface NotificationMarker { sourceRevision: number; signature?: string; cleared?: boolean }
+export interface NotificationSourceState { revision: number; data?: unknown }
+export interface NotificationSourceResult {
+  applied: boolean
+  source: NotificationSourceState
+  changes: NotificationChange[]
+}
 
 export interface NotificationPush {
   change?: NotificationChange
@@ -100,7 +107,14 @@ export interface NotificationPush {
   health: 'ready' | 'degraded'
   /** Sticky for this process: recovery of storage does not pretend missing history was recovered too. */
   historyIncomplete: boolean
-  announcement?: { id: string; expiresAt: number }
+  announcement?: { id: string; expiresAt: number; group?: { source: string; title: string; detail: string; tone?: NotificationTone; target?: NotificationTarget; recordIds: string[] } }
+}
+export interface NotificationGroupPresentation {
+  keys: string[]
+  source: string
+  titleSuffix: string
+  tone?: NotificationTone
+  target?: NotificationTarget
 }
 
 export class NotificationActionError extends Error {
@@ -169,7 +183,7 @@ export function validateNotificationDraft(input: NotificationDraft): void {
 
 function validateScope(scope: NotificationScope): void {
   if (!scope || typeof scope !== 'object' || Array.isArray(scope)) throw new Error('通知作用域无效')
-  const keys = ['workspaceId', 'runId', 'groupId', 'slotId', 'sessionId', 'generation', 'channelId', 'composerId', 'accountId', 'providerId']
+  const keys = ['workspaceId', 'runId', 'groupId', 'slotId', 'sessionId', 'generation', 'bindingGeneration', 'channelId', 'composerId', 'accountId', 'providerId']
   for (const [key, value] of Object.entries(scope)) {
     if (!keys.includes(key) || value !== undefined && (typeof value !== 'string' || value.length > 300)) throw new Error('通知作用域无效')
   }

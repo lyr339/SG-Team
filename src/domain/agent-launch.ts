@@ -10,6 +10,10 @@ export interface AgentLaunchItem {
   stage: AgentLaunchStage
   message: string
   composerId?: string
+  /** Observability only: an existing on-duty Composer must not be counted as a new creation. */
+  creation?: 'new' | 'existing'
+  /** Actual creation+submit API acceptance, distinct from binding and Agent readiness. */
+  submitted?: boolean
   /** 结构性失败原因；存在时 UI 可给出针对性引导（如一键重启 Cursor 启用调试端口）。 */
   code?: AgentLaunchFailureCode
 }

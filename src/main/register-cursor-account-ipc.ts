@@ -38,6 +38,8 @@ export interface CursorAccountIpcOptions {
   workspacePath?: () => string | undefined
   /** 切换开始前抑制 CDP auto-heal 看门（启动窗口内端口未就绪是预期状态）。 */
   suppressCdpAutoHeal?: () => void
+  /** Optional presentation-only observer; it does not control restart, recovery or the switch lock. */
+  restartObservation?: { begin: () => string | undefined; finish: (id: string | undefined, success: boolean) => void }
   /**
    * 从指纹浏览器 profile 读取当前登录态 Token（第一步「获取 Token」的指纹导入来源）。
    * 返回 token（user_xxx::jwt）与可选 userId + 官网资料（email 等，识别失败缺省）；
@@ -259,10 +261,17 @@ export function registerCursorAccountIpc(
     // 一键切换：杀 Cursor → 写登录态 + 重置机器码 → 带端口拉起（FlyCursor 时序）；
     // 成功后才同步 vault 活跃账号（失败时 Cursor 仍运行原账号，active 不能变）。
     // 重启断开全部拾光通道，UI 已在调用前完成用户确认。
-    return switchCursorAccountWithVault(
-      { vault, switcher, suppressCdpAutoHeal: options.suppressCdpAutoHeal },
-      accountIdOf(accountId)
-    )
+    let observationId: string | undefined
+    let observed = false
+    const suppress = (): void => {
+      options.suppressCdpAutoHeal?.()
+      if (!observed) { observed = true; try { observationId = options.restartObservation?.begin() } catch { /* Presentation only. */ } }
+    }
+    const finish = (success: boolean): void => { try { options.restartObservation?.finish(observationId, success) } catch { /* Original result must remain authoritative. */ } }
+    try {
+      const result = await switchCursorAccountWithVault({ vault, switcher, suppressCdpAutoHeal: suppress }, accountIdOf(accountId))
+      finish(result.switched); return result
+    } catch (error) { finish(false); throw error }
   })
   ipcMain.handle(IPC.cursorAccountsSwitchLive, async (event, accountId: unknown) => {
     assertTrustedSender(event, getWindow)

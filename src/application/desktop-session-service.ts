@@ -491,9 +491,11 @@ export class DesktopSessionService implements DesktopSessionBridge {
 
   getSnapshot(): DesktopSnapshot {
     const base = this.bridge.getSnapshot()
-    const enriched = enrichDesktopSnapshot(base, this.team.getSnapshot(), this.telemetry)
+    const team = this.team.getSnapshot()
+    const enriched = enrichDesktopSnapshot(base, team, this.telemetry)
     const snapshot: DesktopSnapshot = {
       ...enriched,
+      runtimeScope: { workspaceId: team.activeWorkspaceId, runId: team.activeRun?.id, teamRevision: team.revision },
       nativeProcessStream: this.nativeProcessStream,
       sessions: enriched.sessions.map((session) => {
         const key = session.composerId || session.id

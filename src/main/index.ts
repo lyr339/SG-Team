@@ -1,5 +1,5 @@
 import { WINDOW_MIN_WIDTH } from '../shared/window-layout'
-import { app, BrowserWindow, Menu, nativeImage, net, safeStorage, shell, Tray } from 'electron'
+import { app, BrowserWindow, Menu, nativeImage, net, powerMonitor, safeStorage, shell, Tray } from 'electron'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { writeStoreFileSync } from '../infrastructure/fs/store-file'
@@ -106,6 +106,8 @@ import { NotificationWorkerPort } from './notification-worker-port'
 import createNotificationWorker from './notification-worker?nodeWorker'
 import { registerNotificationIpc } from './register-notification-ipc'
 import { connectAppUpdateNotifications } from '../application/notifications/app-update-notifications'
+import { connectSessionNotifications } from '../application/notifications/connect-session-notifications'
+import { connectBatchLaunchNotifications } from '../application/notifications/batch-launch-notifications'
 // electron-updater 是 CJS，`autoUpdater` 是 exports 上的惰性 getter：主进程是 ESM，命名导入会在链接期
 // 找不到该导出（cjs-module-lexer 认不出 getter），只能默认导入整个 module.exports 再取属性。
 import electronUpdater from 'electron-updater'
@@ -157,6 +159,8 @@ let teamFailoverService: TeamFailoverService | undefined
 let notificationService: NotificationService | undefined
 let disposeNotificationIpc: (() => void) | undefined
 let disposeAppUpdateNotifications: (() => void) | undefined
+let notificationRuntime: ReturnType<typeof connectSessionNotifications> | undefined
+let disposeBatchLaunchNotifications: (() => void) | undefined
 let teamOrchestrator: TeamOrchestrator | undefined
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
@@ -397,6 +401,10 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     }
   )
   desktopSessionService.startWatcher()
+  if (notificationService) {
+    try { notificationRuntime = connectSessionNotifications({ notifications: notificationService, desktop: desktopSessionService, team: teamControlService, power: powerMonitor }) }
+    catch { notificationService.reportHistoryGap() }
+  }
   // 过程流事件驱动层：Cursor 模型写入即时推送（写信号触发 inspect），
   // 轮询循环保留为流式粒度与兜底；observer 缺席时整体降级为纯轮询。
   // 用量通道：bundle 补丁在 turnEnded 推真实计费 token → 聚合器 → IPC 推送。
@@ -596,6 +604,8 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
       onAllTriggered: (plan) => accountAutomationService.onAllSessionsTriggered(plan.id)
     }
   )
+  if (notificationService) disposeBatchLaunchNotifications = connectBatchLaunchNotifications(agentSessionLauncher,
+    () => notificationRuntime?.currentTeam() ?? teamControlService!.getSnapshot(), notificationService)
   teamCollaborationService = new TeamCollaborationService(
     teamCollaborationRepository,
     teamControlService
@@ -686,6 +696,8 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
       // keeper 在下方创建（cursorCdpKeeperRef 惰性引用）；抑制窗口覆盖
       // 终止链（~13s）+ 启动与端口就绪（~30s）+ 余量。
       suppressCdpAutoHeal: () => cursorCdpKeeperRef?.suppress(120_000),
+      restartObservation: { begin: () => notificationRuntime?.lifecycle.beginRestart('切换并重启 Cursor', 'accounts'),
+        finish: (id, success) => notificationRuntime?.lifecycle.finishRestart(id, success) },
       // 第一步「获取 Token」的指纹导入：开窗读 profile 登录态（内存级），读毕关窗省资源
       //（cookie 留 profile；后续自动化链会重新拉起）。拿到 token 顺手识别官网资料
       //（email/注册时间）——label 显示邮箱而不是 user_xxx；识别失败静默降级。
@@ -743,11 +755,14 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   )
   disposeProcessingProviderIpc = registerProcessingProviderIpc(processingProviders, cursorAccountVault, () => mainWindow)
   const cursorUpdatePreferencesStore = new CursorUpdatePreferencesStore()
+  let autoHealNotificationId: string | undefined
   const cursorCdpKeeper = new CursorCdpKeeper({
     port: cursorCdpCreator.debugPort,
     isEnabled: () => cursorCdpSettingsStore.load().autoHealEnabled,
     workspacePath: activeTeamWorkspacePath,
     emit: (event) => {
+      if (event.phase === 'restarting') autoHealNotificationId = notificationRuntime?.lifecycle.beginRestart('Cursor 自动修复', 'maintenance')
+      else if (event.phase === 'done') { notificationRuntime?.lifecycle.finishRestart(autoHealNotificationId, event.ok); autoHealNotificationId = undefined }
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send(IPC.cursorCdpAutoHealEvent, event)
       }
@@ -759,10 +774,11 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     agentSessionLauncher,
     // 手动启用成功后，若 auto-heal 未开启则引导用户开启（前端据此提示）
     async () => {
-      const result = await restartCursorWithCdp({
-        port: cursorCdpCreator.debugPort,
-        workspacePath: activeTeamWorkspacePath()
-      })
+      const id = notificationRuntime?.lifecycle.beginRestart('重启并启用调试连接', 'maintenance')
+      const result = await restartCursorWithCdp({ port: cursorCdpCreator.debugPort, workspacePath: activeTeamWorkspacePath() })
+        .then(result => { notificationRuntime?.lifecycle.finishRestart(id, result.ok); return result }, error => {
+          notificationRuntime?.lifecycle.finishRestart(id, false); throw error
+        })
       return {
         ...result,
         // Windows 上端口被顺延过时告诉用户为什么不是 9333
@@ -959,6 +975,8 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
 })
 
 app.on('before-quit', () => {
+  notificationRuntime?.dispose()
+  disposeBatchLaunchNotifications?.()
   tray?.destroy()
   tray = undefined
   void accountBrowserHostDisposeRef?.().catch(() => {})

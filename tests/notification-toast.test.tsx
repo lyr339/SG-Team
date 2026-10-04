@@ -67,4 +67,14 @@ describe('single calm notification toast', () => {
       expect((document.querySelector('.notification-toast') as HTMLElement).style.bottom).toBe(`${innerHeight - 400 + 12}px`)
     } finally { composer.remove() }
   })
+  it('a visible exact run-page result stays in place instead of producing a duplicate global toast', async () => {
+    const result = document.createElement('p'); result.dataset.notificationPage = 'run'; result.dataset.notificationResult = ''; result.dataset.notificationKey = 'first'; result.dataset.notificationEvent = 'final'
+    document.body.append(result)
+    vi.spyOn(result, 'getBoundingClientRect').mockReturnValue({ width: 500, height: 40, top: 100, bottom: 140, left: 0, right: 500, x: 0, y: 100, toJSON: () => ({}) })
+    try {
+      await act(async () => store.accept({ change: { changed: true, record: { ...record('first'), eventId: 'final', origin: { module: 'run' } }, summary: { revision: 1, total: 1, unread: 1, pending: 0, clearable: 0 } },
+        announcement: { id: 'first', expiresAt: Date.now() + 60_000 }, health: 'ready', historyIncomplete: false }))
+      expect(document.querySelector('.notification-toast')).toBeNull()
+    } finally { result.remove() }
+  })
 })

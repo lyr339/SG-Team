@@ -27,6 +27,7 @@ function NotificationEntry({ store, workspaceId, onNavigate, onAvailable, onSnoo
   const [otherModal, setOtherModal] = useState(false)
   const [toastRecord, setToastRecord] = useState<NotificationRecord>()
   const [toastFocus, setToastFocus] = useState(0)
+  const groupedToast = useRef(false)
   const toastEpoch = useRef(0)
   const trigger = useRef<HTMLButtonElement>(null)
   const panel = useRef<HTMLDivElement>(null)
@@ -64,10 +65,10 @@ function NotificationEntry({ store, workspaceId, onNavigate, onAvailable, onSnoo
     void (async () => {
       try {
         if (toastRecord.target && await navigationRef.current(toastRecord.target)) {
-          await store.read(toastRecord).catch(() => {})
+          if (!groupedToast.current) await store.read(toastRecord).catch(() => {})
           if (epoch === toastEpoch.current) close(false)
         } else if (epoch === toastEpoch.current) {
-          setFocusRecord(toastRecord)
+          setFocusRecord(groupedToast.current ? undefined : toastRecord)
           if (toastRecord.target) setNavigationError('原会话或工作区已变化。记录仍保留，请在对应工作区查看。')
         }
       } catch { if (epoch === toastEpoch.current) setNavigationError('暂时无法打开来源，记录仍保留。') }
@@ -102,8 +103,9 @@ function NotificationEntry({ store, workspaceId, onNavigate, onAvailable, onSnoo
     {open ? createPortal(<div ref={panel} className="notification-panel-anchor" style={position}>
       <NotificationCenter store={store} workspaceId={workspaceId} onClose={close} onNavigate={navigate} focusRecord={focusRecord} navigationError={navigationError} />
     </div>, document.body) : null}
-    <NotificationToast store={store} blocked={open || otherModal} onOpen={record => {
+    <NotificationToast store={store} blocked={open || otherModal} onOpen={(record, grouped) => {
       // Open a focusable surface synchronously before removing the toast button; then navigate from an effect.
+      groupedToast.current = grouped === true
       setToastRecord(record); setFocusRecord(undefined); setNavigationError(''); setToastFocus(value => value + 1); setOpen(true)
     }} onSnoozeUpdate={onSnoozeUpdate} />
   </>

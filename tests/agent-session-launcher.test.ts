@@ -12,6 +12,22 @@ interface FakeSession {
   lastAgentActivityAt?: number
 }
 
+describe('launch notification observation order', () => {
+  it('preserves automation-before-observation ordering and isolates a throwing subscriber from execution', async () => {
+    let created = false; const order: string[] = []
+    const launcher = new AgentSessionLauncher({ fetchStartPrompt: async () => 'synthetic test prompt' },
+      { createAgentSession: async () => { created = true; return { ok: true, message: 'submitted', composerId: 'new-composer' } } },
+      { activeWorkspacePath: () => '/test-only', bindingKeyForChannel: () => 'test-binding' },
+      { getSnapshot: () => snapshotWith(created ? [{ channelId: '1', online: true, waiting: true, composerId: 'new-composer' }] : []) },
+      { onAllTriggered: () => { order.push('automation') }, now: () => 100, sleep: async () => {} })
+    const stop = launcher.subscribe(plan => { if (plan.items[0]?.submitted) order.push('observation'); throw Error('fixture observer failure') })
+    const plan = await launcher.launch(['1'])
+    expect(plan.state).toBe('done'); expect(plan.items[0]).toMatchObject({ creation: 'new', submitted: true })
+    expect(order.indexOf('automation')).toBeLessThan(order.indexOf('observation'))
+    stop()
+  })
+})
+
 interface HarnessOptions {
   prompts?: Record<string, string>
   promptErrors?: Record<string, string>

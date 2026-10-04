@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AgentLaunchPlan, AgentLaunchRequest } from '../../../domain/agent-launch'
+import { batchLaunchNotification } from '../../../domain/batch-launch-notification'
+import { useNotificationResultRead } from '../notifications/use-notification-result-read'
 import type { SessionWarmupRun } from '../../../domain/session-warmup'
 import type { CdpAutoHealEvent } from '../../../domain/cursor-cdp'
 import type { CursorModelOption, CursorModelSelection } from '../../../domain/cursor-model'
@@ -131,6 +133,10 @@ export function PoolPage({
   const actionInFlight = useRef(false)
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
+  const [planFeedback, setPlanFeedback] = useState<{ key: string; eventId?: string; text: string }>()
+  const feedbackRef = useRef<HTMLParagraphElement>(null)
+  const matchesPlanFeedback = planFeedback && planFeedback.text === (error || notice)
+  useNotificationResultRead(feedbackRef, matchesPlanFeedback ? planFeedback.key : undefined, matchesPlanFeedback ? planFeedback.eventId : undefined)
   const [sheet, setSheet] = useState<PendingSheet | null>(null)
   const [compose, setCompose] = useState<ComposeState | null>(null)
   const [count, setCount] = useState(DEFAULT_INDEPENDENT_COUNT)
@@ -181,6 +187,7 @@ export function PoolPage({
     setBusy(name)
     setError('')
     setNotice('')
+    setPlanFeedback(undefined)
     try {
       return await action()
     } catch (reason) {
@@ -289,18 +296,24 @@ export function PoolPage({
   }))
 
   const reportPlan = (plan: AgentLaunchPlan, doneNotice: string): void => {
+    const record = batchLaunchNotification(plan, {}, false, Date.now())
+    const report = (text: string, failed = false): void => {
+      setPlanFeedback({ key: record.key, eventId: record.eventId, text })
+      if (failed) setError(text)
+      else setNotice(text)
+    }
     if (plan.state === 'done') {
-      setNotice(doneNotice)
+      report(doneNotice)
     } else if (plan.items.some((item) => item.code === 'runtime_account_mismatch')) {
-      setNotice('会话发起已暂停：请在弹窗中处理 Cursor 登录账号问题后自动继续。')
+      report('会话发起已暂停：请在弹窗中处理 Cursor 登录账号问题后自动继续。')
     } else if (plan.items.some((item) => item.code === 'membership_blocked')) {
-      setNotice('会话发起已暂停：当前账号为 Free 档位，请先在「账号与 Cursor」执行「处理」，再于弹窗刷新档位继续。')
+      report('会话发起已暂停：当前账号为 Free 档位，请先在「账号与 Cursor」执行「处理」，再于弹窗刷新档位继续。')
     } else if (plan.items.some((item) => item.code === 'warmup_failed')) {
-      setError(`预热未通过，已中止批量发起（未消耗自动化配额）：${plan.items.find((item) => item.code === 'warmup_failed')?.message ?? ''}`)
+      report(`预热未通过，已中止批量发起（未消耗自动化配额）：${plan.items.find((item) => item.code === 'warmup_failed')?.message ?? ''}`, true)
     } else if (plan.items.some((item) => item.code === 'cdp_unavailable')) {
-      setNotice('会话创建需要 Cursor 调试端口：点击「重启 Cursor 并启用会话创建」（一次性），完成后重试。')
+      report('会话创建需要 Cursor 调试端口：点击「重启 Cursor 并启用会话创建」（一次性），完成后重试。')
     } else {
-      setError(plan.items.find((item) => item.stage === 'failed')?.message || '部分会话未能创建；可重试，或在 Cursor 手动发起。')
+      report(plan.items.find((item) => item.stage === 'failed')?.message || '部分会话未能创建；可重试，或在 Cursor 手动发起。', true)
     }
   }
 
@@ -313,7 +326,7 @@ export function PoolPage({
     const perform = (): void => {
       void run('create-independent', async () => {
         const plan = await onCreateIndependentSessions(input)
-        reportPlan(plan, '独立会话已全部进入待命。')
+        reportPlan(plan, '独立会话已全部接入。')
         if (plan.state === 'done') onOpenSessions()
       })
     }
@@ -328,7 +341,7 @@ export function PoolPage({
   const createPendingSessions = (): void => {
     void run('launch-sessions', async () => {
       const plan = await onLaunchAgentSessions(pendingRequests)
-      reportPlan(plan, '独立会话已全部进入待命。')
+      reportPlan(plan, '独立会话已全部接入。')
     })
   }
 
@@ -454,7 +467,8 @@ export function PoolPage({
   const isBusy = Boolean(busy) || agentLaunchPlan?.state === 'running'
   const feedback = error || notice
   const feedbackStrip = feedback ? (
-    <p className={`run-feedback${error ? ' is-error' : ''}`} role={error ? 'alert' : 'status'} aria-live={error ? 'assertive' : 'polite'}>
+    <p ref={feedbackRef} className={`run-feedback${error ? ' is-error' : ''}`} role={error ? 'alert' : 'status'} aria-live={error ? 'assertive' : 'polite'}
+      data-notification-page="run" data-notification-result data-notification-key={matchesPlanFeedback ? planFeedback.key : undefined} data-notification-event={matchesPlanFeedback ? planFeedback.eventId : undefined}>
       <i aria-hidden="true" />
       <span>{feedback}</span>
       <button type="button" aria-label="关闭提示" onClick={() => { setError(''); setNotice('') }}>×</button>

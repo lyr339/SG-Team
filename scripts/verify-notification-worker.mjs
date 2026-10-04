@@ -62,17 +62,23 @@ try {
   assert.ok(mainTimerMs < 200, `主线程被数据库等待阻塞：${mainTimerMs}ms`)
   database.exec('ROLLBACK'); database.close(); database = undefined
   await writing
+  assert.equal((await rpc({ kind: 'sourceState', key: 'smoke:source' })).revision, 0)
+  const checkpoint = await rpc({ kind: 'commitSource', key: 'smoke:source', expectedRevision: 0, data: { version: 1, incident: 'test-incident' },
+    drafts: [{ ...draft, key: 'smoke:source-event' }], now: 500 })
+  assert.equal(checkpoint.applied, true)
+  assert.equal((await rpc({ kind: 'commitSource', key: 'smoke:source', expectedRevision: 0, data: { incident: 'stale' }, drafts: [], now: 600 })).applied, false)
   await rpc({ kind: 'close' }); await worker.terminate(); worker = undefined
   await spawn()
   const page = await rpc({ kind: 'page' })
-  assert.equal(page.summary.total, 2); assert.equal(page.summary.unread, 1)
+  assert.equal(page.summary.total, 3); assert.equal(page.summary.unread, 2)
+  assert.deepEqual(await rpc({ kind: 'sourceState', key: 'smoke:source' }), { revision: 1, data: { version: 1, incident: 'test-incident' } })
   database = new DatabaseSync(databasePath)
   assert.equal(database.prepare('SELECT value FROM unrelated_fixture').get().value, 'preserve')
   assert.equal(database.prepare('PRAGMA user_version').get().user_version, 9)
   database.close(); database = undefined
   await rpc({ kind: 'close' }); await worker.terminate(); worker = undefined
   console.log(JSON.stringify({ workerEntry: entry, runtime: process.versions.electron ? 'Electron' : 'Node', persistedAcrossRestart: true,
-    noDuplicateReplay: true, readStateRestored: true, unrelatedSchemaPreserved: true, mainTimerMs: Math.round(mainTimerMs), isolatedProfile: true }, null, 2))
+    noDuplicateReplay: true, readStateRestored: true, sourceCheckpointRestored: true, staleSourceRejected: true, unrelatedSchemaPreserved: true, mainTimerMs: Math.round(mainTimerMs), isolatedProfile: true }, null, 2))
 } finally {
   database?.close()
   for (const wait of waits.values()) { clearTimeout(wait.timer); wait.reject(Error('验收结束')) }

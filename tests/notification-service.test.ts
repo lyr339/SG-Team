@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { NotificationService } from '../src/application/notification-service'
 import type { NotificationRepository } from '../src/application/notification-repository'
-import { notificationContentSignature, type NotificationDraft } from '../src/domain/notification'
+import { notificationContentSignature, type NotificationDraft, type NotificationRecord } from '../src/domain/notification'
 
 const draft = (patch: Partial<NotificationDraft> = {}): NotificationDraft => ({
   key: 'result:1', category: 'accounts', source: '账号', title: '导入完成', tone: 'success', attention: 'notice',
@@ -9,13 +9,29 @@ const draft = (patch: Partial<NotificationDraft> = {}): NotificationDraft => ({
 })
 const change = { changed: true, summary: { revision: 1, total: 1, unread: 1, pending: 0, clearable: 0 } }
 function repository(): NotificationRepository {
-  return { marker: vi.fn(async () => ({ sourceRevision: 0 })), put: vi.fn(async () => change), page: vi.fn(async () => ({ records: [], summary: change.summary, reset: false })),
+  return { marker: vi.fn(async () => ({ sourceRevision: 0 })), sourceState: vi.fn(async () => ({ revision: 0 })), commitSource: vi.fn(async () => ({ applied: true, source: { revision: 1 }, changes: [] })),
+    put: vi.fn(async () => change), page: vi.fn(async () => ({ records: [], summary: change.summary, reset: false })),
     read: vi.fn(async () => change), readAll: vi.fn(async () => change), archive: vi.fn(async () => change), clearRead: vi.fn(async () => change),
     preferences: vi.fn(async () => ({ enabled: true, nativeEnabled: false, sound: false, preview: false, quiet: false, mutedCategories: [] })),
     savePreferences: vi.fn(async value => value), close: vi.fn(async () => {}) }
 }
 
 describe('non-blocking notification owner', () => {
+  it('combines delivery, not records or unread count, and uses the final committed global revision', async () => {
+    const port = repository(); const service = new NotificationService(port, () => 300); const events = vi.fn(); service.subscribe(events)
+    const first = draft({ key: 'session:1', category: 'sessions', title: 'CH-1 已离线', announce: true })
+    const second = draft({ key: 'session:2', category: 'sessions', title: 'CH-2 已离线', announce: true })
+    const quiet = draft({ key: 'restart:1', attention: 'activity', announce: false })
+    const asRecord = (item: NotificationDraft, revision: number): NotificationRecord => ({ ...item, id: item.key, createdAt: 100, updatedAt: 200, revision,
+      attentionRevision: item.attention === 'activity' ? 0 : revision, readRevision: 0 })
+    vi.mocked(port.commitSource).mockResolvedValue({ applied: true, source: { revision: 1 }, changes: [first, second, quiet].map((item, index) => ({
+      changed: true, record: asRecord(item, index + 1), summary: { revision: index + 1, total: index + 1, unread: Math.min(2, index + 1), pending: 0, clearable: 0 } })) })
+    await service.commitSource('session-lifecycle:test', 0, {}, [first, second, quiet], { keys: [first.key, second.key], source: '会话连接', titleSuffix: '个会话已离线', tone: 'warning', target: { kind: 'run', runId: 'original-run' } })
+    const announcements = events.mock.calls.map(([event]) => event).filter(event => event.announcement)
+    expect(announcements).toHaveLength(1)
+    expect(announcements[0]).toMatchObject({ change: { summary: { revision: 3, total: 3, unread: 2 } }, announcement: { group: { title: '2 个会话已离线', recordIds: [first.key, second.key] } } })
+    await service.close()
+  })
   it('initial current-state delivery deduplicates persisted markers, including cleared history, without using a wall-clock version', async () => {
     const port = repository(); const first = draft(); const { sourceRevision: _sequence, ...current } = first
     vi.mocked(port.marker).mockResolvedValue({ sourceRevision: 9, signature: notificationContentSignature(first), cleared: true })

@@ -10,7 +10,8 @@ import type { AppUpdateStatus } from '../src/domain/app-update'
 describe('update source connected to the durable owner', () => {
   function harness() {
     const ledger = new SqliteNotificationRepository(':memory:')
-    const port: NotificationRepository = { marker: async key => ledger.marker(key), put: async (draft, now) => ledger.put(draft, now), page: async query => ledger.page(query),
+    const port: NotificationRepository = { marker: async key => ledger.marker(key), sourceState: async key => ledger.sourceState(key), commitSource: async (key, expected, data, drafts, now) => ledger.commitSource(key, expected, data, drafts, now),
+      put: async (draft, now) => ledger.put(draft, now), page: async query => ledger.page(query),
       read: async (id, revision, now) => ledger.read(id, revision, now), readAll: async (query, revision, now) => ledger.readAll(query, revision, now), archive: async (id, now) => ledger.archive(id, now),
       clearRead: async (query, now) => ledger.clearRead(query, now), preferences: async () => ledger.preferences(), savePreferences: async value => ledger.savePreferences(value), close: async () => ledger.close() }
     const service = new NotificationService(port)

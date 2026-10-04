@@ -84,6 +84,7 @@ export class AgentSessionLauncher {
   private readonly sleep: (ms: number) => Promise<void>
   private readonly now: () => number
   private current: AgentLaunchPlan | undefined
+  private readonly listeners = new Set<(plan: AgentLaunchPlan) => void>()
   private readonly onAllTriggered?: (plan: AgentLaunchPlan) => void
   private readonly onFinished?: (plan: AgentLaunchPlan) => void
 
@@ -107,6 +108,12 @@ export class AgentSessionLauncher {
 
   getPlan(): AgentLaunchPlan | undefined {
     return this.current ? structuredClone(this.current) : undefined
+  }
+  subscribe(listener: (plan: AgentLaunchPlan) => void): () => void {
+    this.listeners.add(listener)
+    const plan = this.getPlan()
+    if (plan) { try { listener(plan) } catch { /* Observation failure cannot affect launch. */ } }
+    return () => { this.listeners.delete(listener) }
   }
 
   async launch(
@@ -144,6 +151,8 @@ export class AgentSessionLauncher {
         allTriggeredFired = true
         this.onAllTriggered?.(structuredClone(plan))
       }
+      // After the existing automation trigger, no awaits or additional probes in the critical path.
+      for (const listener of this.listeners) { try { listener(structuredClone(plan)) } catch { /* Presentation is isolated. */ } }
     }
     emit()
     const markCreated = (): void => {
@@ -162,6 +171,7 @@ export class AgentSessionLauncher {
     const existing = this.sessionView(item.channelId)
     let bindingKey = this.context.bindingKeyForChannel(item.channelId)
     if (isAgentOnDuty(existing) && !bindingKey) {
+      item.creation = 'existing'
       item.stage = 'done'
       item.composerId = existing?.composerId
       item.message = '该通道已有待命会话'
@@ -222,6 +232,7 @@ export class AgentSessionLauncher {
       return
     }
     const receiptComposerId = receipt.composerId
+    item.creation = 'new'; item.submitted = true
     markCreated()
     if (receiptComposerId) {
       item.composerId = receiptComposerId

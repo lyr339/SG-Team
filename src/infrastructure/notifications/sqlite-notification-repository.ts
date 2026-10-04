@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import type { NotificationChange, NotificationDraft, NotificationMarker, NotificationPage, NotificationPreferences, NotificationQuery, NotificationRecord, NotificationSummary } from '../../domain/notification'
+import type { NotificationChange, NotificationDraft, NotificationMarker, NotificationPage, NotificationPreferences, NotificationQuery, NotificationRecord, NotificationSummary, NotificationSourceResult, NotificationSourceState } from '../../domain/notification'
 import { normalizeNotificationPreferences, notificationContentSignature, notificationIsPending, notificationSafeText, NotificationActionError, validateNotificationDraft } from '../../domain/notification'
 
 type StoredRow = { payload: string }
@@ -25,7 +25,7 @@ export class SqliteNotificationRepository {
     this.db = new DatabaseSync(databasePath)
     try {
       this.db.exec(`PRAGMA busy_timeout=250;
-        CREATE TABLE IF NOT EXISTS desktop_notification_meta (id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL, preferences TEXT NOT NULL,schema_version INTEGER NOT NULL DEFAULT 2);
+        CREATE TABLE IF NOT EXISTS desktop_notification_meta (id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL, preferences TEXT NOT NULL,schema_version INTEGER NOT NULL DEFAULT 3);
         INSERT OR IGNORE INTO desktop_notification_meta(id,revision,preferences) VALUES(1,0,'{}');
         CREATE TABLE IF NOT EXISTS desktop_notifications (
           id TEXT PRIMARY KEY, semantic_key TEXT NOT NULL UNIQUE, payload TEXT NOT NULL,
@@ -42,7 +42,11 @@ export class SqliteNotificationRepository {
           if (!columns.some(column => column.name === 'content_signature')) this.db.exec('ALTER TABLE desktop_notification_tombstones ADD COLUMN content_signature TEXT')
           this.db.exec('UPDATE desktop_notification_meta SET schema_version=2 WHERE id=1')
         })
-      } else if (version !== 2) throw new Error('通知历史格式暂不支持，原有数据未修改')
+      } else if (version !== 2 && version !== 3) throw new Error('通知历史格式暂不支持，原有数据未修改')
+      this.transaction(() => {
+        this.db.exec(`CREATE TABLE IF NOT EXISTS desktop_notification_sources (source_key TEXT PRIMARY KEY, revision INTEGER NOT NULL, payload TEXT NOT NULL,updated_at INTEGER NOT NULL);
+          UPDATE desktop_notification_meta SET schema_version=3 WHERE id=1;`)
+      })
     } catch (error) { this.db.close(); throw error }
   }
 
@@ -102,9 +106,11 @@ export class SqliteNotificationRepository {
 
   put(draft: NotificationDraft, now: number): NotificationChange {
     validateNotificationDraft(draft)
+    return this.transaction(() => this.putInTransaction(draft, now))
+  }
+  private putInTransaction(draft: NotificationDraft, now: number): NotificationChange {
     draft = { ...draft, title: notificationSafeText(draft.title), source: notificationSafeText(draft.source),
       ...(draft.detail !== undefined ? { detail: notificationSafeText(draft.detail) } : {}) }
-    return this.transaction(() => {
       const oldRow = this.db.prepare('SELECT payload FROM desktop_notifications WHERE semantic_key=?').get(draft.key) as StoredRow | undefined
       const old = oldRow ? decodeRecord(oldRow.payload) : undefined
       const tombstone = this.db.prepare('SELECT source_revision FROM desktop_notification_tombstones WHERE semantic_key=?').get(draft.key) as { source_revision: number } | undefined
@@ -129,6 +135,26 @@ export class SqliteNotificationRepository {
       this.save(record)
       if (tombstone) this.db.prepare('DELETE FROM desktop_notification_tombstones WHERE semantic_key=?').run(draft.key)
       return { changed: true, record, summary: this.summary() }
+  }
+  sourceState(key: string): NotificationSourceState {
+    const row = this.db.prepare('SELECT revision,payload FROM desktop_notification_sources WHERE source_key=?').get(key) as { revision: number; payload: string } | undefined
+    if (!row) return { revision: 0 }
+    if (!Number.isSafeInteger(row.revision) || row.revision < 0) throw new Error('通知来源版本异常，原数据保留。')
+    return { revision: row.revision, data: JSON.parse(row.payload) as unknown }
+  }
+  commitSource(key: string, expectedRevision: number, data: unknown, drafts: NotificationDraft[], now: number): NotificationSourceResult {
+    if (!key || key.length > 300 || !Number.isSafeInteger(expectedRevision) || expectedRevision < 0 || drafts.length > 100) throw new Error('通知来源提交无效')
+    const payload = JSON.stringify(data)
+    if (!payload || payload.length > 200_000) throw new Error('通知来源状态过大或无效')
+    for (const draft of drafts) validateNotificationDraft(draft)
+    return this.transaction(() => {
+      const source = this.sourceState(key)
+      if (source.revision !== expectedRevision) return { applied: false, source, changes: [] }
+      const changes = drafts.map(draft => this.putInTransaction(draft, now))
+      const revision = expectedRevision + 1
+      this.db.prepare(`INSERT INTO desktop_notification_sources VALUES(?,?,?,?) ON CONFLICT(source_key)
+        DO UPDATE SET revision=excluded.revision,payload=excluded.payload,updated_at=excluded.updated_at`).run(key, revision, payload, now)
+      return { applied: true, source: { revision, data }, changes }
     })
   }
   page(query: NotificationQuery = {}): NotificationPage {

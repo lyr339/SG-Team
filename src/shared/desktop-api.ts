@@ -106,6 +106,8 @@ export interface BridgeConnection {
 }
 
 export interface DesktopSnapshot {
+  /** The topology used for this final runtime projection; prevents cross-callback old-team/new-session pairing. */
+  runtimeScope?: { workspaceId?: string; runId?: string; teamRevision: number }
   connection: BridgeConnection
   sessions: AgentSession[]
   /**

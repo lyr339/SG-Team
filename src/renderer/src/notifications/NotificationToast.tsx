@@ -5,13 +5,16 @@ import { notificationTargetLabel } from './notification-view'
 import type { NotificationStore, ToastCandidate } from './notification-store'
 import { notificationIsUnread, type NotificationPush, type NotificationRecord } from '../../../domain/notification'
 
-interface Props { store: NotificationStore; blocked: boolean; onOpen: (record: NotificationRecord) => void; onSnoozeUpdate?: (record: NotificationRecord) => Promise<void> }
+interface Props { store: NotificationStore; blocked: boolean; onOpen: (record: NotificationRecord, grouped?: boolean) => void; onSnoozeUpdate?: (record: NotificationRecord) => Promise<void> }
 function sourceResultVisible(record: NotificationRecord): boolean {
   if (!document.hasFocus() || !record.origin) return false
   // Only suppress when the exact source result is visible; selecting a session alone is not evidence of reading its latest reply.
-  if (record.origin.module !== 'account' || !record.origin.section) return false
-  const section = document.querySelector<HTMLElement>(`[data-notification-page="account:${record.origin.section}"]:not([hidden])`)
-  const result = section?.querySelector<HTMLElement>('[data-notification-result]')
+  const page = record.origin.module === 'account' ? `account:${record.origin.section ?? ''}` : record.origin.module
+  const sections = [...document.querySelectorAll<HTMLElement>('[data-notification-page]')].filter(element => element.dataset.notificationPage === page
+    && !element.closest('[hidden],[inert],[aria-hidden="true"]')
+    && (!record.origin!.sessionId || element.dataset.notificationSession === record.origin!.sessionId))
+  const result = sections.flatMap(section => section.matches('[data-notification-result]') ? [section] : [...section.querySelectorAll<HTMLElement>('[data-notification-result]')])
+    .find(element => element.dataset.notificationKey === record.key && element.dataset.notificationEvent === record.eventId)
   if (!result) return false
   if (result.dataset.notificationKey !== record.key || result.dataset.notificationEvent !== record.eventId) return false
   const rect = result.getBoundingClientRect()
@@ -108,7 +111,7 @@ export function NotificationToast({ store, blocked, onOpen, onSnoozeUpdate }: Pr
     onFocusCapture={() => setWithin(true)} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setWithin(false) }}>
     <NoticeIcon tone={active.record.tone} />
     <div className="notification-toast__copy"><span>{active.record.source}</span><strong>{active.record.title}</strong>{active.record.detail ? <p>{active.record.detail}</p> : null}
-      <div className="notification-toast__actions"><button type="button" onClick={() => { onOpen(active.record); finish() }}>{notificationTargetLabel(active.record.target)}</button>
+      <div className="notification-toast__actions"><button type="button" onClick={() => { onOpen(active.record, active.grouped); finish() }}>{notificationTargetLabel(active.record.target)}</button>
         {active.record.category === 'updates' && (active.record.eventId?.startsWith('update:available:') || active.record.eventId?.startsWith('update:downloaded:')) && onSnoozeUpdate ? <button type="button" onClick={() => { void onSnoozeUpdate(active.record).then(finish).catch(() => setError('更新状态可能已变化；未延后其他版本，请到软件更新查看。')) }}>稍后</button> : null}</div>
       {error ? <p className="notification-toast__error" role="alert">{error}</p> : null}
     </div>

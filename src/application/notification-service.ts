@@ -1,4 +1,4 @@
-import type { NotificationChange, NotificationDraft, NotificationMarker, NotificationPage, NotificationPreferences, NotificationPush, NotificationQuery } from '../domain/notification'
+import type { NotificationChange, NotificationDraft, NotificationGroupPresentation, NotificationMarker, NotificationPage, NotificationPreferences, NotificationPush, NotificationQuery, NotificationSourceResult, NotificationSourceState } from '../domain/notification'
 import { normalizeNotificationPreferences, notificationContentSignature, notificationIsUnread, notificationSafeText, NotificationActionError, validateNotificationDraft } from '../domain/notification'
 import type { NotificationRepository } from './notification-repository'
 
@@ -13,6 +13,7 @@ export class NotificationService {
   private health: NotificationPush['health'] = 'ready'
   private historyIncomplete = false
   private closing?: Promise<void>
+  private readonly sourceTasks = new Set<Promise<unknown>>()
 
   constructor(private readonly repository: NotificationRepository, private readonly now: () => number = Date.now) {}
 
@@ -33,6 +34,48 @@ export class NotificationService {
   }
   private recovered(): void {
     if (this.health !== 'ready') { this.health = 'ready'; this.emit() }
+  }
+  reportHistoryGap(): void { this.degraded(true) }
+  private tracked<T>(task: Promise<T>): Promise<T> {
+    this.sourceTasks.add(task)
+    return task.finally(() => { this.sourceTasks.delete(task) })
+  }
+  sourceState(key: string): Promise<NotificationSourceState> {
+    return this.tracked((async () => {
+      try { const source = await this.repository.sourceState(key); this.recovered(); return source }
+      catch (error) { this.degraded(); throw error }
+    })())
+  }
+  commitSource(key: string, expectedRevision: number, data: unknown, drafts: NotificationDraft[], group?: NotificationGroupPresentation): Promise<NotificationSourceResult> {
+    if (this.closed || this.closing) return Promise.reject(new Error('通知来源已停止'))
+    return this.tracked((async () => { try {
+      const result = await this.repository.commitSource(key, expectedRevision, data, drafts, this.now())
+      this.recovered()
+      const announced = result.applied ? result.changes.filter(change => {
+        const draft = drafts.find(value => value.key === change.record?.key)
+        return change.changed && draft?.announce && change.record && notificationIsUnread(change.record) && change.record.attentionRevision === change.record.revision
+      }) : []
+      const grouped = group ? announced.filter(change => group.keys.includes(change.record!.key)) : []
+      const combine = group !== undefined && grouped.length > 1
+      if (result.applied) for (const change of result.changes) {
+        if (!change.changed || !change.record) continue
+        this.markers.set(change.record.key, { sourceRevision: change.record.sourceRevision, signature: notificationContentSignature(change.record) })
+        const draft = drafts.find(value => value.key === change.record?.key)
+        this.emit({ change, ...(draft?.announce && (!combine || !group!.keys.includes(change.record.key)) && notificationIsUnread(change.record) && change.record.attentionRevision === change.record.revision
+          ? { announcement: { id: `${change.record.id}:${change.record.attentionRevision}`, expiresAt: draft.occurredAt + 60_000 } } : {}) })
+      }
+      if (combine) {
+        const last = grouped.at(-1)!
+        const finalSummary = result.changes.at(-1)?.summary ?? last.summary
+        const mostRecent = Math.max(...grouped.map(change => change.record!.occurredAt))
+        this.emit({ change: { ...last, summary: finalSummary }, announcement: { id: `group:${key}:${result.source.revision}`, expiresAt: mostRecent + 60_000,
+          group: { source: notificationSafeText(group!.source).slice(0, 120), title: `${grouped.length} ${notificationSafeText(group!.titleSuffix)}`.slice(0, 160),
+            detail: grouped.map(change => notificationSafeText(change.record!.title)).join('\n').slice(0, 1_000),
+            ...(group!.target ? { target: group!.target } : {}), ...(group!.tone ? { tone: group!.tone } : {}), recordIds: grouped.map(change => change.record!.id) } } })
+      }
+      while (this.markers.size > 512) this.markers.delete(this.markers.keys().next().value!)
+      return result
+    } catch (error) { this.degraded(true); throw error } })())
   }
 
   /** Fire-and-forget intake. A service subscriber can call this without awaiting or catching anything. */
@@ -123,6 +166,7 @@ export class NotificationService {
     if (this.closing) return this.closing
     this.closing = (async () => {
       await this.flush()
+      await Promise.allSettled([...this.sourceTasks])
       this.closed = true; this.listeners.clear()
       await this.repository.close()
     })()
