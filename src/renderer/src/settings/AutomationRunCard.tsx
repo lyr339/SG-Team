@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type {
   AccountAutomationPhase,
   AccountAutomationRun,
@@ -10,6 +10,8 @@ import {
   type AutomationStageView
 } from './automation-run-view'
 import { isActiveAutomationPhase } from './settings-view'
+import { automationNotificationEventId } from '../../../domain/automation-observation'
+import { useNotificationResultRead } from '../notifications/use-notification-result-read'
 
 interface AutomationRunCardProps {
   run: AccountAutomationRun
@@ -36,6 +38,8 @@ function StageNode({ state, countdown }: Pick<AutomationStageView, 'state' | 'co
         <svg viewBox="0 0 20 20"><path d="m6.2 6.2 7.6 7.6M13.8 6.2l-7.6 7.6" /></svg>
       ) : state === 'cancelled' ? (
         <svg viewBox="0 0 20 20"><path d="M5.5 10h9" /></svg>
+      ) : state === 'unknown' || state === 'warning' ? (
+        <svg viewBox="0 0 20 20"><path d="M10 5.5v5M10 14v.1" /></svg>
       ) : countdown ? (
         <svg viewBox="0 0 22 22" className="automation-run__ring">
           <circle cx="11" cy="11" r={RING_RADIUS} />
@@ -57,6 +61,8 @@ function StageNode({ state, countdown }: Pick<AutomationStageView, 'state' | 'co
  * 无感切换分支行、完成摘要。只投影 AccountAutomationRun，不承载任何链路逻辑；空闲相位由父级决定不渲染。
  */
 export function AutomationRunCard({ run, settings, onCancel }: AutomationRunCardProps): React.JSX.Element {
+  const resultRef = useRef<HTMLElement>(null)
+  useNotificationResultRead(resultRef, run.operationId ? `automation:${run.operationId}` : undefined, automationNotificationEventId(run))
   // 失败 / 取消归属：记住本轮最后一个活跃相位（render 期派生状态，React 官方模式）；
   // 挂载时已是终态（持久化恢复）则没有轨迹，视图模型退化为按消息推断。
   const [lastActivePhase, setLastActivePhase] = useState<AccountAutomationPhase | null>(null)
@@ -72,7 +78,8 @@ export function AutomationRunCard({ run, settings, onCancel }: AutomationRunCard
   })
 
   return (
-    <section className={`automation-run is-${view.tone}`} aria-label="账号自动化运行状态">
+    <section ref={resultRef} className={`automation-run is-${view.tone}`} aria-label="账号自动化运行状态" data-notification-result
+      data-notification-key={run.operationId ? `automation:${run.operationId}` : undefined} data-notification-event={automationNotificationEventId(run)}>
       <header className="automation-run__head">
         <strong>自动处理账号</strong>
         <span className={`automation-run__badge is-${view.tone}`}>{view.statusLabel}</span>
@@ -96,6 +103,7 @@ export function AutomationRunCard({ run, settings, onCancel }: AutomationRunCard
             <span className="automation-run__stage-title">{stage.title}</span>
             <span
               className={`automation-run__stage-detail${stage.countdown ? ' is-countdown' : ''}`}
+              title={run.observations && stage.detail.length > 64 ? stage.detail : undefined}
               role={stage.state === 'failed' ? 'alert' : undefined}
               aria-live={stage.state === 'running' ? 'polite' : undefined}
             >{stage.detail}</span>

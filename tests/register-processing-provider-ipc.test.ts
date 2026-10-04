@@ -15,6 +15,35 @@ vi.mock('../src/main/ipc-security', () => ({ assertTrustedSender: vi.fn() }))
 
 describe('处理服务 IPC', () => {
   beforeEach(() => handlers.clear())
+  it('notification failure never replaces or repeats a real provider result and no credentials enter a draft', async () => {
+    const result = { providerId: 'henxin' as const, ok: true, message: 'confirmed result' }
+    const processToken = vi.fn(async () => result)
+    const offerCurrent = vi.fn(() => { throw Error('notification unavailable') })
+    const dispose = registerProcessingProviderIpc({ require: () => ({ service: { processToken } }) } as never, { credential: () => 'synthetic-private-token' } as never, () => undefined, { offerCurrent })
+    const observed = await handlers.get(IPC.processingProcessAccount)!({}, { providerId: 'henxin', accountId: 'account-1', requestId: 'request-1' })
+    expect(observed).toBe(result); expect(processToken).toHaveBeenCalledOnce()
+    expect(JSON.stringify(offerCurrent.mock.calls)).not.toContain('synthetic-private-token')
+    dispose()
+  })
+  it('adds only display references for a supported original result, not another processing step', async () => {
+    const result = { providerId: 'aozai' as const, ok: true, message: 'done' }; const processToken = vi.fn(async () => result)
+    const offerCurrent = vi.fn()
+    const dispose = registerProcessingProviderIpc({ require: () => ({ service: { processToken } }) } as never, {} as never, () => undefined, { offerCurrent })
+    const observed = await handlers.get(IPC.processingProcessToken)!({}, { providerId: 'aozai', token: 'synthetic-token', requestId: 'request-2' })
+    expect(observed).toEqual({ ...result, notification: { key: 'processing:aozai:request-2', eventId: 'processing:request-2:result' } })
+    expect(processToken).toHaveBeenCalledOnce(); expect(offerCurrent).toHaveBeenCalledOnce()
+    expect(JSON.stringify(offerCurrent.mock.calls)).not.toContain('synthetic-token'); dispose()
+  })
+  it('distinguishes guard rejection from an unknown result after invocation, and throws the original error', async () => {
+    const offerCurrent = vi.fn(); const processToken = vi.fn(async () => { throw Error('original interrupted result') })
+    const dispose = registerProcessingProviderIpc({ require: () => ({ service: { processToken } }) } as never, { credential: () => { throw Error('credential unavailable') } } as never, () => undefined, { offerCurrent })
+    await expect(handlers.get(IPC.processingProcessAccount)!({}, { providerId: 'aozai', accountId: 'account-1', requestId: 'request-3' })).rejects.toThrow('credential unavailable')
+    expect(offerCurrent).toHaveBeenLastCalledWith(expect.objectContaining({ title: '处理请求尚未提交' }))
+    expect(processToken).not.toHaveBeenCalled()
+    await expect(handlers.get(IPC.processingProcessToken)!({}, { providerId: 'aozai', token: 'synthetic-token', requestId: 'request-4' })).rejects.toThrow('original interrupted result')
+    expect(offerCurrent).toHaveBeenLastCalledWith(expect.objectContaining({ title: '奥仔处理结果需核对' }))
+    expect(processToken).toHaveBeenCalledOnce(); dispose()
+  })
 
   it('按 providerId 路由状态、卡密、账号处理和手动处理', async () => {
     const processToken = vi.fn(async () => ({ providerId: 'henxin' as const, ok: true, message: '处理成功' }))

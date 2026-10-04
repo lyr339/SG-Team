@@ -82,7 +82,7 @@ describe('session lifecycle notification evidence', () => {
   it('correlates the exact intended restart without turning unrelated session failures into planned stops', () => {
     const other = fact({ identity: 'other', name: '后端开发 · CH-4', scope: { ...fact().scope, sessionId: 'session-4', channelId: '4', composerId: 'composer-4' } })
     const base = reduce(undefined, input([fact(), other], { baseline: true })).checkpoint
-    const restart = { id: 'restart-1', label: '用户请求重启 Cursor', section: 'maintenance' as const, status: 'running' as const,
+    const restart = { id: 'restart-1', label: '用户请求重启 Cursor', section: 'maintenance' as const, status: 'running' as const, startedAt: 1_000,
       targets: [{ identity: fact().identity, name: fact().name, scope: fact().scope }] }
     const next = reduce(base, input([fact({ online: false, evidence: 'stopped' }), { ...other, online: false, evidence: 'stopped' }], { restart }), 2)
     expect(next.drafts.filter(draft => draft.category === 'sessions').map(draft => draft.scope.channelId)).toEqual(['4'])
@@ -92,7 +92,7 @@ describe('session lifecycle notification evidence', () => {
     expect(done.drafts.filter(draft => draft.category === 'sessions')).toHaveLength(0)
   })
   it('a stored restart interrupted by app exit becomes unconfirmed, not falsely successful or automatically retried', () => {
-    const restart = { id: 'restart-1', label: '重启', section: 'maintenance' as const, status: 'running' as const,
+    const restart = { id: 'restart-1', label: '重启', section: 'maintenance' as const, status: 'running' as const, startedAt: 1_000,
       targets: [{ identity: fact().identity, name: fact().name, scope: fact().scope }] }
     const base = reduce(undefined, input([fact()], { baseline: true, restart })).checkpoint
     const resumed = reduce(base, input([fact({ online: false, evidence: 'stopped' })], { baseline: true }), 2)
@@ -109,7 +109,7 @@ describe('session lifecycle notification evidence', () => {
     expect(timeout.checkpoint.rows[fact().identity]!.incident?.needsAction).toBe(true)
   })
   it('a finalized restart cannot reopen as the cause of a later independent offline event', () => {
-    const restart = { id: 'restart-1', label: '重启', section: 'maintenance' as const, status: 'done' as const,
+    const restart = { id: 'restart-1', label: '重启', section: 'maintenance' as const, status: 'done' as const, startedAt: 100,
       targets: [{ identity: fact().identity, name: fact().name, scope: fact().scope }] }
     const base = reduce(undefined, input([fact()], { baseline: true, restart })).checkpoint
     expect(base.restart?.finalized).toBe(true)

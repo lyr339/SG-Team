@@ -4,10 +4,14 @@ import type { CursorAccountVault } from '../application/cursor-account-vault'
 import {
   normalizeProcessingProviderId,
   type ProcessingProgressEvent,
-  type ProcessingProviderId
+  type ProcessingProviderId,
+  type ProcessingResult
 } from '../domain/processing-provider'
 import { IPC } from '../shared/desktop-api'
 import { assertTrustedSender } from './ipc-security'
+import type { NotificationService } from '../application/notification-service'
+import { processingNotification } from '../domain/processing-notification'
+import type { NotificationReference } from '../domain/notification-reference'
 
 function providerIdOf(value: unknown): ProcessingProviderId {
   if (value !== 'aozai' && value !== 'henxin') throw new Error('处理服务无效')
@@ -43,8 +47,17 @@ function processInput(value: unknown, withAccount: boolean): {
 export function registerProcessingProviderIpc(
   providers: ProcessingProviderRegistry,
   cursorAccounts: CursorAccountVault,
-  getWindow: () => BrowserWindow | undefined
+  getWindow: () => BrowserWindow | undefined,
+  notifications?: Pick<NotificationService, 'offerCurrent'>
 ): () => void {
+  const observe = (input: ReturnType<typeof processInput>, result: ProcessingResult | undefined, error: unknown, submitted: boolean): NotificationReference | undefined => {
+    if (!notifications) return undefined
+    try {
+      const draft = processingNotification({ providerId: input.providerId, requestId: input.requestId, accountId: input.accountId, result,
+        ...(error !== undefined ? { error: error instanceof Error ? error.message : String(error) } : {}), submitted, now: Date.now() })
+      notifications.offerCurrent(draft); return { key: draft.key, eventId: draft.eventId }
+    } catch { return undefined }
+  }
   const emit = (providerId: ProcessingProviderId, requestId: string, accountId: string) =>
     (state: ProcessingProgressEvent['state'], message: string): void => {
       const window = getWindow()
@@ -72,18 +85,35 @@ export function registerProcessingProviderIpc(
   ipcMain.handle(IPC.processingProcessAccount, async (event, value: unknown) => {
     assertTrustedSender(event, getWindow)
     const input = processInput(value, true)
-    return providers.require(input.providerId).service.processToken(
-      cursorAccounts.credential(input.accountId),
-      emit(input.providerId, input.requestId, input.accountId)
-    )
+    let submitted = false
+    let result: ProcessingResult
+    try {
+      const service = providers.require(input.providerId).service
+      const token = cursorAccounts.credential(input.accountId)
+      submitted = true
+      result = await service.processToken(token, emit(input.providerId, input.requestId, input.accountId))
+    } catch (error) {
+      observe(input, undefined, error, submitted)
+      throw error
+    }
+    const reference = observe(input, result, undefined, submitted)
+    return reference ? { ...result, notification: reference } : result
   })
   ipcMain.handle(IPC.processingProcessToken, async (event, value: unknown) => {
     assertTrustedSender(event, getWindow)
     const input = processInput(value, false)
-    return providers.require(input.providerId).service.processToken(
-      input.token,
-      emit(input.providerId, input.requestId, '')
-    )
+    let submitted = false
+    let result: ProcessingResult
+    try {
+      const service = providers.require(input.providerId).service
+      submitted = true
+      result = await service.processToken(input.token, emit(input.providerId, input.requestId, ''))
+    } catch (error) {
+      observe(input, undefined, error, submitted)
+      throw error
+    }
+    const reference = observe(input, result, undefined, submitted)
+    return reference ? { ...result, notification: reference } : result
   })
 
   return () => {

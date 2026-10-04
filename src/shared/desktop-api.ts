@@ -322,7 +322,8 @@ export interface SgDesktopApi {
    * 拉起 Cursor（恒附带 --remote-debugging-port，会话创建能力无缝恢复）。
    * 重启会断开全部拾光通道，UI 必须在调用前完成用户确认。
    */
-  restartCursorWithAccount(accountId: string): Promise<{
+  restartCursorWithAccount(accountId: string, observer?: { notificationId: string }): Promise<{
+    notification?: import('../domain/notification-reference').NotificationReference
     switched: boolean
     killedCursor: boolean
     relaunchMode: 'cdp' | 'plain' | 'failed'
@@ -343,7 +344,7 @@ export interface SgDesktopApi {
    * Cursor 的切号补丁，硬回执到手才同步活跃账号。永不 throw；switched=false
    * 时 reason 为人话原因（补丁未装/端口占用/回执超时/换票失败）。
    */
-  switchCursorAccountLive(accountId: string): Promise<{ switched: boolean; reason?: string; warning?: string }>
+  switchCursorAccountLive(accountId: string, observer?: { notificationId: string }): Promise<{ switched: boolean; reason?: string; warning?: string; notification?: import('../domain/notification-reference').NotificationReference }>
   /** 切号补丁只读状态（维护页状态卡）。 */
   getCursorSwitchPumpStatus(): Promise<CursorSwitchPumpStatus>
   /** 一键安装/修复切号补丁（写 Cursor workbench bundle + 重签名；重启 Cursor 生效）。 */

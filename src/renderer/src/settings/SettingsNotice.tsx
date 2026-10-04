@@ -1,21 +1,27 @@
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { ChevronDownIcon } from '../UiIcons'
+import { useNotificationResultRead } from '../notifications/use-notification-result-read'
 
 export interface SettingsNoticeMessage {
   tone: 'success' | 'warning' | 'error'
   title: string
   detail?: string
+  section?: 'accounts' | 'import'
+  notification?: import('../../../domain/notification-reference').NotificationReference
 }
 
 export function SettingsNotice({ message, onDismiss }: {
   message: SettingsNoticeMessage
   onDismiss?: () => void
 }): React.JSX.Element {
+  const resultRef = useRef<HTMLElement>(null)
+  useNotificationResultRead(resultRef, message.notification?.key, message.notification?.eventId)
   const [expanded, setExpanded] = useState(message.tone !== 'success')
   const detailId = useId()
   useEffect(() => { setExpanded(message.tone !== 'success') }, [message.tone, message.title, message.detail])
   return (
-    <aside className={`settings-notice is-${message.tone}`} role={message.tone === 'error' ? 'alert' : 'status'}>
+    <aside ref={resultRef} className={`settings-notice is-${message.tone}`} role={message.tone === 'error' ? 'alert' : 'status'}
+      data-notification-page={`account:${message.section ?? 'accounts'}`} data-notification-result data-notification-key={message.notification?.key} data-notification-event={message.notification?.eventId}>
       <div className="settings-notice__head">
         <svg className="settings-notice__icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
           {message.tone === 'success'

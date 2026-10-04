@@ -38,6 +38,7 @@ export interface ProcessingProgressEvent {
 }
 
 export interface ProcessingResult {
+  notification?: import('./notification-reference').NotificationReference
   providerId: ProcessingProviderId
   ok: boolean
   message: string

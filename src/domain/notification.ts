@@ -31,6 +31,7 @@ export interface NotificationDraft {
   category: NotificationCategory
   source: string
   eventId?: string
+  eventType?: string
   title: string
   detail?: string
   tone: NotificationTone
@@ -160,6 +161,7 @@ export function validateNotificationDraft(input: NotificationDraft): void {
   if (!input.key.trim() || input.key.length > 300 || !NOTIFICATION_CATEGORIES.includes(input.category)) throw new Error('通知来源身份无效')
   if (!input.title.trim() || input.title.length > 160 || input.source.length > 120 || (input.detail?.length ?? 0) > 4_000) throw new Error('通知内容无效或过长')
   if (input.eventId !== undefined && (typeof input.eventId !== 'string' || input.eventId.length > 300)) throw new Error('通知事件身份无效')
+  if (input.eventType !== undefined && (typeof input.eventType !== 'string' || !/^[a-z][a-z0-9_.-]{0,60}$/.test(input.eventType))) throw new Error('通知事件类型无效')
   if (!['info', 'success', 'warning', 'error'].includes(input.tone) || !['activity', 'notice', 'action'].includes(input.attention)
     || !['active', 'resolved', 'expired'].includes(input.state)) throw new Error('通知状态无效')
   if (!Number.isSafeInteger(input.sourceRevision) || input.sourceRevision < 0 || !Number.isSafeInteger(input.occurredAt) || input.occurredAt < 0 || input.occurredAt > 8_640_000_000_000_000) throw new Error('通知事件版本或时间无效')
@@ -207,5 +209,5 @@ export function notificationContentSignature(draft: NotificationDraft): string {
   const target = reference?.kind === 'session' ? { kind: reference.kind, scope: scope(reference.scope), entryId: reference.entryId, toolCallId: reference.toolCallId }
     : reference?.kind === 'settings' ? { kind: reference.kind, section: reference.section }
       : reference ? { kind: reference.kind, runId: reference.runId, groupId: reference.groupId } : undefined
-  return JSON.stringify([draft.category, draft.source, draft.eventId, draft.title, draft.detail ?? '', draft.tone, draft.attention, draft.state, draft.timeBasis, scope(draft.scope), target, draft.origin])
+  return JSON.stringify([draft.category, draft.source, draft.eventId, draft.eventType, draft.title, draft.detail ?? '', draft.tone, draft.attention, draft.state, draft.timeBasis, scope(draft.scope), target, draft.origin])
 }

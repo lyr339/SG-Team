@@ -5,7 +5,7 @@ import type {
   DesktopSnapshot
 } from '../../shared/desktop-api'
 import { emptyTaskPoolSnapshot, newestTaskPoolSnapshot } from '../../domain/task-pool'
-import type { NotificationTarget } from '../../domain/notification'
+import type { NotificationScope, NotificationTarget } from '../../domain/notification'
 import { notificationTargetAvailable } from './notifications/notification-navigation'
 import { requestReveal } from './inspector/reveal-bus'
 import { groupContextView } from './team/group-context-view'
@@ -153,8 +153,8 @@ export function App(): React.JSX.Element {
   const [cursorAccounts, setCursorAccounts] = useState<CursorAccountMetadata[]>([])
   const [cursorAccountBusy, setCursorAccountBusy] = useState(false)
   const [cursorAccountNotice, setCursorAccountNotice] = useState<SettingsNoticeMessage>()
-  const reportCursorAccountError = useCallback((title: string, reason: unknown): void => {
-    setCursorAccountNotice({ tone: 'error', title, detail: userFacingErrorMessage(reason) })
+  const reportCursorAccountError = useCallback((title: string, reason: unknown, section: 'accounts' | 'import' = 'accounts', notification?: import('../../domain/notification-reference').NotificationReference): void => {
+    setCursorAccountNotice({ tone: 'error', title, detail: userFacingErrorMessage(reason), section, ...(notification ? { notification } : {}) })
   }, [])
   // 升级 Pro 结账结果反馈（待扫码/复核通过/失败原因）；按账号粒度置忙在组件内。
   const [proUpgradeFeedback, setProUpgradeFeedback] = useState<{ ok: boolean; message: string } | null>(null)
@@ -184,7 +184,7 @@ export function App(): React.JSX.Element {
   const [processingBusy, setProcessingBusy] = useState(false)
   const [processingError, setProcessingError] = useState<{ providerId: ProcessingProviderId; message: string } | null>(null)
   const [processingProgress, setProcessingProgress] = useState<ProcessingProgressEvent | null>(null)
-  const [processingFeedback, setProcessingFeedback] = useState<{ providerId: ProcessingProviderId; ok: boolean; message: string } | null>(null)
+  const [processingFeedback, setProcessingFeedback] = useState<{ providerId: ProcessingProviderId; ok: boolean; message: string; originSection?: 'accounts' | 'aozai'; notification?: import('../../domain/notification-reference').NotificationReference } | null>(null)
   const [agentLaunchPlan, setAgentLaunchPlan] = useState<AgentLaunchPlan | undefined>(undefined)
   // 会话预热探针：批量发起前用最低成本模型验证账号能真实跑通响应（绝不触发账号自动化）。
   const [sessionWarmupRun, setSessionWarmupRun] = useState<SessionWarmupRun | undefined>(undefined)
@@ -709,16 +709,17 @@ export function App(): React.JSX.Element {
     setProcessingError(null)
     setProcessingFeedback(null)
     setProcessingProgress(null)
+    const requestId = crypto.randomUUID()
     try {
-      const result = await window.sgDesktop.processAccount({ providerId, accountId, requestId: crypto.randomUUID() })
-      setProcessingFeedback({ providerId, ok: result.ok, message: result.message })
+      const result = await window.sgDesktop.processAccount({ providerId, accountId, requestId })
+      setProcessingFeedback({ providerId, ok: result.ok, message: result.message, originSection: 'accounts', notification: result.notification })
       if (result.balance) {
         setProcessingStatuses((current) => ({ ...current, [providerId]: { ...current[providerId], ...result.balance } }))
       }
       // 处理完成 = 档位大概率已变（free → 试用/付费），立即重查被动档位行。
       if (result.ok) void refreshMembership()
     } catch (reason) {
-      setProcessingFeedback({ providerId, ok: false, message: userFacingErrorMessage(reason) })
+      setProcessingFeedback({ providerId, ok: false, message: userFacingErrorMessage(reason), originSection: 'accounts', notification: { key: `processing:${providerId}:${requestId}`, eventId: `processing:${requestId}:result` } })
     } finally {
       setProcessingBusy(false)
       setProcessingProgress(null)
@@ -731,14 +732,15 @@ export function App(): React.JSX.Element {
     setProcessingError(null)
     setProcessingFeedback(null)
     setProcessingProgress(null)
+    const requestId = crypto.randomUUID()
     try {
-      const result = await window.sgDesktop.processToken({ providerId, token, requestId: crypto.randomUUID() })
-      setProcessingFeedback({ providerId, ok: result.ok, message: result.message })
+      const result = await window.sgDesktop.processToken({ providerId, token, requestId })
+      setProcessingFeedback({ providerId, ok: result.ok, message: result.message, originSection: 'aozai', notification: result.notification })
       if (result.balance) {
         setProcessingStatuses((current) => ({ ...current, [providerId]: { ...current[providerId], ...result.balance } }))
       }
     } catch (reason) {
-      setProcessingFeedback({ providerId, ok: false, message: userFacingErrorMessage(reason) })
+      setProcessingFeedback({ providerId, ok: false, message: userFacingErrorMessage(reason), originSection: 'aozai', notification: { key: `processing:${providerId}:${requestId}`, eventId: `processing:${requestId}:result` } })
     } finally {
       setProcessingBusy(false)
       setProcessingProgress(null)
@@ -1054,12 +1056,14 @@ export function App(): React.JSX.Element {
     if (module !== 'run') setFocusGroupId(undefined)
   }, [])
 
-  const notificationContext = useRef({ sessions: visibleSnapshot.sessions, team: teamControl })
-  notificationContext.current = { sessions: visibleSnapshot.sessions, team: teamControl }
-  const openNotificationTarget = useCallback(async (target: NotificationTarget): Promise<boolean> => {
+  const notificationContext = useRef({ sessions: visibleSnapshot.sessions, team: teamControl, accounts: cursorAccounts, providerId: accountAutomationSettings.processingProvider })
+  notificationContext.current = { sessions: visibleSnapshot.sessions, team: teamControl, accounts: cursorAccounts, providerId: accountAutomationSettings.processingProvider }
+  const openNotificationTarget = useCallback(async (target: NotificationTarget, scope?: NotificationScope): Promise<boolean> => {
     const context = notificationContext.current
     if (!notificationTargetAvailable(target, context.sessions, context.team)) return false
     if (target.kind === 'settings') {
+      if (scope?.accountId && target.section === 'accounts' && !context.accounts.some(account => account.id === scope.accountId)) return false
+      if (scope?.providerId && (target.section === 'aozai' || target.section === 'accounts') && scope.providerId !== context.providerId) return false
       window.location.hash = `#account:${target.section}`; changeModule('account'); return true
     }
     if (target.kind === 'run') { setFocusGroupId(target.groupId); changeModule('run'); return true }
@@ -1134,7 +1138,7 @@ export function App(): React.JSX.Element {
         void refreshMembership()
         void refreshAccountMemberships()
       }
-      catch (reason) { reportCursorAccountError('账号保存失败', reason); throw reason }
+      catch (reason) { reportCursorAccountError('账号保存失败', reason, 'import'); throw reason }
       finally { setCursorAccountBusy(false) }
     },
     onSaveCard: async (input) => {
@@ -1148,7 +1152,7 @@ export function App(): React.JSX.Element {
         void refreshAccountMemberships()
         return { outcome: result.outcome, label: result.label, tokenRefreshed: result.tokenRefreshed, loginError: result.loginError }
       }
-      catch (reason) { reportCursorAccountError('账号导入失败', reason); throw reason }
+      catch (reason) { reportCursorAccountError('账号导入失败', reason, 'import'); throw reason }
       finally { setCursorAccountBusy(false) }
     },
     onReloginAccount: async (accountId) => {
@@ -1211,7 +1215,7 @@ export function App(): React.JSX.Element {
         void refreshMembership()
         void refreshAccountMemberships()
       }
-      catch (reason) { reportCursorAccountError('本机账号导入失败', reason) }
+      catch (reason) { reportCursorAccountError('本机账号导入失败', reason, 'import') }
       finally { setCursorAccountBusy(false) }
     },
     onImportFromBrowser: async () => {
@@ -1222,7 +1226,7 @@ export function App(): React.JSX.Element {
         void refreshMembership()
         void refreshAccountMemberships()
       }
-      catch (reason) { reportCursorAccountError('浏览器账号导入失败', reason) }
+      catch (reason) { reportCursorAccountError('浏览器账号导入失败', reason, 'import') }
       finally { setCursorAccountBusy(false) }
     },
     onImportFromFingerprint: async () => {
@@ -1233,14 +1237,14 @@ export function App(): React.JSX.Element {
         void refreshMembership()
         void refreshAccountMemberships()
       }
-      catch (reason) { reportCursorAccountError('指纹浏览器账号导入失败', reason) }
+      catch (reason) { reportCursorAccountError('指纹浏览器账号导入失败', reason, 'import') }
       finally { setCursorAccountBusy(false) }
     },
     // 提前登录：开窗导航 cursor.com（不关窗；失败提示走账号区错误条）
     onOpenFingerprintLogin: async () => {
       setCursorAccountBusy(true); setCursorAccountNotice(undefined)
       try { await window.sgDesktop.openFingerprintLoginPage() }
-      catch (reason) { reportCursorAccountError('登录窗口未能打开', reason) }
+      catch (reason) { reportCursorAccountError('登录窗口未能打开', reason, 'import') }
       finally { setCursorAccountBusy(false) }
     },
     onCleanupFingerprintEnvironment: async () => {
@@ -1249,17 +1253,19 @@ export function App(): React.JSX.Element {
     },
     onRestartWithAccount: async (accountId) => {
       setCursorAccountBusy(true); setCursorAccountNotice(undefined)
+      const notificationId = crypto.randomUUID()
+      const reference = { key: `account-switch:cold:${notificationId}`, eventId: `account-switch:${notificationId}:result` }
       try {
-        const result = await window.sgDesktop.restartCursorWithAccount(accountId)
+        const result = await window.sgDesktop.restartCursorWithAccount(accountId, { notificationId })
         if (!result.switched) return
         if (!result.runtimeVerified) {
           setCursorAccountNotice(result.relaunchMode === 'failed'
-            ? { tone: 'warning', title: 'Cursor 未能启动', detail: '请手动启动 Cursor 后核对登录态。' }
-            : { tone: 'warning', title: 'Cursor 登录态仍待确认', detail: 'Cursor 已启动，但运行时登录态尚未完成确认。' })
+            ? { tone: 'warning', title: 'Cursor 未能启动', detail: '请手动启动 Cursor 后核对登录态。', notification: result.notification ?? reference }
+            : { tone: 'warning', title: 'Cursor 登录态仍待确认', detail: 'Cursor 已启动，但运行时登录态尚未完成确认。', notification: result.notification ?? reference })
           return
         }
         if (result.tokenExpired) {
-          setCursorAccountNotice({ tone: 'warning', title: '账号 Token 已过期', detail: '请重新获取 Token 后再切换。' })
+          setCursorAccountNotice({ tone: 'warning', title: '账号 Token 已过期', detail: '请重新获取 Token 后再切换。', notification: result.notification ?? reference })
           return
         }
         const relaunchNote = result.relaunchMode === 'cdp'
@@ -1273,6 +1279,7 @@ export function App(): React.JSX.Element {
         setCursorAccountNotice({
           tone: portPending ? 'warning' : 'success',
           title: portPending ? '账号已切换，会话端口仍在准备' : '账号切换完成',
+          notification: result.notification ?? reference,
           detail: `Cursor 已确认目标账号，登录态与机器码已保存。${result.killedCursor ? 'Cursor 已重启。' : 'Cursor 原先未运行。'}${relaunchNote}`
         })
         // 切换成功 = 运行态与活跃账号重新对齐，立即刷新被动状态行
@@ -1280,7 +1287,7 @@ export function App(): React.JSX.Element {
         // 切换后运行账号变了，档位行同步重查
         void refreshMembership()
         void refreshAccountMemberships([accountId])
-      } catch (reason) { reportCursorAccountError('账号切换并重启失败', reason) }
+      } catch (reason) { reportCursorAccountError('账号切换并重启失败', reason, 'accounts', reference) }
       finally {
         // 冷切换的每个出口 vault 都可能已变（activeId + 清「待重启对齐」标记）：
         // 无条件回读，「当前」徽标与账号行标记跟 vault 真实状态对齐，不留旧值。
@@ -1290,21 +1297,23 @@ export function App(): React.JSX.Element {
     },
     onSwitchLiveAccount: async (accountId) => {
       setCursorAccountBusy(true); setCursorAccountNotice(undefined)
+      const notificationId = crypto.randomUUID()
+      const reference = { key: `account-switch:hot:${notificationId}`, eventId: `account-switch:${notificationId}:result` }
       try {
-        const result = await window.sgDesktop.switchCursorAccountLive(accountId)
+        const result = await window.sgDesktop.switchCursorAccountLive(accountId, { notificationId })
         if (!result.switched) {
-          setCursorAccountNotice({ tone: 'warning', title: '无感切换未完成', detail: `${result.reason ?? '未知原因'}。可改用「切换并重启」。` })
+          setCursorAccountNotice({ tone: 'warning', title: '无感切换未完成', detail: `${result.reason ?? '未知原因'}。可改用「切换并重启」。`, notification: result.notification ?? reference })
           return
         }
         setCursorAccountNotice(result.warning
-          ? { tone: 'warning', title: '账号已切换，本地状态仍需处理', detail: result.warning }
-          : { tone: 'success', title: '账号已切换，无需重启 Cursor', detail: '令牌、邮箱与账号缓存已刷新。机器码将在下次「切换并重启」时对齐。' })
+          ? { tone: 'warning', title: '账号已切换，本地状态仍需处理', detail: result.warning, notification: result.notification ?? reference }
+          : { tone: 'success', title: '账号已切换，无需重启 Cursor', detail: '令牌、邮箱与账号缓存已刷新。机器码将在下次「切换并重启」时对齐。', notification: result.notification ?? reference })
         void refreshRuntimeMatch()
         void refreshMembership()
         void refreshAccountMemberships([accountId])
         // pendingMachineAlign 标记随热切置位，账号行标记立即刷新
         void window.sgDesktop.listCursorAccounts().then(setCursorAccounts).catch(() => {})
-      } catch (reason) { reportCursorAccountError('无感切换失败', reason) }
+      } catch (reason) { reportCursorAccountError('无感切换失败', reason, 'accounts', reference) }
       finally { setCursorAccountBusy(false) }
     },
     runtimeMatch,

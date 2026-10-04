@@ -108,6 +108,7 @@ import { registerNotificationIpc } from './register-notification-ipc'
 import { connectAppUpdateNotifications } from '../application/notifications/app-update-notifications'
 import { connectSessionNotifications } from '../application/notifications/connect-session-notifications'
 import { connectBatchLaunchNotifications } from '../application/notifications/batch-launch-notifications'
+import { connectAutomationNotifications } from '../application/notifications/automation-notifications'
 // electron-updater 是 CJS，`autoUpdater` 是 exports 上的惰性 getter：主进程是 ESM，命名导入会在链接期
 // 找不到该导出（cjs-module-lexer 认不出 getter），只能默认导入整个 module.exports 再取属性。
 import electronUpdater from 'electron-updater'
@@ -161,6 +162,7 @@ let disposeNotificationIpc: (() => void) | undefined
 let disposeAppUpdateNotifications: (() => void) | undefined
 let notificationRuntime: ReturnType<typeof connectSessionNotifications> | undefined
 let disposeBatchLaunchNotifications: (() => void) | undefined
+let disposeAutomationNotifications: (() => void) | undefined
 let teamOrchestrator: TeamOrchestrator | undefined
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
@@ -601,11 +603,15 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     {
       // 创建链只剩用户手动的批量创建（席位自动轮换已退役），账号自动化照常跟随；
       // 启动状态机随 2B-1 退役，没有 onFinished 可结算。
-      onAllTriggered: (plan) => accountAutomationService.onAllSessionsTriggered(plan.id)
+      onAllTriggered: (plan) => {
+        const team = notificationRuntime?.currentTeam()
+        accountAutomationService.onAllSessionsTriggered(plan.id, team ? { workspaceId: team.activeWorkspaceId, runId: team.activeRun?.id } : undefined)
+      }
     }
   )
   if (notificationService) disposeBatchLaunchNotifications = connectBatchLaunchNotifications(agentSessionLauncher,
     () => notificationRuntime?.currentTeam() ?? teamControlService!.getSnapshot(), notificationService)
+  if (notificationService) disposeAutomationNotifications = connectAutomationNotifications(accountAutomationService, notificationService)
   teamCollaborationService = new TeamCollaborationService(
     teamCollaborationRepository,
     teamControlService
@@ -698,6 +704,7 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
       suppressCdpAutoHeal: () => cursorCdpKeeperRef?.suppress(120_000),
       restartObservation: { begin: () => notificationRuntime?.lifecycle.beginRestart('切换并重启 Cursor', 'accounts'),
         finish: (id, success) => notificationRuntime?.lifecycle.finishRestart(id, success) },
+      notifications: notificationService,
       // 第一步「获取 Token」的指纹导入：开窗读 profile 登录态（内存级），读毕关窗省资源
       //（cookie 留 profile；后续自动化链会重新拉起）。拿到 token 顺手识别官网资料
       //（email/注册时间）——label 显示邮箱而不是 user_xxx；识别失败静默降级。
@@ -753,7 +760,7 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
       switchMutex: cursorSwitchMutex
     }
   )
-  disposeProcessingProviderIpc = registerProcessingProviderIpc(processingProviders, cursorAccountVault, () => mainWindow)
+  disposeProcessingProviderIpc = registerProcessingProviderIpc(processingProviders, cursorAccountVault, () => mainWindow, notificationService)
   const cursorUpdatePreferencesStore = new CursorUpdatePreferencesStore()
   let autoHealNotificationId: string | undefined
   const cursorCdpKeeper = new CursorCdpKeeper({
@@ -901,7 +908,8 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   disposeCursorStorageIpc = registerCursorStorageIpc(
     cursorStorageScanner,
     { userDataRoot: cursorStorageUserDataRoot, workbenchBundlePath: cursorStorageBundlePath },
-    () => mainWindow
+    () => mainWindow,
+    notificationService
   )
   disposeWindowChromeIpc = registerWindowChromeIpc(() => mainWindow)
   disposeAccountAutomationIpc = registerAccountAutomationIpc(accountAutomationService, () => mainWindow, {
@@ -977,6 +985,7 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
 app.on('before-quit', () => {
   notificationRuntime?.dispose()
   disposeBatchLaunchNotifications?.()
+  disposeAutomationNotifications?.()
   tray?.destroy()
   tray = undefined
   void accountBrowserHostDisposeRef?.().catch(() => {})

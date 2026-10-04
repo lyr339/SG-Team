@@ -34,6 +34,25 @@ function harness(workbenchBundlePath?: string) {
 }
 
 describe('存储清理 IPC', () => {
+  it('notification errors cannot turn an already performed cleanup into another failure or cleanup invocation', async () => {
+    const result = { ok: true, freedBytes: 1_024, done: ['logs'], skipped: [], message: 'done' }
+    const scanner = { cleanup: vi.fn(async () => result) }; const offerCurrent = vi.fn(() => { throw Error('notification unavailable') })
+    const dispose = registerCursorStorageIpc(scanner as unknown as CursorStorageScanner, { userDataRoot: '/test-only' }, () => undefined, { offerCurrent })
+    const observed = await handlers.get(IPC.cursorStorageCleanup)!({}, { ids: ['logs'] })
+    expect(observed).toBe(result); expect(scanner.cleanup).toHaveBeenCalledOnce(); dispose()
+  })
+  it('retains partial success and emits an unconfirmed outcome only for the original cleanup exception', async () => {
+    const result = { ok: false, freedBytes: 1_024, done: ['logs'], skipped: [{ id: 'caches', reason: 'locked' }], message: 'partial' }
+    const scanner = { cleanup: vi.fn(async () => result) }; const offerCurrent = vi.fn()
+    const dispose = registerCursorStorageIpc(scanner as unknown as CursorStorageScanner, { userDataRoot: '/test-only' }, () => undefined, { offerCurrent })
+    const observed = await handlers.get(IPC.cursorStorageCleanup)!({}, { ids: ['logs', 'caches'] }) as typeof result & { notification: { key: string } }
+    expect(observed.done).toEqual(['logs']); expect(observed.notification.key).toMatch(/^storage-cleanup:/)
+    expect(offerCurrent).toHaveBeenLastCalledWith(expect.objectContaining({ title: '部分项目已清理，仍有项目未完成' }))
+    scanner.cleanup.mockRejectedValueOnce(Error('original failure'))
+    await expect(handlers.get(IPC.cursorStorageCleanup)!({}, { ids: ['logs'] })).rejects.toThrow('original failure')
+    expect(offerCurrent).toHaveBeenLastCalledWith(expect.objectContaining({ title: '存储清理结果待核对' }))
+    expect(scanner.cleanup).toHaveBeenCalledTimes(2); dispose()
+  })
   it('盘点：阈值只接受目录里的档位，其他一律按默认；清理：过滤未知项、校验档位、布尔化压实开关', async () => {
     const { scanner, invoke } = harness()
     await invoke(IPC.cursorStorageScan, { chatHistoryOlderThanDays: 30 })

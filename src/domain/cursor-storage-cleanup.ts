@@ -178,6 +178,7 @@ export interface CursorStorageCleanupSkip {
 }
 
 export interface CursorStorageCleanupResult {
+  notification?: import('./notification-reference').NotificationReference
   ok: boolean
   freedBytes: number
   done: CursorStorageItemId[]

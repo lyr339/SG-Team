@@ -19,6 +19,10 @@ import type { CursorSwitchMutex } from '../infrastructure/cursor/cursor-switch-m
 import { IPC } from '../shared/desktop-api'
 import type { CursorProUpgradeResult } from '../domain/cursor-checkout-profile'
 import { assertTrustedSender } from './ipc-security'
+import { randomUUID } from 'node:crypto'
+import type { NotificationService } from '../application/notification-service'
+import type { NotificationReference } from '../domain/notification-reference'
+import { accountSwitchNotification } from '../domain/account-switch-notification'
 
 function accountIdOf(value: unknown): string {
   if (typeof value !== 'string' || !value.trim() || value.length > 200) throw new Error('Cursor 账号 ID 无效')
@@ -40,6 +44,7 @@ export interface CursorAccountIpcOptions {
   suppressCdpAutoHeal?: () => void
   /** Optional presentation-only observer; it does not control restart, recovery or the switch lock. */
   restartObservation?: { begin: () => string | undefined; finish: (id: string | undefined, success: boolean) => void }
+  notifications?: Pick<NotificationService, 'offerCurrent'>
   /**
    * 从指纹浏览器 profile 读取当前登录态 Token（第一步「获取 Token」的指纹导入来源）。
    * 返回 token（user_xxx::jwt）与可选 userId + 官网资料（email 等，识别失败缺省）；
@@ -262,6 +267,17 @@ export function registerCursorAccountIpc(
     // 成功后才同步 vault 活跃账号（失败时 Cursor 仍运行原账号，active 不能变）。
     // 重启断开全部拾光通道，UI 已在调用前完成用户确认。
     let observationId: string | undefined
+    const payload = accountId && typeof accountId === 'object' ? accountId as { accountId?: unknown; notificationId?: unknown } : undefined
+    const requestedId = accountIdOf(payload ? payload.accountId : accountId)
+    const notificationId = typeof payload?.notificationId === 'string' && /^[a-f0-9-]{36}$/.test(payload.notificationId) ? payload.notificationId : randomUUID()
+    const notify = (result: Parameters<typeof accountSwitchNotification>[0]['cold'], error?: unknown): NotificationReference | undefined => {
+      if (!options.notifications) return undefined
+      try {
+        const draft = accountSwitchNotification({ id: notificationId, accountId: requestedId, mode: 'cold', cold: result,
+          ...(error !== undefined ? { error: error instanceof Error ? error.message : String(error) } : {}), now: Date.now() })
+        options.notifications.offerCurrent(draft); return { key: draft.key, eventId: draft.eventId }
+      } catch { return undefined }
+    }
     let observed = false
     const suppress = (): void => {
       options.suppressCdpAutoHeal?.()
@@ -269,16 +285,32 @@ export function registerCursorAccountIpc(
     }
     const finish = (success: boolean): void => { try { options.restartObservation?.finish(observationId, success) } catch { /* Original result must remain authoritative. */ } }
     try {
-      const result = await switchCursorAccountWithVault({ vault, switcher, suppressCdpAutoHeal: suppress }, accountIdOf(accountId))
-      finish(result.switched); return result
-    } catch (error) { finish(false); throw error }
+      const result = await switchCursorAccountWithVault({ vault, switcher, suppressCdpAutoHeal: suppress }, requestedId)
+      finish(result.switched)
+      const reference = notify(result)
+      return reference ? { ...result, notification: reference } : result
+    } catch (error) { finish(false); notify(undefined, error); throw error }
   })
   ipcMain.handle(IPC.cursorAccountsSwitchLive, async (event, accountId: unknown) => {
     assertTrustedSender(event, getWindow)
     // 无感换号（热切）：不杀进程、不写库、不动机器码；结果不 throw——
     // {switched:false, reason} 由 UI 原样亮出（热切降级语义，与自动化链同款）。
     if (!options.liveSwitcher) throw new Error('无感换号未装配')
-    return options.liveSwitcher.switchLive({ accountId: accountIdOf(accountId) })
+    const payload = accountId && typeof accountId === 'object' ? accountId as { accountId?: unknown; notificationId?: unknown } : undefined
+    const requestedId = accountIdOf(payload ? payload.accountId : accountId)
+    const notificationId = typeof payload?.notificationId === 'string' && /^[a-f0-9-]{36}$/.test(payload.notificationId) ? payload.notificationId : randomUUID()
+    const notify = (result: Parameters<typeof accountSwitchNotification>[0]['hot'], error?: unknown): NotificationReference | undefined => {
+      if (!options.notifications) return undefined
+      try {
+        const draft = accountSwitchNotification({ id: notificationId, accountId: requestedId, mode: 'hot', hot: result,
+          ...(error !== undefined ? { error: error instanceof Error ? error.message : String(error) } : {}), now: Date.now() })
+        options.notifications.offerCurrent(draft); return { key: draft.key, eventId: draft.eventId }
+      } catch { return undefined }
+    }
+    try {
+      const result = await options.liveSwitcher.switchLive({ accountId: requestedId })
+      const reference = notify(result); return reference ? { ...result, notification: reference } : result
+    } catch (error) { notify(undefined, error); throw error }
   })
   ipcMain.handle(IPC.cursorSwitchPumpStatus, (event) => {
     assertTrustedSender(event, getWindow)

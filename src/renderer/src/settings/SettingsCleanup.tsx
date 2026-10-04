@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useNotificationResultRead } from '../notifications/use-notification-result-read'
 import {
   CHAT_HISTORY_DEFAULT_OLDER_THAN_DAYS,
   CHAT_HISTORY_OLDER_THAN_OPTIONS,
@@ -123,6 +124,9 @@ export function SettingsCleanup({
   const [confirming, setConfirming] = useState(false)
   /** 已收起的结果横幅：按对象引用记忆，新一次清理的结果会重新显示。 */
   const [dismissedResult, setDismissedResult] = useState<CleanupProps['storageCleanupResult']>()
+  const resultRef = useRef<HTMLDivElement>(null)
+  useNotificationResultRead(resultRef, storageCleanupResult !== dismissedResult ? storageCleanupResult?.notification?.key : undefined,
+    storageCleanupResult !== dismissedResult ? storageCleanupResult?.notification?.eventId : undefined)
   const confirmCancelRef = useRef<HTMLButtonElement>(null)
   const primaryButtonRef = useRef<HTMLButtonElement>(null)
 
@@ -238,7 +242,8 @@ export function SettingsCleanup({
         ) : null}
 
         {storageCleanupResult && storageCleanupResult !== dismissedResult ? (
-          <div className={storageCleanupResult.ok ? 'storage-cleanup__result is-ok' : 'storage-cleanup__result is-error'} role={storageCleanupResult.ok ? 'status' : 'alert'}>
+          <div ref={resultRef} className={storageCleanupResult.ok ? 'storage-cleanup__result is-ok' : 'storage-cleanup__result is-error'} role={storageCleanupResult.ok ? 'status' : 'alert'} data-notification-result
+            data-notification-key={storageCleanupResult.notification?.key} data-notification-event={storageCleanupResult.notification?.eventId}>
             <svg className="storage-cleanup__result-icon" viewBox="0 0 16 16" aria-hidden="true">
               {storageCleanupResult.ok
                 ? <path d="m3.5 8 3 3 6-6" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />

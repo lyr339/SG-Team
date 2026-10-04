@@ -31,6 +31,7 @@ export interface SessionNotificationRestart {
   label: string
   section: 'accounts' | 'maintenance'
   status: 'running' | 'done' | 'failed' | 'unknown'
+  startedAt?: number
   finalized?: boolean
   targets: Array<Pick<NotificationSessionFact, 'identity' | 'name' | 'scope'>>
 }
@@ -57,6 +58,7 @@ export function readSessionLifecycleCheckpoint(value: unknown, scopeKey: string)
     if (row.expectedRestartId !== undefined && (typeof row.expectedRestartId !== 'string' || row.expectedRestartId.length > 150)) throw Error('重启通知检查点格式异常')
   }
   if (result.restart && (typeof result.restart.id !== 'string' || !['running', 'done', 'failed', 'unknown'].includes(result.restart.status)
+    || result.restart.startedAt !== undefined && (!Number.isSafeInteger(result.restart.startedAt) || result.restart.startedAt < 0)
     || !['accounts', 'maintenance'].includes(result.restart.section) || !Array.isArray(result.restart.targets) || result.restart.targets.length > 256)) throw Error('重启通知检查点格式异常')
   return result
 }
@@ -150,11 +152,13 @@ export function reduceSessionLifecycleNotifications(previous: SessionLifecycleCh
     const states = restart.targets.map(target => {
       const same = current.get(target.identity)
       const replacement = observation.facts.find(fact => fact.scope.channelId === target.scope.channelId && fact.identity !== target.identity)
-      return { target, status: same?.online ? '已重新接入' : replacement?.online ? '新会话已接入，旧记录保留' : '原会话尚未恢复' }
+      const newerLife = restart.startedAt !== undefined && same?.online && same.liveAt !== undefined && same.liveAt > restart.startedAt
+      const newerBinding = restart.startedAt !== undefined && replacement?.online && (replacement.liveAt !== undefined && replacement.liveAt > restart.startedAt || replacement.boundAt !== undefined && replacement.boundAt > restart.startedAt)
+      return { target, status: newerLife ? '已重新接入' : newerBinding ? '新会话已接入，旧记录保留' : restart.status === 'running' ? '等待重启后生命证据' : '原会话尚未恢复' }
     })
-    const missing = states.filter(value => value.status === '原会话尚未恢复').length
+    const missing = states.filter(value => value.status !== '已重新接入' && value.status !== '新会话已接入，旧记录保留').length
     const final = restart.status !== 'running'
-    const title = observation.runCompleted ? '本轮的重启监测已结束' : restart.status === 'running' ? `${restart.label}进行中`
+    const title = observation.runCompleted ? '本轮的重启监测已结束' : restart.startedAt === undefined ? '上次重启缺少时间基准，请核对当前状态' : restart.status === 'running' ? `${restart.label}进行中`
       : restart.status === 'failed' ? `${restart.label}未完成` : restart.status === 'unknown' ? '上次重启结果待核对'
         : missing ? `Cursor 已重启，${missing} 个原会话尚未恢复` : 'Cursor 重启已完成'
     drafts.push({ key: `cursor-restart:${restart.id}`, category: 'maintenance', source: restart.label, eventId: `cursor-restart:${restart.id}:${restart.status}:${missing}`,

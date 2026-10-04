@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
-import type { NotificationRecord, NotificationTarget } from '../../../domain/notification'
+import type { NotificationRecord, NotificationScope, NotificationTarget } from '../../../domain/notification'
 import { NotificationCenter } from './NotificationCenter'
 import { NotificationStore } from './notification-store'
 import { NotificationToast } from './NotificationToast'
@@ -8,7 +8,7 @@ import './notifications.css'
 
 interface Props {
   workspaceId?: string
-  onNavigate: (target: NotificationTarget) => boolean | Promise<boolean>
+  onNavigate: (target: NotificationTarget, scope?: NotificationScope) => boolean | Promise<boolean>
   onAvailable: (available: boolean) => void
   onSnoozeUpdate: (record: NotificationRecord) => Promise<void>
 }
@@ -64,12 +64,12 @@ function NotificationEntry({ store, workspaceId, onNavigate, onAvailable, onSnoo
     const epoch = ++toastEpoch.current
     void (async () => {
       try {
-        if (toastRecord.target && await navigationRef.current(toastRecord.target)) {
+        if (toastRecord.target && await navigationRef.current(toastRecord.target, toastRecord.scope)) {
           if (!groupedToast.current) await store.read(toastRecord).catch(() => {})
           if (epoch === toastEpoch.current) close(false)
         } else if (epoch === toastEpoch.current) {
           setFocusRecord(groupedToast.current ? undefined : toastRecord)
-          if (toastRecord.target) setNavigationError('原会话或工作区已变化。记录仍保留，请在对应工作区查看。')
+          if (toastRecord.target) setNavigationError('来源对象或执行范围已变化。原结果保留，可在此阅读详情。')
         }
       } catch { if (epoch === toastEpoch.current) setNavigationError('暂时无法打开来源，记录仍保留。') }
     })()
@@ -89,8 +89,8 @@ function NotificationEntry({ store, workspaceId, onNavigate, onAvailable, onSnoo
   const navigate = async (record: NotificationRecord): Promise<void> => {
     if (!record.target) { setFocusRecord(record); setOpen(true); return }
     try {
-      if (await onNavigate(record.target)) close(false)
-      else { setOpen(true); setFocusRecord(record); setNavigationError('原会话或工作区已变化。记录仍保留，请在对应工作区查看。') }
+      if (await onNavigate(record.target, record.scope)) close(false)
+      else { setOpen(true); setFocusRecord(record); setNavigationError('来源对象或执行范围已变化。原结果保留，可在此阅读详情。') }
     } catch { setOpen(true); setNavigationError('暂时无法打开来源，记录仍保留。') }
   }
   const unread = snapshot.summary.unread

@@ -6,11 +6,13 @@
  * 会话刷新 + 删除）→ 收尾（清场）。倒计时不是独立步骤，而是当前步骤上的一个进度环。
  */
 import type { AccountAutomationPhase, AccountAutomationRun } from '../../../domain/account-automation'
+import type { AccountAutomationStepObservation } from '../../../domain/account-automation'
+import { automationObservedOutcome } from '../../../domain/automation-observation'
 import { automationDurationText, isActiveAutomationPhase, type ActiveAutomationPhase } from './settings-view'
 
 export type AutomationStageKey = 'prepare' | 'process' | 'harden' | 'finish'
-export type AutomationStageState = 'waiting' | 'running' | 'done' | 'failed' | 'cancelled' | 'skipped'
-export type AutomationRunTone = 'running' | 'done' | 'failed' | 'cancelled'
+export type AutomationStageState = 'waiting' | 'running' | 'done' | 'failed' | 'cancelled' | 'skipped' | 'unknown' | 'warning'
+export type AutomationRunTone = 'running' | 'done' | 'failed' | 'cancelled' | 'warning'
 
 export interface AutomationStageView {
   key: AutomationStageKey
@@ -24,7 +26,7 @@ export interface AutomationStageView {
 
 export interface AutomationHandoverView {
   label: string
-  status: 'preparing' | 'switching' | 'done' | 'failed'
+  status: 'preparing' | 'switching' | 'done' | 'failed' | 'cancelled' | 'unknown'
   /** 用户语句：准备中 / 等待 Cursor 确认 / 已切换 · 耗时 / 切换失败：原因；切换前等待期间给出秒数。 */
   detail: string
   /** 服务端原始子状态消息，供悬停排障。 */
@@ -61,7 +63,9 @@ export const AUTOMATION_STAGE_STATE_LABEL: Record<AutomationStageState, string> 
   done: '完成',
   failed: '失败',
   cancelled: '已取消',
-  skipped: '未执行'
+  skipped: '未执行',
+  unknown: '待确认',
+  warning: '有警告'
 }
 
 /** 活跃相位 → 正在进行的阶段；importing 是加固链路里的会话刷新子阶段。 */
@@ -78,14 +82,17 @@ const TONE_LABEL: Record<AutomationRunTone, string> = {
   running: '进行中',
   done: '已完成',
   failed: '未完成',
-  cancelled: '已取消'
+  cancelled: '已取消',
+  warning: '结果需核对'
 }
 
 const HANDOVER_LABEL: Record<AutomationHandoverView['status'], string> = {
   preparing: '准备中',
   switching: '等待 Cursor 确认',
   done: '已切换',
-  failed: '切换失败'
+  failed: '切换失败',
+  cancelled: '未提交，已取消',
+  unknown: '结果待确认'
 }
 
 /** 倒计时显示整秒：0.5s 步进的剩余值向上取整，等待期间永不显示 0。 */
@@ -120,7 +127,8 @@ function stageView(
   countdown?: AutomationStageView['countdown']
 ): AutomationStageView {
   const copy = STAGE_COPY[key]
-  const fallback = state === 'done' ? copy.done : state === 'skipped' ? '未执行' : copy.waiting
+  const fallback = state === 'done' ? copy.done : state === 'skipped' ? '未执行' : state === 'unknown' ? '结果待确认，以该步回执为准'
+    : state === 'cancelled' ? '该步已取消，已发生的结果保留' : state === 'failed' ? '该步未完成' : state === 'warning' ? '该步存在附带警告' : copy.waiting
   return { key, title: copy.title, state, detail: detail || fallback, ...(countdown ? { countdown } : {}) }
 }
 
@@ -143,6 +151,9 @@ function stagesAround(input: {
 function handoverView(run: AccountAutomationRun): AutomationHandoverView | undefined {
   const handover = run.handover
   if (!handover) return undefined
+  const observation = run.observations?.handover
+  if (observation?.status === 'cancelled') return { label: handover.label, status: 'cancelled', detail: '未提交，已取消', rawMessage: observation.detail ?? '' }
+  if (observation?.status === 'unknown') return { label: handover.label, status: 'unknown', detail: '结果待确认', rawMessage: observation.detail ?? handover.message }
   let detail = HANDOVER_LABEL[handover.status]
   if (handover.status === 'done' && handover.finishedAt) {
     detail = `${detail} · ${(Math.max(0, handover.finishedAt - handover.startedAt) / 1_000).toFixed(1)} 秒`
@@ -154,6 +165,20 @@ function handoverView(run: AccountAutomationRun): AutomationHandoverView | undef
     if (waiting) detail = `${countdownSeconds(Number(waiting[1]))} 秒后切换`
   }
   return { label: handover.label, status: handover.status, detail, rawMessage: handover.message }
+}
+
+function observedStage(key: AutomationStageKey, values: AccountAutomationStepObservation[]): AutomationStageView {
+  const failed = values.find(value => value.status === 'failed')
+  const unknown = values.find(value => value.status === 'unknown')
+  const running = values.find(value => value.status === 'running')
+  const warning = values.find(value => value.warning)
+  const allSkipped = values.every(value => value.status === 'skipped')
+  const done = values.every(value => value.status === 'succeeded' || value.status === 'skipped')
+  const cancelled = values.find(value => value.status === 'cancelled')
+  const state: AutomationStageState = failed ? 'failed' : unknown ? 'unknown' : running ? 'running' : warning ? 'warning'
+    : allSkipped ? 'skipped' : done ? 'done' : cancelled ? 'cancelled' : 'waiting'
+  const detail = failed?.detail ?? unknown?.detail ?? warning?.warning
+  return stageView(key, state, detail)
 }
 
 /** 活跃相位的当前步文案与倒计时：倒计时相位给整秒语句 + 进度环，其余直出服务端实时消息。 */
@@ -198,6 +223,28 @@ export function automationRunView(input: {
     cancellable: false,
     durationText: automationDurationText(run),
     handover: run.postProcessingEnabled === false ? undefined : handoverView(run)
+  }
+
+  if (run.observations) {
+    const observed = run.observations
+    const outcome = automationObservedOutcome(run)
+    const ended = ['done', 'failed', 'cancelled'].includes(run.phase)
+    const viewStep = (step: AccountAutomationStepObservation): AccountAutomationStepObservation => ended && step.status === 'not_started' ? { ...step, status: 'skipped' } : step
+    const stages = [observedStage('prepare', [viewStep(observed.prepare)]), observedStage('process', [viewStep(observed.process)]),
+      observedStage('harden', [viewStep(observed.refresh), viewStep(observed.harden)]), observedStage('finish', [viewStep(observed.localRecord), viewStep(observed.cleanup)])]
+    let cancellable = false
+    const phase = run.phase
+    if (isActiveAutomationPhase(phase)) {
+      const current = runningStage(phase, run, run.countdownTotalSec ?? countdownTotalSec)
+      cancellable = current.cancellable
+      const stage = stages.find(value => value.key === RUNNING_STAGE[phase])!
+      // Countdown progress is live UI only; it doesn't turn into persisted events or completed future steps.
+      if (phase === 'countdown' || phase === 'hardening-countdown') { stage.state = 'running'; stage.detail = current.detail; stage.countdown = current.countdown }
+      else if (stage.state === 'running') stage.detail = current.detail
+    }
+    const warning = outcome.kind === 'partial' || outcome.kind === 'pending' || outcome.kind === 'legacy'
+    return { ...base, tone: warning ? 'warning' : base.tone, statusLabel: warning ? '结果需核对' : base.statusLabel,
+      cancellable, stages, summary: ['done', 'failed', 'cancelled'].includes(run.phase) ? outcome.title : undefined }
   }
 
   if (run.phase === 'done') {

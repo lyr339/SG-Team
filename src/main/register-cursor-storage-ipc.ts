@@ -9,6 +9,9 @@ import {
 import type { CursorStorageScanner } from '../infrastructure/cursor/cursor-storage-scanner'
 import { IPC } from '../shared/desktop-api'
 import { assertTrustedSender } from './ipc-security'
+import { randomUUID } from 'node:crypto'
+import type { NotificationService } from '../application/notification-service'
+import { storageCleanupNotification } from '../domain/storage-cleanup-notification'
 
 const ITEM_IDS = new Set<string>(CURSOR_STORAGE_CATALOG.map((spec) => spec.id))
 
@@ -47,7 +50,8 @@ function revealTarget(userDataRoot: string, id: CursorStorageItemId): string {
 export function registerCursorStorageIpc(
   scanner: CursorStorageScanner,
   options: { userDataRoot: string; workbenchBundlePath?: string },
-  getWindow: () => BrowserWindow | undefined
+  getWindow: () => BrowserWindow | undefined,
+  notifications?: Pick<NotificationService, 'offerCurrent'>
 ): () => void {
   ipcMain.handle(IPC.cursorStorageScan, (event, input: unknown) => {
     assertTrustedSender(event, getWindow)
@@ -55,9 +59,22 @@ export function registerCursorStorageIpc(
     const olderThanDays = parseOlderThanDays(record.chatHistoryOlderThanDays)
     return scanner.scan(olderThanDays === undefined ? {} : { chatHistoryOlderThanDays: olderThanDays })
   })
-  ipcMain.handle(IPC.cursorStorageCleanup, (event, request: unknown) => {
+  ipcMain.handle(IPC.cursorStorageCleanup, async (event, request: unknown) => {
     assertTrustedSender(event, getWindow)
-    return scanner.cleanup(parseCleanupRequest(request))
+    const parsed = parseCleanupRequest(request)
+    const operationId = randomUUID()
+    try {
+      const result = await scanner.cleanup(parsed)
+      if (!notifications) return result
+      try {
+        const draft = storageCleanupNotification(operationId, result, undefined, Date.now())
+        notifications.offerCurrent(draft)
+        return { ...result, notification: { key: draft.key, eventId: draft.eventId } }
+      } catch { return result }
+    } catch (error) {
+      if (notifications) { try { notifications.offerCurrent(storageCleanupNotification(operationId, undefined, error instanceof Error ? error.message : String(error), Date.now())) } catch { /* No recursive cleanup. */ } }
+      throw error
+    }
   })
   ipcMain.handle(IPC.cursorStorageReveal, (event, id: unknown) => {
     assertTrustedSender(event, getWindow)

@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
+import { useNotificationResultRead } from '../notifications/use-notification-result-read'
 import { PROCESSING_PROVIDER_IDS, PROCESSING_PROVIDER_LABEL } from '../../../domain/processing-provider'
 import type { SettingsPageProps } from './settings-view'
 import { SettingsSection } from './SettingsSection'
@@ -23,6 +24,9 @@ export function SettingsAozai({
   automationSettings,
   onSaveAutomationSettings
 }: ProcessingProps): React.JSX.Element {
+  const resultRef = useRef<HTMLParagraphElement>(null)
+  const ownResult = !processingBusy && processingFeedback?.providerId === (automationSettings?.processingProvider ?? 'aozai') && processingFeedback?.originSection !== 'accounts'
+  useNotificationResultRead(resultRef, ownResult ? processingFeedback?.notification?.key : undefined, ownResult ? processingFeedback?.notification?.eventId : undefined)
   const [cardCode, setCardCode] = useState('')
   const [manualToken, setManualToken] = useState('')
   const providerId = automationSettings?.processingProvider ?? 'aozai'
@@ -163,8 +167,9 @@ export function SettingsAozai({
           {processingBusy && processingProgress?.providerId === providerId ? (
             <p className="account-aozai__progress">{processingProgress.message}</p>
           ) : null}
-          {!processingBusy && processingFeedback?.providerId === providerId ? (
-            <p className={processingFeedback.ok ? 'account-aozai__ok' : 'account-aozai__fail'}>{processingFeedback.message}</p>
+          {!processingBusy && processingFeedback?.providerId === providerId && processingFeedback.originSection !== 'accounts' ? (
+            <p ref={resultRef} className={processingFeedback.ok ? 'account-aozai__ok' : 'account-aozai__fail'} data-notification-result
+              data-notification-key={processingFeedback.notification?.key} data-notification-event={processingFeedback.notification?.eventId}>{processingFeedback.message}</p>
           ) : null}
           {processingError?.providerId === providerId ? <p className="account-aozai__fail">{processingError.message}</p> : null}
         </div>

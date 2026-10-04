@@ -117,15 +117,15 @@ export function SettingsPage(props: SettingsPageProps): React.JSX.Element {
           <h1>{active.label}</h1>
           <p>{active.description}</p>
         </header>
-        {props.notice ? <SettingsNotice message={props.notice} onDismiss={props.onDismissNotice} /> : null}
+        {props.notice && group === (props.notice.section ?? 'accounts') ? <SettingsNotice message={props.notice} onDismiss={props.onDismissNotice} /> : null}
         <div className="settings-groups">
           <div hidden={group !== 'stats'}><SettingsStats {...props} active={group === 'stats'} /></div>
-          <div hidden={group !== 'accounts'}><SettingsAccounts {...props} active={group === 'accounts'} onNavigateToImport={() => selectGroup('import')} /></div>
+          <div hidden={group !== 'accounts'} data-notification-page="account:accounts"><SettingsAccounts {...props} active={group === 'accounts'} onNavigateToImport={() => selectGroup('import')} /></div>
           <div hidden={group !== 'import'}><SettingsImportSource {...props} phase={phase} /></div>
-          <div hidden={group !== 'automation'}><SettingsAutomation {...props} /></div>
-          <div hidden={group !== 'aozai'}><SettingsAozai {...props} /></div>
+          <div hidden={group !== 'automation'} data-notification-page="account:automation"><SettingsAutomation {...props} /></div>
+          <div hidden={group !== 'aozai'} data-notification-page="account:aozai"><SettingsAozai {...props} /></div>
           <div hidden={group !== 'maintenance'}><SettingsMaintenance {...props} /></div>
-          <div hidden={group !== 'cleanup'}><SettingsCleanup {...props} active={group === 'cleanup'} /></div>
+          <div hidden={group !== 'cleanup'} data-notification-page="account:cleanup"><SettingsCleanup {...props} active={group === 'cleanup'} /></div>
           <div hidden={group !== 'update'} data-notification-page="account:update"><SettingsUpdate /></div>
         </div>
       </div>

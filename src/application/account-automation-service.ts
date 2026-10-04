@@ -3,10 +3,15 @@ import type { CursorAccountVault } from './cursor-account-vault'
 import type { AccountAutomationSettingsStore } from './account-automation-store'
 import type { CursorAccountDeleter, CursorAccountDeleteResult } from '../infrastructure/cursor/cursor-account-deleter'
 import type { InBrowserDeleteResult } from '../infrastructure/cursor/cursor-in-browser-account-deleter'
+import { randomUUID } from 'node:crypto'
+import { notificationSafeText } from '../domain/notification'
 import {
   IDLE_ACCOUNT_AUTOMATION_RUN,
   type AccountAutomationRun,
-  type AccountAutomationSettings
+  type AccountAutomationSettings,
+  ACCOUNT_AUTOMATION_STEPS,
+  type AccountAutomationStep,
+  type AccountAutomationStepObservation
 } from '../domain/account-automation'
 
 export interface AccountAutomationServiceDeps {
@@ -154,12 +159,12 @@ export class AccountAutomationService {
   }
 
   /** launcher 钩子：本轮所有通道的会话都已创建提交成功（CDP 硬回执齐全）。 */
-  onAllSessionsTriggered(planId: string): void {
+  onAllSessionsTriggered(planId: string, scope?: AccountAutomationRun['scope']): void {
     if (!planId || planId === this.lastHandledPlanId) return
     if (!this.getSettings().enabled) return
     if (this.running && this.run.phase !== 'countdown') return
     this.lastHandledPlanId = planId
-    void this.execute(planId)
+    void this.execute(planId, scope)
   }
 
   /** 两段倒计时均可取消；处理/删除请求已发出后不可中止（服务商扣费/删号无回滚）。 */
@@ -170,8 +175,40 @@ export class AccountAutomationService {
   }
 
   private setRun(patch: Partial<AccountAutomationRun>): void {
-    this.run = { ...this.run, ...patch }
-    for (const listener of this.listeners) listener(structuredClone(this.run))
+    const phase = patch.phase
+    if (phase === 'processing') { this.observeStep('prepare', 'succeeded'); this.observeStep('process', 'running') }
+    if (phase === 'hardening-countdown') this.observeStep('process', 'succeeded')
+    if (phase === 'importing') this.observeStep('refresh', 'running')
+    if (phase === 'deleting') this.observeStep('harden', 'running')
+    if (phase === 'failed') {
+      const step = patch.failureStep ?? [...ACCOUNT_AUTOMATION_STEPS].reverse().find(key => key !== 'handover' && this.run.observations?.[key].status === 'running')
+        ?? (this.run.observations?.handover.status === 'running' || this.run.observations?.handover.status === 'unknown' ? 'handover' : undefined)
+      if (!patch.failureStep && step) this.observeStep(step, 'unknown', '流程已中止，未取得可核验的完成结果。')
+      if (step) patch = { ...patch, failureStep: step }
+    }
+    if (phase === 'cancelled' && !patch.cancelledStep) {
+      const step = this.run.observations?.process.status === 'succeeded' ? 'harden' : 'prepare'
+      this.observeStep(step, 'cancelled'); patch = { ...patch, cancelledStep: step, cancellationReason: 'user' }
+    }
+    this.run = { ...this.run, ...patch, ...(this.run.operationId ? { revision: (this.run.revision ?? 0) + 1 } : {}) }
+    this.publish(this.run)
+  }
+  private publish(run: AccountAutomationRun): void {
+    for (const listener of this.listeners) { try { listener(structuredClone(run)) } catch { /* A display failure must not alter processing or cleanup. */ } }
+  }
+  /** Effect ledger only. Normal-path observations piggyback on existing progress emissions. */
+  private observeStep(step: AccountAutomationStep, status: AccountAutomationStepObservation['status'], detail?: string, warning?: string): void {
+    if (!this.run.observations) return
+    const value: AccountAutomationStepObservation = { status, ...(detail ? { detail: notificationSafeText(detail).slice(0, 400) } : {}), ...(warning ? { warning: notificationSafeText(warning).slice(0, 400) } : {}) }
+    this.run = { ...this.run, observations: { ...this.run.observations, [step]: value } }
+  }
+  private lateStep(runSeq: number, step: AccountAutomationStep, status: AccountAutomationStepObservation['status'], detail?: string, warning?: string): void {
+    if (this.runSeq !== runSeq) return
+    this.observeStep(step, status, detail, warning); this.setRun({})
+  }
+  private failStep(step: AccountAutomationStep, patch: Partial<AccountAutomationRun>): void {
+    this.observeStep(step, 'failed', patch.message)
+    this.setRun({ ...patch, phase: 'failed', failureStep: step })
   }
 
   /**
@@ -261,6 +298,7 @@ export class AccountAutomationService {
     const nextId = this.deps.pickNextAccount(processedAccountId, settings.seamlessHandoverAccountId)
     if (!nextId) return undefined
     const targetLabel = this.deps.accounts.list().find((account) => account.id === nextId)?.label ?? nextId
+    this.observeStep('handover', 'running')
     this.setRun({
       handover: {
         accountId: nextId,
@@ -283,6 +321,7 @@ export class AccountAutomationService {
         }))
       .then((result) => {
         if (this.runSeq === runSeq && this.run.handover?.accountId === nextId) {
+          if (!result.ok) this.observeStep('handover', 'failed', result.result.reason)
           this.setRun({
             handover: {
               ...this.run.handover,
@@ -345,6 +384,7 @@ export class AccountAutomationService {
     }).then((result) => {
       // 取消放弃的切换不写回 failed——主链已按用户意图定型为 cancelled。
       if (this.runSeq === preparation.runSeq && !result.cancelled) {
+        this.observeStep('handover', result.switched ? 'succeeded' : 'failed', result.reason, result.warning)
         this.setRun({
           handover: {
             accountId: preparation.targetAccountId,
@@ -358,6 +398,7 @@ export class AccountAutomationService {
           }
         })
       }
+      if (this.runSeq === preparation.runSeq && result.cancelled) this.lateStep(preparation.runSeq, 'handover', 'cancelled', '切换未提交，已随本轮取消。')
       return result
     })
     return {
@@ -405,6 +446,8 @@ export class AccountAutomationService {
   private async liveSwitchNoteWithin(settling: Promise<string | undefined>): Promise<string | undefined> {
     const settled = await this.awaitWithin(settling, LIVE_SWITCH_DEADLINE_MS)
     if (settled.done) return settled.value
+    if (this.run.observations && !['succeeded', 'failed', 'cancelled', 'skipped'].includes(this.run.observations.handover.status))
+      this.observeStep('handover', 'unknown', '未在原等待期限内取得回执，后台结果以接手状态为准。')
     return `无感换号 ${LIVE_SWITCH_DEADLINE_MS / 1_000}s 内未回执，以接手状态为准（可在账号列表手动切换）`
   }
 
@@ -419,11 +462,16 @@ export class AccountAutomationService {
    * 所以两条支线都压上看门狗，超时按「收尾异常」降级并写明是哪一条（下次不必再猜）。
    */
   private async finishDeletedAccount(accountId: string, successMessage: string, runSeq: number): Promise<void> {
+    this.observeStep('harden', 'succeeded')
+    if (this.run.observations?.refresh.status === 'not_started') this.observeStep('refresh', 'skipped')
+    this.observeStep('localRecord', 'running')
     let localRemoveError: string | undefined
     try {
       this.deps.accounts.remove(accountId)
+      this.observeStep('localRecord', 'succeeded')
     } catch (error) {
       localRemoveError = error instanceof Error ? error.message : String(error)
+      this.observeStep('localRecord', 'failed', localRemoveError)
     }
     // 热切 settle 与浏览器清场并行：两条通道本就独立（回环泵 ↔ Roxy profile）。
     let liveSwitchSettled = this.pendingLiveSwitch?.runSeq !== runSeq
@@ -432,14 +480,29 @@ export class AccountAutomationService {
     const cleanup = this.deps.inBrowserDeleter?.finalizeDeletedAccount ?? this.deps.inBrowserDeleter?.clearSiteData
     let cleanupError: string | undefined
     if (cleanup) {
+      this.observeStep('cleanup', 'running')
       this.setRun({ phase: 'cleaning', message: '账号已加固，正在清理浏览器环境并轮换指纹…' })
       try {
-        const cleaned = await this.awaitWithin(cleanup(), CLEANUP_DEADLINE_MS)
-        if (!cleaned.done) cleanupError = `超过 ${CLEANUP_DEADLINE_MS / 1_000}s 未返回（后台继续）`
+        const task = cleanup()
+        let timedOut = false
+        let confirmed: AccountAutomationStepObservation | undefined
+        // Tap the existing promise; no new await/retry. Only a real late resolution can replace "unknown".
+        void task.then(() => { confirmed = { status: 'succeeded' }; if (timedOut) this.lateStep(runSeq, 'cleanup', 'succeeded') }, error => {
+          confirmed = { status: 'failed', detail: error instanceof Error ? error.message : String(error) }
+          if (timedOut) this.lateStep(runSeq, 'cleanup', 'failed', confirmed.detail)
+        })
+        const cleaned = await this.awaitWithin(task, CLEANUP_DEADLINE_MS)
+        if (!cleaned.done) {
+          timedOut = true
+          cleanupError = `超过 ${CLEANUP_DEADLINE_MS / 1_000}s 未返回（后台继续）`
+          if (confirmed) this.observeStep('cleanup', confirmed.status, confirmed.detail)
+          else this.observeStep('cleanup', 'unknown', cleanupError)
+        } else this.observeStep('cleanup', 'succeeded')
       } catch (error) {
         cleanupError = error instanceof Error ? error.message : String(error)
+        this.observeStep('cleanup', 'failed', cleanupError)
       }
-    }
+    } else this.observeStep('cleanup', 'skipped')
     // 清场已收、只剩热切未定型时如实告知——不让「正在清理」挂在等 Cursor 回执的时间上；
     // 具体在等什么（切换前倒计时 / 等待 Cursor 确认）由 handover 子状态呈现，这里不重复。
     if (!liveSwitchSettled) {
@@ -465,16 +528,29 @@ export class AccountAutomationService {
     this.setRun({ phase: 'done', message, finishedAt: this.now() })
   }
 
-  private async execute(planId: string): Promise<void> {
+  private async execute(planId: string, scope?: AccountAutomationRun['scope']): Promise<void> {
+    if (this.running && this.run.phase === 'countdown' && this.run.operationId) {
+      this.publish({ ...this.run, revision: (this.run.revision ?? 0) + 1, phase: 'cancelled', cancellationReason: 'replaced', cancelledStep: 'prepare',
+        finishedAt: this.now(), message: '已由新的会话创建操作取代；本轮处理尚未开始。',
+        ...(this.run.observations ? { observations: { ...this.run.observations, prepare: { status: 'cancelled' } } } : {}) })
+    }
     const mySeq = ++this.runSeq
     this.pendingLiveSwitch = undefined
     this.running = true
     this.cancelRequested = false
     const startedAt = this.now()
+    this.run = { ...IDLE_ACCOUNT_AUTOMATION_RUN, phase: 'countdown', operationId: randomUUID(), revision: 0, planId, startedAt,
+      ...(scope ? { scope: structuredClone(scope) } : {}),
+      observations: Object.fromEntries(ACCOUNT_AUTOMATION_STEPS.map(step => [step, { status: step === 'prepare' ? 'running' : 'not_started' }])) as NonNullable<AccountAutomationRun['observations']> }
     let postProcessingEnabled = true
     try {
       const settings = structuredClone(this.getSettings())
       postProcessingEnabled = settings.postProcessingEnabled !== false
+      if (!postProcessingEnabled) for (const step of ['refresh', 'harden', 'localRecord', 'cleanup', 'handover'] as const) this.observeStep(step, 'skipped')
+      else {
+        if (!this.deps.inBrowserDeleter?.finalizeDeletedAccount && !this.deps.inBrowserDeleter?.clearSiteData) this.observeStep('cleanup', 'skipped')
+        if (settings.seamlessHandoverEnabled === false || (!this.deps.prepareLiveSwitch && !this.deps.liveSwitch) || !this.deps.pickNextAccount) this.observeStep('handover', 'skipped')
+      }
       const processing = this.deps.processingProviders.require(settings.processingProvider)
       const provider = processing.service
       this.setRun({
@@ -539,7 +615,7 @@ export class AccountAutomationService {
       const earlyIssue = await preflight('early')
       if (this.runSeq !== mySeq) return
       if (earlyIssue) {
-        this.setRun({ phase: 'failed', message: earlyIssue, remainingSec: undefined, finishedAt: this.now() })
+        this.failStep('prepare', { message: earlyIssue, remainingSec: undefined, finishedAt: this.now() })
         return
       }
 
@@ -558,21 +634,22 @@ export class AccountAutomationService {
       const issue = await preflight('recheck')
       if (this.runSeq !== mySeq) return
       if (issue) {
-        this.setRun({ phase: 'failed', message: issue, finishedAt: this.now() })
+        this.failStep('prepare', { message: issue, finishedAt: this.now() })
         return
       }
 
       const account = this.deps.accounts.list().find((candidate) => candidate.active)
       if (!account) {
-        this.setRun({ phase: 'failed', message: '尚未选择 Cursor 账号，自动化中止', finishedAt: this.now() })
+        this.failStep('prepare', { message: '尚未选择 Cursor 账号，自动化中止', finishedAt: this.now() })
         return
       }
 
-      this.setRun({ phase: 'processing', message: `${provider.label}自助处理中…` })
+      this.setRun({ phase: 'processing', processedAccountId: account.id, message: `${provider.label}自助处理中…` })
       const previousToken = this.deps.accounts.credential(account.id)
       // 目标在本轮固定；票据兑换与服务商请求并行。预热不触碰 Cursor，只有退款
       // 成功后的 startLiveSwitch 才提交运行态写票。
       const liveSwitchPreparation = postProcessingEnabled ? this.prepareLiveSwitch(account.id, mySeq, settings) : undefined
+      if (!liveSwitchPreparation && postProcessingEnabled) this.observeStep('handover', 'skipped')
       const processed = await provider.processToken(
         previousToken,
         (_state, message) => {
@@ -581,8 +658,8 @@ export class AccountAutomationService {
         { refreshBalance: false }
       )
       if (!processed.ok) {
-        this.setRun({
-          phase: 'failed',
+        if (liveSwitchPreparation) this.observeStep('handover', 'skipped', '处理未取得成功结果，未提交 Cursor 接手。')
+        this.failStep('process', {
           message: `${provider.label}处理失败：${processed.message}（本地账号已保留）`,
           handover: undefined,
           finishedAt: this.now()
@@ -592,6 +669,7 @@ export class AccountAutomationService {
 
       if (!postProcessingEnabled) {
         // Never create a handover promise, touch browser credentials, or enter deletion/cleanup here.
+        this.observeStep('process', 'succeeded')
         this.setRun({ phase: 'done', message: `${provider.label}处理已完成；后续操作未执行，本地账号记录已保留`,
           remainingSec: undefined, handover: undefined, finishedAt: this.now() })
         return
@@ -639,7 +717,7 @@ export class AccountAutomationService {
           return
         }
         if (fast.kind === 'not_logged_in') {
-          this.setRun({ phase: 'failed', message: `${fast.message}（本地账号已保留）`, finishedAt: this.now() })
+          this.failStep('harden', { message: `${fast.message}（本地账号已保留）`, finishedAt: this.now() })
           return
         }
         this.setRun({ phase: 'importing', message: `秒级通道不可用（${fast.message}），回退 cookie 轮换通道…` })
@@ -648,7 +726,9 @@ export class AccountAutomationService {
         this.setRun({ phase: 'deleting', message: '正在加固 Cursor 账号（不可撤销）…' })
         const direct = await this.deleteWithTeamWait(previousToken)
         if (direct.ok) {
+          this.observeStep('harden', 'succeeded'); this.observeStep('refresh', 'skipped'); this.observeStep('localRecord', 'running'); this.observeStep('cleanup', 'skipped')
           this.deps.accounts.remove(account.id)
+          this.observeStep('localRecord', 'succeeded')
           const liveSwitchNote = await this.liveSwitchNoteWithin(this.settleLiveSwitch(mySeq))
           this.setRun({
             phase: 'done',
@@ -658,7 +738,7 @@ export class AccountAutomationService {
           return
         }
         if (!direct.authExpired) {
-          this.setRun({ phase: 'failed', message: `${direct.message}（本地账号已保留）`, finishedAt: this.now() })
+          this.failStep('harden', { message: `${direct.message}（本地账号已保留）`, finishedAt: this.now() })
           return
         }
         this.setRun({ phase: 'importing', message: '会话已失效，正在刷新浏览器会话获取新 Token…' })
@@ -667,6 +747,7 @@ export class AccountAutomationService {
       try {
         newToken = await this.deps.refreshBrowserToken(previousToken)
       } catch (error) {
+        this.observeStep('refresh', 'unknown', '未确认取得可用的新凭据。')
         // 轮换超时的真实成因之一：处理服务副作用延迟，旧 token 仍有效（completed ≠ 已落地，
         // 与退团延迟同理的实机先例）。秒级通道在场时兜底用旧 token 直删一次——
         // 仍有效则直接完成；无通道路径此前已直删并确认失效，重试无意义，维持原失败语义。
@@ -682,11 +763,11 @@ export class AccountAutomationService {
             return
           }
           const detail = error instanceof Error ? error.message : String(error)
-          this.setRun({ phase: 'failed', message: `新 Token 获取失败：${detail}；旧会话加固未成功：${direct.message}（本地账号已保留）`, finishedAt: this.now() })
+          this.failStep('harden', { message: `新 Token 获取失败：${detail}；旧会话加固未成功：${direct.message}（本地账号已保留）`, finishedAt: this.now() })
           return
         }
         const detail = error instanceof Error ? error.message : String(error)
-        this.setRun({ phase: 'failed', message: `新 Token 获取失败：${detail}（本地账号已保留）`, finishedAt: this.now() })
+        this.failStep('refresh', { message: `新 Token 获取失败：${detail}（本地账号已保留）`, finishedAt: this.now() })
         return
       }
       // 归属复核（先于入库）：轮换出的新会话必须仍属被处理账号——热切后活跃账号
@@ -695,8 +776,7 @@ export class AccountAutomationService {
       const previousAccountId = tokenAccountId(previousToken)
       const newAccountId = tokenAccountId(newToken)
       if (previousAccountId && newAccountId && previousAccountId !== newAccountId) {
-        this.setRun({
-          phase: 'failed',
+        this.failStep('refresh', {
           message: '浏览器刷新出的新会话已属于其他账号——已中止以防误删（请检查执行窗口登录态）；本地账号已保留',
           finishedAt: this.now()
         })
@@ -704,16 +784,17 @@ export class AccountAutomationService {
       }
       try {
         this.deps.accounts.replaceToken(account.id, newToken)
+        this.observeStep('refresh', 'succeeded')
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error)
-        this.setRun({ phase: 'failed', message: `新 Token 入库失败：${detail}`, finishedAt: this.now() })
+        this.failStep('refresh', { message: `新 Token 入库失败：${detail}`, finishedAt: this.now() })
         return
       }
 
       this.setRun({ phase: 'deleting', message: '正在用新会话加固 Cursor 账号（不可撤销）…' })
       const deleted = await this.deleteWithTeamWait(newToken)
       if (!deleted.ok) {
-        this.setRun({ phase: 'failed', message: `${deleted.message}（新 Token 已入库，本地记录已保留）`, finishedAt: this.now() })
+        this.failStep('harden', { message: `${deleted.message}（新 Token 已入库，本地记录已保留）`, finishedAt: this.now() })
         return
       }
 

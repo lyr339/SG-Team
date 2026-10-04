@@ -59,7 +59,7 @@ interface HarnessOptions {
   /** 秒级通道行为（提供时注入 inBrowserDeleter）。 */
   inBrowser?: FastChannelSpec
   /** finalizeDeletedAccount 的注入行为（默认成功 noop；hang = 永不返回，用于看门狗）。 */
-  finalize?: { error?: string; hang?: boolean }
+  finalize?: { error?: string; hang?: boolean; run?: () => Promise<void> }
   /** Cursor 运行态一致性核对（提供时注入 verifyCursorRuntime）。 */
   verifyCursorRuntime?: { ok: boolean; reason?: string }
   seamlessHandoverEnabled?: boolean
@@ -231,6 +231,7 @@ function createHarness(options: HarnessOptions = {}) {
               finalizeCalls.push(1)
               if (options.finalize?.hang) return new Promise<void>(() => {})
               if (options.finalize?.error) throw new Error(options.finalize.error)
+              await options.finalize?.run?.()
             }
           }
         }
@@ -286,6 +287,43 @@ async function waitForTerminal(service: AccountAutomationService, maxPolls = 1_0
 }
 
 describe('AccountAutomationService', () => {
+  it('observes a processing-only run with frozen identity/scope and explicit skipped future effects', async () => {
+    const harness = createHarness({ postProcessingEnabled: false }); cleanup = harness.cleanup
+    const scope = { workspaceId: 'original-workspace', runId: 'original-run' }
+    harness.service.onAllSessionsTriggered('observed-only', scope); scope.workspaceId = 'new-workspace'
+    const run = await waitForTerminal(harness.service)
+    expect(run.operationId).toMatch(/^[a-f0-9-]{36}$/)
+    expect(run.scope).toEqual({ workspaceId: 'original-workspace', runId: 'original-run' })
+    expect(run.observations).toMatchObject({ prepare: { status: 'succeeded' }, process: { status: 'succeeded' }, harden: { status: 'skipped' }, localRecord: { status: 'skipped' }, cleanup: { status: 'skipped' }, handover: { status: 'skipped' } })
+    expect(harness.deleteCalls).toHaveLength(0); expect(harness.processCalls).toHaveLength(1)
+  })
+  it('a throwing presentation subscriber cannot stop or repeat the existing business flow', async () => {
+    const harness = createHarness(); cleanup = harness.cleanup
+    harness.service.subscribe(() => { throw Error('fixture display failure') })
+    harness.service.onAllSessionsTriggered('bad-display')
+    const run = await waitForTerminal(harness.service)
+    expect(run.phase).toBe('done'); expect(harness.processCalls).toHaveLength(1); expect(harness.deleteCalls).toHaveLength(1)
+  })
+  it('records remote hardening success separately from cleanup failure rather than pretending rollback', async () => {
+    const harness = createHarness({ inBrowser: { kind: 'deleted' }, finalize: { error: 'cleanup denied' } }); cleanup = harness.cleanup
+    harness.service.onAllSessionsTriggered('observed-cleanup-error')
+    const run = await waitForTerminal(harness.service)
+    expect(run.phase).toBe('done')
+    expect(run.observations).toMatchObject({ process: { status: 'succeeded' }, harden: { status: 'succeeded' }, localRecord: { status: 'succeeded' }, cleanup: { status: 'failed', detail: 'cleanup denied' } })
+  })
+  it('real late cleanup resolution changes unknown to succeeded without altering the main finish time', async () => {
+    let complete!: () => void
+    const task = new Promise<void>(resolve => { complete = resolve })
+    const harness = createHarness({ inBrowser: { kind: 'deleted' }, finalize: { run: () => task } }); cleanup = harness.cleanup
+    harness.service.onAllSessionsTriggered('observed-late-cleanup')
+    const ended = await waitForTerminal(harness.service, 20_000)
+    expect(ended.observations?.cleanup.status).toBe('unknown')
+    complete(); for (let i = 0; i < 12; i++) await Promise.resolve()
+    const late = harness.service.getRun()
+    expect(late.observations?.cleanup.status).toBe('succeeded')
+    expect(late.operationId).toBe(ended.operationId); expect(late.finishedAt).toBe(ended.finishedAt)
+    expect(harness.finalizeCalls).toHaveLength(1)
+  })
   let cleanup = (): void => {}
   afterEach(() => cleanup())
 

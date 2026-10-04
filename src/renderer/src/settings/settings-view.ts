@@ -141,7 +141,11 @@ interface StatusFeedback {
   message: string
 }
 
-interface ProcessingFeedback extends StatusFeedback { providerId: ProcessingProviderId }
+interface ProcessingFeedback extends StatusFeedback {
+  providerId: ProcessingProviderId
+  originSection?: 'accounts' | 'aozai'
+  notification?: import('../../../domain/notification-reference').NotificationReference
+}
 
 export interface SettingsPageProps {
   accounts: CursorAccountMetadata[]

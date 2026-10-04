@@ -175,7 +175,26 @@ export type AccountAutomationPhase =
   | 'failed'
   | 'cancelled'
 
+export const ACCOUNT_AUTOMATION_STEPS = ['prepare', 'process', 'refresh', 'harden', 'localRecord', 'cleanup', 'handover'] as const
+export type AccountAutomationStep = typeof ACCOUNT_AUTOMATION_STEPS[number]
+export type AccountAutomationStepStatus = 'not_started' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'skipped' | 'unknown'
+export interface AccountAutomationStepObservation {
+  status: AccountAutomationStepStatus
+  /** Diagnostic excerpt only; never credentials or full provider requests. */
+  detail?: string
+  warning?: string
+}
+
 export interface AccountAutomationRun {
+  /** Stable attempt identity and source revision; not wall-clock deduplication. */
+  operationId?: string
+  revision?: number
+  scope?: { workspaceId?: string; runId?: string }
+  observations?: Record<AccountAutomationStep, AccountAutomationStepObservation>
+  failureStep?: AccountAutomationStep
+  cancelledStep?: AccountAutomationStep
+  cancellationReason?: 'user' | 'replaced'
+  processedAccountId?: string
   phase: AccountAutomationPhase
   message: string
   planId?: string

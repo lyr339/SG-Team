@@ -109,7 +109,7 @@ export class SessionLifecycleNotifications {
   private registerRestart(label: string, section: 'accounts' | 'maintenance'): string | undefined {
     const key = this.activeScope?.key; const observation = key ? this.latest.get(key) : undefined
     if (!key || !observation || this.closed || this.suspended || this.restarts.get(key)?.status === 'running') return undefined
-    const restart: SessionNotificationRestart = { id: this.newId(), label: label.slice(0, 80), section, status: 'running',
+    const restart: SessionNotificationRestart = { id: this.newId(), label: label.slice(0, 80), section, status: 'running', startedAt: this.now(),
       targets: observation.facts.filter(fact => fact.online).map(({ identity, name, scope }) => ({ identity, name, scope })) }
     this.restarts.set(key, restart)
     if (this.restarts.size > 8) {

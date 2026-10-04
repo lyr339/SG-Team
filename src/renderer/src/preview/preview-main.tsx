@@ -6,6 +6,8 @@ import { StrictMode } from 'react'
 import { createNotificationPreview } from './notification-preview'
 import { createRoot } from 'react-dom/client'
 import type { AccountAutomationRun } from '../../../domain/account-automation'
+import { ACCOUNT_AUTOMATION_STEPS } from '../../../domain/account-automation'
+import { automationNotification } from '../../../domain/automation-notification'
 import { TaskPoolAggregate } from '../../../domain/task-pool'
 import { parseCursorAccountCard } from '../../../domain/cursor-account-card'
 import { cursorCompatibilityForVersion } from '../../../domain/cursor-compatibility'
@@ -93,10 +95,22 @@ const automationSceneRunBase: AccountAutomationRun | undefined = automationScene
   failed: { phase: 'failed', message: '奥仔处理失败：卡密余额不足，请先充值或更换卡密（本地账号已保留）', planId: 'preview-plan', startedAt: previewNow - 22_000, finishedAt: previewNow - 8_000 },
   cancelled: { phase: 'cancelled', message: '已取消本次自动化', planId: 'preview-plan', startedAt: previewNow - 9_000, finishedAt: previewNow - 4_000 }
 } as const)[automationScene] : undefined
-const automationSceneRun = automationSceneRunBase && processingOnlyScene
+let automationSceneRun = automationSceneRunBase && processingOnlyScene
   ? { ...automationSceneRunBase, postProcessingEnabled: false, handover: undefined,
       ...(automationSceneRunBase.phase === 'done' ? { message: '奥仔处理已完成；后续操作未执行，本地账号记录已保留' } : {}) }
   : automationSceneRunBase
+const observedAutomationScene = previewParameters.get('automationOutcome')
+if (automationSceneRun && observedAutomationScene) {
+  const observations = Object.fromEntries(ACCOUNT_AUTOMATION_STEPS.map(step => [step, { status: step === 'refresh' ? 'skipped' : 'succeeded' }])) as NonNullable<AccountAutomationRun['observations']>
+  if (processingOnlyScene) for (const step of ['refresh', 'harden', 'localRecord', 'cleanup', 'handover'] as const) observations[step] = { status: 'skipped' }
+  if (observedAutomationScene === 'cleanup-failed') observations.cleanup = { status: 'failed', detail: '原步骤返回清场未完成，已确认的处理和加固结果保留。' }
+  if (observedAutomationScene === 'handover-pending') observations.handover = { status: 'unknown', detail: '原等待期限内未取得回执，后台结果尚未确认。' }
+  if (observedAutomationScene === 'cancelled-after-process') {
+    observations.harden = { status: 'cancelled' }; observations.localRecord = { status: 'not_started' }; observations.cleanup = { status: 'not_started' }; observations.handover = { status: 'cancelled' }
+  }
+  automationSceneRun = { ...automationSceneRun, operationId: 'preview-observed-automation', revision: 8, processingProvider: 'aozai', observations,
+    ...(observedAutomationScene === 'cancelled-after-process' ? { phase: 'cancelled', cancelledStep: 'harden', cancellationReason: 'user' } : {}) }
+}
 // 会话预热走查场景：?warmup=running|done|slow|failed|no-model
 const warmupScene = (['running', 'done', 'slow', 'failed', 'no-model'] as const)
   .find((scene) => scene === previewParameters.get('warmup'))
@@ -1148,6 +1162,10 @@ function updatePreviewGroup(groupId: string, update: (view: typeof state.team.gr
 
 const notificationPreview = createNotificationPreview()
 notificationPreview.observeUpdate(previewUpdateStatus())
+if (automationSceneRun?.operationId) {
+  const draft = automationNotification(automationSceneRun, false, previewNow)
+  if (draft) notificationPreview.offer(draft)
+}
 const api: SgDesktopApi = {
   ...notificationPreview.api,
   listCursorAccounts: async () => structuredClone(previewCursorAccounts),
