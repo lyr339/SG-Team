@@ -138,7 +138,26 @@ export function validateNotificationDraft(input: NotificationDraft): void {
   if (!['info', 'success', 'warning', 'error'].includes(input.tone) || !['activity', 'notice', 'action'].includes(input.attention)
     || !['active', 'resolved', 'expired'].includes(input.state)) throw new Error('通知状态无效')
   if (!Number.isSafeInteger(input.sourceRevision) || input.sourceRevision < 0 || !Number.isFinite(input.occurredAt) || input.occurredAt < 0) throw new Error('通知事件版本或时间无效')
-  for (const value of Object.values(input.scope)) if (typeof value !== 'string' || value.length > 300) throw new Error('通知作用域无效')
+  validateScope(input.scope)
+  const target = input.target
+  if (target) {
+    if (target.kind === 'settings') {
+      if (!['stats', 'accounts', 'import', 'automation', 'aozai', 'maintenance', 'cleanup', 'update'].includes(target.section)) throw new Error('通知目标无效')
+    } else if (target.kind === 'session') {
+      validateScope(target.scope)
+      for (const value of [target.entryId, target.toolCallId]) if (value !== undefined && (typeof value !== 'string' || value.length > 300)) throw new Error('通知目标无效')
+    } else if (target.kind === 'run') {
+      for (const value of [target.runId, target.groupId]) if (value !== undefined && (typeof value !== 'string' || value.length > 300)) throw new Error('通知目标无效')
+    } else throw new Error('通知目标无效')
+  }
+}
+
+function validateScope(scope: NotificationScope): void {
+  if (!scope || typeof scope !== 'object' || Array.isArray(scope)) throw new Error('通知作用域无效')
+  const keys = ['workspaceId', 'runId', 'groupId', 'slotId', 'sessionId', 'generation', 'channelId', 'composerId', 'accountId', 'providerId']
+  for (const [key, value] of Object.entries(scope)) {
+    if (!keys.includes(key) || value !== undefined && (typeof value !== 'string' || value.length > 300)) throw new Error('通知作用域无效')
+  }
 }
 
 /** Defense in depth for diagnostic excerpts; adapters must still avoid passing credentials or full conversation text. */
@@ -152,7 +171,10 @@ export function notificationSafeText(value: string): string {
 
 /** Source-local version and observation time are not changes worth another notification. */
 export function notificationContentSignature(draft: NotificationDraft): string {
-  const scope = (value: NotificationScope): Array<[string, string | undefined]> => Object.entries(value).sort(([a], [b]) => a.localeCompare(b))
-  const target = draft.target?.kind === 'session' ? { ...draft.target, scope: scope(draft.target.scope) } : draft.target
+  const scope = (value: NotificationScope): Array<[string, string]> => Object.entries(value).filter((entry): entry is [string, string] => entry[1] !== undefined).sort(([a], [b]) => a.localeCompare(b))
+  const reference = draft.target
+  const target = reference?.kind === 'session' ? { kind: reference.kind, scope: scope(reference.scope), entryId: reference.entryId, toolCallId: reference.toolCallId }
+    : reference?.kind === 'settings' ? { kind: reference.kind, section: reference.section }
+      : reference ? { kind: reference.kind, runId: reference.runId, groupId: reference.groupId } : undefined
   return JSON.stringify([draft.category, draft.source, draft.title, draft.detail ?? '', draft.tone, draft.attention, draft.state, scope(draft.scope), target])
 }

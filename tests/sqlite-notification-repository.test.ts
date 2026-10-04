@@ -40,6 +40,12 @@ describe('notification ledger', () => {
     expect(repeated.summary.unread).toBe(0)
     expect(repository.put(draft({ sourceRevision: 4, title: '过期结果' }), 500).changed).toBe(false)
   })
+  it('accepts absent optional scope fields and canonicalizes them instead of manufacturing a new result', () => {
+    repository.put(draft(), 200)
+    expect(repository.put(draft({ sourceRevision: 2, scope: { groupId: undefined, runId: 'run-a', workspaceId: 'a' } }), 300).changed).toBe(false)
+    expect(() => repository.put(draft({ scope: { arbitrarySecret: 'not-a-scope' } as never }), 400)).toThrow('作用域无效')
+    expect(() => repository.put(draft({ target: { kind: 'url', url: 'javascript:alert(1)' } as never }), 400)).toThrow('目标无效')
+  })
   it('redacts credential-shaped diagnostic excerpts before persisting them', () => {
     const saved = repository.put(draft({ detail: 'Bearer secret-123; password=my-password; CTI-00000000000000000000000000000000' }), 200).record!
     expect(saved.detail).not.toContain('secret-123'); expect(saved.detail).not.toContain('my-password'); expect(saved.detail).not.toContain('0000000000000000')
