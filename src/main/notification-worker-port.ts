@@ -1,6 +1,6 @@
 import type { Worker } from 'node:worker_threads'
 import type { NotificationRepository } from '../application/notification-repository'
-import type { NotificationChange, NotificationDraft, NotificationPage, NotificationPreferences, NotificationQuery } from '../domain/notification'
+import type { NotificationChange, NotificationDraft, NotificationMarker, NotificationPage, NotificationPreferences, NotificationQuery } from '../domain/notification'
 import type { NotificationWorkerCommand, NotificationWorkerReply } from './notification-worker'
 
 type WorkerFactory = (options: { workerData: { databasePath: string } }) => Worker
@@ -73,6 +73,7 @@ export class NotificationWorkerPort implements NotificationRepository {
     }
   }
   put(draft: NotificationDraft, now: number): Promise<NotificationChange> { return this.call({ kind: 'put', draft, now }) }
+  marker(key: string): Promise<NotificationMarker> { return this.call({ kind: 'marker', key }) }
   page(query?: NotificationQuery): Promise<NotificationPage> { return this.call({ kind: 'page', query }) }
   read(id: string, revision: number, now: number): Promise<NotificationChange> { return this.call({ kind: 'read', id, revision, now }) }
   readAll(query: NotificationQuery, revision: number, now: number): Promise<NotificationChange> { return this.call({ kind: 'readAll', query, revision, now }) }

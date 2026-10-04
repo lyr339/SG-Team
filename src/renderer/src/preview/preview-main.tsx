@@ -3,7 +3,7 @@
  * 仅供 preview.html 使用，不进入生产构建，不连接任何端口。
  */
 import { StrictMode } from 'react'
-import { emptyNotificationPreviewApi } from './notification-preview'
+import { createNotificationPreview } from './notification-preview'
 import { createRoot } from 'react-dom/client'
 import type { AccountAutomationRun } from '../../../domain/account-automation'
 import { TaskPoolAggregate } from '../../../domain/task-pool'
@@ -1121,6 +1121,7 @@ function pushUpdate(next: AppUpdateState = previewUpdateState): AppUpdateStatus 
   previewUpdateState = next
   const status = previewUpdateStatus()
   for (const listener of updateListeners) listener(structuredClone(status))
+  notificationPreview.observeUpdate(status, true)
   return status
 }
 
@@ -1145,8 +1146,10 @@ function updatePreviewGroup(groupId: string, update: (view: typeof state.team.gr
   return structuredClone(state.team)
 }
 
+const notificationPreview = createNotificationPreview()
+notificationPreview.observeUpdate(previewUpdateStatus())
 const api: SgDesktopApi = {
-  ...emptyNotificationPreviewApi(),
+  ...notificationPreview.api,
   listCursorAccounts: async () => structuredClone(previewCursorAccounts),
   saveCursorAccount: async ({ label, token }) => {
     const at = Date.now()
@@ -1403,7 +1406,8 @@ const api: SgDesktopApi = {
     previewUpdateSettings = rest
     return pushUpdate()
   },
-  snoozeAppUpdate: async () => {
+  snoozeAppUpdate: async (input) => {
+    if (input?.expectedVersion && (!('release' in previewUpdateState) || previewUpdateState.release?.version !== input.expectedVersion)) throw new Error('更新状态已变化')
     previewUpdateSettings = { ...previewUpdateSettings, snoozedUntil: Date.now() + APP_UPDATE_SNOOZE_MS }
     return pushUpdate()
   },

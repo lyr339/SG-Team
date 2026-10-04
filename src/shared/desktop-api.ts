@@ -402,7 +402,7 @@ export interface SgDesktopApi {
   skipAppUpdate(): Promise<AppUpdateStatus>
   unskipAppUpdate(): Promise<AppUpdateStatus>
   /** 稍后：24 小时内不再提醒。 */
-  snoozeAppUpdate(): Promise<AppUpdateStatus>
+  snoozeAppUpdate(input?: { expectedVersion?: string }): Promise<AppUpdateStatus>
   dismissAppUpdateFailure(): Promise<AppUpdateStatus>
   saveAppUpdateSettings(settings: AppUpdateSettings): Promise<AppUpdateStatus>
   /** 在系统浏览器打开当前状态对应的发布页。 */

@@ -105,6 +105,7 @@ import { NotificationService } from '../application/notification-service'
 import { NotificationWorkerPort } from './notification-worker-port'
 import createNotificationWorker from './notification-worker?nodeWorker'
 import { registerNotificationIpc } from './register-notification-ipc'
+import { connectAppUpdateNotifications } from '../application/notifications/app-update-notifications'
 // electron-updater 是 CJS，`autoUpdater` 是 exports 上的惰性 getter：主进程是 ESM，命名导入会在链接期
 // 找不到该导出（cjs-module-lexer 认不出 getter），只能默认导入整个 module.exports 再取属性。
 import electronUpdater from 'electron-updater'
@@ -155,6 +156,7 @@ let localSessionBridge: LocalSessionBridge | undefined
 let teamFailoverService: TeamFailoverService | undefined
 let notificationService: NotificationService | undefined
 let disposeNotificationIpc: (() => void) | undefined
+let disposeAppUpdateNotifications: (() => void) | undefined
 let teamOrchestrator: TeamOrchestrator | undefined
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
@@ -864,6 +866,7 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     launchedAfterUpdate: process.argv.includes('--updated')
   })
   disposeAppUpdateIpc = registerAppUpdateIpc(appUpdateServiceRef, () => mainWindow)
+  if (notificationService) disposeAppUpdateNotifications = connectAppUpdateNotifications(appUpdateServiceRef, notificationService)
   appUpdateServiceRef.start()
   // Cursor 本机存储清理：盘点只读；对话历史的数据库分析/删除在 worker 线程（22GB 库上
   // 一次索引遍历要数秒）；目录类清理走系统回收站。拾光运行绑定过的 Composer 永不清理。
@@ -993,6 +996,7 @@ app.on('before-quit', () => {
   disposeCursorQuestionIpc?.()
   disposeAppUpdateIpc?.()
   disposeNotificationIpc?.()
+  disposeAppUpdateNotifications?.()
   void notificationService?.close().catch(() => { console.warn('[notifications] 历史存储关闭未确认') })
   appUpdateServiceRef?.stop()
   cursorCdpKeeperRef?.stop()

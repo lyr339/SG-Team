@@ -1,6 +1,7 @@
-import type { NotificationChange, NotificationDraft, NotificationPage, NotificationPreferences, NotificationQuery } from '../domain/notification'
+import type { NotificationChange, NotificationDraft, NotificationMarker, NotificationPage, NotificationPreferences, NotificationQuery } from '../domain/notification'
 
 export interface NotificationRepository {
+  marker(key: string): Promise<NotificationMarker>
   put(draft: NotificationDraft, now: number): Promise<NotificationChange>
   page(query?: NotificationQuery): Promise<NotificationPage>
   read(id: string, observedRevision: number, now: number): Promise<NotificationChange>

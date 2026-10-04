@@ -5,6 +5,8 @@ import { MenuSelect } from '../lobby/MenuSelect'
 import { ToggleSwitch } from '../lobby/ToggleSwitch'
 import { SettingsSection } from './SettingsSection'
 import { UPDATE_INTERVAL_OPTIONS, buildUpdatePanelView, groupReleaseNotes, type UpdateActionId } from './update-view'
+import { appUpdateNotification, appUpdateReceiptNotification } from '../../../domain/app-update-notification'
+import { useNotificationResultRead } from '../notifications/use-notification-result-read'
 
 interface SettingsUpdateProps {
   /** 测试 / 预览可注入初始状态；生产从 window.sgDesktop 拉取并订阅推送。 */
@@ -64,6 +66,8 @@ export function SettingsUpdate({ initialStatus, now = () => Date.now() }: Settin
   const [updatedNoteDismissed, setUpdatedNoteDismissed] = useState(false)
   const [busyAction, setBusyAction] = useState<UpdateActionId>()
   const panelRef = useRef<HTMLDivElement>(null)
+  const notificationResultRef = useRef<HTMLDivElement>(null)
+  const notificationReceiptRef = useRef<HTMLParagraphElement>(null)
   const confirmButtonRef = useRef<HTMLButtonElement>(null)
   /** 取消 / Esc 关掉确认块后要还焦的那个动作（打开它的按钮此刻还没挂回来）。 */
   const restoreFocusTo = useRef<PendingConfirm['action'] | undefined>(undefined)
@@ -95,6 +99,10 @@ export function SettingsUpdate({ initialStatus, now = () => Date.now() }: Settin
 
   const settings = status?.settings ?? normalizeAppUpdateSettings(undefined)
   const view = status ? buildUpdatePanelView(status, now()) : undefined
+  const notificationResult = status ? appUpdateNotification(status, false) : undefined
+  const notificationReceipt = status ? appUpdateReceiptNotification(status) : undefined
+  useNotificationResultRead(notificationResultRef, notificationResult?.key, notificationResult?.eventId)
+  useNotificationResultRead(notificationReceiptRef, notificationReceipt?.key, notificationReceipt?.eventId)
 
   const saveSettings = (patch: Partial<AppUpdateSettings>): void => {
     const api = updateApi()
@@ -208,12 +216,12 @@ export function SettingsUpdate({ initialStatus, now = () => Date.now() }: Settin
       >
         <div className="app-update" ref={panelRef}>
           {applyResult ? (
-            <p className={`app-update__updated is-${applyResult.tone}`} role={applyResult.tone === 'danger' ? 'alert' : 'status'}>
+            <p className={`app-update__updated is-${applyResult.tone}`} role={applyResult.tone === 'danger' ? 'alert' : 'status'} ref={notificationReceiptRef} data-notification-key={notificationReceipt?.key} data-notification-event={notificationReceipt?.eventId}>
               <span>{applyResult.text}</span>
               <button type="button" aria-label="收起" onClick={dismissApplyResult}>×</button>
             </p>
           ) : status?.launchedAfterUpdate && !updatedNoteDismissed ? (
-            <p className="app-update__updated" role="status">
+            <p className="app-update__updated" role="status" ref={notificationReceiptRef} data-notification-key={notificationReceipt?.key} data-notification-event={notificationReceipt?.eventId}>
               <span>已更新到 {status.currentVersion}。Cursor 里的 SG Team 服务器会随之重载一次；若席位长时间未恢复，到 Cursor 的 MCP 设置里刷新 SG Team。</span>
               <button type="button" aria-label="收起" onClick={() => setUpdatedNoteDismissed(true)}>×</button>
             </p>
@@ -224,7 +232,8 @@ export function SettingsUpdate({ initialStatus, now = () => Date.now() }: Settin
                * 一行设置（与 Cursor 维护页同一结构）：左边标签是版本（没有目标时「拾光 0.3.2」，有目标时
                * 「新版本 0.3.3」/「回滚到 0.3.2」），下面一两行说明；右边是操作。状态色只在区块头的胶囊上。
                */}
-              <div className={`settings-row app-update__row is-${view.tone}`} aria-busy={view.busy}>
+              <div className={`settings-row app-update__row is-${view.tone}`} aria-busy={view.busy} data-notification-result ref={notificationResultRef}
+                data-notification-key={notificationResult?.key} data-notification-event={notificationResult?.eventId}>
                 <div className="settings-row__copy">
                   <span className="settings-row__label app-update__title">{view.title}</span>
                   <span className="settings-row__hint app-update__headline">{view.headline}</span>

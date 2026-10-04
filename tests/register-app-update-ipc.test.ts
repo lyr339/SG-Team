@@ -60,6 +60,17 @@ function harness(releaseUrl?: string) {
 }
 
 describe('软件更新 IPC', () => {
+  it('an old reminder cannot snooze a newer version or a phase which is no longer remindable', () => {
+    const { service, invoke, dispose } = harness()
+    const release = { version: '0.6.0', releaseUrl: 'https://github.com/lyr339/SG-Team/releases/tag/v0.6.0' }
+    service.getStatus.mockReturnValue({ ...statusOf(), state: { phase: 'available', release, checkedAt: 1 } })
+    expect(() => invoke(IPC.appUpdateSnooze, { expectedVersion: '0.5.16' })).toThrow('未延后其他版本')
+    expect(service.snooze).not.toHaveBeenCalled()
+    invoke(IPC.appUpdateSnooze, { expectedVersion: '0.6.0' }); expect(service.snooze).toHaveBeenCalledOnce()
+    service.getStatus.mockReturnValue({ ...statusOf(), state: { phase: 'downloading', release, receivedBytes: 1, totalBytes: 2, startedAt: 1 } })
+    expect(() => invoke(IPC.appUpdateSnooze, { expectedVersion: '0.6.0' })).toThrow('更新状态已变化')
+    expect(service.snooze).toHaveBeenCalledOnce(); dispose()
+  })
   it('每个键路由到服务方法，且都先校验发送方；安装的 confirmed 只认布尔 true', async () => {
     const { service, invoke } = harness()
     expect(await invoke(IPC.appUpdateGetStatus)).toMatchObject({ currentVersion: '0.3.2' })

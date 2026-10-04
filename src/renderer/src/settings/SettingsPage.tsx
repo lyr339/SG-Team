@@ -126,7 +126,7 @@ export function SettingsPage(props: SettingsPageProps): React.JSX.Element {
           <div hidden={group !== 'aozai'}><SettingsAozai {...props} /></div>
           <div hidden={group !== 'maintenance'}><SettingsMaintenance {...props} /></div>
           <div hidden={group !== 'cleanup'}><SettingsCleanup {...props} active={group === 'cleanup'} /></div>
-          <div hidden={group !== 'update'}><SettingsUpdate /></div>
+          <div hidden={group !== 'update'} data-notification-page="account:update"><SettingsUpdate /></div>
         </div>
       </div>
     </div>

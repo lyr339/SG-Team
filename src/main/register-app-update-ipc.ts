@@ -26,7 +26,15 @@ export function registerAppUpdateIpc(
     [IPC.appUpdateDismissApplyResult, () => service.dismissApplyResult()],
     [IPC.appUpdateSkip, () => service.skipCurrent()],
     [IPC.appUpdateUnskip, () => service.unskip()],
-    [IPC.appUpdateSnooze, () => service.snooze()],
+    [IPC.appUpdateSnooze, (_event, payload) => {
+      const expected = payload && typeof payload === 'object' ? (payload as { expectedVersion?: unknown }).expectedVersion : undefined
+      if (expected !== undefined) {
+        const state = service.getStatus().state
+        if (typeof expected !== 'string' || !['available', 'downloaded'].includes(state.phase)
+          || !('release' in state) || state.release?.version !== expected) throw new Error('更新状态已变化，请查看软件更新；未延后其他版本。')
+      }
+      return service.snooze()
+    }],
     [IPC.appUpdateDismissFailure, () => service.dismissFailure()],
     [IPC.appUpdateSaveSettings, (_event, payload) => service.saveSettings(normalizeAppUpdateSettings(payload))],
     [IPC.appUpdateOpenReleasePage, async () => {

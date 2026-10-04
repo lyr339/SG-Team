@@ -1,21 +1,41 @@
 import { describe, expect, it, vi } from 'vitest'
 import { NotificationService } from '../src/application/notification-service'
 import type { NotificationRepository } from '../src/application/notification-repository'
-import type { NotificationDraft } from '../src/domain/notification'
+import { notificationContentSignature, type NotificationDraft } from '../src/domain/notification'
 
 const draft = (patch: Partial<NotificationDraft> = {}): NotificationDraft => ({
   key: 'result:1', category: 'accounts', source: '账号', title: '导入完成', tone: 'success', attention: 'notice',
   state: 'resolved', scope: { accountId: 'account-1' }, occurredAt: 100, sourceRevision: 1, ...patch
 })
-const change = { changed: true, summary: { revision: 1, total: 1, unread: 1, pending: 0 } }
+const change = { changed: true, summary: { revision: 1, total: 1, unread: 1, pending: 0, clearable: 0 } }
 function repository(): NotificationRepository {
-  return { put: vi.fn(async () => change), page: vi.fn(async () => ({ records: [], summary: change.summary, reset: false })),
+  return { marker: vi.fn(async () => ({ sourceRevision: 0 })), put: vi.fn(async () => change), page: vi.fn(async () => ({ records: [], summary: change.summary, reset: false })),
     read: vi.fn(async () => change), readAll: vi.fn(async () => change), archive: vi.fn(async () => change), clearRead: vi.fn(async () => change),
     preferences: vi.fn(async () => ({ enabled: true, nativeEnabled: false, sound: false, preview: false, quiet: false, mutedCategories: [] })),
     savePreferences: vi.fn(async value => value), close: vi.fn(async () => {}) }
 }
 
 describe('non-blocking notification owner', () => {
+  it('initial current-state delivery deduplicates persisted markers, including cleared history, without using a wall-clock version', async () => {
+    const port = repository(); const first = draft(); const { sourceRevision: _sequence, ...current } = first
+    vi.mocked(port.marker).mockResolvedValue({ sourceRevision: 9, signature: notificationContentSignature(first), cleared: true })
+    const service = new NotificationService(port)
+    service.offerCurrent(current); await service.flush()
+    expect(port.put).not.toHaveBeenCalled()
+    service.offerCurrent({ ...current, title: '新的真实结果' }); await service.flush()
+    expect(vi.mocked(port.put).mock.calls[0]?.[0].sourceRevision).toBe(10)
+    await service.close()
+  })
+  it('coalesces a new current state while the first durable marker is still loading', async () => {
+    const port = repository(); let resolve!: (value: { sourceRevision: number }) => void
+    vi.mocked(port.marker).mockImplementationOnce(() => new Promise(done => { resolve = done }))
+    const service = new NotificationService(port)
+    const { sourceRevision: _sequence, ...current } = draft()
+    service.offerCurrent(current); service.offerCurrent({ ...current, title: '下载已完成', renewAttention: true })
+    resolve({ sourceRevision: 5 }); await service.flush()
+    expect(port.put).toHaveBeenCalledTimes(1); expect(vi.mocked(port.put).mock.calls[0]?.[0]).toMatchObject({ title: '下载已完成', sourceRevision: 6 })
+    await service.close()
+  })
   it('offers immediately while storage waits, coalesces newer queued results and isolates listeners', async () => {
     const port = repository(); let release!: (value: typeof change) => void
     vi.mocked(port.put).mockImplementationOnce(() => new Promise(resolve => { release = resolve }))

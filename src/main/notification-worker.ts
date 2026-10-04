@@ -3,6 +3,7 @@ import { SqliteNotificationRepository } from '../infrastructure/notifications/sq
 import type { NotificationDraft, NotificationPreferences, NotificationQuery } from '../domain/notification'
 
 export type NotificationWorkerCommand =
+  | { kind: 'marker'; key: string }
   | { kind: 'put'; draft: NotificationDraft; now: number }
   | { kind: 'page'; query?: NotificationQuery }
   | { kind: 'read'; id: string; revision: number; now: number }
@@ -24,6 +25,7 @@ if (parentPort) {
       try {
         let result: unknown
         switch (command.kind) {
+          case 'marker': result = repository.marker(command.key); break
           case 'put': result = repository.put(command.draft, command.now); break
           case 'page': result = repository.page(command.query); break
           case 'read': result = repository.read(command.id, command.revision, command.now); break

@@ -5,6 +5,9 @@ import type {
   DesktopSnapshot
 } from '../../shared/desktop-api'
 import { emptyTaskPoolSnapshot, newestTaskPoolSnapshot } from '../../domain/task-pool'
+import type { NotificationTarget } from '../../domain/notification'
+import { notificationTargetAvailable } from './notifications/notification-navigation'
+import { requestReveal } from './inspector/reveal-bus'
 import { groupContextView } from './team/group-context-view'
 import { submitGroupTask } from './team/group-task-submit'
 import { GroupCollaborationDialog } from './team/GroupCollaborationDialog'
@@ -1051,6 +1054,25 @@ export function App(): React.JSX.Element {
     if (module !== 'run') setFocusGroupId(undefined)
   }, [])
 
+  const notificationContext = useRef({ sessions: visibleSnapshot.sessions, team: teamControl })
+  notificationContext.current = { sessions: visibleSnapshot.sessions, team: teamControl }
+  const openNotificationTarget = useCallback(async (target: NotificationTarget): Promise<boolean> => {
+    const context = notificationContext.current
+    if (!notificationTargetAvailable(target, context.sessions, context.team)) return false
+    if (target.kind === 'settings') {
+      window.location.hash = `#account:${target.section}`; changeModule('account'); return true
+    }
+    if (target.kind === 'run') { setFocusGroupId(target.groupId); changeModule('run'); return true }
+    changeModule('sessions'); selectSession(target.scope.channelId!)
+    if (target.entryId) {
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+      const latest = notificationContext.current
+      if (!notificationTargetAvailable(target, latest.sessions, latest.team)) return false
+      return requestReveal({ entryId: target.entryId })
+    }
+    return true
+  }, [changeModule, selectSession])
+
   const openMembershipTransfer = useCallback(async (slotId: string): Promise<void> => {
     setHandoffBusy(true)
     setHandoffError('')
@@ -1449,6 +1471,7 @@ export function App(): React.JSX.Element {
     <DesktopShell
       snapshot={visibleSnapshot}
       activeModule={activeModule}
+      onNotificationTarget={openNotificationTarget}
       sidebar={activeModule === 'sessions' ? (
         <SessionSidebar
           snapshot={visibleSnapshot}

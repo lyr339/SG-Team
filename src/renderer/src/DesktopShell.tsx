@@ -16,6 +16,8 @@ import { AppearanceSettings } from './AppearanceSettings'
 import { WorkspaceMenu } from './WorkspaceMenu'
 import { UpdateReminder, useAppUpdateStatus } from './UpdateReminder'
 import { subscribeReviewFocus } from './inspector/review-focus-bus'
+import type { NotificationTarget } from '../../domain/notification'
+import { NotificationSystem } from './notifications/NotificationSystem'
 
 /** 会话（工作区）/ 运行（团队或独立批次的控制）/ 账号与 Cursor（右上角设置入口，不在主导航里）。 */
 export type AppModule = 'sessions' | 'run' | 'account'
@@ -43,6 +45,7 @@ interface DesktopShellProps {
   /** 背景预设 id（缺省折光）；未传 onBackgroundChange 时弹层不出现背景行。 */
   background?: string
   onModuleChange: (module: AppModule) => void
+  onNotificationTarget?: (target: NotificationTarget) => boolean | Promise<boolean>
   onOpenProjectConfiguration: () => void
   onCardOpacityChange: (value: number) => void
   onColorModeChange: (value: 'system' | 'light' | 'dark') => void
@@ -112,6 +115,7 @@ export function DesktopShell({
   accent,
   background,
   onModuleChange,
+  onNotificationTarget,
   onOpenProjectConfiguration,
   onCardOpacityChange,
   onColorModeChange,
@@ -120,6 +124,7 @@ export function DesktopShell({
   children
 }: DesktopShellProps): React.JSX.Element {
   const [showConnection, setShowConnection] = useState(false)
+  const [notificationsAvailable, setNotificationsAvailable] = useState(false)
   const [showAppearance, setShowAppearance] = useState(false)
   const [showInspector, setShowInspector] = useState(() => {
     try { return localStorage.getItem(INSPECTOR_OPEN_KEY) === '1' } catch { return false }
@@ -248,6 +253,8 @@ export function DesktopShell({
         </nav>
 
         <div className="topbar__actions">
+          <NotificationSystem workspaceId={workspace?.id} onAvailable={setNotificationsAvailable}
+            onNavigate={onNotificationTarget ?? (() => false)} onSnoozeUpdate={async record => { await window.sgDesktop.snoozeAppUpdate({ expectedVersion: record.key.slice('app-update:'.length) }) }} />
           <button
             className={`account-button ${activeModule === 'account' ? 'is-active' : ''}`}
             onClick={() => onModuleChange(activeModule === 'account' ? 'sessions' : 'account')}
@@ -258,7 +265,7 @@ export function DesktopShell({
             aria-pressed={activeModule === 'account'}
           >
             <GearIcon />
-            {updateReminderVersion ? <i className="account-button__dot" aria-label={`拾光 ${updateReminderVersion} 可用`} /> : null}
+            {updateReminderVersion && !notificationsAvailable ? <i className="account-button__dot" aria-label={`拾光 ${updateReminderVersion} 可用`} /> : null}
           </button>
           {activeModule === 'sessions' ? (
             <button
@@ -388,7 +395,7 @@ export function DesktopShell({
           </ResizableColumns>
         )}
       </div>
-      <UpdateReminder status={appUpdateStatus} onOpen={openUpdateSettings} />
+      {typeof window.sgDesktop?.getNotificationPage !== 'function' ? <UpdateReminder status={appUpdateStatus} onOpen={openUpdateSettings} /> : null}
     </div>
   )
 }

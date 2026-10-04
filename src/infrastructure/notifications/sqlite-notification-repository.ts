@@ -2,10 +2,19 @@ import { randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import type { NotificationChange, NotificationDraft, NotificationPage, NotificationPreferences, NotificationQuery, NotificationRecord, NotificationSummary } from '../../domain/notification'
+import type { NotificationChange, NotificationDraft, NotificationMarker, NotificationPage, NotificationPreferences, NotificationQuery, NotificationRecord, NotificationSummary } from '../../domain/notification'
 import { normalizeNotificationPreferences, notificationContentSignature, notificationIsPending, notificationSafeText, NotificationActionError, validateNotificationDraft } from '../../domain/notification'
 
 type StoredRow = { payload: string }
+function decodeRecord(payload: string): NotificationRecord {
+  try {
+    const record = JSON.parse(payload) as NotificationRecord
+    validateNotificationDraft(record)
+    if (typeof record.id !== 'string' || !record.id || [record.revision, record.attentionRevision, record.readRevision].some(value => !Number.isSafeInteger(value) || value < 0)
+      || [record.createdAt, record.updatedAt, record.readAt, record.archivedAt].some(value => value !== undefined && (!Number.isSafeInteger(value) || value < 0 || value > 8_640_000_000_000_000))) throw Error('invalid record')
+    return record
+  } catch { throw new Error('通知记录格式异常，原操作不受影响；原历史保留。') }
+}
 
 /** Synchronous on purpose: this repository is owned ONLY by the notification worker. */
 export class SqliteNotificationRepository {
@@ -16,7 +25,7 @@ export class SqliteNotificationRepository {
     this.db = new DatabaseSync(databasePath)
     try {
       this.db.exec(`PRAGMA busy_timeout=250;
-        CREATE TABLE IF NOT EXISTS desktop_notification_meta (id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL, preferences TEXT NOT NULL,schema_version INTEGER NOT NULL DEFAULT 1);
+        CREATE TABLE IF NOT EXISTS desktop_notification_meta (id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL, preferences TEXT NOT NULL,schema_version INTEGER NOT NULL DEFAULT 2);
         INSERT OR IGNORE INTO desktop_notification_meta(id,revision,preferences) VALUES(1,0,'{}');
         CREATE TABLE IF NOT EXISTS desktop_notifications (
           id TEXT PRIMARY KEY, semantic_key TEXT NOT NULL UNIQUE, payload TEXT NOT NULL,
@@ -25,14 +34,22 @@ export class SqliteNotificationRepository {
           archived_at INTEGER, source_revision INTEGER NOT NULL);
         CREATE INDEX IF NOT EXISTS desktop_notifications_scope ON desktop_notifications(workspace_id,revision DESC);
         CREATE INDEX IF NOT EXISTS desktop_notifications_order ON desktop_notifications(revision DESC);
-        CREATE TABLE IF NOT EXISTS desktop_notification_tombstones (semantic_key TEXT PRIMARY KEY, source_revision INTEGER NOT NULL, cleared_at INTEGER NOT NULL);`)
+        CREATE TABLE IF NOT EXISTS desktop_notification_tombstones (semantic_key TEXT PRIMARY KEY, source_revision INTEGER NOT NULL, cleared_at INTEGER NOT NULL,content_signature TEXT);`)
       const version = (this.db.prepare('SELECT schema_version FROM desktop_notification_meta WHERE id=1').get() as { schema_version: number }).schema_version
-      if (version !== 1) throw new Error('通知历史格式暂不支持，原有数据未修改')
+      if (version === 1) {
+        this.transaction(() => {
+          const columns = this.db.prepare('PRAGMA table_info(desktop_notification_tombstones)').all() as Array<{ name: string }>
+          if (!columns.some(column => column.name === 'content_signature')) this.db.exec('ALTER TABLE desktop_notification_tombstones ADD COLUMN content_signature TEXT')
+          this.db.exec('UPDATE desktop_notification_meta SET schema_version=2 WHERE id=1')
+        })
+      } else if (version !== 2) throw new Error('通知历史格式暂不支持，原有数据未修改')
     } catch (error) { this.db.close(); throw error }
   }
 
   private revision(): number {
-    return Number((this.db.prepare('SELECT revision FROM desktop_notification_meta WHERE id=1').get() as { revision: number }).revision)
+    const value = Number((this.db.prepare('SELECT revision FROM desktop_notification_meta WHERE id=1').get() as { revision: number }).revision)
+    if (!Number.isSafeInteger(value) || value < 0) throw new Error('通知历史版本异常，原数据保留。')
+    return value
   }
   private nextRevision(): number {
     this.db.prepare('UPDATE desktop_notification_meta SET revision=revision+1 WHERE id=1').run()
@@ -45,6 +62,7 @@ export class SqliteNotificationRepository {
   }
   private where(query: NotificationQuery, filter = query.filter): { sql: string; params: Array<string | number> } {
     const clauses = ['archived_at IS NULL']; const params: Array<string | number> = []
+    if (query.key) { clauses.push('semantic_key=?'); params.push(query.key) }
     if (query.workspaceId) { clauses.push('(workspace_id=? OR workspace_id IS NULL)'); params.push(query.workspaceId) }
     if (query.category) { clauses.push('category=?'); params.push(query.category) }
     if (filter === 'unread') clauses.push("attention<>'activity' AND read_revision<attention_revision")
@@ -56,7 +74,10 @@ export class SqliteNotificationRepository {
       const where = this.where(query, filter ?? 'all')
       return Number((this.db.prepare(`SELECT COUNT(*) AS n FROM desktop_notifications WHERE ${where.sql}`).get(...where.params) as { n: number }).n)
     }
-    return { revision: this.revision(), total: count(), unread: count('unread'), pending: count('pending') }
+    const where = this.where(query, 'all')
+    const clearable = Number((this.db.prepare(`SELECT COUNT(*) AS n FROM desktop_notifications WHERE ${where.sql}
+      AND attention<>'activity' AND read_revision>=attention_revision AND NOT (attention='action' AND state='active')`).get(...where.params) as { n: number }).n)
+    return { revision: this.revision(), total: count(), unread: count('unread'), pending: count('pending'), clearable }
   }
   private save(record: NotificationRecord): void {
     this.db.prepare(`INSERT INTO desktop_notifications VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
@@ -69,7 +90,14 @@ export class SqliteNotificationRepository {
   }
   private get(id: string): NotificationRecord | undefined {
     const row = this.db.prepare('SELECT payload FROM desktop_notifications WHERE id=?').get(id) as StoredRow | undefined
-    return row ? JSON.parse(row.payload) as NotificationRecord : undefined
+    return row ? decodeRecord(row.payload) : undefined
+  }
+
+  marker(key: string): NotificationMarker {
+    const row = this.db.prepare('SELECT payload FROM desktop_notifications WHERE semantic_key=?').get(key) as StoredRow | undefined
+    if (row) { const record = decodeRecord(row.payload); return { sourceRevision: record.sourceRevision, signature: notificationContentSignature(record) } }
+    const tombstone = this.db.prepare('SELECT source_revision,content_signature FROM desktop_notification_tombstones WHERE semantic_key=?').get(key) as { source_revision: number; content_signature: string | null } | undefined
+    return tombstone ? { sourceRevision: tombstone.source_revision, cleared: true, ...(tombstone.content_signature ? { signature: tombstone.content_signature } : {}) } : { sourceRevision: 0 }
   }
 
   put(draft: NotificationDraft, now: number): NotificationChange {
@@ -78,7 +106,7 @@ export class SqliteNotificationRepository {
       ...(draft.detail !== undefined ? { detail: notificationSafeText(draft.detail) } : {}) }
     return this.transaction(() => {
       const oldRow = this.db.prepare('SELECT payload FROM desktop_notifications WHERE semantic_key=?').get(draft.key) as StoredRow | undefined
-      const old = oldRow ? JSON.parse(oldRow.payload) as NotificationRecord : undefined
+      const old = oldRow ? decodeRecord(oldRow.payload) : undefined
       const tombstone = this.db.prepare('SELECT source_revision FROM desktop_notification_tombstones WHERE semantic_key=?').get(draft.key) as { source_revision: number } | undefined
       if ((!old && tombstone && draft.sourceRevision <= tombstone.source_revision) || (old && draft.sourceRevision <= old.sourceRevision)) {
         return { changed: false, record: old, summary: this.summary() }
@@ -89,7 +117,7 @@ export class SqliteNotificationRepository {
         return { changed: false, record: old, summary: this.summary() }
       }
       const revision = this.nextRevision()
-      const { renewAttention, ...content } = draft
+      const { renewAttention, announce: _announce, ...content } = draft
       const escalated = old && (old.attention === 'activity' && draft.attention !== 'activity'
         || draft.attention === 'action' && draft.state === 'active' && !notificationIsPending(old))
       const attentionRevision = draft.attention === 'activity' ? 0 : !old || renewAttention || escalated ? revision : old.attentionRevision
@@ -110,8 +138,8 @@ export class SqliteNotificationRepository {
     const limit = Math.min(100, Math.max(1, Math.floor(query.limit ?? 40)))
     const where = this.where(query)
     const rows = this.db.prepare(`SELECT payload FROM desktop_notifications WHERE ${where.sql}
-      ORDER BY CASE WHEN attention='action' AND state='active' THEN 0 ELSE 1 END,revision DESC LIMIT ? OFFSET ?`).all(...where.params, limit + 1, offset) as StoredRow[]
-    return { records: rows.slice(0, limit).map(row => JSON.parse(row.payload) as NotificationRecord), summary, reset,
+      ORDER BY CASE WHEN attention='action' AND state='active' THEN 0 WHEN attention='activity' THEN 2 ELSE 1 END,revision DESC LIMIT ? OFFSET ?`).all(...where.params, limit + 1, offset) as StoredRow[]
+    return { records: rows.slice(0, limit).map(row => decodeRecord(row.payload)), summary, reset,
       ...(rows.length > limit ? { nextCursor: { revision: summary.revision, offset: offset + limit } } : {}) }
   }
   read(id: string, observedRevision: number, now: number): NotificationChange {
@@ -132,7 +160,7 @@ export class SqliteNotificationRepository {
         AND read_revision<attention_revision AND attention_revision<=?`).all(...where.params, observedRevision) as StoredRow[]
       if (rows.length) {
         this.nextRevision()
-        for (const row of rows) { const record = JSON.parse(row.payload) as NotificationRecord; record.readRevision = record.attentionRevision; record.readAt = now; this.save(record) }
+        for (const row of rows) { const record = decodeRecord(row.payload); record.readRevision = record.attentionRevision; record.readAt = now; this.save(record) }
       }
       return { changed: rows.length > 0, summary: this.summary() }
     })
@@ -152,9 +180,9 @@ export class SqliteNotificationRepository {
       const rows = this.db.prepare(`SELECT payload FROM desktop_notifications WHERE ${where.sql}
         AND attention<>'activity' AND read_revision>=attention_revision AND NOT (attention='action' AND state='active')`).all(...where.params) as StoredRow[]
       for (const row of rows) {
-        const record = JSON.parse(row.payload) as NotificationRecord
-        this.db.prepare(`INSERT INTO desktop_notification_tombstones VALUES(?,?,?) ON CONFLICT(semantic_key)
-          DO UPDATE SET source_revision=MAX(source_revision,excluded.source_revision),cleared_at=excluded.cleared_at`).run(record.key, record.sourceRevision, now)
+        const record = decodeRecord(row.payload)
+        this.db.prepare(`INSERT INTO desktop_notification_tombstones VALUES(?,?,?,?) ON CONFLICT(semantic_key)
+          DO UPDATE SET source_revision=MAX(source_revision,excluded.source_revision),cleared_at=excluded.cleared_at,content_signature=excluded.content_signature`).run(record.key, record.sourceRevision, now, notificationContentSignature(record))
         this.db.prepare('DELETE FROM desktop_notifications WHERE id=?').run(record.id)
       }
       if (rows.length) this.nextRevision()

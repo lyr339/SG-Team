@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { SqliteNotificationRepository } from '../src/infrastructure/notifications/sqlite-notification-repository'
 import { notificationIsPending, notificationIsUnread, type NotificationDraft } from '../src/domain/notification'
@@ -90,6 +91,7 @@ describe('notification ledger', () => {
     repository.read(record.id, record.revision, 300); repository.clearRead({}, 400)
     repository.close(); repository = new SqliteNotificationRepository(path)
     expect(repository.put(draft(), 500).changed).toBe(false)
+    expect(repository.marker(draft().key)).toMatchObject({ sourceRevision: 1, cleared: true, signature: expect.any(String) })
     expect(repository.page().summary.total).toBe(0)
     expect(repository.put(draft({ sourceRevision: 2, title: '新的已确认结果' }), 600).changed).toBe(true)
   })
@@ -98,5 +100,25 @@ describe('notification ledger', () => {
     repository.savePreferences({ enabled: false, nativeEnabled: true, sound: false, preview: false, quiet: true, mutedCategories: ['accounts', 'accounts'] })
     repository.close(); repository = new SqliteNotificationRepository(path)
     expect(repository.preferences()).toMatchObject({ enabled: false, quiet: true, mutedCategories: ['accounts'] })
+  })
+  it('migrates the earlier private notification schema without touching other data or the global version', () => {
+    const saved = repository.put(draft(), 200).record!
+    repository.read(saved.id, saved.revision, 300)
+    repository.close()
+    const database = new DatabaseSync(path)
+    database.exec(`UPDATE desktop_notification_meta SET schema_version=1;
+      ALTER TABLE desktop_notification_tombstones DROP COLUMN content_signature;
+      CREATE TABLE preserved_business_state(id INTEGER PRIMARY KEY,value TEXT);
+      INSERT INTO preserved_business_state VALUES(1,'preserve');PRAGMA user_version=9;`)
+    database.close()
+    repository = new SqliteNotificationRepository(path)
+    expect(repository.page().summary.unread).toBe(0)
+    expect(repository.marker(draft().key).sourceRevision).toBe(1)
+    const inspect = new DatabaseSync(path)
+    try {
+      expect(inspect.prepare('SELECT schema_version FROM desktop_notification_meta').get()).toMatchObject({ schema_version: 2 })
+      expect(inspect.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 9 })
+      expect(inspect.prepare('SELECT value FROM preserved_business_state').get()).toMatchObject({ value: 'preserve' })
+    } finally { inspect.close() }
   })
 })
