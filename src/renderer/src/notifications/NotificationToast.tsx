@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { NoticeIcon, notificationTargetLabel } from './NotificationCenter'
+import { NoticeIcon } from './NotificationCenter'
+import { notificationTargetLabel } from './notification-view'
 import type { NotificationStore, ToastCandidate } from './notification-store'
 import { notificationIsUnread, type NotificationPush, type NotificationRecord } from '../../../domain/notification'
 
