@@ -10,6 +10,9 @@ export class NotificationService {
   private readonly markers = new Map<string, NotificationMarker>()
   private pumping?: Promise<void>
   private closed = false
+  private shuttingDown = false
+  private shutdownFailed = false
+  private closeConfirmed = false
   private health: NotificationPush['health'] = 'ready'
   private historyIncomplete = false
   private closing?: Promise<void>
@@ -22,13 +25,16 @@ export class NotificationService {
     return () => this.listeners.delete(listener)
   }
   private emit(event: Omit<NotificationPush, 'health' | 'historyIncomplete'> = {}): void {
+    // Quit draining is persistence work, not an opportunity to pop a late toast or OS alert.
+    const delivered = this.shuttingDown ? { ...event, announcement: undefined } : event
     for (const listener of this.listeners) {
-      try { listener({ ...event, health: this.health, historyIncomplete: this.historyIncomplete }) } catch { /* A broken presentation must not fail a completed business operation. */ }
+      try { listener({ ...delivered, health: this.health, historyIncomplete: this.historyIncomplete }) } catch { /* A broken presentation must not fail a completed business operation. */ }
     }
   }
   private degraded(historyLost = false): void {
     const changed = this.health !== 'degraded' || historyLost && !this.historyIncomplete
     this.historyIncomplete ||= historyLost
+    if (this.shuttingDown && historyLost) this.shutdownFailed = true
     this.health = 'degraded'
     if (changed) this.emit()
   }
@@ -36,6 +42,11 @@ export class NotificationService {
     if (this.health !== 'ready') { this.health = 'ready'; this.emit() }
   }
   reportHistoryGap(): void { this.degraded(true) }
+  status(): { health: NotificationPush['health']; historyIncomplete: boolean; shutdownConfirmed: boolean } {
+    return { health: this.health, historyIncomplete: this.historyIncomplete, shutdownConfirmed: this.closeConfirmed && !this.shutdownFailed && this.health === 'ready' }
+  }
+  /** Source producers must seal and drain before close rejects their remaining commits. */
+  beginShutdown(): void { this.shuttingDown = true }
   private tracked<T>(task: Promise<T>): Promise<T> {
     this.sourceTasks.add(task)
     return task.finally(() => { this.sourceTasks.delete(task) })
@@ -164,11 +175,13 @@ export class NotificationService {
   }
   close(): Promise<void> {
     if (this.closing) return this.closing
+    this.beginShutdown()
     this.closing = (async () => {
       await this.flush()
       await Promise.allSettled([...this.sourceTasks])
       this.closed = true; this.listeners.clear()
-      await this.repository.close()
+      try { await this.repository.close(); this.closeConfirmed = true }
+      catch (error) { this.degraded(true); throw error }
     })()
     return this.closing
   }

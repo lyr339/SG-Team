@@ -2,7 +2,7 @@
 
 当前状态：实施中，完整目标未完成，未发布、未安装或重启用户软件。
 
-实现工作树为 `/Users/lyr/Downloads/SG-Team-notifications`，分支 `feat/notification-system`，基于 v0.5.15 主线 `5a371f7`。原主目录和原 UI 开发工作树保持不变。完整需求以 `docs/NOTIFICATIONS-DESIGN.md` 为准，不能把底座或空通知列表作为系统完成。
+实现工作树为 `/Users/lyr/Downloads/SG-Team-notifications`，分支 `feat/notification-system`，基于 v0.5.15 主线 `5a371f7`。原主目录和原 UI 开发工作树不作为本目标的修改范围，已有基线漂移原样保留并记在各批保护报告中。完整需求以 `docs/NOTIFICATIONS-DESIGN.md` 为准，不能把底座或空通知列表作为系统完成。
 
 ## 当前已落地并核验的批次
 
@@ -99,6 +99,22 @@
 本轮保护核对见 `protected-message-audit.json`：旧 UI 树 675 个文件和 Git 状态／diff 均匹配；主目录 Git 状态／diff／HEAD 不变，但预热相关四文件与旧内容哈希不同。本轮没有写这些主目录文件，未重置或覆盖该差异，旧保护基线原样保留。
 
 **仍未完成**：问卷动作失败／队列／上下文和成员交接等重要结果，账号导入／登录与维护等其余页面来源，原生 macOS／Windows 送达与完整偏好，保留与 worker 重建、真正应用退出受理队列边界、完整打包及 Windows 实机验收。第五批不是整套完成，没有推送、发版、安装或重启 Cursor。
+
+### 第六批：真正退出的受理队列边界与问卷证据复核（2026-10-05）
+
+- 根因：原 `before-quit` 先直接 stop/清空源队列，再 fire-and-forget 关通知库；Electron 不等待后者。已被源接受、尚未加载检查点的通知可能随退出消失，原关库单测不能证明应用退出安全。
+- 新顺序：对已有源停止接收、保留并排空已接收语义帧，再关闭 ledger。普通桌面资源仍按原逻辑停用，且只执行一次。休眠中的已接收生命周期帧也能排空，不等下一次唤醒。来源失败即使被观察器内部吞掉，也会使本次退出未确认；过去已有的历史缺口与本次成功排空分别记录。
+- 真实退出期间不弹新提醒；重复退出请求不重复销毁资源、运行安装器或关库。通知排空等待默认最多两秒；超时仍继续原退出请求，不盲目重放未知写入，不改运行/账号结果。真正完成需要收到 repository.close 回执，不能仅因停止接收或发出关库指令就称成功。
+- 私有 `notifications/runtime.json` 是小型运行完整性证据，不是队列或数据库。它只含版本、时间和可能历史缺口；正常确认写 closedAt，超时或强退不伪写干净状态，下次启动在中心保留“可能不完整”事实。读取有 4 KiB 硬界，错误原文件保留，临时写文件清理。该说明不冒充知道所有错过事件，不自动重跑业务。
+- 不更改 mac 最后窗口关闭继续后台、Windows 最后窗口关闭退出的原分支；退出已经停用后不再新建窗口。没有重启 Cursor、真实账号操作、真实软件升级或通知 OS 权限修改。OS 强制关机／进程终止不能保证排空，只恢复已有证据；磁盘不可写时也不能许诺完整性证据已持久化。
+- 同时复核问卷真实来源：旧 awaitingUser=false 可能只是没有过程帧。新增只读证据来源，未知／裁剪／过期甚至严重未来时间的采样不当成明确否定；保留已确认待回答问题，直到有明确提交/取消、可靠不再等待或停止/换代证据。原布尔显示沿用已有信号，不新增 CDP／模型请求。
+- 回归中出现现有气泡计数偶发 412→413 不推进。确定性复现证明：合并 timer 可比 120ms 的墙钟门槛早 1ms 触发，旧代码先清掉待补信号，再被原节流拒绝，导致最后一帧永久丢失。现在 inspect 返回是否真正启动，拒绝时保留原待补信号并沿用原窗口补读；没有额外探针或提高正常采样频率。该修复影响通知依赖的最后状态证据，不是忽略失败测试重跑。
+
+当前验证由 `notification-shutdown.test.ts`、`desktop-session-service.test.ts` 与 `question-notifications.test.ts` 覆盖受理后慢写、停止后拒收、休眠退出、观察器处理失败、真正关库回执、超时/迟到不二次退出、损坏/超大证据保留和问卷未知 false。`scripts/verify-notification-shutdown.mjs` 加载真实源码和编译 worker，但不加载生产 main：实际 macOS Electron 的 before-quit / will-quit 在干净、模拟更新触发、超时、强退及强退后恢复五场景验证；正常已接收记录重开 SQLite 可见，退出只恢复一次，未出现退出时提醒。模拟更新触发不等于实际 NSIS 或整包替换安装验收。
+
+完整当前证据需对应最后源码：`full-regression-shutdown-verified.log`、`build-shutdown-verified.log`、`dead-code-shutdown-verified.log`、`electron-worker-shutdown-verified.log`、`electron-lifecycle-shutdown-verified.log`、`channel-smoke-shutdown-verified.log`、`mcp-smoke-shutdown-verified.log`。所有原生 fixture 数据和编译临时目录 finally 清理；业务/原目录保护见 `protected-shutdown-audit.json`，已知四个预热文件漂移未被覆盖。
+
+**后续完整范围仍在**：队列（入队不等于取走/回复，缺失不等于撤回）、上下文/成员交接（真实 outbox 身份关联）、问卷动作失败以及同会话新旧问题身份序列、其余页面重要操作与跨重启未知结果、原生送达与完整偏好、历史保留/缺口说明确认、worker 真实终止后的恢复、正式打包与 Windows/完整应用实机。当前只是已接入源的正常退出边界完成，不是所有流程、所有平台和强制退出都能无丢失。仍未发布或安装。
 
 下面保留完整要求，不因前三批已有成果缩小。已实现部分仍需匹配该项范围验收；未实现部分继续开工。
 

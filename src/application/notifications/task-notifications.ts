@@ -23,5 +23,7 @@ export function connectTaskNotifications(tasks: { subscribe(listener: (snapshot:
       source.observe(key, { key, completed: team.activeRun.status === 'completed', now: Date.now(), facts })
     } catch { owner.reportHistoryGap() }
   })
-  return { source, dispose: () => { stop(); source.stop() } }
+  let detached = false
+  const detach = () => { if (!detached) { detached = true; stop() } }
+  return { source, close: () => { detach(); return source.close() }, dispose: () => { detach(); source.stop() } }
 }

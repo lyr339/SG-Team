@@ -500,8 +500,8 @@ export class DesktopSessionService implements DesktopSessionBridge {
       sessions: enriched.sessions.map((session) => {
         const key = session.composerId || session.id
         const liveEvidence = session.composerId ? this.runtimeEvidence[session.composerId] : undefined
-        const runtimeAwaitingUser = liveEvidence && Date.now() - liveEvidence.observedAt <= 3_000
-          ? liveEvidence.awaitingUser === true
+        const runtimeAwaitingUser = liveEvidence && Math.abs(Date.now() - liveEvidence.observedAt) <= 3_000 && typeof liveEvidence.awaitingUser === 'boolean'
+          ? liveEvidence.awaitingUser
           : undefined
         const processAwaitingUser = this.liveCursorProcess.get(session.channelId)?.view.blocks.some((block) => (
           block.kind === 'tool' && block.question?.status === 'pending'
@@ -509,6 +509,7 @@ export class DesktopSessionService implements DesktopSessionBridge {
         // 新鲜 runtime inspect 能明确撤销旧过程帧的 pending；inspect 尚未到达时回退
         // 当前过程块。这样 Cursor 里直接作答后，侧栏不会继续残留「等待回答」。
         const awaitingUser = runtimeAwaitingUser ?? processAwaitingUser
+        const awaitingUserEvidence = runtimeAwaitingUser !== undefined ? 'runtime' as const : processAwaitingUser ? 'process' as const : 'unknown' as const
         if (session.contextUsage) this.contextUsageByComposer.set(key, session.contextUsage)
         const contextUsage = session.contextUsage ?? this.contextUsageByComposer.get(key)
         const activeDurationMs = this.trackActiveDuration(key, session)
@@ -521,6 +522,7 @@ export class DesktopSessionService implements DesktopSessionBridge {
           session.waiting ? 1 : 0,
           session.connected ? 1 : 0,
           awaitingUser ? 1 : 0,
+          awaitingUserEvidence,
           session.runtimeEvidence ?? '',
           session.deliveryMode ?? '',
           session.lastSeenAt ?? 0,
@@ -559,6 +561,7 @@ export class DesktopSessionService implements DesktopSessionBridge {
         const view: AgentSession = {
           ...session,
           awaitingUser,
+          awaitingUserEvidence,
           contextUsage,
           activeDurationMs,
           ...(composerBubbleCount === undefined ? {} : { composerBubbleCount })
@@ -1281,12 +1284,12 @@ export class DesktopSessionService implements DesktopSessionBridge {
     }
   }
 
-  private refreshRuntimeEvidence(workspacePath: string, bindings: RuntimeBinding[]): void {
-    if (!this.runtimeSource || this.runtimeInspecting) return
+  private refreshRuntimeEvidence(workspacePath: string, bindings: RuntimeBinding[]): boolean {
+    if (!this.runtimeSource || this.runtimeInspecting) return false
     const now = Date.now()
-    if (now - this.lastRuntimeInspectionAt < 120) return
+    if (now - this.lastRuntimeInspectionAt < 120) return false
     const composerIds = bindings.flatMap((binding) => binding.composerId ? [binding.composerId] : [])
-    if (!composerIds.length) return
+    if (!composerIds.length) return false
     this.runtimeInspecting = true
     this.lastRuntimeInspectionAt = now
     this.lastRuntimeArgs = { workspacePath, bindings }
@@ -1350,6 +1353,7 @@ export class DesktopSessionService implements DesktopSessionBridge {
         this.runtimeInspecting = false
         this.flushPendingRuntimeSignals()
       })
+    return true
   }
 
   /**
@@ -1399,7 +1403,7 @@ export class DesktopSessionService implements DesktopSessionBridge {
         : event.awaitingUser ? 'Cursor Agent 正在等待用户决策' : 'Cursor 原生过程回合已结束',
       observedAt: event.observedAt,
       isGenerating: event.isGenerating,
-      ...(event.awaitingUser ? { awaitingUser: true } : {}),
+      ...(event.awaitingUser === undefined ? {} : { awaitingUser: event.awaitingUser }),
       ...(event.composerStatus ? { composerStatus: event.composerStatus } : {}),
       ...(event.statusLine ? { statusLine: event.statusLine } : {}),
       ...(event.bubbleCount === undefined ? {} : { bubbleCount: event.bubbleCount }),
@@ -1453,11 +1457,17 @@ export class DesktopSessionService implements DesktopSessionBridge {
       }
       const args = this.lastRuntimeArgs
       if (!args?.bindings.length) return
+      const pending = [...this.pendingRuntimeSignals]
       const relevant = args.bindings.some((binding) => (
-        binding.composerId && this.pendingRuntimeSignals.has(binding.composerId)
+        binding.composerId && pending.includes(binding.composerId)
       ))
       this.pendingRuntimeSignals.clear()
-      if (relevant) this.refreshRuntimeEvidence(args.workspacePath, args.bindings)
+      if (relevant && !this.refreshRuntimeEvidence(args.workspacePath, args.bindings)) {
+        // A timer can fire a millisecond before the wall-clock throttle is due.
+        // Keep the owed signal; clearing it before a refused inspect loses the trailing edge.
+        for (const composerId of pending) this.pendingRuntimeSignals.add(composerId)
+        this.flushPendingRuntimeSignals()
+      }
     }, delay)
     this.runtimeSignalTimer.unref?.()
   }

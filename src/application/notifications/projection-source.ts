@@ -13,13 +13,15 @@ export class NotificationProjectionSource<T, S> {
   private current?: SourceObservation<T>
   private processing?: Promise<void>
   private closed = false
+  private accepting = true
+  private closing?: Promise<void>
   private epoch = 0
   constructor(private readonly owner: Pick<NotificationService, 'sourceState' | 'commitSource' | 'reportHistoryGap'>,
     private readonly decode: (value: unknown, key: string) => S | undefined,
     private readonly reduce: (previous: S | undefined, input: T, baseline: boolean, revision: number) => NotificationProjection<S>,
     private readonly inputSignature: (input: T) => string) {}
   observe(key: string, input: T): void {
-    if (this.closed) return
+    if (this.closed || !this.accepting) return
     try {
       const signature = this.inputSignature(input)
       // Compare within one source, not just adjacent global frames. A/B/A transitions
@@ -84,5 +86,13 @@ export class NotificationProjectionSource<T, S> {
     for (const observation of this.pending) observation.baseline = true
   }
   async flush(): Promise<void> { while (this.processing) await this.processing }
-  stop(): void { this.closed = true; this.pending.length = 0 }
+  close(): Promise<void> {
+    if (this.closing) return this.closing
+    this.accepting = false
+    this.start()
+    this.closing = this.flush().finally(() => this.stop())
+    return this.closing
+  }
+  /** Immediate abort for disposal/tests; a real app quit uses close to preserve accepted observations. */
+  stop(): void { this.accepting = false; this.closed = true; this.pending.length = 0 }
 }

@@ -27,6 +27,7 @@ export class QuestionNotifications {
       for (const fact of observed.facts) {
         const session = snapshot.sessions.find(session => session.channelId === fact.scope.channelId)!
         sessions.push({ scope: fact.scope, online: fact.online, ...(session.awaitingUser !== undefined ? { awaitingUser: session.awaitingUser } : {}),
+          awaitingUserEvidence: session.awaitingUserEvidence ?? 'unknown',
           terminated: fact.retired || fact.evidence === 'stopped' })
         const collect = (blocks: ProcessBlock[], into: Map<string, NotificationQuestionFact>, entryId?: string) => {
           for (const block of blocks) {
@@ -66,5 +67,6 @@ export class QuestionNotifications {
   suspend(): void { this.stopped = true; this.source.quietNextObservation() }
   resume(): void { this.stopped = false; this.source.quietNextObservation() }
   async flush(): Promise<void> { await this.source.flush() }
+  async close(): Promise<void> { this.stopped = true; await this.source.close(); this.history.clear() }
   stop(): void { this.stopped = true; this.source.stop(); this.history.clear() }
 }

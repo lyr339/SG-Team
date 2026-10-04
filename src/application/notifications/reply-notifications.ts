@@ -46,6 +46,7 @@ export class ReplyNotifications {
     } catch { this.owner.reportHistoryGap() }
   }
   async flush(): Promise<void> { await this.source.flush() }
+  async close(): Promise<void> { this.stopped = true; await this.source.close(); this.extracted.clear() }
   suspend(): void { this.stopped = true; this.source.quietNextObservation() }
   resume(): void { this.stopped = false; this.source.quietNextObservation() }
   stop(): void { this.stopped = true; this.source.stop(); this.extracted.clear() }

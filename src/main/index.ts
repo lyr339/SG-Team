@@ -103,6 +103,8 @@ import { createMacUpdaterPort } from '../infrastructure/app-update/mac-updater-p
 import { registerAppUpdateIpc } from './register-app-update-ipc'
 import { NotificationService } from '../application/notification-service'
 import { NotificationWorkerPort } from './notification-worker-port'
+import { NotificationQuitBarrier, drainNotificationsForQuit } from './notification-quit-barrier'
+import { NotificationRuntimeJournal } from '../infrastructure/notifications/runtime-journal'
 import createNotificationWorker from './notification-worker?nodeWorker'
 import { registerNotificationIpc } from './register-notification-ipc'
 import { connectAppUpdateNotifications } from '../application/notifications/app-update-notifications'
@@ -160,6 +162,7 @@ let channelMessageRelay: ChannelMessageRelay | undefined
 let localSessionBridge: LocalSessionBridge | undefined
 let teamFailoverService: TeamFailoverService | undefined
 let notificationService: NotificationService | undefined
+let notificationRuntimeJournal: NotificationRuntimeJournal | undefined
 let disposeNotificationIpc: (() => void) | undefined
 let disposeAppUpdateNotifications: (() => void) | undefined
 let notificationRuntime: ReturnType<typeof connectSessionNotifications> | undefined
@@ -168,6 +171,7 @@ let disposeAutomationNotifications: (() => void) | undefined
 let taskNotificationSource: ReturnType<typeof connectTaskNotifications> | undefined
 let operatorMessageNotificationSource: ReturnType<typeof connectOperatorMessageNotifications> | undefined
 let teamOrchestrator: TeamOrchestrator | undefined
+let desktopDisposed = false
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
 if (!hasSingleInstanceLock) app.quit()
@@ -182,6 +186,7 @@ selectSafeStorageNamespace(app)
 app.setPath('userData', resolveUserDataDirectory(app.getPath('appData'), app.isPackaged))
 
 function createWindow(): void {
+  if (desktopDisposed) return
   // 平台分离：mac 用 hiddenInset（红绿灯融入顶栏左侧）；win 用 hidden +
   // titleBarOverlay（系统绘制最小化/最大化/关闭，占据顶栏右上约 138px，
   // 渲染层以 --window-control-safe-right 避让；颜色由渲染层主题经 IPC 同步）。
@@ -342,6 +347,13 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   // Notification history is desktop-private and never becomes a second main/MCP communication channel.
   try {
     notificationService = new NotificationService(new NotificationWorkerPort(createNotificationWorker, join(app.getPath('userData'), 'notifications.sqlite3')))
+    try {
+      notificationRuntimeJournal = new NotificationRuntimeJournal(join(app.getPath('userData'), 'notifications', 'runtime.json'))
+      if (notificationRuntimeJournal.open().historyIncomplete) notificationService.reportHistoryGap()
+    } catch {
+      notificationService.reportHistoryGap()
+      console.warn('[notifications] 上次退出记录未确认，通知历史可能不完整')
+    }
     disposeNotificationIpc = registerNotificationIpc(notificationService, () => mainWindow)
   } catch {
     // Renderer can expose unavailable notification history; launching and account services must still initialize.
@@ -993,12 +1005,11 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   })
 })
 
-app.on('before-quit', () => {
-  notificationRuntime?.dispose()
+function disposeDesktopOnce(): void {
+  if (desktopDisposed) return
+  desktopDisposed = true
   disposeBatchLaunchNotifications?.()
   disposeAutomationNotifications?.()
-  taskNotificationSource?.dispose()
-  operatorMessageNotificationSource?.dispose()
   tray?.destroy()
   tray = undefined
   void accountBrowserHostDisposeRef?.().catch(() => {})
@@ -1037,7 +1048,6 @@ app.on('before-quit', () => {
   disposeAppUpdateIpc?.()
   disposeNotificationIpc?.()
   disposeAppUpdateNotifications?.()
-  void notificationService?.close().catch(() => { console.warn('[notifications] 历史存储关闭未确认') })
   appUpdateServiceRef?.stop()
   cursorCdpKeeperRef?.stop()
   teamControlService?.dispose()
@@ -1046,6 +1056,24 @@ app.on('before-quit', () => {
   teamCollaborationRepository?.close()
   teamMemoryRepository?.close()
   taskPoolRepository?.close()
+}
+
+const notificationQuitBarrier = new NotificationQuitBarrier({
+  drain: () => drainNotificationsForQuit(notificationService!, [
+    () => notificationRuntime?.close() ?? Promise.resolve(),
+    () => taskNotificationSource?.close() ?? Promise.resolve(),
+    () => operatorMessageNotificationSource?.close() ?? Promise.resolve()
+  ], disposeDesktopOnce),
+  settled: result => {
+    try { notificationRuntimeJournal?.finish(result.confirmed, notificationService?.status().historyIncomplete ?? true) }
+    catch { console.warn('[notifications] 通知退出记录未写入') }
+    if (!result.confirmed) console.warn('[notifications] 通知落盘未确认，仍按用户请求退出')
+  },
+  resumeQuit: () => app.quit()
+})
+app.on('before-quit', event => {
+  if (!notificationService) { disposeDesktopOnce(); return }
+  notificationQuitBarrier.handle(event)
 })
 
 app.on('window-all-closed', () => {

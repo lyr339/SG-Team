@@ -3622,6 +3622,19 @@ describe('ask_question 等待用户决策', () => {
       expect(blocks[0]).toMatchObject({ kind: 'thinking', status: 'done' })
       expect(blocks[1]).toMatchObject({ kind: 'tool', toolKind: 'question', status: 'running', question: { status: 'pending' } })
       expect(service.getSnapshot().sessions[0]?.awaitingUser).toBe(true)
+      expect(service.getSnapshot().sessions[0]?.awaitingUserEvidence).toBe('process')
+      const decisionEvidence = service as unknown as { runtimeEvidence: Record<string, CursorComposerRuntimeEvidence> }
+      decisionEvidence.runtimeEvidence = { 'composer-alpha-123': { composerId: 'composer-alpha-123', state: 'unknown', detail: '', observedAt: 500_600, awaitingUser: true } }
+      expect(service.getSnapshot().sessions[0]?.awaitingUserEvidence).toBe('runtime')
+      vi.setSystemTime(504_000)
+      expect(service.getSnapshot().sessions[0]?.awaitingUserEvidence).toBe('process')
+      vi.setSystemTime(500_600)
+      // An absent bool, and a far-future observation after clock rollback, are not confirmed false evidence.
+      decisionEvidence.runtimeEvidence = { 'composer-alpha-123': { composerId: 'composer-alpha-123', state: 'unknown', detail: '', observedAt: 500_600 } }
+      expect(service.getSnapshot().sessions[0]?.awaitingUserEvidence).toBe('process')
+      decisionEvidence.runtimeEvidence = { 'composer-alpha-123': { composerId: 'composer-alpha-123', state: 'unknown', detail: '', observedAt: 900_000, awaitingUser: false } }
+      expect(service.getSnapshot().sessions[0]?.awaitingUser).toBe(true)
+      decisionEvidence.runtimeEvidence = {}
       // awaitingUser 是独立生命证据：presence 的 runtimeActiveAt 被刷新，5 分钟宽限不会把席位判死。
       expect(repository.getPresence('1')?.runtimeActiveAt).toBe(500_600)
       expect(service.findQuestion('1', 'tc-1')).toMatchObject({ toolCallId: 'tc-1', status: 'pending' })
@@ -3649,6 +3662,9 @@ describe('ask_question 等待用户决策', () => {
         question: { status: 'submitted', note: '选 A', answers: [{ questionId: 'q', selectedOptionIds: ['a'] }] }
       })
       expect(service.getSnapshot().sessions[0]?.awaitingUser).toBe(false)
+      expect(service.getSnapshot().sessions[0]?.awaitingUserEvidence).toBe('unknown')
+      decisionEvidence.runtimeEvidence = { 'composer-alpha-123': { composerId: 'composer-alpha-123', state: 'unknown', detail: '', observedAt: 500_600, awaitingUser: false } }
+      expect(service.getSnapshot().sessions[0]?.awaitingUserEvidence).toBe('runtime')
       expect(service.findQuestion('1', 'tc-1')?.status).toBe('submitted')
       expect(service.applyQuestionOutcome('1', { toolCallId: 'unknown', status: 'cancelled' })).toBe(false)
     } finally {
@@ -3661,6 +3677,26 @@ describe('ask_question 等待用户决策', () => {
 })
 
 describe('Composer 气泡数事实（名册悬停详情的会话体积）', () => {
+  it('a timer firing before the wall-clock throttle does not silently drop the owed final inspect', async () => {
+    vi.useFakeTimers(); vi.setSystemTime(1_000)
+    let clock = 1_000
+    const now = vi.spyOn(Date, 'now').mockImplementation(() => clock)
+    const active = teamSnapshot('composer-alpha-123')
+    let inspected: Record<string, CursorComposerRuntimeEvidence> = {}
+    const inspect = vi.fn(async () => inspected)
+    const service = new DesktopSessionService(new FakeBridge(), new FakeTeam(active), { readWorkspace: () => telemetry() }, undefined, { inspectComposerRuntime: inspect })
+    try {
+      service.refreshTelemetry(); await vi.advanceTimersByTimeAsync(0)
+      expect(inspect).toHaveBeenCalledOnce()
+      inspected = { 'composer-alpha-123': { composerId: 'composer-alpha-123', state: 'active', detail: '', observedAt: 1_120, bubbleCount: 413 } }
+      service.notifyComposerWriteSignal('composer-alpha-123')
+      clock = 1_119; await vi.advanceTimersByTimeAsync(120)
+      expect(inspect).toHaveBeenCalledOnce()
+      clock = 1_120; await vi.advanceTimersByTimeAsync(1)
+      expect(inspect).toHaveBeenCalledTimes(2)
+      expect(service.getSnapshot().sessions[0]?.composerBubbleCount).toBe(413)
+    } finally { service.dispose(); now.mockRestore(); vi.useRealTimers() }
+  })
   it('hook 帧与 inspect 同源写入，按观测时刻取新，随会话投影；未观测到时缺省', async () => {
     const active = teamSnapshot('composer-alpha-123')
     active.runs = [{

@@ -70,12 +70,14 @@ export class SessionLifecycleNotifications {
   private resetBaseline = false
   private epoch = 0
   private closed = false
+  private accepting = true
+  private closing?: Promise<void>
   private readonly conflicts = new Map<string, number>()
   constructor(private readonly notifications: Source, private readonly now: () => number = Date.now, private readonly newId: () => string = randomUUID) {
     this.startedAt = now()
   }
   observe(snapshot: DesktopSnapshot, team: TeamControlSnapshot): void {
-    if (this.closed || this.suspended) return
+    if (this.closed || !this.accepting || this.suspended) return
     if (snapshot.runtimeScope && (snapshot.runtimeScope.workspaceId !== team.activeWorkspaceId || snapshot.runtimeScope.runId !== team.activeRun?.id
       || snapshot.runtimeScope.teamRevision !== team.revision)) return
     try {
@@ -108,7 +110,7 @@ export class SessionLifecycleNotifications {
   }
   private registerRestart(label: string, section: 'accounts' | 'maintenance'): string | undefined {
     const key = this.activeScope?.key; const observation = key ? this.latest.get(key) : undefined
-    if (!key || !observation || this.closed || this.suspended || this.restarts.get(key)?.status === 'running') return undefined
+    if (!key || !observation || this.closed || !this.accepting || this.suspended || this.restarts.get(key)?.status === 'running') return undefined
     const restart: SessionNotificationRestart = { id: this.newId(), label: label.slice(0, 80), section, status: 'running', startedAt: this.now(),
       targets: observation.facts.filter(fact => fact.online).map(({ identity, name, scope }) => ({ identity, name, scope })) }
     this.restarts.set(key, restart)
@@ -123,7 +125,7 @@ export class SessionLifecycleNotifications {
     try { this.finishRestartInternal(id, success) } catch { this.notifications.reportHistoryGap() }
   }
   private finishRestartInternal(id: string | undefined, success: boolean): void {
-    if (!id || this.closed) return
+    if (!id || this.closed || !this.accepting) return
     const entry = [...this.restarts].find(([, restart]) => restart.id === id)
     if (!entry) return
     const [key, old] = entry; const observation = this.latest.get(key)
@@ -201,5 +203,15 @@ export class SessionLifecycleNotifications {
     }
   }
   async flush(): Promise<void> { while (this.processing) await this.processing }
-  stop(): void { ++this.epoch; this.closed = true; this.pending.clear() }
+  close(): Promise<void> {
+    if (this.closing) return this.closing
+    this.accepting = false; ++this.epoch
+    // Drain facts received before sleep as history; do not wait for another wake/source callback.
+    this.suspended = false
+    for (const queue of this.pending.values()) for (const observation of queue) observation.quietDelivery = true
+    this.start()
+    this.closing = this.flush().finally(() => this.stop())
+    return this.closing
+  }
+  stop(): void { ++this.epoch; this.accepting = false; this.closed = true; this.pending.clear() }
 }

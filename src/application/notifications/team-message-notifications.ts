@@ -23,5 +23,7 @@ export function connectOperatorMessageNotifications(messages: { subscribe(listen
       source.observe(key, { key, facts, now: Date.now() })
     } catch { owner.reportHistoryGap() }
   })
-  return { source, dispose: () => { stop(); source.stop() } }
+  let detached = false
+  const detach = () => { if (!detached) { detached = true; stop() } }
+  return { source, close: () => { detach(); return source.close() }, dispose: () => { detach(); source.stop() } }
 }

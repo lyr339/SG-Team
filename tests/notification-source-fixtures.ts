@@ -6,8 +6,8 @@ import { emptyTeamControlSnapshot, type TeamControlSnapshot } from '../src/domai
 import type { AgentSession } from '../src/domain/agent-session'
 import type { DesktopSnapshot } from '../src/shared/desktop-api'
 
-export function notificationSourceHarness() {
-  const ledger = new SqliteNotificationRepository(':memory:')
+export function notificationSourceHarness(path = ':memory:') {
+  const ledger = new SqliteNotificationRepository(path)
   const port: NotificationRepository = {
     marker: async key => ledger.marker(key), sourceState: vi.fn(async key => ledger.sourceState(key)),
     commitSource: vi.fn(async (key, expected, data, drafts, now) => ledger.commitSource(key, expected, data, drafts, now)),

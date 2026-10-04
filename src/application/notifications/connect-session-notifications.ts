@@ -25,11 +25,17 @@ export function connectSessionNotifications(input: {
   const suspend = () => { lifecycle.suspend(); questions.suspend(); replies.suspend() }
   const resume = () => { lifecycle.resume(); questions.resume(); replies.resume() } // Wait for the existing next source event, not a new network/telemetry probe.
   input.power.on('suspend', suspend); input.power.on('resume', resume)
+  let detached = false
+  const detach = (): void => {
+    if (detached) return
+    detached = true; stopTeam(); stopDesktop(); input.power.removeListener('suspend', suspend); input.power.removeListener('resume', resume)
+  }
   return {
     lifecycle,
     questions,
     replies,
     currentTeam: (): TeamControlSnapshot => team,
-    dispose: (): void => { stopTeam(); stopDesktop(); input.power.removeListener('suspend', suspend); input.power.removeListener('resume', resume); lifecycle.stop(); questions.stop(); replies.stop() }
+    close: async (): Promise<void> => { detach(); await Promise.all([lifecycle.close(), questions.close(), replies.close()]) },
+    dispose: (): void => { detach(); lifecycle.stop(); questions.stop(); replies.stop() }
   }
 }

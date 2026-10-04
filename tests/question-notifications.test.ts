@@ -31,9 +31,24 @@ describe('question source into the real private ledger', () => {
       source.observe(waitingFrame(), notificationTeam()); await source.flush()
       const clipped = notificationFrame({ sessions: [notificationSession({ awaitingUser: true })] })
       source.observe(clipped, notificationTeam()); await source.flush(); expect(h.ledger.page().summary.pending).toBe(1)
-      source.observe(notificationFrame({ sessions: [notificationSession({ awaitingUser: false })] }), notificationTeam()); await source.flush()
+      source.observe(notificationFrame({ sessions: [notificationSession({ awaitingUser: false, awaitingUserEvidence: 'unknown' })] }), notificationTeam()); await source.flush()
+      expect(h.ledger.page().summary.pending).toBe(1)
+      source.observe(notificationFrame({ sessions: [notificationSession({ awaitingUser: false, awaitingUserEvidence: 'runtime' })] }), notificationTeam()); await source.flush()
       expect(h.ledger.page().records[0]).toMatchObject({ state: 'expired', subjectState: 'pending' })
       expect(h.ledger.page().summary.pending).toBe(0)
+    } finally { source.stop(); await h.owner.close() }
+  })
+  it('cached pending blocks plus an unknown/fallback false cannot expire an already confirmed human action', async () => {
+    const h = notificationSourceHarness(), source = new QuestionNotifications(h.owner)
+    try {
+      source.observe(waitingFrame(), notificationTeam()); await source.flush()
+      const fallback = waitingFrame(); fallback.sessions = [notificationSession({ awaitingUser: false, awaitingUserEvidence: 'unknown' })]
+      source.observe(fallback, notificationTeam()); await source.flush()
+      expect(h.ledger.page().summary.pending).toBe(1)
+      fallback.sessions = [notificationSession({ awaitingUser: false, awaitingUserEvidence: 'runtime' })]
+      source.observe(fallback, notificationTeam()); await source.flush()
+      expect(h.ledger.page().summary.pending).toBe(0)
+      expect(h.ledger.page().records[0]?.subjectState).toBe('pending')
     } finally { source.stop(); await h.owner.close() }
   })
   it('a positive stop, or reusing CH with another generation, closes the old action without fabricating an answer', async () => {
