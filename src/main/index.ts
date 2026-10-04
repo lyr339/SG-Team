@@ -109,6 +109,8 @@ import { connectAppUpdateNotifications } from '../application/notifications/app-
 import { connectSessionNotifications } from '../application/notifications/connect-session-notifications'
 import { connectBatchLaunchNotifications } from '../application/notifications/batch-launch-notifications'
 import { connectAutomationNotifications } from '../application/notifications/automation-notifications'
+import { connectTaskNotifications } from '../application/notifications/task-notifications'
+import { connectOperatorMessageNotifications } from '../application/notifications/team-message-notifications'
 // electron-updater 是 CJS，`autoUpdater` 是 exports 上的惰性 getter：主进程是 ESM，命名导入会在链接期
 // 找不到该导出（cjs-module-lexer 认不出 getter），只能默认导入整个 module.exports 再取属性。
 import electronUpdater from 'electron-updater'
@@ -163,6 +165,8 @@ let disposeAppUpdateNotifications: (() => void) | undefined
 let notificationRuntime: ReturnType<typeof connectSessionNotifications> | undefined
 let disposeBatchLaunchNotifications: (() => void) | undefined
 let disposeAutomationNotifications: (() => void) | undefined
+let taskNotificationSource: ReturnType<typeof connectTaskNotifications> | undefined
+let operatorMessageNotificationSource: ReturnType<typeof connectOperatorMessageNotifications> | undefined
 let teamOrchestrator: TeamOrchestrator | undefined
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
@@ -630,6 +634,13 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
       member.binding?.agentSessionId === agentSessionId && member.runtime?.online === true))
   taskPoolService.startSweeper()
   taskPoolService.startWatcher()
+  if (notificationService) {
+    try {
+      const getTeam = () => notificationRuntime?.currentTeam() ?? teamControlService!.getSnapshot()
+      taskNotificationSource = connectTaskNotifications(taskPoolService, getTeam, notificationService)
+      operatorMessageNotificationSource = connectOperatorMessageNotifications(teamCollaborationService, getTeam, notificationService)
+    } catch { notificationService.reportHistoryGap() }
+  }
   const orchestrationError = (error: unknown): void => {
     process.stderr.write(`[team-orchestrator] ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`)
   }
@@ -986,6 +997,8 @@ app.on('before-quit', () => {
   notificationRuntime?.dispose()
   disposeBatchLaunchNotifications?.()
   disposeAutomationNotifications?.()
+  taskNotificationSource?.dispose()
+  operatorMessageNotificationSource?.dispose()
   tray?.destroy()
   tray = undefined
   void accountBrowserHostDisposeRef?.().catch(() => {})

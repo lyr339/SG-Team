@@ -56,6 +56,19 @@ describe('collaboration dialog lifecycle and truthful states', () => {
     expect(document.querySelector('.collaboration-wire')?.getAttribute('data-kind')).toBe('history')
     expect(document.querySelector('.collaboration-wire')?.getAttribute('data-motion')).toBe('history')
   })
+  it('explicit message navigation pins that real message; a later snapshot does not switch it to the latest', async () => {
+    const f = facts(), original = f.messages[0]!
+    const human: TeamMessage = { ...original, id: 'to-human', content: '明确定位的操作员消息', recipient: { type: 'operator' } }
+    const newer: TeamMessage = { ...original, id: 'newer', content: '更新的无关消息', createdAt: original.createdAt + 1 }
+    f.messages.push(human, newer)
+    await act(async () => root.render(<GroupCollaborationDialog facts={f} focusMessageId={human.id} onClose={vi.fn()} onOpenMember={() => true} />))
+    expect(document.querySelector('.collaboration-detail__message')?.textContent).toContain(human.content)
+    const later = { ...f, messages: [...f.messages, { ...newer, id: 'latest', content: '继续到来的消息' }] }
+    await act(async () => root.render(<GroupCollaborationDialog facts={later} focusMessageId={human.id} onClose={vi.fn()} onOpenMember={() => true} />))
+    expect(document.querySelector('.collaboration-detail__message')?.textContent).toContain(human.content)
+    expect(document.querySelector('.collaboration-detail__message')?.getAttribute('data-notification-key')).toBe('operator-message:to-human')
+    expect(document.querySelector('.collaboration-detail')!.compareDocumentPosition(document.querySelector('.collaboration-canvas')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
   it('node selection is local until the explicit open-session action and uses slot identity', async () => {
     const f = facts(), actions = await render(f)
     const node = document.querySelector<HTMLButtonElement>('.collaboration-node')!

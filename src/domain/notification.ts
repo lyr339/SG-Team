@@ -1,4 +1,7 @@
 export const NOTIFICATION_CATEGORIES = ['sessions', 'run', 'team', 'accounts', 'automation', 'processing', 'maintenance', 'storage', 'updates', 'usage'] as const
+export const NOTIFICATION_SOURCE_BATCH_LIMIT = 100
+/** Compact, bounded identity checkpoints only; conversation bodies are not source state. */
+export const NOTIFICATION_SOURCE_PAYLOAD_LIMIT = 2 * 1024 * 1024
 export type NotificationCategory = typeof NOTIFICATION_CATEGORIES[number]
 export type NotificationAttention = 'activity' | 'notice' | 'action'
 export type NotificationTone = 'info' | 'success' | 'warning' | 'error'
@@ -23,7 +26,8 @@ export interface NotificationScope {
 export type NotificationTarget =
   | { kind: 'settings'; section: NotificationSettingsSection }
   | { kind: 'run'; runId?: string; groupId?: string }
-  | { kind: 'session'; scope: NotificationScope; entryId?: string; toolCallId?: string }
+  | { kind: 'collaboration'; runId: string; groupId: string; messageId?: string }
+  | { kind: 'session'; scope: NotificationScope; entryId?: string; toolCallId?: string; blockId?: string }
 
 export interface NotificationDraft {
   /** Semantic identity (operation, session incident, or source event), never the display title. */
@@ -32,6 +36,7 @@ export interface NotificationDraft {
   source: string
   eventId?: string
   eventType?: string
+  subjectState?: string
   title: string
   detail?: string
   tone: NotificationTone
@@ -47,10 +52,12 @@ export interface NotificationDraft {
   renewAttention?: boolean
   /** Live delivery only; never persisted or replayed when reopening the center. */
   announce?: boolean
+  /** Metadata repair must not resurrect a result the human already cleared. */
+  respectCleared?: boolean
   origin?: { module: 'sessions' | 'run' | 'account'; section?: NotificationSettingsSection; sessionId?: string }
 }
 
-export interface NotificationRecord extends Omit<NotificationDraft, 'renewAttention' | 'announce'> {
+export interface NotificationRecord extends Omit<NotificationDraft, 'renewAttention' | 'announce' | 'respectCleared'> {
   id: string
   createdAt: number
   updatedAt: number
@@ -74,6 +81,9 @@ export interface NotificationQuery {
   filter?: 'all' | 'unread' | 'pending'
   workspaceId?: string
   category?: NotificationCategory
+  sessionId?: string
+  toolCallId?: string
+  entryId?: string
   limit?: number
   cursor?: { revision: number; offset: number }
 }
@@ -162,6 +172,8 @@ export function validateNotificationDraft(input: NotificationDraft): void {
   if (!input.title.trim() || input.title.length > 160 || input.source.length > 120 || (input.detail?.length ?? 0) > 4_000) throw new Error('通知内容无效或过长')
   if (input.eventId !== undefined && (typeof input.eventId !== 'string' || input.eventId.length > 300)) throw new Error('通知事件身份无效')
   if (input.eventType !== undefined && (typeof input.eventType !== 'string' || !/^[a-z][a-z0-9_.-]{0,60}$/.test(input.eventType))) throw new Error('通知事件类型无效')
+  if (input.subjectState !== undefined && (typeof input.subjectState !== 'string' || input.subjectState.length > 80)) throw new Error('通知来源状态无效')
+  if (input.respectCleared !== undefined && typeof input.respectCleared !== 'boolean') throw new Error('通知清理策略无效')
   if (!['info', 'success', 'warning', 'error'].includes(input.tone) || !['activity', 'notice', 'action'].includes(input.attention)
     || !['active', 'resolved', 'expired'].includes(input.state)) throw new Error('通知状态无效')
   if (!Number.isSafeInteger(input.sourceRevision) || input.sourceRevision < 0 || !Number.isSafeInteger(input.occurredAt) || input.occurredAt < 0 || input.occurredAt > 8_640_000_000_000_000) throw new Error('通知事件版本或时间无效')
@@ -176,9 +188,10 @@ export function validateNotificationDraft(input: NotificationDraft): void {
       if (!['stats', 'accounts', 'import', 'automation', 'aozai', 'maintenance', 'cleanup', 'update'].includes(target.section)) throw new Error('通知目标无效')
     } else if (target.kind === 'session') {
       validateScope(target.scope)
-      for (const value of [target.entryId, target.toolCallId]) if (value !== undefined && (typeof value !== 'string' || value.length > 300)) throw new Error('通知目标无效')
-    } else if (target.kind === 'run') {
+      for (const value of [target.entryId, target.toolCallId, target.blockId]) if (value !== undefined && (typeof value !== 'string' || value.length > 300)) throw new Error('通知目标无效')
+    } else if (target.kind === 'run' || target.kind === 'collaboration') {
       for (const value of [target.runId, target.groupId]) if (value !== undefined && (typeof value !== 'string' || value.length > 300)) throw new Error('通知目标无效')
+      if (target.kind === 'collaboration' && (!target.runId || !target.groupId || target.messageId !== undefined && (typeof target.messageId !== 'string' || target.messageId.length > 300))) throw new Error('协作通知目标无效')
     } else throw new Error('通知目标无效')
   }
 }
@@ -206,8 +219,9 @@ export function notificationSafeText(value: string): string {
 export function notificationContentSignature(draft: NotificationDraft): string {
   const scope = (value: NotificationScope): Array<[string, string]> => Object.entries(value).filter((entry): entry is [string, string] => entry[1] !== undefined).sort(([a], [b]) => a.localeCompare(b))
   const reference = draft.target
-  const target = reference?.kind === 'session' ? { kind: reference.kind, scope: scope(reference.scope), entryId: reference.entryId, toolCallId: reference.toolCallId }
+  const target = reference?.kind === 'session' ? { kind: reference.kind, scope: scope(reference.scope), entryId: reference.entryId, toolCallId: reference.toolCallId, blockId: reference.blockId }
     : reference?.kind === 'settings' ? { kind: reference.kind, section: reference.section }
-      : reference ? { kind: reference.kind, runId: reference.runId, groupId: reference.groupId } : undefined
-  return JSON.stringify([draft.category, draft.source, draft.eventId, draft.eventType, draft.title, draft.detail ?? '', draft.tone, draft.attention, draft.state, draft.timeBasis, scope(draft.scope), target, draft.origin])
+      : reference?.kind === 'collaboration' ? { kind: reference.kind, runId: reference.runId, groupId: reference.groupId, messageId: reference.messageId }
+        : reference ? { kind: reference.kind, runId: reference.runId, groupId: reference.groupId } : undefined
+  return JSON.stringify([draft.category, draft.source, draft.eventId, draft.eventType, draft.subjectState, draft.title, draft.detail ?? '', draft.tone, draft.attention, draft.state, draft.timeBasis, scope(draft.scope), target, draft.origin])
 }

@@ -72,13 +72,31 @@ try {
   const page = await rpc({ kind: 'page' })
   assert.equal(page.summary.total, 3); assert.equal(page.summary.unread, 2)
   assert.deepEqual(await rpc({ kind: 'sourceState', key: 'smoke:source' }), { revision: 1, data: { version: 1, incident: 'test-incident' } })
+  const scope = { workspaceId: 'test-only', sessionId: 'test-session', channelId: '1', generation: '0', composerId: 'test-composer' }
+  const reply = { ...draft, key: 'smoke:exact-reply', category: 'sessions', eventType: 'session.reply', subjectState: 'complete', scope,
+    target: { kind: 'session', scope, entryId: 'reply:test' } }
+  const replyResult = await rpc({ kind: 'put', draft: reply, now: 700 })
+  await rpc({ kind: 'put', draft: { ...reply, key: 'smoke:question', eventType: 'question.state', subjectState: 'pending', attention: 'action', state: 'active',
+    target: { kind: 'session', scope, entryId: 'reply:test', blockId: 'test-block', toolCallId: 'test-tool' } }, now: 710 })
+  assert.equal((await rpc({ kind: 'page', query: { sessionId: 'test-session', toolCallId: 'test-tool' } })).records[0].key, 'smoke:question')
+  assert.equal((await rpc({ kind: 'page', query: { sessionId: 'wrong-session', entryId: 'reply:test' } })).records.length, 0)
+  await rpc({ kind: 'read', id: replyResult.record.id, revision: replyResult.record.revision, now: 720 })
+  await rpc({ kind: 'clearRead', query: { key: reply.key }, now: 730 })
+  assert.equal((await rpc({ kind: 'put', draft: { ...reply, sourceRevision: 2, respectCleared: true,
+    target: { kind: 'session', scope, entryId: 'reply:canonical' } }, now: 740 })).changed, false)
+  assert.equal((await rpc({ kind: 'marker', key: reply.key })).cleared, true)
+  assert.equal((await rpc({ kind: 'page', query: { key: reply.key } })).summary.total, 0)
+  const largeIdentities = { version: 1, identities: Array.from({ length: 2_000 }, (_, index) => ({ id: `test-${index}`, aliases: Array.from({ length: 5 }, () => 'f'.repeat(64)) })) }
+  const large = await rpc({ kind: 'commitSource', key: 'smoke:large-identities', expectedRevision: 0, data: largeIdentities, drafts: [], now: 750 })
+  assert.equal(large.applied, true)
   database = new DatabaseSync(databasePath)
   assert.equal(database.prepare('SELECT value FROM unrelated_fixture').get().value, 'preserve')
   assert.equal(database.prepare('PRAGMA user_version').get().user_version, 9)
   database.close(); database = undefined
   await rpc({ kind: 'close' }); await worker.terminate(); worker = undefined
   console.log(JSON.stringify({ workerEntry: entry, runtime: process.versions.electron ? 'Electron' : 'Node', persistedAcrossRestart: true,
-    noDuplicateReplay: true, readStateRestored: true, sourceCheckpointRestored: true, staleSourceRejected: true, unrelatedSchemaPreserved: true, mainTimerMs: Math.round(mainTimerMs), isolatedProfile: true }, null, 2))
+    noDuplicateReplay: true, readStateRestored: true, sourceCheckpointRestored: true, staleSourceRejected: true, exactSourceQueries: true,
+    clearedMetadataNotResurrected: true, boundedLargeIdentityCheckpoint: true, unrelatedSchemaPreserved: true, mainTimerMs: Math.round(mainTimerMs), isolatedProfile: true }, null, 2))
 } finally {
   database?.close()
   for (const wait of waits.values()) { clearTimeout(wait.timer); wait.reject(Error('验收结束')) }

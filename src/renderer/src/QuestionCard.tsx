@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import type { ProcessQuestion } from '../../domain/conversation-entry'
 import {
   CURSOR_QUESTION_FREEFORM_OPTION_ID,
@@ -7,9 +7,12 @@ import {
   type CursorQuestionDraft
 } from '../../domain/cursor-question'
 import type { CursorQuestionActionResult } from '../../shared/desktop-api'
+import type { NotificationScope } from '../../domain/notification'
+import { useQuestionNotificationRead } from './notifications/use-question-notification-read'
 
 /** 会话页对 ask_question 的两个动作；由 App 绑定到当前通道的 desktop API。 */
 export interface QuestionActions {
+  notificationScope?: NotificationScope
   answer(toolCallId: string, draft: CursorQuestionDraft & { note?: string }): Promise<CursorQuestionActionResult>
   skip(toolCallId: string): Promise<CursorQuestionActionResult>
 }
@@ -40,6 +43,11 @@ function toggleSelection(current: string[], optionId: string, allowMultiple: boo
  * 已回答 / 已跳过时展示最终答案。状态与 Cursor 面板双向一致（同一份气泡数据）。
  */
 export function QuestionCard({ question, actions, readOnly = false }: QuestionCardProps): React.JSX.Element {
+  const resultRef = useRef<HTMLDivElement>(null)
+  useQuestionNotificationRead(resultRef, actions?.notificationScope, question.toolCallId, question.status)
+  const notificationIdentity = { 'data-notification-session': actions?.notificationScope?.sessionId,
+    'data-notification-generation': actions?.notificationScope?.generation, 'data-notification-composer': actions?.notificationScope?.composerId,
+    'data-notification-binding': actions?.notificationScope?.bindingGeneration, 'data-question-status': question.status }
   const [selections, setSelections] = useState<Record<string, string[]>>({})
   const [freeformTexts, setFreeformTexts] = useState<Record<string, string>>({})
   const [note, setNote] = useState('')
@@ -69,7 +77,7 @@ export function QuestionCard({ question, actions, readOnly = false }: QuestionCa
   if (question.status !== 'pending') {
     const cancelled = question.status === 'cancelled'
     return (
-      <div className={`cursor-question is-${question.status}`} data-tool-call-id={question.toolCallId}>
+      <div ref={resultRef} className={`cursor-question is-${question.status}`} data-tool-call-id={question.toolCallId} {...notificationIdentity}>
         {cancelled ? (
           <p className="cursor-question__resolution">
             {question.skipReason === 'timeout' ? '提问已超时，未收到回答' : '已跳过这组提问'}
@@ -97,7 +105,7 @@ export function QuestionCard({ question, actions, readOnly = false }: QuestionCa
   }
 
   return (
-    <div className="cursor-question is-pending" data-tool-call-id={question.toolCallId} role="group" aria-label={question.title || 'Agent 提问'}>
+    <div ref={resultRef} className="cursor-question is-pending" data-tool-call-id={question.toolCallId} {...notificationIdentity} role="group" aria-label={question.title || 'Agent 提问'}>
       {question.questions.map((item, index) => {
         const chosen = selections[item.id] ?? []
         const freeformChosen = chosen.includes(CURSOR_QUESTION_FREEFORM_OPTION_ID)

@@ -50,4 +50,22 @@ describe('exact visible source result acknowledgements', () => {
     await act(async () => push({ change: { changed: true, record, summary: page().summary }, health: 'ready', historyIncomplete: false }))
     expect(api.readNotification).toHaveBeenCalledWith({ id: 'n1', revision: 1 })
   })
+  it('reads a source inside its own foreground dialog but never content clipped under another modal', async () => {
+    await act(async () => root.render(<section role="dialog" aria-modal="true"><Result /></section>))
+    expect(api.readNotification).toHaveBeenCalledOnce()
+    await act(async () => root.render(null)); api.readNotification.mockClear()
+    const overlay = document.createElement('section'); overlay.setAttribute('role', 'dialog'); overlay.setAttribute('aria-modal', 'true'); document.body.append(overlay)
+    try {
+      await act(async () => root.render(<Result />)); expect(api.readNotification).not.toHaveBeenCalled()
+    } finally { overlay.remove() }
+  })
+  it('a scroll parent clipping almost all of the source content does not count as reading', async () => {
+    const bounds = vi.mocked(HTMLElement.prototype.getBoundingClientRect)
+    bounds.mockImplementation(function (this: HTMLElement) {
+      const top = this.classList.contains('clip') ? 165 : 100
+      return { width: 300, height: 70, top, bottom: top + 70, left: 10, right: 310, x: 10, y: top, toJSON: () => ({}) }
+    })
+    await act(async () => root.render(<div className="clip" style={{ overflow: 'auto' }}><Result /></div>))
+    expect(api.readNotification).not.toHaveBeenCalled()
+  })
 })

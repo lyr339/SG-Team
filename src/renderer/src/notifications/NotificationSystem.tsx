@@ -65,7 +65,8 @@ function NotificationEntry({ store, workspaceId, onNavigate, onAvailable, onSnoo
     void (async () => {
       try {
         if (toastRecord.target && await navigationRef.current(toastRecord.target, toastRecord.scope)) {
-          if (!groupedToast.current) await store.read(toastRecord).catch(() => {})
+          // Navigating to a route is not proof the specific result was rendered.
+          // Source visibility hooks or explicit center reading own the human receipt.
           if (epoch === toastEpoch.current) close(false)
         } else if (epoch === toastEpoch.current) {
           setFocusRecord(groupedToast.current ? undefined : toastRecord)

@@ -4,10 +4,19 @@ import { NoticeIcon } from './NotificationCenter'
 import { notificationTargetLabel } from './notification-view'
 import type { NotificationStore, ToastCandidate } from './notification-store'
 import { notificationIsUnread, type NotificationPush, type NotificationRecord } from '../../../domain/notification'
+import { notificationElementVisible } from './notification-visible'
+import { notificationSessionScopeMatches } from './notification-session-scope'
 
 interface Props { store: NotificationStore; blocked: boolean; onOpen: (record: NotificationRecord, grouped?: boolean) => void; onSnoozeUpdate?: (record: NotificationRecord) => Promise<void> }
 function sourceResultVisible(record: NotificationRecord): boolean {
   if (!document.hasFocus() || !record.origin) return false
+  if (record.eventType === 'question.state' && record.target?.kind === 'session') {
+    const toolCallId = record.target.toolCallId
+    return [...document.querySelectorAll<HTMLElement>('[data-tool-call-id][data-notification-session]')].some(element =>
+      element.dataset.toolCallId === toolCallId && element.dataset.questionStatus === record.subjectState
+      && notificationSessionScopeMatches(record.scope, { sessionId: element.dataset.notificationSession, generation: element.dataset.notificationGeneration,
+        composerId: element.dataset.notificationComposer, bindingGeneration: element.dataset.notificationBinding, channelId: record.scope.channelId }) && notificationElementVisible(element))
+  }
   // Only suppress when the exact source result is visible; selecting a session alone is not evidence of reading its latest reply.
   const page = record.origin.module === 'account' ? `account:${record.origin.section ?? ''}` : record.origin.module
   const sections = [...document.querySelectorAll<HTMLElement>('[data-notification-page]')].filter(element => element.dataset.notificationPage === page
@@ -17,8 +26,7 @@ function sourceResultVisible(record: NotificationRecord): boolean {
     .find(element => element.dataset.notificationKey === record.key && element.dataset.notificationEvent === record.eventId)
   if (!result) return false
   if (result.dataset.notificationKey !== record.key || result.dataset.notificationEvent !== record.eventId) return false
-  const rect = result.getBoundingClientRect()
-  return rect.width > 0 && Math.min(rect.bottom, innerHeight) - Math.max(rect.top, 0) >= Math.min(rect.height, 48)
+  return notificationElementVisible(result)
 }
 
 export function NotificationToast({ store, blocked, onOpen, onSnoozeUpdate }: Props): React.JSX.Element | null {

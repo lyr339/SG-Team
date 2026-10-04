@@ -944,7 +944,7 @@ export function App(): React.JSX.Element {
   const sessionGroupContext = useMemo(() => groupContextView(teamControl, workspaceChannelId, taskPool, collaboration),
     [teamControl, workspaceChannelId, taskPool, collaboration])
   const communicationSummaries = useMemo(() => groupCommunicationSummaries(teamControl, collaboration), [teamControl, collaboration])
-  const [collaborationTarget, setCollaborationTarget] = useState<{ runId: string; groupId: string }>()
+  const [collaborationTarget, setCollaborationTarget] = useState<{ runId: string; groupId: string; messageId?: string }>()
   const openCollaboration = useCallback((groupId: string): void => {
     const run = teamControl.activeRun
     if (!run || activeRunRef.current.id !== run.id || !teamControl.groups.some(view => view.group.id === groupId && view.group.runId === run.id)) return
@@ -974,11 +974,13 @@ export function App(): React.JSX.Element {
     setComposerDrafts((current) => ({ ...current, [workspaceChannelId]: value }))
   }, [workspaceChannelId])
   const workspaceQuestionActions = useMemo((): QuestionActions => ({
+    notificationScope: { channelId: workspaceChannelId, sessionId: selectedSession?.id, generation: String(selectedSession?.generation ?? 0),
+      composerId: selectedSession?.composerId, bindingGeneration: selectedMember?.binding?.generation },
     answer: (toolCallId, draft) => window.sgDesktop.answerCursorQuestion({
       channelId: workspaceChannelId, toolCallId, ...draft
     }),
     skip: (toolCallId) => window.sgDesktop.skipCursorQuestion({ channelId: workspaceChannelId, toolCallId })
-  }), [workspaceChannelId])
+  }), [workspaceChannelId, selectedSession?.id, selectedSession?.generation, selectedSession?.composerId, selectedMember?.binding?.generation])
   const handleWorkspaceSend = useCallback(async (text: string, attachments?: MessageAttachment[]): Promise<void> => {
     if (!workspaceChannelId) return
     await window.sgDesktop.sendMessage({ channelId: workspaceChannelId, text, attachments })
@@ -1067,15 +1069,27 @@ export function App(): React.JSX.Element {
       window.location.hash = `#account:${target.section}`; changeModule('account'); return true
     }
     if (target.kind === 'run') { setFocusGroupId(target.groupId); changeModule('run'); return true }
+    if (target.kind === 'collaboration') {
+      if (!target.messageId) { openCollaboration(target.groupId); return true }
+      const snapshot = await window.sgDesktop.getTeamCollaborationSnapshot()
+      const message = snapshot.messages[target.messageId]
+      if (!notificationTargetAvailable(target, notificationContext.current.sessions, notificationContext.current.team)
+        || snapshot.runId !== target.runId || !message || message.runId !== target.runId || message.groupId !== target.groupId) return false
+      const latestTeam = notificationContext.current.team
+      const group = latestTeam.groups.find(view => view.group.id === target.groupId && view.group.runId === target.runId)!
+      if (!collaborationMapFacts(group, latestTeam.activeRun!, snapshot).messages.some(row => row.id === target.messageId)) return false
+      acceptCollaboration(snapshot)
+      setCollaborationTarget({ runId: target.runId, groupId: target.groupId, messageId: target.messageId }); return true
+    }
     changeModule('sessions'); selectSession(target.scope.channelId!)
-    if (target.entryId) {
+    if (target.entryId || target.blockId) {
       await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
       const latest = notificationContext.current
       if (!notificationTargetAvailable(target, latest.sessions, latest.team)) return false
-      return requestReveal({ entryId: target.entryId })
+      return requestReveal({ ...(target.entryId ? { entryId: target.entryId } : {}), ...(target.blockId ? { blockId: target.blockId } : {}) })
     }
     return true
-  }, [changeModule, selectSession])
+  }, [changeModule, selectSession, openCollaboration, acceptCollaboration])
 
   const openMembershipTransfer = useCallback(async (slotId: string): Promise<void> => {
     setHandoffBusy(true)
@@ -1661,7 +1675,7 @@ export function App(): React.JSX.Element {
         />
       )}
     </DesktopShell>
-    {collaborationFacts ? <GroupCollaborationDialog key={collaborationFacts.scopeKey} facts={collaborationFacts}
+    {collaborationFacts ? <GroupCollaborationDialog key={`${collaborationFacts.scopeKey}:${collaborationTarget?.messageId ?? ''}`} facts={collaborationFacts} focusMessageId={collaborationTarget?.messageId}
       workspaceName={teamControl.workspaces.find(workspace => workspace.id === teamControl.activeRun?.workspaceId)?.name}
       onClose={closeCollaboration} onOpenMember={openCollaborationMember} /> : null}
     {groupComposer ? (

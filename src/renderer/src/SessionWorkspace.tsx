@@ -20,6 +20,7 @@ import { suggestedActionsFromText } from './process-turn-view'
 import { partitionTimelineEntries, projectTurnTimeline, type TurnTimelineItem } from './timeline-view'
 import { useBottomFollow } from './use-bottom-follow'
 import { revealAfterPaint, subscribeReveal } from './inspector/reveal-bus'
+import { useReplyNotificationRead } from './notifications/use-reply-notification-read'
 
 interface SessionWorkspaceProps {
   session: AgentSession
@@ -270,6 +271,8 @@ export function SessionWorkspace({
     `${session.id}:${session.composerId ?? ''}`,
     `${timelineEntries.length}:${lastEntryKey}:${liveProcessKey}:${liveResponseKey}:${timelineItems.length}`
   )
+  useReplyNotificationRead(follow.viewportRef, { sessionId: session.id, channelId: session.channelId, generation: String(session.generation),
+    composerId: session.composerId, bindingGeneration: questionActions?.notificationScope?.bindingGeneration }, timelineEntries)
   const canSend = (session.online || queuedTransport) && !submitting
   // 独立席位：solo 角色模板的 roleTemplateKey 流经 AgentSession（团队席为
   // lead/frontend 等真实模板键）。措辞分支用它，避免把 solo 会话表述成团队协作一环。
@@ -560,8 +563,10 @@ export function SessionWorkspace({
                 questionActions={questionActions}
               />
             ) : null}
-            <TurnResponseText turnKey={continuation ? `${turnKey}:continuation` : turnKey} live={response} reply={reply} />
-            {reply && !reply.text ? (reply.status === 'streaming' ? '正在生成…' : '（空）') : null}
+            <div data-notification-reply={reply?.id}>
+              <TurnResponseText turnKey={continuation ? `${turnKey}:continuation` : turnKey} live={response} reply={reply} />
+              {reply && !reply.text ? (reply.status === 'streaming' ? '正在生成…' : '（空）') : null}
+            </div>
             {reply ? renderAttachments(reply) : null}
             {reply?.status === 'streaming' ? (
               <span className="typing-indicator"><i /><i /><i /></span>

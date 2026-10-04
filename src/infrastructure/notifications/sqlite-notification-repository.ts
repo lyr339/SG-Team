@@ -3,7 +3,7 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import type { NotificationChange, NotificationDraft, NotificationMarker, NotificationPage, NotificationPreferences, NotificationQuery, NotificationRecord, NotificationSummary, NotificationSourceResult, NotificationSourceState } from '../../domain/notification'
-import { normalizeNotificationPreferences, notificationContentSignature, notificationIsPending, notificationSafeText, NotificationActionError, validateNotificationDraft } from '../../domain/notification'
+import { normalizeNotificationPreferences, notificationContentSignature, notificationIsPending, notificationSafeText, NotificationActionError, validateNotificationDraft, NOTIFICATION_SOURCE_BATCH_LIMIT, NOTIFICATION_SOURCE_PAYLOAD_LIMIT } from '../../domain/notification'
 
 type StoredRow = { payload: string }
 function decodeRecord(payload: string): NotificationRecord {
@@ -67,6 +67,9 @@ export class SqliteNotificationRepository {
   private where(query: NotificationQuery, filter = query.filter): { sql: string; params: Array<string | number> } {
     const clauses = ['archived_at IS NULL']; const params: Array<string | number> = []
     if (query.key) { clauses.push('semantic_key=?'); params.push(query.key) }
+    if (query.sessionId) { clauses.push("json_extract(payload,'$.scope.sessionId')=?"); params.push(query.sessionId) }
+    if (query.toolCallId) { clauses.push("json_extract(payload,'$.target.toolCallId')=?"); params.push(query.toolCallId) }
+    if (query.entryId) { clauses.push("json_extract(payload,'$.target.entryId')=?"); params.push(query.entryId) }
     if (query.workspaceId) { clauses.push('(workspace_id=? OR workspace_id IS NULL)'); params.push(query.workspaceId) }
     if (query.category) { clauses.push('category=?'); params.push(query.category) }
     if (filter === 'unread') clauses.push("attention<>'activity' AND read_revision<attention_revision")
@@ -117,13 +120,18 @@ export class SqliteNotificationRepository {
       if ((!old && tombstone && draft.sourceRevision <= tombstone.source_revision) || (old && draft.sourceRevision <= old.sourceRevision)) {
         return { changed: false, record: old, summary: this.summary() }
       }
+      if (!old && tombstone && draft.respectCleared) {
+        this.db.prepare('UPDATE desktop_notification_tombstones SET source_revision=?,content_signature=? WHERE semantic_key=?')
+          .run(draft.sourceRevision, notificationContentSignature(draft), draft.key)
+        return { changed: false, summary: this.summary() }
+      }
       if (old && notificationContentSignature(old) === notificationContentSignature(draft)) {
         old.sourceRevision = draft.sourceRevision
         this.save(old)
         return { changed: false, record: old, summary: this.summary() }
       }
       const revision = this.nextRevision()
-      const { renewAttention, announce: _announce, ...content } = draft
+      const { renewAttention, announce: _announce, respectCleared: _respectCleared, ...content } = draft
       const escalated = old && (old.attention === 'activity' && draft.attention !== 'activity'
         || draft.attention === 'action' && draft.state === 'active' && !notificationIsPending(old))
       const attentionRevision = draft.attention === 'activity' ? 0 : !old || renewAttention || escalated ? revision : old.attentionRevision
@@ -143,9 +151,9 @@ export class SqliteNotificationRepository {
     return { revision: row.revision, data: JSON.parse(row.payload) as unknown }
   }
   commitSource(key: string, expectedRevision: number, data: unknown, drafts: NotificationDraft[], now: number): NotificationSourceResult {
-    if (!key || key.length > 300 || !Number.isSafeInteger(expectedRevision) || expectedRevision < 0 || drafts.length > 100) throw new Error('通知来源提交无效')
+    if (!key || key.length > 300 || !Number.isSafeInteger(expectedRevision) || expectedRevision < 0 || drafts.length > NOTIFICATION_SOURCE_BATCH_LIMIT) throw new Error('通知来源提交无效')
     const payload = JSON.stringify(data)
-    if (!payload || payload.length > 200_000) throw new Error('通知来源状态过大或无效')
+    if (!payload || Buffer.byteLength(payload, 'utf8') > NOTIFICATION_SOURCE_PAYLOAD_LIMIT) throw new Error('通知来源状态过大或无效')
     for (const draft of drafts) validateNotificationDraft(draft)
     return this.transaction(() => {
       const source = this.sourceState(key)

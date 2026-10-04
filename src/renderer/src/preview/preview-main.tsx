@@ -4,6 +4,7 @@
  */
 import { StrictMode } from 'react'
 import { createNotificationPreview } from './notification-preview'
+import { reduceOperatorMessages } from '../../../domain/team-message-notification'
 import { createRoot } from 'react-dom/client'
 import type { AccountAutomationRun } from '../../../domain/account-automation'
 import { ACCOUNT_AUTOMATION_STEPS } from '../../../domain/account-automation'
@@ -1161,6 +1162,20 @@ function updatePreviewGroup(groupId: string, update: (view: typeof state.team.gr
 }
 
 const notificationPreview = createNotificationPreview()
+if (previewParameters.get('notifications') === 'human' && state.team.activeRun && state.team.groups[0]) {
+  const run = state.team.activeRun, group = state.team.groups[0], sender = group.members[0]!
+  const message: TeamMessage = { id: 'preview:operator-message', runId: run.id, groupId: group.group.id, threadId: 'preview:operator-thread', clientMessageId: 'preview:operator-message',
+    sender: { type: 'agent', slotId: sender.slot.id }, recipient: { type: 'operator' }, kind: 'question', createdAt: previewNow - 12_000,
+    content: '接口边界检查已经完成。请确认下一步优先处理 Windows 兼容，还是继续梳理旧版本的恢复路径？\n\n此消息只发给你，阅读不会改写成员间的消息回执。',
+    receipt: { notificationState: 'not_required', notificationDetail: '', updatedAt: previewNow - 12_000 } }
+  previewCollaboration.messages[message.id] = message; previewCollaboration.messageOrder.push(message.id)
+  const unrelated = { ...message, id: 'preview:operator-latest', clientMessageId: 'preview:operator-latest', kind: 'status' as const, createdAt: previewNow,
+    content: '这是一条晚到的普通状态记录，不应该替换你正在看的原消息。' }
+  previewCollaboration.messages[unrelated.id] = unrelated; previewCollaboration.messageOrder.push(unrelated.id)
+  const projected = reduceOperatorMessages(undefined, { key: 'preview:operator-source', now: previewNow, facts: [{ id: message.id, kind: message.kind, at: message.createdAt,
+    sender: sender.role.name, subject: '确认后续方向', scope: { workspaceId: run.workspaceId, runId: run.id, groupId: group.group.id } }] }, true, 1)
+  projected.drafts.forEach(notificationPreview.offer)
+}
 notificationPreview.observeUpdate(previewUpdateStatus())
 if (automationSceneRun?.operationId) {
   const draft = automationNotification(automationSceneRun, false, previewNow)

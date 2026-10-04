@@ -25,6 +25,9 @@ function query(value: unknown): NotificationQuery {
   const cursor = input.cursor === undefined ? undefined : object(input.cursor)
   return {
     ...(input.key !== undefined ? { key: id(input.key) } : {}),
+    ...(input.sessionId !== undefined ? { sessionId: id(input.sessionId) } : {}),
+    ...(input.toolCallId !== undefined ? { toolCallId: id(input.toolCallId) } : {}),
+    ...(input.entryId !== undefined ? { entryId: id(input.entryId) } : {}),
     ...(input.filter ? { filter: input.filter as NotificationQuery['filter'] } : {}),
     ...(input.category ? { category: input.category as NotificationCategory } : {}),
     ...(input.workspaceId !== undefined ? { workspaceId: id(input.workspaceId) } : {}),
