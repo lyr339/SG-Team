@@ -23,6 +23,18 @@ if (document.documentElement) {
 }
 
 const api: SgDesktopApi = {
+  getNotificationPage: input => ipcRenderer.invoke(IPC.notificationPage, input),
+  readNotification: input => ipcRenderer.invoke(IPC.notificationRead, input),
+  readAllNotifications: input => ipcRenderer.invoke(IPC.notificationReadAll, input),
+  archiveNotification: id => ipcRenderer.invoke(IPC.notificationArchive, id),
+  clearReadNotifications: input => ipcRenderer.invoke(IPC.notificationClearRead, input),
+  getNotificationPreferences: () => ipcRenderer.invoke(IPC.notificationPreferences),
+  saveNotificationPreferences: input => ipcRenderer.invoke(IPC.notificationSavePreferences, input),
+  onNotificationChanged: listener => {
+    const wrapped = (_event: Electron.IpcRendererEvent, payload: Parameters<typeof listener>[0]): void => listener(payload)
+    ipcRenderer.on(IPC.notificationChanged, wrapped)
+    return () => ipcRenderer.off(IPC.notificationChanged, wrapped)
+  },
   listCursorAccounts: () => ipcRenderer.invoke(IPC.cursorAccountsList),
   saveCursorAccount: (input) => ipcRenderer.invoke(IPC.cursorAccountsSave, input),
   saveCursorAccountCard: (input) => ipcRenderer.invoke(IPC.cursorAccountsSaveCard, input),

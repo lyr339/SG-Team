@@ -101,6 +101,10 @@ import { AppUpdateSettingsStore } from '../application/app-update-settings-store
 import { createElectronUpdaterPort } from '../infrastructure/app-update/electron-updater-port'
 import { createMacUpdaterPort } from '../infrastructure/app-update/mac-updater-port'
 import { registerAppUpdateIpc } from './register-app-update-ipc'
+import { NotificationService } from '../application/notification-service'
+import { NotificationWorkerPort } from './notification-worker-port'
+import createNotificationWorker from './notification-worker?nodeWorker'
+import { registerNotificationIpc } from './register-notification-ipc'
 // electron-updater 是 CJS，`autoUpdater` 是 exports 上的惰性 getter：主进程是 ESM，命名导入会在链接期
 // 找不到该导出（cjs-module-lexer 认不出 getter），只能默认导入整个 module.exports 再取属性。
 import electronUpdater from 'electron-updater'
@@ -149,6 +153,8 @@ let channelMessageRepository: SqliteChannelMessageRepository | undefined
 let channelMessageRelay: ChannelMessageRelay | undefined
 let localSessionBridge: LocalSessionBridge | undefined
 let teamFailoverService: TeamFailoverService | undefined
+let notificationService: NotificationService | undefined
+let disposeNotificationIpc: (() => void) | undefined
 let teamOrchestrator: TeamOrchestrator | undefined
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
@@ -320,6 +326,14 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   teamCollaborationRepository = new SqliteTeamCollaborationRepository(databasePath)
   teamMemoryRepository = new SqliteTeamMemoryRepository(databasePath)
   channelMessageRepository = new SqliteChannelMessageRepository(databasePath)
+  // Notification persistence is worker-owned and never awaited by a launch/account/automation operation.
+  try {
+    notificationService = new NotificationService(new NotificationWorkerPort(createNotificationWorker, databasePath))
+    disposeNotificationIpc = registerNotificationIpc(notificationService, () => mainWindow)
+  } catch {
+    // Renderer can expose unavailable notification history; launching and account services must still initialize.
+    console.warn('[notifications] 通知存储暂不可用，原有功能继续运行')
+  }
   channelMessageRelay = new ChannelMessageRelay(channelMessageRepository)
   channelMessageRelay.start()
   localSessionBridge = new LocalSessionBridge(channelMessageRelay)
@@ -977,6 +991,8 @@ app.on('before-quit', () => {
   disposeSessionHandoffIpc?.()
   disposeCursorQuestionIpc?.()
   disposeAppUpdateIpc?.()
+  disposeNotificationIpc?.()
+  void notificationService?.close().catch(() => { console.warn('[notifications] 历史存储关闭未确认') })
   appUpdateServiceRef?.stop()
   cursorCdpKeeperRef?.stop()
   teamControlService?.dispose()

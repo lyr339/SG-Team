@@ -3,6 +3,7 @@
  * 仅供 preview.html 使用，不进入生产构建，不连接任何端口。
  */
 import { StrictMode } from 'react'
+import { emptyNotificationPreviewApi } from './notification-preview'
 import { createRoot } from 'react-dom/client'
 import type { AccountAutomationRun } from '../../../domain/account-automation'
 import { TaskPoolAggregate } from '../../../domain/task-pool'
@@ -1145,6 +1146,7 @@ function updatePreviewGroup(groupId: string, update: (view: typeof state.team.gr
 }
 
 const api: SgDesktopApi = {
+  ...emptyNotificationPreviewApi(),
   listCursorAccounts: async () => structuredClone(previewCursorAccounts),
   saveCursorAccount: async ({ label, token }) => {
     const at = Date.now()

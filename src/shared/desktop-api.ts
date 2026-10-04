@@ -40,6 +40,7 @@ import type {
 import type { SessionHandoffContext, SessionHandoffRequest, SessionHandoffResult } from '../domain/session-handoff'
 import type { CursorStatusLine } from '../domain/cursor-status-line'
 import type { AppUpdateSettings, AppUpdateStatus, UpdateGate } from '../domain/app-update'
+import type { NotificationChange, NotificationPage, NotificationPreferences, NotificationPush, NotificationQuery } from '../domain/notification'
 
 export type BridgeConnectionState =
   | 'disconnected'
@@ -274,6 +275,14 @@ export interface SaveCursorAccountCardResult {
 }
 
 export interface SgDesktopApi {
+  getNotificationPage(query?: NotificationQuery): Promise<NotificationPage>
+  readNotification(input: { id: string; revision: number }): Promise<NotificationChange>
+  readAllNotifications(input: { query?: NotificationQuery; revision: number }): Promise<NotificationChange>
+  archiveNotification(id: string): Promise<NotificationChange>
+  clearReadNotifications(input: { query?: NotificationQuery; confirmed: boolean }): Promise<NotificationChange>
+  getNotificationPreferences(): Promise<NotificationPreferences>
+  saveNotificationPreferences(preferences: NotificationPreferences): Promise<NotificationPreferences>
+  onNotificationChanged(listener: (event: NotificationPush) => void): () => void
   listCursorAccounts(): Promise<CursorAccountMetadata[]>
   saveCursorAccount(input: { label: string; token: string; makeActive?: boolean }): Promise<CursorAccountMetadata[]>
   /** 卡号粘贴导入（邮箱----邮箱密码----Cursor密码----辅邮----辅邮密码----Token）：主进程权威解析，凭据整体加密随账号保存。 */
@@ -499,6 +508,14 @@ export interface SgDesktopApi {
 }
 
 export const IPC = {
+  notificationPage: 'notification:page',
+  notificationRead: 'notification:read',
+  notificationReadAll: 'notification:read-all',
+  notificationArchive: 'notification:archive',
+  notificationClearRead: 'notification:clear-read',
+  notificationPreferences: 'notification:preferences',
+  notificationSavePreferences: 'notification:save-preferences',
+  notificationChanged: 'notification:changed',
   cursorAccountsList: 'cursor-accounts:list',
   cursorAccountsSave: 'cursor-accounts:save',
   cursorAccountsSaveCard: 'cursor-accounts:save-card',

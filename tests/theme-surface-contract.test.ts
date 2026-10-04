@@ -11,6 +11,15 @@ const settings = readFileSync(join(process.cwd(), 'src/renderer/src/settings/set
 const update = readFileSync(join(process.cwd(), 'src/renderer/src/settings/update.css'), 'utf8')
 
 describe('theme surface contracts', () => {
+  it('keeps the update reminder frame neutral and uniform, reserving accent for its action', () => {
+    const card = update.match(/\.update-reminder\s*\{([^}]*)\}/)?.[1] ?? ''
+    expect(card).toContain('background: var(--surface-solid)')
+    expect(card).toContain('border: 1px solid var(--color-border-secondary)')
+    expect(card).not.toMatch(/\bborder-(?:left|inline-start)(?:-color|-width|-style)?\s*:/)
+    expect(card).not.toContain('var(--accent)')
+    expect(update).toMatch(/\.update-reminder__button\.is-primary\s*\{[^}]*color:\s*var\(--accent-deep\)/)
+  })
+
   it('retires the account error banner and keeps notice surfaces neutral and readable', () => {
     expect(styles).not.toContain('.account-dialog-error')
     expect(settings).not.toContain('.settings-error')
