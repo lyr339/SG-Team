@@ -66,4 +66,5 @@ export type ContextHandoffOutcome =
 export interface MembershipTransferOutcome {
   transfer: MembershipTransferResult
   contextHandoff?: ContextHandoffOutcome
+  notification?: import('./notification-reference').NotificationReference
 }

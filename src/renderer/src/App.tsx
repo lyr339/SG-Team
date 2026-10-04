@@ -1086,7 +1086,7 @@ export function App(): React.JSX.Element {
       await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
       const latest = notificationContext.current
       if (!notificationTargetAvailable(target, latest.sessions, latest.team)) return false
-      return requestReveal({ ...(target.entryId ? { entryId: target.entryId } : {}), ...(target.blockId ? { blockId: target.blockId } : {}) })
+      return requestReveal({ ...(target.entryId ? { entryId: target.entryId } : {}), ...(target.blockId ? { blockId: target.blockId } : {}), ...(target.surface ? { surface: target.surface } : {}) })
     }
     return true
   }, [changeModule, selectSession, openCollaboration, acceptCollaboration])

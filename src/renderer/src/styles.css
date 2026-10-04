@@ -1758,9 +1758,9 @@ button.workspace-group-chip:focus-visible { outline: 2px solid var(--accent-bord
 
 /* 两个交接弹窗共用的结果页 */
 .handoff-done { display: grid; gap: 10px; padding: 18px 17px 15px; }
-.handoff-done > i { width: 34px; height: 34px; display: grid; place-items: center; color: var(--color-text-success); background: var(--color-background-success); border-radius: 50%; font-style: normal; font-weight: 700; }
+.handoff-done > i { width: 34px; height: 34px; display: grid; place-items: center; color: var(--accent-deep); background: var(--accent-wash); border-radius: 9px; font-style: normal; font-weight: 700; }
 .handoff-done strong { font-size: var(--fs-13, 14px); }
-.handoff-done p { margin: 0; color: var(--text-soft); font-size: var(--fs-10); line-height: 1.55; }
+.handoff-done p { margin: 0; color: var(--text-soft); font-size: var(--fs-12); line-height: 1.65; text-wrap: pretty; }
 .handoff-done p.is-warning { color: var(--color-text-warning); }
 .handoff-done dl { display: grid; gap: 6px; margin: 0; }
 .handoff-done dl > div { display: grid; gap: 2px; }

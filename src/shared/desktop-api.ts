@@ -166,6 +166,8 @@ export interface QueuedMessageRef {
 
 export interface SendMessageAccepted {
   commandId: string
+  /** Stable database outbox identity, if the transport supplied one. Acceptance is not delivery. */
+  entryId?: string
 }
 
 /** 拾光卡片提交的 ask_question 答案：按题 id 的选项 id（可含自由填写哨兵）与自由填写正文。 */

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentSession } from '../src/domain/agent-session'
 import type { ConversationEntry } from '../src/domain/conversation-entry'
 import { QUEUE_TRAY_COLLAPSED_KEY, QueuedMessageTray, queuePreview, queueTrayState } from '../src/renderer/src/QueuedMessageTray'
+import { requestReveal } from '../src/renderer/src/inspector/reveal-bus'
 
 const session: AgentSession = {
   id: 'session-2', channelId: '2', generation: 1, displayName: '架构实现', roleName: '实现席',
@@ -137,6 +138,23 @@ describe('QueuedMessageTray（待投递托盘）', () => {
       act(() => { container.querySelector<HTMLButtonElement>('[data-entry-id="outbox:a"] button.is-danger')!.click() })
       expect(onWithdraw).toHaveBeenCalledWith('outbox:a')
       expect(onWithdraw).toHaveBeenCalledTimes(1)
+    })
+    it('explicit queue navigation reveals the real row without changing global collapse preference, and unmount cannot reveal another pane', async () => {
+      localStorage.setItem(QUEUE_TRAY_COLLAPSED_KEY, '1')
+      const frames: FrameRequestCallback[] = []
+      vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.push(callback); return frames.length })
+      const scroll = vi.fn(); Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scroll })
+      try {
+        await act(async () => root.render(<QueuedMessageTray session={session} entries={[plain, held]} />))
+        let revealed!: Promise<boolean>
+        await act(async () => { revealed = requestReveal({ surface: 'queue', entryId: held.id }) })
+        await act(async () => { while (frames.length) frames.shift()!(0) })
+        expect(await revealed).toBe(true); expect(container.querySelector(`[data-entry-id="${held.id}"]`)?.classList.contains('is-revealed')).toBe(true)
+        expect(localStorage.getItem(QUEUE_TRAY_COLLAPSED_KEY)).toBe('1'); expect(scroll).toHaveBeenCalledOnce()
+        await act(async () => { revealed = requestReveal({ surface: 'queue', entryId: held.id }); root.render(null) })
+        await act(async () => { while (frames.length) frames.shift()!(0) })
+        expect(await revealed).toBe(false)
+      } finally { vi.unstubAllGlobals(); delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView }
     })
   })
 })

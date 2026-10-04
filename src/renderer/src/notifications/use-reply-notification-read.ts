@@ -17,8 +17,8 @@ export function useReplyNotificationRead(ref: RefObject<HTMLElement | null>, sco
     const queried = new Set<string>(), fetching = new Set<string>(), reading = new Set<string>(), acknowledged = new Map<string, number>()
     const records = new Map<string, NotificationRecord>()
     let active = true, frame: number | undefined
-    const matches = (record: NotificationRecord) => record.eventType === 'session.reply' && record.target?.kind === 'session'
-      && notificationSessionScopeMatches(record.scope, current) && statuses.get(record.target.entryId ?? '') === record.subjectState
+    const matches = (record: NotificationRecord) => (record.eventType === 'session.reply' || record.eventType === 'queue.state' && record.subjectState === 'replied') && record.target?.kind === 'session'
+      && notificationSessionScopeMatches(record.scope, current) && statuses.get(record.target.entryId ?? '') === (record.eventType === 'queue.state' ? 'complete' : record.subjectState)
     const read = async (record: NotificationRecord): Promise<void> => {
       if (!active || !matches(record) || !notificationIsUnread(record) || reading.has(record.id) || (acknowledged.get(record.id) ?? -1) >= record.attentionRevision) return
       const element = elements.get(record.target!.kind === 'session' ? record.target!.entryId ?? '' : '')

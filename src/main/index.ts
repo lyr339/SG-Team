@@ -113,6 +113,7 @@ import { connectBatchLaunchNotifications } from '../application/notifications/ba
 import { connectAutomationNotifications } from '../application/notifications/automation-notifications'
 import { connectTaskNotifications } from '../application/notifications/task-notifications'
 import { connectOperatorMessageNotifications } from '../application/notifications/team-message-notifications'
+import { membershipTransferNotification } from '../domain/membership-transfer-notification'
 // electron-updater 是 CJS，`autoUpdater` 是 exports 上的惰性 getter：主进程是 ESM，命名导入会在链接期
 // 找不到该导出（cjs-module-lexer 认不出 getter），只能默认导入整个 module.exports 再取属性。
 import electronUpdater from 'electron-updater'
@@ -420,7 +421,8 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   )
   desktopSessionService.startWatcher()
   if (notificationService) {
-    try { notificationRuntime = connectSessionNotifications({ notifications: notificationService, desktop: desktopSessionService, team: teamControlService, power: powerMonitor }) }
+    try { notificationRuntime = connectSessionNotifications({ notifications: notificationService, desktop: desktopSessionService, team: teamControlService, power: powerMonitor,
+      queue: () => channelMessageRelay!.notificationQueueSnapshot(), watchQueue: fact => channelMessageRelay!.watchNotificationQueueFact(fact) }) }
     catch { notificationService.reportHistoryGap() }
   }
   // 过程流事件驱动层：Cursor 模型写入即时推送（写信号触发 inspect），
@@ -845,7 +847,8 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     locateTranscript: (composerId, workspacePath) => cursorTelemetry.locateTranscript(composerId, workspacePath),
     conversationsOf: (channelId) => channelMessageRelay?.conversationsOf(channelId),
     handoffRoot,
-    onerror: (error) => process.stderr.write(`[session-handoff] ${error instanceof Error ? error.message : String(error)}\n`)
+    onerror: (error) => process.stderr.write(`[session-handoff] ${error instanceof Error ? error.message : String(error)}\n`),
+    observeOutcome: (result, sourceChannelId) => notificationRuntime?.queue?.registerHandoff(result, sourceChannelId)
   })
   // 「在 Finder 中显示」白名单：交接记录、Cursor 转录、通道附件（三处都是拾光自己写入/定位的文件）。
   const revealPolicy = new RevealPathPolicy([
@@ -858,7 +861,7 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     desktopSessionService,
     revealPolicy,
     () => mainWindow,
-    { downloadsPath: () => app.getPath('downloads') }
+    { downloadsPath: () => app.getPath('downloads'), observeFailure: (channelId, error) => notificationRuntime?.queue?.reportHandoffFailure(channelId, error) }
   )
   // 拾光内回答 Cursor 原生 ask_question：与会话创建/过程观察共用同一 Cursor 窗口解析。
   disposeCursorQuestionIpc = registerCursorQuestionIpc(
@@ -997,7 +1000,14 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     // 见 transferMembershipWithContext。
     { team: teamControlService, handoff: sessionHandoffService },
     () => mainWindow,
-    { isSessionLaunchRunning: () => agentSessionLauncher.getPlan()?.state === 'running' }
+    { isSessionLaunchRunning: () => agentSessionLauncher.getPlan()?.state === 'running', observeTransfer: (outcome, team) => {
+      if (!notificationService) return undefined
+      const linked = notificationRuntime?.queue?.registerTransfer(outcome)
+      if (linked) return linked
+      const draft = membershipTransferNotification(outcome, team)
+      notificationService.offerCurrent(draft)
+      return { key: draft.key, eventId: draft.eventId }
+    } }
   )
   createWindow()
   app.on('activate', () => {

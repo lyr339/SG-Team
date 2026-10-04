@@ -11,6 +11,7 @@ export interface RevealTarget {
   blockId?: string
   /** 会话条目 id（用户消息 / 回复）。 */
   entryId?: string
+  surface?: 'queue'
 }
 
 /** 返回 true 表示已定位到目标；准备方（只展开、不定位）返回 undefined。 */
@@ -75,7 +76,7 @@ export function revealInViewport(viewport: HTMLElement | null, target: RevealTar
  */
 export function revealAfterPaint(viewport: () => HTMLElement | null, target: RevealTarget): Promise<boolean> {
   return new Promise((resolve) => {
-    const attempt = (): void => resolve(revealInViewport(viewport(), target))
+    const attempt = (): void => { const root = viewport(); resolve(root ? revealInViewport(root, target) : false) }
     if (typeof requestAnimationFrame !== 'function') {
       attempt()
       return

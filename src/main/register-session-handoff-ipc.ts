@@ -60,7 +60,7 @@ export function registerSessionHandoffIpc(
   },
   reveal: RevealPathPolicy,
   getWindow: () => BrowserWindow | undefined,
-  options: { downloadsPath?: () => string } = {}
+  options: { downloadsPath?: () => string; observeFailure?: (channelId: string, error: unknown) => void } = {}
 ): () => void {
   ipcMain.handle(IPC.withdrawQueuedMessage, (event, input: unknown) => {
     assertTrustedSender(event, getWindow)
@@ -78,7 +78,9 @@ export function registerSessionHandoffIpc(
   })
   ipcMain.handle(IPC.sessionHandoffDeliver, (event, input: unknown) => {
     assertTrustedSender(event, getWindow)
-    return handoff.deliver(handoffRequestOf(input))
+    const request = handoffRequestOf(input)
+    try { return handoff.deliver(request) }
+    catch (error) { try { options.observeFailure?.(request.sourceChannelId, error) } catch {} throw error }
   })
   ipcMain.handle(IPC.revealPathInFolder, (event, input: unknown) => {
     assertTrustedSender(event, getWindow)

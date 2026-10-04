@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { MembershipTransferCandidate, MembershipTransferOptions, MembershipTransferOutcome } from '../../../domain/team-handoff'
 import { AgentAvatar } from '../AgentAvatar'
+import { useNotificationResultRead } from '../notifications/use-notification-result-read'
 
 interface TransferMembershipDialogProps {
   options: MembershipTransferOptions
@@ -22,6 +23,8 @@ export function TransferMembershipDialog({ options, busy, error, onClose, onConf
   const [selected, setSelected] = useState(options.candidates[0]?.slotId ?? '')
   const [includeContext, setIncludeContext] = useState(true)
   const [outcome, setOutcome] = useState<{ candidate: MembershipTransferCandidate; result: MembershipTransferOutcome }>()
+  const resultRef = useRef<HTMLDivElement>(null)
+  useNotificationResultRead(resultRef, outcome?.result.notification?.key, outcome?.result.notification?.eventId)
 
   const confirm = async (): Promise<void> => {
     const candidate = options.candidates.find((item) => item.slotId === selected)
@@ -43,7 +46,7 @@ export function TransferMembershipDialog({ options, busy, error, onClose, onConf
           <button disabled={busy} aria-label="关闭迁移窗口" onClick={onClose}>×</button>
         </header>
         {outcome ? (
-          <div className="handoff-done" role="status">
+          <div ref={resultRef} className="handoff-done" role="status" data-notification-key={outcome.result.notification?.key} data-notification-event={outcome.result.notification?.eventId}>
             <i aria-hidden="true">✓</i>
             <strong>
               {outcome.result.transfer.transferredLead
@@ -59,7 +62,7 @@ export function TransferMembershipDialog({ options, busy, error, onClose, onConf
             {outcome.result.contextHandoff ? (
               outcome.result.contextHandoff.ok ? (
                 <>
-                  <p>上下文文档已排进 CH-{outcome.result.contextHandoff.result.targetChannelId} 的队列，接手者下一次轮询即会阅读。</p>
+                  <p>上下文交接已受理到 CH-{outcome.result.contextHandoff.result.targetChannelId}，不据此确认已经取走或读完；请以对应回复核对接手内容。</p>
                   <dl>
                     <div><dt>上下文文档</dt><dd><code>{outcome.result.contextHandoff.result.transcriptPath}</code></dd></div>
                     {outcome.result.contextHandoff.result.recordPath

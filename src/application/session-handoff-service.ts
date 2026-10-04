@@ -16,6 +16,7 @@ import {
 } from '../domain/session-handoff'
 import type { TeamControlSnapshot } from '../domain/team-control'
 import type { DesktopSnapshot, SendMessageAccepted, SendMessageInput } from '../shared/desktop-api'
+import type { NotificationReference } from '../domain/notification-reference'
 
 export interface SessionHandoffPorts {
   team: { getSnapshot(): TeamControlSnapshot }
@@ -32,6 +33,8 @@ export interface SessionHandoffPorts {
   handoffRoot: string
   now?: () => number
   onerror?: (error: unknown) => void
+  /** Optional presentation only; observation failures never change send/order/results. */
+  observeOutcome?: (result: SessionHandoffResult, sourceChannelId: string) => NotificationReference | undefined
 }
 
 /** 通道在当前运行中的席位角色（独立席位也算，templateKey='solo'）；备用/未编入通道无。 */
@@ -127,14 +130,20 @@ export class SessionHandoffService {
       text,
       ...(held ? { holdUntilNewSession: true } : {})
     })
-    return {
+    const result: SessionHandoffResult = {
       targetChannelId,
       held,
       transcriptPath: source.transcript.path,
       recordPath,
       commandId: accepted.commandId,
-      issuedAt
+      issuedAt,
+      ...(accepted.entryId ? { entryId: accepted.entryId } : {}),
+      transcriptState: !source.transcript.exists ? 'expected' : source.transcript.modifiedAt === undefined ? 'unverified'
+        : source.transcript.modifiedAt < issuedAt ? 'older' : 'present'
     }
+    try { const notification = this.ports.observeOutcome?.(result, source.channelId); if (notification) result.notification = notification }
+    catch { /* Notification side effects must never repeat or replace a successful delivery. */ }
+    return result
   }
 
   private writeRecord(source: SessionHandoffContext, issuedAt: number, team: TeamControlSnapshot): string | undefined {

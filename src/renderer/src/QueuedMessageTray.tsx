@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import type { AgentSession } from '../../domain/agent-session'
 import type { ConversationEntry } from '../../domain/conversation-entry'
 import { formatClock } from './format'
+import { revealAfterPaint, subscribeReveal } from './inspector/reveal-bus'
 
 interface QueuedMessageTrayProps {
   session: AgentSession
@@ -64,6 +65,12 @@ export function queueTrayState(session: Pick<AgentSession, 'online' | 'waiting'>
  */
 export function QueuedMessageTray({ session, entries, onWithdraw, onRelease }: QueuedMessageTrayProps): React.JSX.Element | null {
   const listId = useId()
+  const root = useRef<HTMLElement>(null)
+  useEffect(() => subscribeReveal(target => {
+    if (target.surface !== 'queue' || !entries.some(entry => entry.id === target.entryId)) return false
+    setCollapsed(false)
+    return revealAfterPaint(() => root.current, target)
+  }), [entries, session.id, session.composerId, session.generation])
   // 折叠偏好持久化，与下方本轮文件栏同一规则：两条栏叠放时行为一致。
   const [collapsed, setCollapsed] = useState(readCollapsed)
   const listRef = useRef<HTMLOListElement>(null)
@@ -85,7 +92,7 @@ export function QueuedMessageTray({ session, entries, onWithdraw, onRelease }: Q
   const expandable = entries.length > 0
   const open = expandable && !collapsed
   return (
-    <section
+    <section ref={root}
       className={`queue-tray is-${tone} ${open ? 'is-open' : 'is-collapsed'}`}
       aria-label="待投递消息"
       data-queue-depth={depth}

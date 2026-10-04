@@ -121,7 +121,8 @@ describe('TransferMembershipDialog · 确认后的结果页', () => {
     const status = container.querySelector('[role="status"]')!
     expect(status.textContent).toContain('组身份已迁移给 CH-7（架构实现）')
     expect(status.textContent).toContain('2 项任务已释放回队列')
-    expect(status.textContent).toContain('上下文文档已排进 CH-7 的队列')
+    expect(status.textContent).toContain('上下文交接已受理到 CH-7')
+    expect(status.textContent).toContain('不据此确认已经取走或读完')
     expect(status.textContent).toContain('/t/composer.jsonl')
     expect(status.textContent).toContain('/h/CH-2.md')
     expect(Array.from(container.querySelectorAll('button')).map((button) => button.textContent)).toContain('打开 CH-7')

@@ -47,6 +47,16 @@ function fakeService() {
 }
 
 describe('协作组 IPC', () => {
+  it('observes the committed migration once without replacing/repeating a result when the notification callback fails', () => {
+    handlers.clear()
+    const { service, context, calls, transfer, teamSnapshot } = fakeService()
+    const observeTransfer = vi.fn(() => { throw Error('display observer only') })
+    const dispose = registerTeamGroupIpc(service, context, () => undefined, { observeTransfer })
+    const value = handlers.get(IPC.teamGroupTransferMembership)!({ senderFrame: null }, { groupId: 'g-1', fromSlotId: 'slot-2', toSlotId: 'slot-7', includeContext: false })
+    expect(value).toEqual({ transfer, team: teamSnapshot }); expect(observeTransfer).toHaveBeenCalledOnce()
+    expect(calls.filter(([name]) => name === 'transferMembership')).toHaveLength(1)
+    dispose()
+  })
   it('normalizes and validates the membership operations before handing them to the service', () => {
     handlers.clear()
     const { service, context, calls, snapshot, transfer, teamSnapshot } = fakeService()

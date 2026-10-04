@@ -78,6 +78,9 @@ export interface SessionHandoffResult {
   recordPath?: string
   commandId: string
   issuedAt: number
+  entryId?: string
+  transcriptState?: 'expected' | 'older' | 'present' | 'unverified'
+  notification?: import('./notification-reference').NotificationReference
 }
 
 export const SESSION_HANDOFF_NOTE_MAX_CHARS = 2_000

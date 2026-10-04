@@ -8,6 +8,9 @@ import type { PlanTaskInput } from '../domain/task-pool'
 import { TEAM_ROLE_TEMPLATES, type TeamGroupPlanPolicy } from '../domain/team-control'
 import { IPC, type TeamGroupMemberInput } from '../shared/desktop-api'
 import { assertTrustedSender } from './ipc-security'
+import type { MembershipTransferOutcome } from '../domain/team-handoff'
+import type { TeamControlSnapshot } from '../domain/team-control'
+import type { NotificationReference } from '../domain/notification-reference'
 
 const GROUP_MEMBERS_MAX = 64
 const GROUP_NAME_MAX = 80
@@ -98,6 +101,7 @@ function membersOf(value: unknown): TeamGroupMemberInput[] {
 export interface TeamGroupIpcOptions {
   /** 一键会话创建进行中不得改成员关系：新席位的注册与绑定尚未落定。 */
   isSessionLaunchRunning?: () => boolean
+  observeTransfer?: (outcome: MembershipTransferOutcome, team: TeamControlSnapshot) => NotificationReference | undefined
 }
 
 /** 成员身份迁移随迁上下文文档所需的两个端口：团队快照（定位原席位通道）与会话上下文交接。 */
@@ -203,7 +207,9 @@ export function registerTeamGroupIpc(
         includeContext: raw.includeContext === true
       }
     )
-    return { ...outcome, team: transferContext.team.getSnapshot() }
+    const team = transferContext.team.getSnapshot()
+    try { const notification = options.observeTransfer?.(outcome, team); if (notification) outcome.notification = notification } catch { /* Original migration outcomes remain unchanged. */ }
+    return { ...outcome, team }
   })
   // 规划任务不改成员关系，不受一键会话创建阻塞：任务只是入池，派单由编排器在成员就绪后进行。
   ipcMain.handle(IPC.teamGroupPlanTasks, (event, value: unknown) => {

@@ -29,6 +29,7 @@ function outboundKindOf(value: unknown): ChannelOutboundKind | undefined {
 
 /** 出站行的投递状态投影（不含正文与附件），供主进程的高频状态同步使用。 */
 export type ChannelOutboundDeliveryState = Pick<ChannelOutboundMessage, 'id' | 'deliveredAt' | 'retiredAt' | 'withdrawnAt'>
+  & Partial<Pick<ChannelOutboundMessage, 'channelId' | 'runId' | 'createdAt'>> & { held?: boolean }
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value ? value : undefined
@@ -550,22 +551,35 @@ export class SqliteChannelMessageRepository {
    * 不取 text 与 attachments_json（图片附件行可达数 MB，逐拍 SELECT * 再 JSON.parse
    * 曾占主进程 20% 单核且随贴图数线性增长）。
    */
-  listOutboundDeliveryStateSince(startedAt: number, limit = 500): ChannelOutboundDeliveryState[] {
+  listOutboundDeliveryStateSince(startedAt: number, limit = 500, options: { watchedIds?: readonly string[] } = {}): ChannelOutboundDeliveryState[] {
+    const watched = options.watchedIds ?? []
+    if (watched.length > 2_000) throw Error('交接观察身份超出上限')
     const rows = this.database.prepare(`
-      SELECT id, delivered_at, retired_at, withdrawn_at FROM (
-        SELECT id, delivered_at, retired_at, withdrawn_at, created_at, seq FROM channel_outbox
+      SELECT id, delivered_at, retired_at, withdrawn_at, channel_id, run_id, created_at, held, seq FROM (
+        SELECT id, delivered_at, retired_at, withdrawn_at, channel_id, run_id, created_at, seq, hold_session_token IS NOT NULL AS held FROM channel_outbox
         WHERE created_at >= ?
         ORDER BY created_at DESC, seq DESC
         LIMIT ?
       )
+      ${watched.length ? `UNION SELECT id,delivered_at,retired_at,withdrawn_at,channel_id,run_id,created_at,hold_session_token IS NOT NULL AS held,seq FROM channel_outbox WHERE id IN (${watched.map(() => '?').join(',')})` : ''}
       ORDER BY created_at ASC, seq ASC
-    `).all(Math.max(0, Math.floor(startedAt)), Math.max(1, limit)) as SqliteRow[]
+    `).all(Math.max(0, Math.floor(startedAt)), Math.max(1, limit), ...watched) as SqliteRow[]
     return rows.map((row) => ({
       id: String(row.id),
       deliveredAt: row.delivered_at === null ? undefined : numberOf(row.delivered_at),
       withdrawnAt: row.withdrawn_at === null || row.withdrawn_at === undefined ? undefined : numberOf(row.withdrawn_at),
-      retiredAt: row.retired_at === null || row.retired_at === undefined ? undefined : numberOf(row.retired_at)
+      retiredAt: row.retired_at === null || row.retired_at === undefined ? undefined : numberOf(row.retired_at),
+      channelId: String(row.channel_id), ...(row.run_id === null ? {} : { runId: String(row.run_id) }), createdAt: numberOf(row.created_at), held: Boolean(row.held)
     }))
+  }
+
+  /** Read-only, bounded post-scope-switch audit. No text/attachment read or business mutation. */
+  queueDeliveryStateFor(ids: string[]): ChannelOutboundDeliveryState[] {
+    if (!ids.length) return []
+    if (ids.length > 256) throw Error('队列状态审计批次过大')
+    const rows = this.database.prepare(`SELECT id,delivered_at,retired_at,withdrawn_at FROM channel_outbox WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids) as SqliteRow[]
+    return rows.map(row => ({ id: String(row.id), deliveredAt: row.delivered_at === null ? undefined : numberOf(row.delivered_at),
+      withdrawnAt: row.withdrawn_at === null ? undefined : numberOf(row.withdrawn_at), retiredAt: row.retired_at === null ? undefined : numberOf(row.retired_at) }))
   }
 
   /** 主进程侧：按时间窗口读取已入队的可回放出站消息（含已投递/未投递）。 */

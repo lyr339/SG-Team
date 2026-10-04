@@ -5,6 +5,7 @@
 import { StrictMode } from 'react'
 import { createNotificationPreview } from './notification-preview'
 import { reduceOperatorMessages } from '../../../domain/team-message-notification'
+import { reduceQueueNotifications } from '../../../domain/queue-notification'
 import { createRoot } from 'react-dom/client'
 import type { AccountAutomationRun } from '../../../domain/account-automation'
 import { ACCOUNT_AUTOMATION_STEPS } from '../../../domain/account-automation'
@@ -1637,16 +1638,29 @@ const api: SgDesktopApi = {
     }
     state.desktop.conversations = {
       ...state.desktop.conversations,
-      [targetChannelId]: [...(state.desktop.conversations[targetChannelId] ?? []), entry]
+      // These legacy mock rows were already delivered in the non-queue fixture.
+      // Production uses real delivered_at and never infers it from complete.
+      [targetChannelId]: [...(state.desktop.conversations[targetChannelId] ?? []).map(value => value.role === 'user' && value.status === 'complete' && !value.heldForNextSession
+        ? { ...value, deliveredAt: value.deliveredAt ?? value.timestamp } : value), entry]
     }
+    state.desktop.sessions = state.desktop.sessions.map(value => value.channelId === targetChannelId ? { ...value, deliveryMode: 'queued', queueDepth: value.queueDepth + 1 } : value)
     pushDesktop()
+    const id = Date.now().toString(16).padStart(32, '0'), session = state.desktop.sessions.find(value => value.channelId === targetChannelId)!
+    const binding = state.team.members.find(value => value.binding?.channelId === targetChannelId)?.binding
+    const scope = { sessionId: session.id, channelId: targetChannelId, composerId: session.composerId, generation: String(session.generation), bindingGeneration: binding?.generation,
+      runId: state.team.activeRun?.id, workspaceId: state.team.activeWorkspaceId }
+    const projected = reduceQueueNotifications(undefined, { key: 'preview:handoff', runId: state.team.activeRun?.id, workspaceId: state.team.activeWorkspaceId, now: entry.timestamp,
+      facts: [{ id, entryId: entry.id, channelId: targetChannelId, phase: held ? 'held' : 'queued', at: entry.timestamp, scope }],
+      annotations: [{ id, entryId: entry.id, channelId: targetChannelId, sourceChannelId, issuedAt: entry.timestamp, scope, transcript: 'older', recordWritten: true }] }, false, 1)
+    projected.drafts.forEach(notificationPreview.offer)
     return {
       targetChannelId,
       held,
       transcriptPath: '/Users/preview/.cursor/projects/Users-preview-workspace/agent-transcripts/preview/preview.jsonl',
       recordPath: '/Users/preview/Library/Application Support/sg-team/handoff/CH-1-preview-20260904-200000.md',
-      commandId: entry.id,
-      issuedAt: entry.timestamp
+      commandId: `preview-accepted-${entry.timestamp}`,
+      issuedAt: entry.timestamp, entryId: entry.id, transcriptState: 'older',
+      notification: { key: projected.drafts[0]!.key, eventId: projected.drafts[0]!.eventId }
     }
   },
   revealPathInFolder: async () => true,

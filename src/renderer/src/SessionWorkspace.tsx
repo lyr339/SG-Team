@@ -296,7 +296,7 @@ export function SessionWorkspace({
   // 贴底跟随按既有意图模型自动暂停。等过程卡把目标步骤展开提交后再定位，并把
   // 「是否找到」回给右栏——找不到时右栏会给出提示，而不是静默无事发生。
   useEffect(() => subscribeReveal((target) => (
-    revealAfterPaint(() => follow.viewportRef.current, target)
+    target.surface === 'queue' ? false : revealAfterPaint(() => follow.viewportRef.current, target)
   )), [follow.viewportRef])
 
   const pendingBelow = follow.awayFromBottom ? Math.max(0, timelineEntries.length - seenCount.current) : 0

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AgentSession } from '../../domain/agent-session'
 import {
   formatHandoffTime,
@@ -10,6 +10,7 @@ import {
 import { formatFileSize } from '../../shared/format-file-size'
 import { AgentAvatar } from './AgentAvatar'
 import { statusLabel } from './format'
+import { useNotificationResultRead } from './notifications/use-notification-result-read'
 
 interface SessionHandoffDialogProps {
   session: AgentSession
@@ -107,6 +108,8 @@ export function SessionHandoffDialog({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [result, setResult] = useState<SessionHandoffResult>()
+  const resultRef = useRef<HTMLDivElement>(null)
+  useNotificationResultRead(resultRef, result?.notification?.key, result?.notification?.eventId)
   const [copied, setCopied] = useState(false)
 
   useEffect(() => {
@@ -181,18 +184,20 @@ export function SessionHandoffDialog({
         </header>
 
         {result ? (
-          <div className="handoff-done" role="status">
-            <i aria-hidden="true">✓</i>
-            <strong>已排队到 CH-{result.targetChannelId}</strong>
+          <div ref={resultRef} className="handoff-done" role="status" data-notification-key={result.notification?.key} data-notification-event={result.notification?.eventId}>
+            <i aria-hidden="true"><svg viewBox="0 0 20 20" width="20" height="20"><path d="M3 7h14M3 11h8M3 15h8m2-3 3 3-3 3" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg></i>
+            <strong>{result.entryId ? '已排队到' : '投递已受理 ·'} CH-{result.targetChannelId}</strong>
             <p>
               {result.held
-                ? '带「等待新会话」保持位：当前 Agent 取不到这条消息；该席位在同一运行内重建后，新会话第一次轮询就会收到并阅读。'
-                : '按普通排队投递：目标会话下一次轮询即会收到并阅读。'}
+                ? '保留给同一运行内该席位的新会话：当前 Agent 无法取走。新会话取走后，再以它的回复确认接手内容。'
+                : '按原链路投递：受理不等于目标已经取走或读完，请以对应回复确认接手内容。'}
             </p>
             <dl>
               <div><dt>上下文文档</dt><dd><code>{result.transcriptPath}</code></dd></div>
               {result.recordPath ? <div><dt>拾光会话记录</dt><dd><code>{result.recordPath}</code></dd></div> : null}
             </dl>
+            {result.transcriptState && result.transcriptState !== 'present' ? <p>交接时转录{result.transcriptState === 'expected' ? '尚未创建' : result.transcriptState === 'older' ? '早于本次发出时间' : '新鲜度未确认'}，未据此确认完整落盘。</p> : null}
+            {!result.recordPath ? <p>拾光补充记录未写入；原转录路径仍已投递受理，不必重复执行整段交接。</p> : null}
             <footer>
               {onOpenSession && result.targetChannelId !== session.channelId ? (
                 <button onClick={() => { onOpenSession(result.targetChannelId); onClose() }}>打开 CH-{result.targetChannelId}</button>
