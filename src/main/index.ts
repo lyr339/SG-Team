@@ -326,9 +326,10 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   teamCollaborationRepository = new SqliteTeamCollaborationRepository(databasePath)
   teamMemoryRepository = new SqliteTeamMemoryRepository(databasePath)
   channelMessageRepository = new SqliteChannelMessageRepository(databasePath)
-  // Notification persistence is worker-owned and never awaited by a launch/account/automation operation.
+  // A worker alone is insufficient: writing the shared task DB could still block synchronous business writers.
+  // Notification history is desktop-private and never becomes a second main/MCP communication channel.
   try {
-    notificationService = new NotificationService(new NotificationWorkerPort(createNotificationWorker, databasePath))
+    notificationService = new NotificationService(new NotificationWorkerPort(createNotificationWorker, join(app.getPath('userData'), 'notifications.sqlite3')))
     disposeNotificationIpc = registerNotificationIpc(notificationService, () => mainWindow)
   } catch {
     // Renderer can expose unavailable notification history; launching and account services must still initialize.

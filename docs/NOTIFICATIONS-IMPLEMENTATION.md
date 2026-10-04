@@ -7,7 +7,7 @@
 ## 当前已落地并核验的批次
 
 - 通知模型区分活动、需知晓和待处理；读取、归档不改变业务生命周期。
-- 独立通知表和私有 schema 版本复用本地数据库，但不修改全局 user_version 或已有业务表。
+- 桌面私有 `notifications.sqlite3` 和私有 schema 版本，不写任务／消息／账号数据库，也不修改其全局 user_version 或已有业务表。这个私有库不是新 MCP 通信媒介。
 - 记录、已读版本、偏好持久化；重复和过期源版本不回退结果；相同内容的新采样不反复通知。
 - 读过的旧版本不能误读新结果；读操作不改变事件排序；待处理事项不能被归档或清理。
 - 工作区查询包含全局更新但不混入另一工作区；分页遇到版本变化明确 reset，不继续拼接旧 offset。
@@ -26,6 +26,7 @@
 - `build-foundation-final.log`、`typecheck-foundation-final.log`、`dead-code-foundation.log`：构建与代码检查。
 - `electron-asar-worker.log`：实际 macOS Electron 加载 ASAR 中的当前编译 worker，跨重启记录和已读恢复、重复事件去重、已有 schema 保留；持锁时主线程定时器正常响应。
 - `channel-smoke-foundation.log`、`mcp-smoke-foundation.log`：原通信与协作协议冒烟。
+- `tests/notification-storage-isolation.test.ts`：验证正式主进程连接到独立文件，通知与业务写锁不共用。
 - `protected-baseline.json`：两份原开发目录的全部源文件、status、binary diff 基线。
 
 所有数据库和 ASAR 验收使用隔离数据；临时目录已清理。未调用真实账号处理、模型请求、删除或退款，未重启 Cursor。没有 Windows 主机实机验收，不能表述为双平台真实使用通过。
