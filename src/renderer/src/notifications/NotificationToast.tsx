@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { NoticeIcon } from './NotificationCenter'
 import { notificationTargetLabel } from './notification-view'
@@ -24,6 +24,8 @@ export function NotificationToast({ store, blocked, onOpen, onSnoozeUpdate }: Pr
   const [hovering, setHovering] = useState(false)
   const [within, setWithin] = useState(false)
   const [error, setError] = useState('')
+  const [placement, setPlacement] = useState({ bottom: 16, visible: true })
+  const toastRef = useRef<HTMLElement>(null)
   const remaining = useRef({ key: '', ms: 5_000 })
   const choosing = useRef(false)
   const current = useRef(active); current.current = active
@@ -35,6 +37,24 @@ export function NotificationToast({ store, blocked, onOpen, onSnoozeUpdate }: Pr
     if (item) store.dismissToast(item.key)
   }
   const finishRef = useRef(finish); finishRef.current = finish
+  useLayoutEffect(() => {
+    if (!active || blocked) return
+    const composer = document.querySelector<HTMLElement>('.workspace-composer')
+    const place = (): void => {
+      const height = toastRef.current?.getBoundingClientRect().height ?? 0
+      const composerRect = composer?.getBoundingClientRect()
+      const headerBottom = document.querySelector('.topbar')?.getBoundingClientRect().bottom ?? 48
+      const bottom = composerRect && composerRect.width > 0 && composerRect.height > 0 ? Math.max(16, innerHeight - composerRect.top + 12) : 16
+      const visible = innerHeight - bottom - height >= headerBottom + 8
+      setPlacement(old => old.bottom === bottom && old.visible === visible ? old : { bottom, visible })
+    }
+    place()
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(place) : undefined
+    if (composer) observer?.observe(composer)
+    if (toastRef.current) observer?.observe(toastRef.current)
+    window.addEventListener('resize', place)
+    return () => { observer?.disconnect(); window.removeEventListener('resize', place) }
+  }, [active, blocked])
   useEffect(() => {
     const choose = (event?: NotificationPush): void => {
       if (choosing.current) return
@@ -69,13 +89,13 @@ export function NotificationToast({ store, blocked, onOpen, onSnoozeUpdate }: Pr
     return () => { stop(); window.removeEventListener('focus', onFocus); window.removeEventListener('blur', onBlur) }
   }, [store])
   useEffect(() => {
-    if (!active || blocked || !focused || hovering || within) return
+    if (!active || blocked || !focused || hovering || within || !placement.visible) return
     if (active.expiresAt <= Date.now()) { finishRef.current(); return }
     const duration = remaining.current
     const started = performance.now()
     const timer = setTimeout(() => finishRef.current(), Math.max(0, duration.ms))
     return () => { clearTimeout(timer); duration.ms = Math.max(0, duration.ms - (performance.now() - started)) }
-  }, [active, blocked, focused, hovering, within])
+  }, [active, blocked, focused, hovering, within, placement.visible])
   useEffect(() => {
     if (active || blocked || !focused || !store.snapshot().preferencesReady || !store.snapshot().preferences.enabled || store.snapshot().preferences.quiet) return
     // Dismissal may be the last queue change. Re-check pending candidates once after the old card unmounts.
@@ -83,7 +103,8 @@ export function NotificationToast({ store, blocked, onOpen, onSnoozeUpdate }: Pr
     if (item) { remaining.current = { key: item.key, ms: item.record.category === 'updates' ? 15_000 : item.record.target ? 10_000 : 5_000 }; current.current = item; setActive(item) }
   }, [active, blocked, focused, store])
   if (!active || blocked) return null
-  return createPortal(<aside className="notification-toast" role="status" aria-live="polite" onMouseEnter={() => setHovering(true)} onMouseLeave={() => setHovering(false)}
+  return createPortal(<aside ref={toastRef} className="notification-toast" role="status" aria-live="polite" aria-hidden={!placement.visible} inert={!placement.visible}
+    style={{ bottom: placement.bottom, visibility: placement.visible ? undefined : 'hidden' }} onMouseEnter={() => setHovering(true)} onMouseLeave={() => setHovering(false)}
     onFocusCapture={() => setWithin(true)} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setWithin(false) }}>
     <NoticeIcon tone={active.record.tone} />
     <div className="notification-toast__copy"><span>{active.record.source}</span><strong>{active.record.title}</strong>{active.record.detail ? <p>{active.record.detail}</p> : null}

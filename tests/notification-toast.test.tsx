@@ -59,4 +59,12 @@ describe('single calm notification toast', () => {
     await act(async () => root.render(<NotificationToast store={store} blocked={false} onOpen={() => {}} />))
     expect(document.querySelector('.notification-toast')).toBeNull()
   })
+  it('places the reminder above the composer instead of covering its send and attachment controls', async () => {
+    const composer = document.createElement('section'); composer.className = 'workspace-composer'; document.body.append(composer)
+    vi.spyOn(composer, 'getBoundingClientRect').mockReturnValue({ width: 500, height: 200, top: 400, bottom: 600, left: 0, right: 500, x: 0, y: 400, toJSON: () => ({}) })
+    try {
+      await push('first')
+      expect((document.querySelector('.notification-toast') as HTMLElement).style.bottom).toBe(`${innerHeight - 400 + 12}px`)
+    } finally { composer.remove() }
+  })
 })
