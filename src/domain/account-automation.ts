@@ -12,6 +12,8 @@ export interface AccountAutomationSettings {
   postProcessDelaySec: number
   /** 当前账号处理服务；运行开始后冻结，本轮中途改设置只影响下一轮。 */
   processingProvider: ProcessingProviderId
+  /** Processing-only boundary: false skips ALL post-processing side effects. Missing = legacy full chain. */
+  postProcessingEnabled?: boolean
   /**
    * 账号管线的浏览器宿主——在第一步「获取 Token」选定，贯穿整条管线：
    *   - 'fingerprint' 指纹浏览器（RoxyBrowser profile + CDP）：Token 从 profile 导入，处理后的
@@ -102,6 +104,7 @@ export function normalizeAccountAutomationSettings(value: unknown): AccountAutom
     delaySec: Math.min(ACCOUNT_AUTOMATION_DELAY_MAX_SEC, Math.max(ACCOUNT_AUTOMATION_DELAY_MIN_SEC, delay)),
     postProcessDelaySec: Math.min(ACCOUNT_AUTOMATION_DELAY_MAX_SEC, Math.max(ACCOUNT_AUTOMATION_DELAY_MIN_SEC, postProcessDelay)),
     processingProvider: normalizeProcessingProviderId(raw.processingProvider),
+    ...(raw.postProcessingEnabled === false ? { postProcessingEnabled: false } : {}),
     roxyApiPort,
     browserHost,
     bitProfileId,
@@ -181,6 +184,9 @@ export interface AccountAutomationRun {
   startedAt: number
   /** 本轮冻结的处理服务；旧持久化记录缺省。 */
   processingProvider?: ProcessingProviderId
+  /** Frozen for this run; the view must not infer executed steps from current settings. */
+  postProcessingEnabled?: boolean
+  countdownTotalSec?: { beforeProcess: number; beforeHardening: number }
   finishedAt?: number
   /** 与主流程并行的无感换号子状态；目标在本轮开始后冻结。 */
   handover?: {

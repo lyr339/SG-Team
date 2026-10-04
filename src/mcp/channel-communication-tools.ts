@@ -384,7 +384,32 @@ export function registerChannelCommunicationTools(
       }),
       annotations: { readOnlyHint: false, idempotentHint: false }
     },
-    async ({ channel_id, session }, ctx) => runCheck(channel_id, { session }, ctx.mcpReq.signal)
+    async ({ channel_id, session }, ctx) => {
+      const request = ctx.mcpReq
+      const token = request._meta?.progressToken
+      if (!(typeof token === 'string' || (typeof token === 'number' && Number.isFinite(token)))) {
+        return runCheck(channel_id, { session }, request.signal)
+      }
+      // Cursor 3.21.12 has a 120s idle timeout. Protocol progress keeps this ONE call alive;
+      // it neither returns keepalive to the model nor changes channel/tick/session semantics.
+      let finished = false
+      let progress = 0
+      const timer = setInterval(() => {
+        void Promise.resolve().then(() => {
+          if (finished || request.signal.aborted) return
+          return request.notify({ method: 'notifications/progress', params: { progressToken: token, progress: ++progress } })
+        }).catch(() => stop())
+      }, 30_000)
+      timer.unref?.()
+      const stop = (): void => { finished = true; clearInterval(timer) }
+      request.signal.addEventListener('abort', stop, { once: true })
+      try {
+        return await runCheck(channel_id, { session }, request.signal)
+      } finally {
+        stop()
+        request.signal.removeEventListener('abort', stop)
+      }
+    }
   )
 
 

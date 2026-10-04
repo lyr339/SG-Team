@@ -83,7 +83,7 @@ describe('CursorQuestionService', () => {
       command: {
         composerId: 'composer-2', toolCallId: 'tool-1',
         selections: { direction: ['a'] }, freeformTexts: {},
-        note: '先做 A，外观后续再说\n已选择：方案 A'
+        note: '先做 A，外观后续再说\n已选择：方案 A', followupNote: '先做 A，外观后续再说'
       }
     }])
     expect(outcomes).toEqual([{

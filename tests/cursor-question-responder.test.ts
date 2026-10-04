@@ -85,22 +85,35 @@ describe('cursor question responder', () => {
 
 // 执行实际注入表达式，不只检查生成的字符串。
 describe('question expression execution', () => {
-  function runtime(blocking = true) {
+  function runtime(blocking = true, modern = false, persistFailure = false) {
     let extra: Record<string, unknown> = { status: 'pending' }
     let pending: Record<string, unknown> = { bubble: { toolCallId: 'tool', blocking } }
     const calls: string[] = []
+    const data = { fullConversationHeadersOnly: [] as Array<{ type: number; bubbleId: string }>, conversationMap: {} as Record<string, { text: string }> }
     const tf = {
-      getBubbleIdByToolCallId: () => 'bubble', getBubbleData: () => ({ additionalData: extra }),
+      getBubbleIdByToolCallId: () => 'bubble', getBubbleData: () => ({ additionalData: extra,
+        params: { questions: [{ id: 'q', allowMultiple: false, options: [{ id: 'a', label: 'A' }] }] } }),
       setBubbleData: (_: string, value: { additionalData: Record<string, unknown> }) => { calls.push('draft'); extra = value.additionalData },
       pendingDecisions: () => ({ pendingDecisions: pending }),
-      rejectToolCall: () => { calls.push('reject'); pending = {} }
+      rejectToolCall: () => { calls.push('reject'); pending = {} },
+      acceptToolCall: () => { calls.push('accept'); extra.status = 'submitted'; pending = {} }
     }
     const window = {
+      vscode: { context: { configuration: () => ({ product: { version: modern ? '3.21.12' : '3.6.31' } }) } },
       __sgComposerService: {
         createComposer: () => ({}),
-        composerDataService: { getHandleIfLoaded: () => ({}), getToolFormer: () => tf },
+        composerDataService: { getHandleIfLoaded: () => ({}), getToolFormer: () => tf,
+          getComposerDataIfLoaded: () => data,
+          manuallyPersistComposerOrThrow: async (id: string) => {
+            expect(id).toBe('composer'); calls.push('persist')
+            if (persistFailure) throw new Error('disk failure')
+          } },
         composerChatService: {
-          submitChatMaybeAbortCurrent: () => { calls.push('submit'); extra.status = 'submitted'; pending = {}; return Promise.resolve() }
+          submitChatMaybeAbortCurrent: (_id: string, note: string) => {
+            calls.push('submit'); extra.status = 'submitted'; pending = {}
+            data.fullConversationHeadersOnly.push({ type: 1, bubbleId: 'followup' }); data.conversationMap.followup = { text: note }
+            return Promise.resolve()
+          }
         }
       }
     }
@@ -123,5 +136,42 @@ describe('question expression execution', () => {
     const r = runtime()
     expect(await runInNewContext(buildSkipQuestionExpression(command), { window: r.window, setTimeout })).toEqual({ ok: true, status: 'cancelled' })
     expect(r.calls).toEqual(['draft', 'reject'])
+  })
+  it('3.21.12 uses native acceptance without submitting a follow-up that would cancel the question', async () => {
+    const r = runtime(true, true)
+    expect(await runInNewContext(buildAnswerQuestionExpression(command), { window: r.window, setTimeout })).toEqual({ ok: true, status: 'submitted' })
+    expect(r.calls).toEqual(['draft', 'persist', 'accept', 'persist'])
+    expect(r.calls).not.toContain('submit')
+  })
+  it('3.21.12 preserves explicit comments only AFTER accepting and saving the answers', async () => {
+    const r = runtime(true, true)
+    expect(await runInNewContext(buildAnswerQuestionExpression({ ...command, followupNote: 'User comment' }), { window: r.window, setTimeout })).toEqual({ ok: true, status: 'submitted' })
+    expect(r.calls).toEqual(['draft', 'persist', 'accept', 'persist', 'submit'])
+  })
+  it('3.21.12 rejects incomplete/unknown selections before changing native state', async () => {
+    const drafts: Array<Record<string, string[]>> = [{}, { q: ['unknown'] }, { q: ['a', 'a'] }, { q: ['__freeform_other__'] }]
+    for (const selections of drafts) {
+      const r = runtime(true, true)
+      expect(await runInNewContext(buildAnswerQuestionExpression({ ...command, selections }), { window: r.window, setTimeout }))
+        .toMatchObject({ ok: false, code: 'submit_failed' })
+      expect(r.calls).toEqual([])
+    }
+  })
+  it('3.21.12 does not release a pending decision when saving its draft failed', async () => {
+    const r = runtime(true, true, true)
+    expect(await runInNewContext(buildAnswerQuestionExpression(command), { window: r.window, setTimeout }))
+      .toMatchObject({ ok: false, code: 'submit_failed' })
+    expect(r.calls).toEqual(['draft', 'persist'])
+    expect(r.extra().status).toBe('pending')
+  })
+  it('3.21.12 persists skip before rejecting, and restores pending state if persistence failed', async () => {
+    const r = runtime(true, true)
+    expect(await runInNewContext(buildSkipQuestionExpression(command), { window: r.window, setTimeout })).toEqual({ ok: true, status: 'cancelled' })
+    expect(r.calls).toEqual(['draft', 'persist', 'reject'])
+    const failed = runtime(true, true, true)
+    expect(await runInNewContext(buildSkipQuestionExpression(command), { window: failed.window, setTimeout }))
+      .toMatchObject({ ok: false, code: 'submit_failed' })
+    expect(failed.calls).toEqual(['draft', 'persist', 'draft'])
+    expect(failed.extra().status).toBe('pending')
   })
 })

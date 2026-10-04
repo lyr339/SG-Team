@@ -1139,6 +1139,22 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
    三行右列统一为开关——切号补丁的 installed 即「无感换号已开启」，
    外部兼容（开态禁用）与不支持版本（关态禁用）由说明文字承载。 */
 .settings-maintenance { min-width: 0; display: grid; }
+.cursor-maintenance__controls { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
+.cursor-maintenance__button {
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 1px solid var(--line-faint);
+  border-radius: 7px;
+  background: var(--surface-pure);
+  color: var(--text-soft);
+  font: 550 var(--fs-11)/1.35 var(--font-sans);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 150ms, border-color 150ms;
+}
+.cursor-maintenance__button:hover:not(:disabled) { background: var(--surface-soft); border-color: var(--line); }
+.cursor-maintenance__button:focus-visible { outline: 2px solid var(--color-ring-primary); outline-offset: 2px; }
+.cursor-maintenance__button:disabled { opacity: .55; cursor: default; }
 
 /* ---------- 窄断点：导航折叠为顶部横排 ---------- */
 @media (max-width: 760px) {

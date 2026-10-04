@@ -86,9 +86,10 @@ export const CURSOR_PROCESS_BINDING_NAME = 'sgTeamProcess'
  * v35（2026-09-15）：`generateImageToolCall` 进呈现表——kind=image、对象为请求文件名，结果的
  * 本地路径进结构化 `image` 字段（此前落到 other 类：卡片只剩 `generate_image` 原始名，
  * 路径埋在 `{filePath, imageData:"[omitted]"}` 的 JSON 文本里，图片在拾光会话里看不到）。
+ * v36：兼容 3.21.12 InteractionQuery 产生的不带 toolCall 的 ask_question 气泡，以及 createPlanToolCall。
  * base64 与 Cursor 落盘行为一致地不携带；文件是持久事实源。
  */
-export const CURSOR_STREAM_HOOK_VERSION = 35
+export const CURSOR_STREAM_HOOK_VERSION = 36
 const RETRY_BASE_MS = 5_000
 const RETRY_MAX_MS = 60_000
 const ATTACH_TIMEOUT_MS = 8_000
@@ -120,6 +121,7 @@ export const CURSOR_STREAM_HOOK_EXPRESSION = `(() => {
   let snapshotQueued = false
   function classifyTool(name) {
     const n = String(name || '').toLowerCase()
+    if (n.includes('question')) return 'question'
     if (n.includes('todo')) return 'todo'
     if (n.includes('browser') || n.includes('computer') || n.includes('screenshot') || n.includes('navigate') || n.includes('click') || n.includes('fetch')) return 'browser'
     if (n.startsWith('mcp-') || n.startsWith('get_mcp_tools') || n.includes('_mcp_') || n.includes('mcptool')) return 'mcp'
@@ -434,6 +436,7 @@ export const CURSOR_STREAM_HOOK_EXPRESSION = `(() => {
     applyAgentDiffToolCall: { kind: 'edit' },
     updateTodosToolCall: { kind: 'todo' },
     readTodosToolCall: { kind: 'todo' },
+    createPlanToolCall: { kind: 'todo', title: a => a.name, summary: a => a.overview || '执行计划' },
     taskToolCall: { kind: 'task', title: a => a.description, summary: a => a.model, hint: (a, p, td) => td?.additionalData?.terminationReason || '' },
     // await = 等待后台命令结束（Cursor 归入 "Monitoring background tasks"），不是子 Agent：
     // 归 command 类（终端图标），提示给出运行时长与非零退出码。

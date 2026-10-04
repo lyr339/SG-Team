@@ -435,7 +435,7 @@ function buildCreateExpression(input: {
         { updateGlobalConfig: false }
       ));
       if (service.composerDataService.manuallyPersistComposer) {
-        await service.composerDataService.manuallyPersistComposer(handle);
+        await service.composerDataService.manuallyPersistComposer(composerId);
       }
       await Promise.resolve();
       const actualConfig = modelService.getEffectiveModelConfigForComposer(handle) || {};
@@ -490,18 +490,23 @@ function buildCreateExpression(input: {
   while (Date.now() < deadline) {
     if (settled) {
       if (submitError) return { ok: false, error: 'submit_exception:' + submitError, composerId };
-      if (submitResult && submitResult.ok === true) return { ok: true, composerId };
-      if (submitResult) {
+      if (submitResult && submitResult.ok !== true) {
         return { ok: false, error: 'submit_failed:' + String(submitResult && submitResult.error || 'unknown').slice(0, 180), composerId };
       }
     }
     try {
       const st = bridge.getStatus ? await bridge.getStatus(composerId) : undefined;
+      if (st && st.hasError === true) {
+        return { ok: false, error: 'submit_failed:' + String(st.errorText || 'Cursor 拒绝了提交').slice(0, 180), composerId };
+      }
       const lastText = st && typeof st.lastHumanText === 'string' ? st.lastHumanText : '';
       if (st && st.found === true && lastText && lastText.slice(0, 50) === prefix) {
-        return { ok: true, composerId, submitAsync: true };
+        return { ok: true, composerId, submitAsync: !settled };
       }
     } catch (e) { /* 继续重试 */ }
+    if (settled && submitResult && submitResult.ok === true) {
+      return { ok: false, error: 'submit_unconfirmed:原生提交已结束，但没有核验到开场提示词', composerId };
+    }
     await new Promise(function (r) { setTimeout(r, 300); });
   }
   return { ok: false, error: 'submit_unconfirmed:提交未获回执且未在会话中核验到文本', composerId };

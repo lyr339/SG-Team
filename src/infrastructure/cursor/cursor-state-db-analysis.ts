@@ -1,5 +1,6 @@
 import { DatabaseSync } from 'node:sqlite'
 import { statSync } from 'node:fs'
+import { createTableComposerHeaderDeleter, CURSOR_COMPOSER_HEADERS_KEY, readCursorComposerHeadersJson } from './cursor-composer-headers'
 import {
   SPECIAL_COMPOSER_FLAGS,
   chatHistoryPruneCandidates,
@@ -34,7 +35,7 @@ export const COMPOSER_KEY_FAMILIES = [
   'composerVirtualRowHeights'
 ] as const
 
-export const GLOBAL_COMPOSER_HEADERS_KEY = 'composer.composerHeaders'
+export const GLOBAL_COMPOSER_HEADERS_KEY = CURSOR_COMPOSER_HEADERS_KEY
 export const WORKSPACE_COMPOSER_INDEX_KEY = 'composer.composerData'
 
 export interface CursorStateDatabaseAnalysisInput {
@@ -107,8 +108,7 @@ function countRange(database: DatabaseSync, family: string, composerId?: string)
 }
 
 export function readGlobalComposerHeaders(database: DatabaseSync): CursorComposerHeader[] {
-  const row = database.prepare('SELECT value FROM ItemTable WHERE key = ?').get(GLOBAL_COMPOSER_HEADERS_KEY) as { value: unknown } | undefined
-  return parseHeaders(row?.value)
+  return parseHeaders(readCursorComposerHeadersJson(database))
 }
 
 /**
@@ -220,6 +220,7 @@ function rollbackQuietly(database: DatabaseSync): void {
 function composerRowDeleter(database: DatabaseSync): (composerId: string) => number {
   const deleteRange = database.prepare('DELETE FROM cursorDiskKV WHERE key >= ? AND key < ?')
   const deleteExact = database.prepare('DELETE FROM cursorDiskKV WHERE key = ?')
+  const deleteHeader = createTableComposerHeaderDeleter(database)
   return (composerId) => {
     let removed = 0
     database.exec('BEGIN IMMEDIATE')
@@ -229,6 +230,7 @@ function composerRowDeleter(database: DatabaseSync): (composerId: string) => num
         const [from, to] = rangeOf(family, composerId)
         removed += Number(deleteRange.run(from, to).changes)
       }
+      removed += deleteHeader(composerId)
       database.exec('COMMIT')
     } catch (error) {
       rollbackQuietly(database)

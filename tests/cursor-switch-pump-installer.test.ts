@@ -7,15 +7,17 @@ import {
   PROFILE_REFRESH_HOOK,
   SWITCH_PUMP_OWNER,
   analyzeSwitchPump,
+  assertJavaScriptSyntax,
   describeBundleWriteFailure,
   installProfileRefreshHook,
   installSwitchPump,
   removeSwitchPumpFromSource,
   switchPumpMatches
 } from '../src/infrastructure/cursor/cursor-switch-pump-installer'
+import { CursorRuntimeCompanionConfig } from '../src/infrastructure/cursor/cursor-runtime-companion-config'
 
 const config = { port: 51_824, key: 'unit-test-key', revision: 1 }
-const source = `class AuthenticationService {
+const authSource = `class AuthenticationService {
   constructor() {
     this.overrideAccessToken = undefined;
     this.storageService = { store() {}, flush() {} };
@@ -24,20 +26,23 @@ const source = `class AuthenticationService {
     this.storeAccessRefreshToken = () => {};
   }
 }`
+const footer = 'function FZ1(){kn(()=>{if(!e.signedIn()){s(Fvf),a(!1);return}loadProfile()})}'
+const source = `${authSource}\n${footer}`
 
 const tempRoots: string[] = []
 afterEach(() => {
   for (const root of tempRoots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 
-function appFixture() {
+function appFixture(version = '3.6.31', bundleSource = source) {
   const root = mkdtempSync(join(tmpdir(), 'sg-switch-pump-'))
   tempRoots.push(root)
   const appRoot = join(root, 'Cursor.app', 'Contents', 'Resources', 'app')
   const bundlePath = join(appRoot, 'out', 'vs', 'workbench', 'workbench.desktop.main.js')
   mkdirSync(dirname(bundlePath), { recursive: true })
-  writeFileSync(bundlePath, source)
-  writeFileSync(join(appRoot, 'product.json'), JSON.stringify({ checksums: { 'vs/workbench/workbench.desktop.main.js': 'old' } }))
+  writeFileSync(bundlePath, bundleSource)
+  writeFileSync(join(appRoot, 'package.json'), JSON.stringify({ version }))
+  writeFileSync(join(appRoot, 'product.json'), JSON.stringify({ version, checksums: { 'vs/workbench/workbench.desktop.main.js': 'old' } }))
   return { root, appRoot, bundlePath }
 }
 
@@ -55,7 +60,8 @@ describe('CursorSwitchPumpInstaller', () => {
     expect(await installer.readInstalledConfig()).toBeUndefined()
     expect(await installer.ensure(config)).toMatchObject({ ok: true })
     expect(await installer.remove()).toMatchObject({ ok: true })
-    expect(readFileSync(second.bundlePath, 'utf8')).toBe(source)
+    // The independent profile refresh hook remains when only the pump is removed.
+    expect(readFileSync(second.bundlePath, 'utf8').replace(`${PROFILE_REFRESH_HOOK}e.displayEmail();`, '')).toBe(source)
     expect(analyzeSwitchPump(readFileSync(first.bundlePath, 'utf8')).installed).toBe(true)
   })
 
@@ -74,6 +80,8 @@ describe('CursorSwitchPumpInstaller', () => {
     expect(installed.source).toContain(`${PROFILE_REFRESH_HOOK}e.displayEmail();if(!e.signedIn())`)
     expect(installProfileRefreshHook(installed.source)).toMatchObject({ ok: true, changed: false })
     expect(installProfileRefreshHook('no footer')).toMatchObject({ ok: false, changed: false })
+    expect(installProfileRefreshHook(`${footer}${PROFILE_REFRESH_HOOK}`)).toMatchObject({ ok: false, changed: false })
+    expect(installProfileRefreshHook(`${installed.source}${PROFILE_REFRESH_HOOK}`)).toMatchObject({ ok: false, changed: false })
   })
 
   it('installs, re-reads and removes an owned pump idempotently', () => {
@@ -104,7 +112,7 @@ describe('CursorSwitchPumpInstaller', () => {
     expect(await installer.status()).toMatchObject({ kind: 'not-installed' })
     expect(await installer.ensure(config)).toMatchObject({ ok: true, changed: true })
     expect(await installer.status()).toMatchObject({ kind: 'installed', managed: true, config })
-    expect(readFileSync(`${fixture.bundlePath}.sg-runtime-switch-backup`, 'utf8')).toBe(source)
+    expect(readFileSync(`${fixture.bundlePath}.sg-runtime-switch-backup-3.6.31`, 'utf8')).toBe(source)
     expect(JSON.parse(readFileSync(join(fixture.appRoot, 'product.json'), 'utf8')).checksums['vs/workbench/workbench.desktop.main.js']).not.toBe('old')
     if (process.platform === 'darwin') {
       expect(execFn).toHaveBeenCalledWith('/usr/bin/codesign', ['--force', '--deep', '--sign', '-', join(fixture.root, 'Cursor.app')])
@@ -133,7 +141,7 @@ describe('CursorSwitchPumpInstaller', () => {
 
   it('leaves an external compatible pump byte-for-byte unchanged', async () => {
     const fixture = appFixture()
-    const external = installSwitchPump(source, config).source.replace(SWITCH_PUMP_OWNER, '')
+    const external = installProfileRefreshHook(installSwitchPump(source, config).source).source.replace(SWITCH_PUMP_OWNER, '')
     writeFileSync(fixture.bundlePath, external)
     const installer = new CursorSwitchPumpInstaller({ bundlePath: fixture.bundlePath, execFn: vi.fn(async () => {}) })
     expect(await installer.status()).toMatchObject({ kind: 'installed', managed: false })
@@ -145,7 +153,7 @@ describe('CursorSwitchPumpInstaller', () => {
   it('preserves an external pump while adding the independent profile refresh hook', async () => {
     const fixture = appFixture()
     const footer = 'function FZ1(){kn(()=>{if(!e.signedIn()){s(Fvf),a(!1);return}loadProfile()})}'
-    const external = installSwitchPump(`${source}\n${footer}`, config).source.replace(SWITCH_PUMP_OWNER, '')
+    const external = installSwitchPump(`${authSource}\n${footer}`, config).source.replace(SWITCH_PUMP_OWNER, '')
     writeFileSync(fixture.bundlePath, external)
     const installer = new CursorSwitchPumpInstaller({ bundlePath: fixture.bundlePath, execFn: vi.fn(async () => {}) })
     expect(await installer.ensure({ ...config, port: 51_825, key: 'different' })).toMatchObject({ ok: true, changed: true })
@@ -177,5 +185,68 @@ describe('CursorSwitchPumpInstaller', () => {
     writeFileSync(fixture.bundlePath, oldOwned.replace(SWITCH_PUMP_OWNER, ''))
     expect(await installer.status()).toMatchObject({ kind: 'installed', managed: false })
     expect(await installer.readInstalledConfig()).toMatchObject({ revision: 0 })
+  })
+
+  it.each(['3.6.31', '3.21.12'])('auto-selects %s and checks the actual profile hook before writing', async (version) => {
+    const profile = version === '3.6.31' ? footer
+      : 'function rFy(){Yt(()=>{if(!t.signedIn()){s(dPo),a(!1);return}loadProfile()})}'
+    const original = `import { x } from './not-executed.js';\n${authSource}\n${profile}`
+    const fixture = appFixture(version, original)
+    const installer = new CursorSwitchPumpInstaller({ bundlePath: fixture.bundlePath, execFn: async () => {} })
+    expect(await installer.status()).toMatchObject({ compatibility: { state: 'supported', adapter: version } })
+    expect(await installer.ensure(config)).toMatchObject({ ok: true, changed: true })
+    const patched = readFileSync(fixture.bundlePath, 'utf8')
+    expect(patched).toContain(`import { x } from './not-executed.js'`)
+    expect(patched).toContain(`${PROFILE_REFRESH_HOOK}${version === '3.6.31' ? 'e' : 't'}.displayEmail();`)
+    expect(await installer.status()).toMatchObject({ kind: 'installed', profileRefreshReady: true })
+    expect(await installer.ensure(config)).toMatchObject({ ok: true, changed: false })
+  })
+
+  it('refuses unknown releases without writing, then re-detects after an upgrade or downgrade', async () => {
+    const fixture = appFixture('3.22.0')
+    const installer = new CursorSwitchPumpInstaller({ bundlePath: fixture.bundlePath })
+    expect(await installer.status()).toMatchObject({ kind: 'unsupported', compatibility: { version: '3.22.0' } })
+    expect(await installer.ensure(config)).toMatchObject({ ok: false, changed: false })
+    expect(readFileSync(fixture.bundlePath, 'utf8')).toBe(source)
+    writeFileSync(join(fixture.appRoot, 'package.json'), JSON.stringify({ version: '3.21.12' }))
+    writeFileSync(join(fixture.appRoot, 'product.json'), JSON.stringify({ version: '3.21.12' }))
+    expect(await installer.status()).toMatchObject({ kind: 'not-installed', compatibility: { adapter: '3.21.12' } })
+  })
+
+  it('does not silently skip a missing or ambiguous profile hook', async () => {
+    for (const original of [authSource, `${source}\n${footer}`]) {
+      const fixture = appFixture('3.21.12', original)
+      const outcome = await new CursorSwitchPumpInstaller({ bundlePath: fixture.bundlePath }).ensure(config)
+      expect(outcome).toMatchObject({ ok: false, changed: false, message: expect.stringContaining('资料刷新适配未通过') })
+      expect(readFileSync(fixture.bundlePath, 'utf8')).toBe(original)
+    }
+  })
+
+  it('keeps release-specific originals instead of overwriting or reusing the other release backup', async () => {
+    const fixture = appFixture('3.6.31')
+    const installer = new CursorSwitchPumpInstaller({ bundlePath: fixture.bundlePath, execFn: async () => {} })
+    expect((await installer.ensure(config)).ok).toBe(true)
+    const current = `import x from './react.js';\n${authSource}\nfunction rFy(){Yt(()=>{if(!t.signedIn()){s(dPo),a(!1);return}loadProfile()})}`
+    writeFileSync(fixture.bundlePath, current)
+    writeFileSync(join(fixture.appRoot, 'package.json'), JSON.stringify({ version: '3.21.12' }))
+    writeFileSync(join(fixture.appRoot, 'product.json'), JSON.stringify({ version: '3.21.12' }))
+    expect((await installer.ensure(config)).ok).toBe(true)
+    expect(readFileSync(`${fixture.bundlePath}.sg-runtime-switch-backup-3.6.31`, 'utf8')).toBe(source)
+    expect(readFileSync(`${fixture.bundlePath}.sg-runtime-switch-backup-3.21.12`, 'utf8')).toBe(current)
+  })
+
+  it('keeps a current pump available for hot switching after a cold switch changes port and key', async () => {
+    const fixture = appFixture('3.21.12')
+    const installer = new CursorSwitchPumpInstaller({ bundlePath: fixture.bundlePath, execFn: async () => {} })
+    expect((await installer.ensure(config)).ok).toBe(true)
+    new CursorRuntimeCompanionConfig(fixture.bundlePath).ensure({ port: 51_831, key: 'cold-switch-endpoint' })
+    expect(await installer.status()).toMatchObject({ kind: 'installed', config: { port: 51_831, key: 'cold-switch-endpoint', revision: 1 } })
+    expect(await installer.readInstalledConfig()).toEqual({ port: 51_831, key: 'cold-switch-endpoint', revision: 1 })
+  })
+
+  it('uses real ESM grammar without resolving imports or executing the source', () => {
+    expect(() => assertJavaScriptSyntax('import x from "missing.js"; export const y = import.meta.url; throw new Error("must not run");')).not.toThrow()
+    expect(() => assertJavaScriptSyntax('export const broken = ;')).toThrow(/语法解析失败/)
+    expect(() => assertJavaScriptSyntax('import { from "missing.js";')).toThrow(/语法解析失败/)
   })
 })

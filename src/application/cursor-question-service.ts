@@ -84,7 +84,8 @@ export class CursorQuestionService {
       toolCallId,
       selections: draft.selections,
       freeformTexts: draft.freeformTexts ?? {},
-      note: buildCursorQuestionNote(question, answers, userNote)
+      note: buildCursorQuestionNote(question, answers, userNote),
+      ...(userNote ? { followupNote: userNote } : {})
     })
     if (result.ok && result.status !== 'submitted') return { ok: false, code: 'unconfirmed', message: 'Cursor 回执与提交操作不一致' }
     if (result.ok) {

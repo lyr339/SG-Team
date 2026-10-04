@@ -1,3 +1,5 @@
+import type { CursorCompatibility } from './cursor-compatibility'
+
 /** 切号泵补丁（ZMO_SWITCH_V1）的共享类型：IPC 契约与安装器实现的单一出处。 */
 
 export interface CursorSwitchPumpStatus {
@@ -12,6 +14,10 @@ export interface CursorSwitchPumpStatus {
   config?: { port: number; key: string; revision: number }
   /** true 表示由拾光当前安装器写入；false 表示可复用的外部兼容泵。 */
   managed?: boolean
+  /** Auto-selected from this installation's metadata; unknown releases cannot be patched. */
+  compatibility?: CursorCompatibility
+  /** Separate from the core pump: legacy/external installs may still need the profile hook. */
+  profileRefreshReady?: boolean
   message: string
 }
 

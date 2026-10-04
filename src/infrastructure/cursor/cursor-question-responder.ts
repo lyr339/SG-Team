@@ -5,7 +5,9 @@ import { SG_COMPOSER_BRIDGE_PRELUDE, SG_COMPOSER_SERVICE_GLOBAL } from './cursor
 /**
  * 在 Cursor 渲染进程内回答 / 跳过原生 ask_question（CDP Runtime.evaluate）。
  *
- * Cursor 自己的问卷提交函数依赖一个模块私有的答案暂存表，外部拿不到；但它的
+ * 3.21.12 直接持久化答案草稿再 acceptToolCall，由原生 AskQuestionQueryHandler
+ * 读取草稿生成答案；不得发送跟进消息（新版 onBeforeSubmitChat 会取消问卷）。
+ * 3.6.31 的问卷提交函数依赖一个模块私有的答案暂存表，外部拿不到；但它的
  * ToolFormer 在「问卷未答时用户直接发消息」这条原生路径（onBeforeSubmitChat）里，
  * 会读取气泡 additionalData.currentSelections 组装答案、接受工具调用，再把消息文本
  * 作为跟进消息送入当前回合。拾光复用这条路径：
@@ -27,6 +29,8 @@ export interface CursorQuestionAnswerCommand {
   freeformTexts: Record<string, string>
   /** 跟进消息正文（非空）；Cursor 回退路径要求有文本才会走问卷接受分支。 */
   note: string
+  /** Explicit user comment, separate from the 3.6.31 generated answer summary. */
+  followupNote?: string
 }
 
 export interface CursorQuestionSkipCommand {
@@ -78,6 +82,7 @@ const LOCATE_QUESTION_SOURCE = `
     return String(extra.status || '');
   };
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const cursorVersion = window.vscode?.context?.configuration?.()?.product?.version;
 `
 
 export function buildAnswerQuestionExpression(command: CursorQuestionAnswerCommand, confirmTimeoutMs = DEFAULT_CONFIRM_TIMEOUT_MS): string {
@@ -87,8 +92,71 @@ export function buildAnswerQuestionExpression(command: CursorQuestionAnswerComma
   const SELECTIONS = ${JSON.stringify(command.selections)};
   const FREEFORM = ${JSON.stringify(command.freeformTexts)};
   const NOTE = ${JSON.stringify(command.note)};
+  const FOLLOWUP_NOTE = ${JSON.stringify(command.followupNote ?? '')};
   const CONFIRM_MS = ${Math.max(500, Math.floor(confirmTimeoutMs))};
   ${LOCATE_QUESTION_SOURCE}
+  if (cursorVersion === '3.21.12') {
+    if (typeof toolFormer.acceptToolCall !== 'function' || typeof cds.manuallyPersistComposerOrThrow !== 'function') {
+      return { ok: false, code: 'unsupported_runtime', error: '新版问卷提交接口不可用' };
+    }
+    if (FOLLOWUP_NOTE && (typeof svc.composerChatService?.submitChatMaybeAbortCurrent !== 'function'
+      || typeof cds.getComposerDataIfLoaded !== 'function')) {
+      return { ok: false, code: 'unsupported_runtime', error: '附言提交接口不可用' };
+    }
+    const questions = bubble.params && Array.isArray(bubble.params.questions) ? bubble.params.questions : [];
+    if (!questions.length || !questions.every(q => {
+      const selected = SELECTIONS[q.id];
+      return Array.isArray(selected) && selected.length > 0
+        && (q.allowMultiple === true || selected.length === 1)
+        && new Set(selected).size === selected.length
+        && selected.every(id => id === '__freeform_other__'
+          ? typeof FREEFORM[q.id] === 'string' && FREEFORM[q.id].trim().length > 0
+          : (q.options || []).some(option => option.id === id));
+    })) return { ok: false, code: 'submit_failed', error: '请完整回答当前问卷' };
+    // 3.21.12 native AskQuestionQueryHandler reads the draft when acceptToolCall decides.
+    // Sending a follow-up instead would run onBeforeSubmitChat and CANCEL the questionnaire.
+    toolFormer.setBubbleData(bubbleId, {
+      additionalData: { ...additional, status: 'pending', currentSelections: SELECTIONS, freeformTexts: FREEFORM }
+    });
+    try { await cds.manuallyPersistComposerOrThrow(COMPOSER_ID); }
+    catch (e) { return { ok: false, code: 'submit_failed', error: '保存问卷草稿失败：' + String(e && e.message || e) }; }
+    const decisions = (toolFormer.pendingDecisions() || {}).pendingDecisions || {};
+    if (toolFormer.getBubbleIdByToolCallId(TOOL_CALL_ID) !== bubbleId || readStatus() !== 'pending'
+      || !Object.values(decisions).some(item => item && item.toolCallId === TOOL_CALL_ID && item.blocking === true)) {
+      return { ok: false, code: 'question_not_pending', error: '保存期间问卷已被处理' };
+    }
+    toolFormer.acceptToolCall(TOOL_CALL_ID);
+    const deadline = Date.now() + CONFIRM_MS;
+    while (Date.now() < deadline) {
+      const status = readStatus();
+      if (status === 'submitted') {
+        try { await cds.manuallyPersistComposerOrThrow(COMPOSER_ID); }
+        catch (e) { return { ok: false, code: 'unconfirmed', error: 'Cursor 已接收答案，但持久化失败：' + String(e && e.message || e) }; }
+        if (FOLLOWUP_NOTE) {
+          // Accept the question FIRST. Only an actual user comment becomes a follow-up; never submit
+          // the automatically generated summary, which would interrupt every native answer.
+          let failed = '';
+          Promise.resolve().then(() => svc.composerChatService.submitChatMaybeAbortCurrent(COMPOSER_ID, FOLLOWUP_NOTE, { ignoreQueuing: true }))
+            .catch(e => { failed = String(e && e.message || e); });
+          const followupDeadline = Date.now() + CONFIRM_MS;
+          while (Date.now() < followupDeadline) {
+            if (failed) return { ok: false, code: 'unconfirmed', error: '答案已接收，附言提交失败：' + failed };
+            const data = cds.getComposerDataIfLoaded(COMPOSER_ID);
+            const headers = data && data.fullConversationHeadersOnly || [];
+            const human = [...headers].reverse().find(h => h && h.type === 1);
+            const last = human && data.conversationMap && data.conversationMap[human.bubbleId];
+            if (last && last.text === FOLLOWUP_NOTE) return { ok: true, status: 'submitted' };
+            await sleep(100);
+          }
+          return { ok: false, code: 'unconfirmed', error: '答案已接收，但未确认附言；请在 Cursor 中核对' };
+        }
+        return { ok: true, status: 'submitted' };
+      }
+      if (status === 'cancelled') return { ok: false, code: 'submit_failed', error: '问卷被取消' };
+      await sleep(100);
+    }
+    return { ok: false, code: 'unconfirmed', error: 'Cursor 未确认问卷答案' };
+  }
   ${SG_COMPOSER_BRIDGE_PRELUDE}
   const bridge = sgBridge;
   if (!bridge || typeof bridge.submitByComposerId !== 'function') {
@@ -121,7 +189,23 @@ export function buildSkipQuestionExpression(command: CursorQuestionSkipCommand, 
   const TOOL_CALL_ID = ${JSON.stringify(command.toolCallId)};
   const CONFIRM_MS = ${Math.max(500, Math.floor(confirmTimeoutMs))};
   ${LOCATE_QUESTION_SOURCE}
+  if (cursorVersion === '3.21.12' && typeof cds.manuallyPersistComposerOrThrow !== 'function') {
+    return { ok: false, code: 'unsupported_runtime', error: '新版问卷持久化接口不可用' };
+  }
   toolFormer.setBubbleData(bubbleId, { additionalData: { ...additional, status: 'cancelled', skipReason: 'user' } });
+  if (cursorVersion === '3.21.12') {
+    try { await cds.manuallyPersistComposerOrThrow(COMPOSER_ID); }
+    catch (e) {
+      const remaining = (toolFormer.pendingDecisions() || {}).pendingDecisions || {};
+      if (readStatus() === 'cancelled' && Object.values(remaining).some(item => item && item.toolCallId === TOOL_CALL_ID)) {
+        toolFormer.setBubbleData(bubbleId, { additionalData: additional });
+      }
+      return { ok: false, code: 'submit_failed', error: '保存跳过状态失败：' + String(e && e.message || e) };
+    }
+    if (toolFormer.getBubbleIdByToolCallId(TOOL_CALL_ID) !== bubbleId || readStatus() !== 'cancelled') {
+      return { ok: false, code: 'question_not_pending', error: '保存期间问卷已被处理' };
+    }
+  }
   toolFormer.rejectToolCall(TOOL_CALL_ID, { skipReason: 'user' });
   const deadline = Date.now() + CONFIRM_MS;
   while (Date.now() < deadline) {

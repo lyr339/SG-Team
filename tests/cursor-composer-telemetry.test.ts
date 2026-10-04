@@ -76,6 +76,54 @@ function writeHeaders(path: string, headers: unknown[]): void {
   }
 }
 
+describe('3.21.12 table-backed telemetry', () => {
+  it('reads the gated standalone model catalog and invalidates it independently of applicationUser', () => {
+    const data = fixture()
+    writeHeaders(data.globalStateDatabase, [])
+    writeApplicationUser(data.globalStateDatabase, { availableDefaultModels2: [{ name: 'default' }] })
+    const database = new DatabaseSync(data.globalStateDatabase)
+    try {
+      database.prepare('INSERT INTO ItemTable VALUES (?, ?)').run('cursor.modelCatalogOwnKey.gateEnabled', 'true')
+      database.prepare('INSERT INTO ItemTable VALUES (?, ?)').run('cursor.modelCatalog.v1', JSON.stringify([{ name: 'model-a', displayName: 'Model A' }]))
+      expect(data.reader.readModelCatalog()?.some((model) => model.modelId === 'model-a')).toBe(true)
+      database.prepare('UPDATE ItemTable SET value=? WHERE key=?').run(JSON.stringify([{ name: 'model-b', displayName: 'Model B' }]), 'cursor.modelCatalog.v1')
+      expect(data.reader.readModelCatalog()?.some((model) => model.modelId === 'model-b')).toBe(true)
+      database.prepare('UPDATE ItemTable SET value=? WHERE key=?').run('false', 'cursor.modelCatalogOwnKey.gateEnabled')
+      expect(data.reader.readModelCatalog()?.some((model) => model.modelId === 'model-b')).toBe(false)
+    } finally { database.close() }
+  })
+  it('discovers native composers when the retired JSON index key is absent', () => {
+    const data = fixture()
+    const native = header({ composerId: 'composer-new-table-123', workspace: data.workspace, title: 'Native table session', additions: 12 })
+    writeHeaders(data.globalStateDatabase, [])
+    const database = new DatabaseSync(data.globalStateDatabase)
+    try {
+      database.exec('CREATE TABLE composerHeaders(composerId TEXT PRIMARY KEY, value TEXT)')
+      database.prepare('INSERT INTO composerHeaders VALUES (?, ?)').run(native.composerId, JSON.stringify(native))
+      database.prepare('DELETE FROM ItemTable WHERE key=?').run('composer.composerHeaders')
+      database.prepare('INSERT INTO ItemTable VALUES (?, ?)').run('composer.composerHeaders.version', 'native-1')
+    } finally { database.close() }
+    const snapshot = data.reader.readWorkspace(data.workspace, [])
+    expect(snapshot.availability).toBe('available')
+    expect(snapshot.composers).toHaveLength(1)
+    expect(snapshot.composers[0]).toMatchObject({ composerId: native.composerId })
+  })
+  it('binds from the exact persisted opening bubble before transcript export, without guessing from later messages', () => {
+    const data = fixture(), runtime = binding('1')
+    const id = 'composer-native-opening-123'
+    writeHeaders(data.globalStateDatabase, [header({ composerId: id, workspace: data.workspace })])
+    const database = new DatabaseSync(data.globalStateDatabase)
+    try {
+      database.exec('CREATE TABLE cursorDiskKV (key TEXT PRIMARY KEY, value TEXT)')
+      const insert = database.prepare('INSERT INTO cursorDiskKV VALUES (?, ?)')
+      insert.run(`composerData:${id}`, JSON.stringify({ fullConversationHeadersOnly: [{ type: 1, bubbleId: 'human-opening-123' }] }))
+      insert.run(`bubbleId:${id}:human-opening-123`, JSON.stringify({ text: `Start\n${cursorComposerBindingMarker({ channelId: runtime.channelId, bindingKey: runtime.composerBindingKey })}` }))
+    } finally { database.close() }
+    const snapshot = data.reader.readWorkspace(data.workspace, [runtime])
+    expect(snapshot.bindingCandidates).toEqual([expect.objectContaining({ composerId: id, channelId: '1', method: 'launch_marker' })])
+  })
+})
+
 function writeApplicationUser(path: string, value: unknown, raw = false): void {
   const database = new DatabaseSync(path)
   try {

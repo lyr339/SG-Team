@@ -162,6 +162,12 @@ export function App(): React.JSX.Element {
   const [switchPumpStatus, setSwitchPumpStatus] = useState<CursorSwitchPumpStatus>()
   const [switchPumpBusy, setSwitchPumpBusy] = useState(false)
   const [switchPumpFeedback, setSwitchPumpFeedback] = useState<{ ok: boolean; message: string }>()
+  const switchPumpReadSequence = useRef(0)
+  const refreshSwitchPumpStatus = useCallback(async (): Promise<void> => {
+    const sequence = ++switchPumpReadSequence.current
+    const status = await window.sgDesktop.getCursorSwitchPumpStatus()
+    if (sequence === switchPumpReadSequence.current) setSwitchPumpStatus(status)
+  }, [])
   // 存储清理：盘点结果只来自主进程；清理结果自带清理后的新盘点
   const [storageScan, setStorageScan] = useState<CursorStorageScan>()
   const [storageScanBusy, setStorageScanBusy] = useState(false)
@@ -404,8 +410,7 @@ export function App(): React.JSX.Element {
       .then(setCursorUpdatePreferences)
       .catch((reason: unknown) => setCursorUpdateError(userFacingErrorMessage(reason)))
     // 切号补丁状态（只读检测，零副作用）；维护页状态卡与热切可用性共用。
-    void window.sgDesktop.getCursorSwitchPumpStatus()
-      .then(setSwitchPumpStatus)
+    void refreshSwitchPumpStatus()
       .catch(() => {})
     const unsubscribeAccountAutomation = window.sgDesktop.onAccountAutomationProgress((run) => {
       setAccountAutomationRun(run)
@@ -1317,12 +1322,9 @@ export function App(): React.JSX.Element {
     switchPumpStatus,
     switchPumpBusy,
     switchPumpFeedback,
-    onRefreshSwitchPumpStatus: () => {
-      void window.sgDesktop.getCursorSwitchPumpStatus()
-        .then(setSwitchPumpStatus)
-        .catch(() => {})
-    },
+    onRefreshSwitchPumpStatus: refreshSwitchPumpStatus,
     onEnsureSwitchPump: async () => {
+      ++switchPumpReadSequence.current
       setSwitchPumpBusy(true); setSwitchPumpFeedback(undefined)
       try {
         const outcome = await window.sgDesktop.ensureCursorSwitchPump()
@@ -1333,12 +1335,13 @@ export function App(): React.JSX.Element {
       } catch (reason) {
         setSwitchPumpFeedback({ ok: false, message: userFacingErrorMessage(reason) })
       } finally {
-        setSwitchPumpBusy(false)
         // 安装/改写后状态可能变化（installed/config），无条件重读一次
-        void window.sgDesktop.getCursorSwitchPumpStatus().then(setSwitchPumpStatus).catch(() => {})
+        await refreshSwitchPumpStatus().catch(() => {})
+        setSwitchPumpBusy(false)
       }
     },
     onRemoveSwitchPump: async () => {
+      ++switchPumpReadSequence.current
       setSwitchPumpBusy(true); setSwitchPumpFeedback(undefined)
       try {
         const outcome = await window.sgDesktop.removeCursorSwitchPump()
@@ -1349,8 +1352,8 @@ export function App(): React.JSX.Element {
       } catch (reason) {
         setSwitchPumpFeedback({ ok: false, message: userFacingErrorMessage(reason) })
       } finally {
+        await refreshSwitchPumpStatus().catch(() => {})
         setSwitchPumpBusy(false)
-        void window.sgDesktop.getCursorSwitchPumpStatus().then(setSwitchPumpStatus).catch(() => {})
       }
     },
     storageScan,
@@ -1402,9 +1405,12 @@ export function App(): React.JSX.Element {
       return { message }
     },
     onSaveAutomationSettings: (settings) => {
-      void window.sgDesktop.saveAccountAutomationSettings(settings)
-        .then((saved) => setAccountAutomationSettings(saved))
-        .catch((reason: unknown) => setProcessingError({ providerId: settings.processingProvider, message: userFacingErrorMessage(reason) }))
+      return window.sgDesktop.saveAccountAutomationSettings(settings)
+        .then((saved) => { setAccountAutomationSettings(saved); return true })
+        .catch((reason: unknown) => {
+          setProcessingError({ providerId: settings.processingProvider, message: userFacingErrorMessage(reason) })
+          return false
+        })
     },
     onCancelAutomation: () => {
       void window.sgDesktop.cancelAccountAutomation().catch(() => {})

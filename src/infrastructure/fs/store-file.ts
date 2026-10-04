@@ -26,12 +26,12 @@ export type StoreJsonRead =
 /** 写入并 fsync 后原子替换目标文件；mode 缺省时不改权限（沿用 umask/既有权限）。 */
 export function writeStoreFileSync(
   path: string,
-  data: string,
+  data: string | Uint8Array,
   options: { mode?: number; temporaryPath?: string } = {}
 ): void {
   mkdirSync(dirname(path), { recursive: true })
   const temporary = options.temporaryPath ?? `${path}.tmp`
-  const buffer = Buffer.from(data, 'utf8')
+  const buffer = typeof data === 'string' ? Buffer.from(data, 'utf8') : Buffer.from(data)
   const fd = openSync(temporary, 'w', options.mode)
   try {
     let offset = 0
@@ -43,7 +43,8 @@ export function writeStoreFileSync(
   // open 的 mode 只在新建时生效；临时文件若是崩溃残留（'w' 复用旧 inode），权限要补齐。
   if (options.mode !== undefined) chmodSync(temporary, options.mode)
   renameSync(temporary, path)
-  if (options.mode !== undefined) chmodSync(path, options.mode)
+  // rename preserves the temporary file's mode. No throwing operation after the atomic commit:
+  // a redundant chmod here could report failure even though the new account selection was saved.
   try {
     const directory = openSync(dirname(path), 'r')
     try {

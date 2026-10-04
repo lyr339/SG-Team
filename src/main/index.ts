@@ -535,10 +535,10 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     // 接手号 = 排除当前处理号后最近更新者（与小辰 pickNextMain 的 newestFirst 同序）。
     liveSwitch: (accountId) => cursorLiveSwitcher.switchLive({ accountId }),
     prepareLiveSwitch: (accountId) => cursorLiveSwitcher.prepare({ accountId }),
-    pickNextAccount: (excludeId) => selectAccountHandoverTarget(
+    pickNextAccount: (excludeId, preferredAccountId) => selectAccountHandoverTarget(
       cursorAccountVault.list(),
       excludeId,
-      accountAutomationSettingsStore.load().seamlessHandoverAccountId
+      preferredAccountId
     )?.id,
     // 秒级通道（首选）：宿主各自的「刷新 + token 轮换守门 + 页内删除」实现
     inBrowserDeleter: {

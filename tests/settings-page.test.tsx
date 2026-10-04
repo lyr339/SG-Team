@@ -361,7 +361,7 @@ describe('SettingsPage', () => {
     const on = renderToStaticMarkup(<SettingsPage {...propsFor()} />)
     // 只看自动化那一段：软件更新组也有一个随「自动检查」开合的 settings-collapse（默认开）。
     const automationBlock = (html: string): string => html.slice(html.indexOf('settings-automation'), html.indexOf('倒计时后复核会话'))
-    expect(automationBlock(off)).toContain('<div class="settings-collapse">')
+    expect(automationBlock(off)).toContain('<div class="settings-collapse" inert="">')
     expect(automationBlock(off)).not.toContain('settings-collapse is-open')
     expect(automationBlock(on)).toContain('settings-collapse is-open')
   })

@@ -6,6 +6,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { AccountAutomationRun } from '../../../domain/account-automation'
 import { parseCursorAccountCard } from '../../../domain/cursor-account-card'
+import { cursorCompatibilityForVersion } from '../../../domain/cursor-compatibility'
 import type { ConversationEntry, ProcessBlock } from '../../../domain/conversation-entry'
 import { AGENT_AVATAR_IDS, TEAM_ROLE_TEMPLATES, createConfiguredTeamBundle, emptyTeamControlSnapshot } from '../../../domain/team-control'
 import type { TeamRunStatus } from '../../../domain/team-control'
@@ -60,7 +61,8 @@ const requestedRunStatus = previewParameters.get('runStatus')
 const automationScene = (['countdown', 'processing', 'hardening-countdown', 'importing', 'deleting', 'cleaning', 'done', 'failed', 'cancelled'] as const)
   .find((phase) => phase === previewParameters.get('automation'))
 const previewNow = Date.now()
-const automationSceneRun: AccountAutomationRun | undefined = automationScene ? ({
+const processingOnlyScene = previewParameters.get('postProcessing') === 'off'
+const automationSceneRunBase: AccountAutomationRun | undefined = automationScene ? ({
   countdown: { phase: 'countdown', message: '将在 6.5s 后自动处理当前账号（可取消）', remainingSec: 6.5, planId: 'preview-plan', startedAt: previewNow - 3_500 },
   processing: {
     phase: 'processing', message: '奥仔：正在提交 Session Token 处理…', planId: 'preview-plan', startedAt: previewNow - 12_000,
@@ -86,6 +88,10 @@ const automationSceneRun: AccountAutomationRun | undefined = automationScene ? (
   failed: { phase: 'failed', message: '奥仔处理失败：卡密余额不足，请先充值或更换卡密（本地账号已保留）', planId: 'preview-plan', startedAt: previewNow - 22_000, finishedAt: previewNow - 8_000 },
   cancelled: { phase: 'cancelled', message: '已取消本次自动化', planId: 'preview-plan', startedAt: previewNow - 9_000, finishedAt: previewNow - 4_000 }
 } as const)[automationScene] : undefined
+const automationSceneRun = automationSceneRunBase && processingOnlyScene
+  ? { ...automationSceneRunBase, postProcessingEnabled: false, handover: undefined,
+      ...(automationSceneRunBase.phase === 'done' ? { message: '奥仔处理已完成；后续操作未执行，本地账号记录已保留' } : {}) }
+  : automationSceneRunBase
 // 会话预热走查场景：?warmup=running|done|slow|failed|no-model
 const warmupScene = (['running', 'done', 'slow', 'failed', 'no-model'] as const)
   .find((scene) => scene === previewParameters.get('warmup'))
@@ -1086,7 +1092,10 @@ const api: SgDesktopApi = {
   }),
   verifyCursorRuntimeAccount: async () => ({ status: 'matched' as const, cursorLabel: 'preview@cursor.com', activeLabel: 'preview@cursor.com' }),
   switchCursorAccountLive: async () => ({ switched: true }),
-  getCursorSwitchPumpStatus: async () => pumpScene === 'external'
+  getCursorSwitchPumpStatus: async () => {
+    const compatibility = cursorCompatibilityForVersion(previewParameters.get('cursorVersion') ?? '3.21.12')
+    if (compatibility.state !== 'supported') return { kind: 'unsupported', message: compatibility.detail, compatibility }
+    const status = pumpScene === 'external'
     ? ({
         kind: 'installed' as const, managed: false,
         config: { port: 51824, key: 'preview', revision: 2 },
@@ -1098,7 +1107,9 @@ const api: SgDesktopApi = {
           kind: 'installed' as const, managed: true,
           config: { port: 51824, key: 'preview', revision: 1 },
           message: '拾光切号补丁已安装（端口 51824）'
-        }),
+        })
+    return { ...status, compatibility, profileRefreshReady: pumpScene !== 'profile-missing' }
+  },
   ensureCursorSwitchPump: async () => ({ ok: true, changed: false, message: '切号补丁已是当前配置' }),
   removeCursorSwitchPump: async () => ({ ok: true, changed: true, message: '切号补丁已卸载，重启 Cursor 生效。' }),
   refreshCursorMembership: async () => ({ state: 'ok' as const, profile: { tier: 'pro' as const, raw: 'pro', trialEligible: false, isTeamMember: false, lastPaymentFailed: false, fetchedAt: Date.now() } }),
@@ -1110,7 +1121,7 @@ const api: SgDesktopApi = {
         profile: { tier: index === 0 ? 'free' as const : 'pro' as const, raw: index === 0 ? 'free' : 'pro', fetchedAt: Date.now() }
       }])
   ),
-  getProcessingProviderStatuses: async () => automationSceneRun ? [
+  getProcessingProviderStatuses: async () => automationSceneRun || processingOnlyScene ? [
     { providerId: 'aozai' as const, label: '奥仔', saved: true, maskedCode: '••••6l8Q', unit: 'points' as const, remaining: 87, capacity: 100, costPerOperation: 3 },
     { providerId: 'henxin' as const, label: '痕心', saved: true, maskedCode: '••••CA23', unit: 'uses' as const, remaining: 5, capacity: 5, costPerOperation: 1 }
   ] : [
@@ -1259,7 +1270,8 @@ const api: SgDesktopApi = {
     updateListeners.add(listener)
     return () => { updateListeners.delete(listener) }
   },
-  getAccountAutomationSettings: async () => ({ enabled: Boolean(automationSceneRun), delaySec: 10, postProcessDelaySec: 10, processingProvider: 'aozai' as const }),
+  getAccountAutomationSettings: async () => ({ enabled: Boolean(automationSceneRun) || processingOnlyScene, delaySec: 10,
+    postProcessDelaySec: 10, processingProvider: 'aozai' as const, ...(processingOnlyScene ? { postProcessingEnabled: false } : {}) }),
   saveAccountAutomationSettings: async (settings) => settings,
   getAccountAutomationRun: async () => automationSceneRun ?? { phase: 'idle' as const, message: '', startedAt: 0 },
   cancelAccountAutomation: async () => ({ phase: 'cancelled' as const, message: '已取消本次自动化', startedAt: 0, finishedAt: Date.now() }),

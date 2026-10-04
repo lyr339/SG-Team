@@ -1,11 +1,12 @@
-import { execFile } from 'node:child_process'
+import { execFile, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { copyFileSync, existsSync, readFileSync } from 'node:fs'
 import { dirname, join, normalize } from 'node:path'
 import { promisify } from 'node:util'
 import type { CursorSwitchPumpOutcome, CursorSwitchPumpStatus } from '../../domain/cursor-switch-pump'
 import { writeStoreFileSync } from '../fs/store-file'
-import { cursorWorkbenchBundleCandidates, locateCursorWorkbenchBundle } from './cursor-install-paths'
+import { appRootOfBundle, cursorWorkbenchBundleCandidates, locateCursorWorkbenchBundle } from './cursor-install-paths'
+import { cursorRuntimeBackupPath, readCursorCompatibility } from './cursor-compatibility'
 import { WINDOWS_POWERSHELL_PROBE_TIMEOUT_MS, resolveWindowsCursorWorkbench } from './cursor-windows-launch'
 
 const execFileAsync = promisify(execFile)
@@ -13,6 +14,7 @@ const execFileAsync = promisify(execFile)
 /** IPC 契约类型与 domain 单一出处对齐（结构一致，本地别名保住既有可读性）。 */
 export type SwitchPumpStatus = CursorSwitchPumpStatus
 export type SwitchPumpInstallOutcome = CursorSwitchPumpOutcome
+export { appRootOfBundle } from './cursor-install-paths'
 
 /**
  * 切号泵补丁（ZMO_SWITCH_V1）安装器。
@@ -28,7 +30,7 @@ export const SWITCH_PUMP_START = '/*ZMO_SWITCH_V1_START*/'
 export const SWITCH_PUMP_END = '/*ZMO_SWITCH_V1_END*/'
 export const SWITCH_PUMP_REVISION = 1
 export const SWITCH_PUMP_OWNER = '/*SG_SWITCH_PUMP_MANAGED_V1*/'
-/** Cursor 3.6.31 Agent 侧栏资料卡只监听 signedIn；补上邮箱信号依赖后热切会异步重取 getMe。 */
+/** Both audited builds' account card watches signedIn; email changes trigger an asynchronous profile refresh. */
 export const PROFILE_REFRESH_HOOK = '/*SG_PROFILE_REFRESH_V1*/'
 
 const CONFIG_PREFIX = '/*ZMO_SWITCH_CONFIG:'
@@ -41,7 +43,13 @@ const STORE_ANCHOR = /this\.storeAccessRefreshToken\s*=/g
 /** 锚点附近必须出现的鉴权服务行为标记（防误认其他构造器）。 */
 const NEARBY_MARKERS = ['storageService', 'notifyLoginChangedListeners', 'storeEmailAndSignUpType']
 const NEARBY_WINDOW = 16_000
-const PROFILE_REFRESH_ANCHOR = 'kn(()=>{if(!e.signedIn()){s(Fvf),a(!1);return}'
+// Match the effect's behavior, retaining every minified identifier from the selected build.
+const PROFILE_REFRESH_ANCHOR = /[A-Za-z_$][\w$]*\(\(\)=>\{if\(!([A-Za-z_$][\w$]*)\.signedIn\(\)\)\{[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\),[A-Za-z_$][\w$]*\(!1\);return\}/g
+const PROFILE_REFRESH_INSTALLED = /[A-Za-z_$][\w$]*\(\(\)=>\{\/\*SG_PROFILE_REFRESH_V1\*\/([A-Za-z_$][\w$]*)\.displayEmail\(\);if\(!\1\.signedIn\(\)\)\{[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\),[A-Za-z_$][\w$]*\(!1\);return\}/
+
+function hasProfileRefreshHook(source: string): boolean {
+  return source.split(PROFILE_REFRESH_HOOK).length === 2 && PROFILE_REFRESH_INSTALLED.test(source)
+}
 
 /** 写新票前清掉的鉴权缓存键（顺序与小辰一致，协议侧无顺序依赖）。 */
 const CLEAR_KEYS = [
@@ -96,23 +104,26 @@ export interface SwitchPumpEditResult {
 }
 
 /**
- * 给固定版 Cursor 的 Agent 侧栏资料卡补一条响应式依赖。cachedEmail 在换号时变化，
+ * 给已审查的 Cursor 资料卡补一条响应式依赖；标识符来自当前 bundle 而非硬编码混淆名。cachedEmail 在换号时变化，
  * effect 因而异步重跑 getMe；不等待资料请求，也不改变核心换号回执时序。
  */
 export function installProfileRefreshHook(source: string): SwitchPumpEditResult {
   if (source.includes(PROFILE_REFRESH_HOOK)) {
-    return { ok: true, changed: false, source, message: '账号资料异步刷新已启用' }
+    return hasProfileRefreshHook(source)
+      ? { ok: true, changed: false, source, message: '账号资料异步刷新已启用' }
+      : { ok: false, changed: false, source, message: '账号资料刷新界标损坏，拒绝覆盖未知代码' }
   }
-  const count = source.split(PROFILE_REFRESH_ANCHOR).length - 1
-  const first = source.indexOf(PROFILE_REFRESH_ANCHOR)
-  if (count !== 1) {
-    return { ok: false, changed: false, source, message: `账号资料卡锚点数量异常（${count}）` }
+  const matches = [...source.matchAll(PROFILE_REFRESH_ANCHOR)]
+  const match = matches[0]
+  if (matches.length !== 1 || match?.index === undefined || !match[1]) {
+    return { ok: false, changed: false, source, message: `账号资料卡锚点数量异常（${matches.length}）` }
   }
-  const replacement = `kn(()=>{${PROFILE_REFRESH_HOOK}e.displayEmail();if(!e.signedIn()){s(Fvf),a(!1);return}`
+  const first = match.index
+  const replacement = match[0].replace('()=>{', `()=>{${PROFILE_REFRESH_HOOK}${match[1]}.displayEmail();`)
   return {
     ok: true,
     changed: true,
-    source: source.slice(0, first) + replacement + source.slice(first + PROFILE_REFRESH_ANCHOR.length),
+    source: source.slice(0, first) + replacement + source.slice(first + match[0].length),
     message: '账号资料异步刷新已启用'
   }
 }
@@ -279,27 +290,17 @@ export function removeSwitchPumpFromSource(source: string): SwitchPumpEditResult
   return { ok: true, changed: true, source: stripped, message: '切号补丁已卸载' }
 }
 
-/** 整块代码语法自检（数十 MB bundle 一次性解析，秒级）；失败即拒写。 */
+/** Parse as ESM in an isolated Node process. SourceTextModule never links or executes the bundle. */
 export function assertJavaScriptSyntax(source: string): void {
-  try {
-    // Workbench 是 ESM；Function 可做完整语法扫描，但需先在“仅用于校验”的副本
-    // 中去掉 tslib 顶部导出、main 导出与 import.meta。落盘内容仍保持原字节。
-    let parsable = source
-    const tslibStart = parsable.indexOf('export function __extends')
-    const tslibDefault = parsable.indexOf('export default{__extends')
-    const tslibEnd = tslibDefault < 0 ? -1 : parsable.indexOf('};var ', tslibDefault)
-    if (tslibStart >= 0 && tslibDefault >= tslibStart && tslibEnd > tslibDefault) {
-      const head = parsable.slice(0, tslibEnd + 2)
-        .replace(/\bexport\s+(?=function|var)/g, '')
-        .replace(/\bexport\s+default\b/g, 'void')
-      parsable = head + parsable.slice(tslibEnd + 2)
-    }
-    parsable = parsable
-      .replace(/;export\{[A-Za-z_$][\w$]* as main\};/, ';')
-      .replace(/\bimport\.meta\b/g, '({})')
-    new Function(parsable)
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error)
+  const check = spawnSync(process.execPath, ['--experimental-vm-modules', '--no-warnings', '-e',
+    'try{new(require("node:vm").SourceTextModule)(require("node:fs").readFileSync(0,"utf8"))}'
+    + 'catch(e){process.stderr.write(String(e.message).slice(0,240));process.exitCode=1}'
+  ], {
+    input: source, encoding: 'utf8', timeout: 45_000, maxBuffer: 8_192, windowsHide: true,
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', NODE_OPTIONS: '' }
+  })
+  if (check.error || check.status !== 0) {
+    const detail = check.error?.message || check.stderr?.trim() || `解析器未完成（${check.signal ?? check.status}）`
     throw new Error(`补丁自检没过（语法解析失败：${detail.slice(0, 160)}），没有写盘`)
   }
 }
@@ -371,12 +372,6 @@ export async function resignMacApp(
   }
 }
 
-/** bundle 路径 → app 根目录（…/Contents/Resources/app 或 …/resources/app）。 */
-export function appRootOfBundle(bundlePath: string): string {
-  // bundle = <appRoot>/out/vs/workbench/workbench.desktop.main.js
-  return dirname(dirname(dirname(dirname(bundlePath))))
-}
-
 export interface SwitchPumpInstallerOptions {
   bundlePath?: string
   locateBundle?: () => Promise<string | undefined>
@@ -445,6 +440,11 @@ export class CursorSwitchPumpInstaller {
         message: `读不到 Workbench：${error instanceof Error ? error.message : String(error)}`
       }
     }
+    const compatibility = readCursorCompatibility(bundlePath)
+    const provenance = { bundlePath, compatibility, profileRefreshReady: hasProfileRefreshHook(source) }
+    if (compatibility.state !== 'supported') {
+      return { ...provenance, kind: compatibility.state === 'unsupported' ? 'unsupported' : 'unavailable', message: compatibility.detail }
+    }
     const analysis = analyzeSwitchPump(source)
     if (analysis.installed && analysis.config) {
       // 外部兼容泵按能力复用；拾光自己管理的泵必须与当前模板 revision 一致。
@@ -452,35 +452,39 @@ export class CursorSwitchPumpInstaller {
       if (analysis.managed && analysis.config.revision !== SWITCH_PUMP_REVISION) {
         return {
           kind: 'not-installed',
-          bundlePath,
+          ...provenance,
           managed: true,
           message: `拾光切号补丁需要更新（当前版本 ${analysis.config.revision}，目标版本 ${SWITCH_PUMP_REVISION}）`
         }
       }
       return {
-        kind: 'installed', bundlePath, config: analysis.config, managed: analysis.managed,
-        message: analysis.managed
-          ? `拾光切号补丁已安装（端口 ${analysis.config.port}）`
-          : `检测到兼容切号补丁（端口 ${analysis.config.port}，由其他工具管理）`
+        kind: 'installed', ...provenance, config: analysis.config, managed: analysis.managed,
+        message: !provenance.profileRefreshReady
+          ? '切号泵已安装；账号资料刷新需补全'
+          : analysis.managed
+            ? `拾光切号补丁已安装（端口 ${analysis.config.port}）`
+            : `检测到兼容切号补丁（端口 ${analysis.config.port}，由其他工具管理）`
       }
     }
     if (source.includes(SWITCH_PUMP_START) || source.includes(SWITCH_PUMP_END)) {
       return {
         kind: 'unsupported',
-        bundlePath,
+        ...provenance,
         message: '检测到切号泵界标，但配置或运行体校验未通过；请先恢复对应工具的原始补丁'
       }
     }
     if (!analysis.supported) {
-      return { kind: 'unsupported', bundlePath, message: analysis.reason ?? '这个 Cursor 版本装不了切号补丁' }
+      return { kind: 'unsupported', ...provenance, message: analysis.reason ?? '这个 Cursor 版本装不了切号补丁' }
     }
-    return { kind: 'not-installed', bundlePath, message: '切号补丁未安装' }
+    return { kind: 'not-installed', ...provenance, message: '切号补丁未安装' }
   }
 
   /** 读取运行中 Cursor 正在轮询的补丁配置（热切绑端口的依据）；未安装返回 undefined。 */
   async readInstalledConfig(): Promise<{ port: number; key: string; revision: number } | undefined> {
     try {
-      const analysis = analyzeSwitchPump(readFileSync(await this.resolveBundlePath(), 'utf8'))
+      const bundlePath = await this.resolveBundlePath()
+      if (readCursorCompatibility(bundlePath).state !== 'supported') return undefined
+      const analysis = analyzeSwitchPump(readFileSync(bundlePath, 'utf8'))
       if (!analysis.installed || !analysis.config) return undefined
       if (analysis.managed && analysis.config.revision !== SWITCH_PUMP_REVISION) return undefined
       return analysis.config
@@ -501,6 +505,10 @@ export class CursorSwitchPumpInstaller {
     } catch (error) {
       return { ok: false, changed: false, message: `读不到 Workbench：${error instanceof Error ? error.message : String(error)}` }
     }
+    const compatibility = readCursorCompatibility(bundlePath)
+    if (compatibility.state !== 'supported') {
+      return { ok: false, changed: false, message: compatibility.detail }
+    }
     const existing = analyzeSwitchPump(source)
     const external = existing.installed && existing.config && !existing.managed
     const installed = external
@@ -517,7 +525,10 @@ export class CursorSwitchPumpInstaller {
 
     // 资料卡修复是独立界标：兼容外部切号泵时只改侧栏依赖，不触碰其配置与运行体。
     const profileRefresh = installProfileRefreshHook(installed.source)
-    const nextSource = profileRefresh.ok ? profileRefresh.source : installed.source
+    if (!profileRefresh.ok) {
+      return { ok: false, changed: false, message: `Cursor ${compatibility.version} 资料刷新适配未通过：${profileRefresh.message}。未修改安装` }
+    }
+    const nextSource = profileRefresh.source
     const changed = installed.changed || profileRefresh.changed
     if (!changed) return { ok: true, changed: false, message: installed.message }
     try {
@@ -525,8 +536,17 @@ export class CursorSwitchPumpInstaller {
     } catch (error) {
       return { ok: false, changed: false, message: error instanceof Error ? error.message : String(error) }
     }
+    // An external updater may have replaced the installation while the parser was running.
+    try {
+      const current = readCursorCompatibility(bundlePath)
+      if (readFileSync(bundlePath, 'utf8') !== source || current.state !== 'supported' || current.version !== compatibility.version) {
+        return { ok: false, changed: false, message: 'Cursor 安装在检查期间发生变化；请重新检测后再安装' }
+      }
+    } catch {
+      return { ok: false, changed: false, message: 'Cursor 安装在检查期间不可读；请重新检测后再安装' }
+    }
     // 备份只留第一份原始盘片：覆盖成已补丁版本就失去了还原锚点。
-    const backup = `${bundlePath}.sg-runtime-switch-backup`
+    const backup = cursorRuntimeBackupPath(bundlePath)
     try {
       if (!existsSync(backup)) copyFileSync(bundlePath, backup)
       writeStoreFileSync(bundlePath, nextSource, { temporaryPath: `${bundlePath}.sg-switch-pump.tmp` })
@@ -544,7 +564,7 @@ export class CursorSwitchPumpInstaller {
           && readbackPump.config.key === existing.config!.key
         : switchPumpMatches(readback, config)
       if (!pumpMatches) throw new Error('回读配置或运行体不一致')
-      if (profileRefresh.changed && !readback.includes(PROFILE_REFRESH_HOOK)) throw new Error('账号资料刷新界标回读失败')
+      if (!hasProfileRefreshHook(readback)) throw new Error('账号资料刷新界标回读失败')
     } catch (error) {
       // 写后自检失败时立刻恢复本次写入前的字节，避免留下半可用 Cursor。
       try {

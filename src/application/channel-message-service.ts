@@ -83,11 +83,15 @@ function sleepWithAbort(signal: AbortSignal | undefined, ms: number): Promise<bo
       resolve(false)
       return
     }
-    const timer = setTimeout(() => resolve(true), ms)
-    signal?.addEventListener('abort', () => {
+    // A five-minute wait runs this helper hundreds of times; release the listener after each tick.
+    const finish = (progressed: boolean): void => {
       clearTimeout(timer)
-      resolve(false)
-    }, { once: true })
+      signal?.removeEventListener('abort', onAbort)
+      resolve(progressed)
+    }
+    const onAbort = (): void => finish(false)
+    const timer = setTimeout(() => finish(true), ms)
+    signal?.addEventListener('abort', onAbort, { once: true })
   })
 }
 

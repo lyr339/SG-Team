@@ -1,5 +1,29 @@
 import { describe, expect, it } from 'vitest'
-import { resolveExecutionProfileId } from '../src/domain/account-automation'
+import { normalizeAccountAutomationSettings, resolveExecutionProfileId } from '../src/domain/account-automation'
+import { AccountAutomationSettingsStore } from '../src/application/account-automation-store'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+
+describe('processing-only boundary persistence', () => {
+  it('only explicit false changes the old full-chain behavior', () => {
+    expect(normalizeAccountAutomationSettings({ enabled: true }).postProcessingEnabled).toBeUndefined()
+    expect(normalizeAccountAutomationSettings({ postProcessingEnabled: 'false' }).postProcessingEnabled).toBeUndefined()
+    expect(normalizeAccountAutomationSettings({ postProcessingEnabled: false }).postProcessingEnabled).toBe(false)
+  })
+  it('survives restart without erasing the saved timers, handover target or browser settings', () => {
+    const root = mkdtempSync(join(tmpdir(), 'sg-automation-boundary-'))
+    try {
+      const store = new AccountAutomationSettingsStore(join(root, 'settings.json'))
+      store.save({ enabled: true, postProcessingEnabled: false, delaySec: 5, postProcessDelaySec: 9,
+        seamlessHandoverEnabled: true, seamlessHandoverAccountId: 'spare', bitProfileId: 'window', handoverDelaySec: 3 })
+      const saved = new AccountAutomationSettingsStore(store.path).load()
+      expect(saved).toMatchObject({ postProcessingEnabled: false, postProcessDelaySec: 9, seamlessHandoverAccountId: 'spare', bitProfileId: 'window' })
+      expect(store.save({ ...saved, postProcessingEnabled: true })).toMatchObject({ postProcessDelaySec: 9, handoverDelaySec: 3 })
+      expect(store.load().postProcessingEnabled).toBeUndefined()
+    } finally { rmSync(root, { recursive: true, force: true }) }
+  })
+})
 
 /**
  * 自动化执行链的窗口解析（唯一权威规则）：

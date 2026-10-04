@@ -27,9 +27,9 @@ export interface CursorAccountSwitchDeps {
  * 2. 机器码身份账号绑定（首次生成并持久化；切换失败身份未被应用也无害——
  *    下次尝试回放同一套，语义不变）；
  * 3. 抑制 auto-heal 看门后执行切换（杀 Cursor → 写登录态/机器码 → 带端口拉起）；
- * 4. **切换成功后**才 vault.select 同步活跃账号。顺序不可倒置：失败时 Cursor
- *    仍运行原账号，active 若已被改成目标账号，账号自动化（按 active 取凭据）
- *    会拿新账号 token 作用于仍登录旧账号的 Cursor——切换失败反而污染状态。
+ * 4. 原生回执与落库读回确认后，仍在切换器的互斥/恢复窗口内提交活跃账号。
+ *    回执失败、凭据变更或金库保存失败均由切换器恢复本轮原状态；不能确认恢复时
+ *    明确报错，不用离线写入的目标 Token 冒充运行态成功。
  */
 export async function switchCursorAccountWithVault(
   deps: CursorAccountSwitchDeps,
@@ -48,12 +48,20 @@ export async function switchCursorAccountWithVault(
   })()
   deps.suppressCdpAutoHeal?.()
 
+  let committed = false
   const result = await switcher.switchAccount({
     token,
     email: emailFromLabel(account?.label),
     identity
+  }, (confirmed) => {
+    if (!confirmed.switched || !confirmed.runtimeVerified || confirmed.relaunchMode === 'failed') {
+      throw new Error('Cursor 账号切换尚未确认，未更改拾光活跃账号')
+    }
+    if (vault.credential(id) !== token) throw new Error('目标账号凭据在切换期间已改变，未提交活跃账号')
+    // A failed Vault save must still be able to stop Cursor and restore this switch's snapshot.
+    vault.activateAfterColdSwitch(id)
+    committed = true
   })
-  // Cursor 写票/写机器码全部成功后，一次提交活跃账号与对齐状态。
-  vault.activateAfterColdSwitch(id)
+  if (!committed) throw new Error('Cursor 切换未提交活跃账号，未报告成功')
   return result
 }
