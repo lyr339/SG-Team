@@ -2,6 +2,10 @@ import type { SVGProps } from 'react'
 
 type IconProps = SVGProps<SVGSVGElement>
 
+export function TeamIcon(props: IconProps): React.JSX.Element {
+  return <svg {...base(props)}><circle cx="8" cy="4.5" r="2" /><path d="M4.5 13v-1.5a3.5 3.5 0 0 1 7 0V13M3 4.5a1.5 1.5 0 0 0 0 3M13 4.5a1.5 1.5 0 0 1 0 3M1.5 12v-1a2 2 0 0 1 2-2M14.5 12v-1a2 2 0 0 0-2-2" /></svg>
+}
+
 function base(props: IconProps): IconProps {
   return { viewBox: '0 0 16 16', width: 16, height: 16, 'aria-hidden': true, fill: 'none', stroke: 'currentColor', strokeWidth: 1.4, strokeLinecap: 'round', strokeLinejoin: 'round', ...props }
 }

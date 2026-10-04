@@ -303,6 +303,58 @@ const RAIL_BAR_PROBE = `new Promise((done, fail) => {
 })`
 
 const scenes = [
+  {name:'team-menu-escape-in-drawer',run:true,query:'independent=groups',width:1440,height:900,colorScheme:'dark',storage:baseStorage({colorMode:'dark'}),clip:'.group-composer',actions:[
+    {click:'.pool-groups .run-section-head .run-link'},{wait:250},
+    {click:'.group-composer__member-pick input[type="checkbox"]'},
+    {click:'.group-composer__member .menu-select__button'},{wait:150},
+    {eval:`document.querySelector('.menu-select__menu button').focus()`},
+    {key:'Escape'},{wait:150},
+    {label:'Esc只收菜单不收抽屉，焦点回到角色按钮',probe:`(() => {if(!document.querySelector('.group-composer'))throw Error('外层抽屉错误关闭');if(document.querySelector('.menu-select__menu'))throw Error('菜单未关闭');if(!document.activeElement.matches('.group-composer__member .menu-select__button'))throw Error('焦点未回到触发器');return {topLayerOnly:true};})()`}
+  ]},
+  {name:'team-menu-escape-in-inspector',query:'independent=groups&teamContext=1',width:1440,height:1000,colorScheme:'light',storage:baseStorage({tab:'team',width:420}),clip:'.workspace-inspector',actions:[
+    {eval:`[...document.querySelectorAll('.group-context button')].find(button=>button.textContent==='新增任务').click()`},{wait:150},
+    {click:'.group-context__task-form .menu-select__button'},{wait:150},
+    {eval:`document.querySelector('.group-context__task-form .menu-select__button').focus()`},
+    {key:'Escape'},{wait:150},
+    {label:'Esc收成员菜单但保留右栏及任务草稿',probe:`(() => {if(document.querySelector('.workspace-inspector-pane[inert]'))throw Error('右栏错误关闭');if(!document.querySelector('.group-context__task-form'))throw Error('草稿被关闭');if(document.querySelector('.menu-select__menu'))throw Error('菜单未关闭');return {topLayerOnly:true};})()`}
+  ]},
+  {name:'team-member-row-alignment',run:true,query:'independent=groups',width:1440,height:1100,colorScheme:'light',storage:baseStorage(),clip:'.pool-groups',actions:[
+    {eval:`document.querySelector('.pool-groups').scrollIntoView({block:'start'})`},{wait:180},
+    {label:'头像、角色、通道、主控标记与状态在同行对齐',probe:`(() => {const results=[];for(const row of document.querySelectorAll('.group-card-member')){const nodes=[row.querySelector('.agent-avatar'),row.querySelector('.group-card-member__who strong'),row.querySelector('.group-card-member__who small'),row.querySelector('.group-card-member__state'),row.querySelector('.group-card-member__lead')].filter(Boolean);const centers=nodes.map(node=>{const r=node.getBoundingClientRect();return r.top+r.height/2});const delta=Math.max(...centers)-Math.min(...centers);if(delta>1.5)throw Error('成员信息上下参差: '+delta);results.push(Math.round(delta*10)/10)}return {centerDeltas:results};})()`}
+  ]},
+  ...['light','dark'].map(colorMode=>({name:`team-context-long-${colorMode}`,query:'independent=groups&teamContext=long',width:1180,height:1000,colorScheme:colorMode,reducedMotion:true,storage:baseStorage({tab:'team',width:300,colorMode}),clip:'.workspace-inspector',actions:[
+    {label:'长标题、路径及正文不撑破协同栏',probe:`(() => {const panel=document.querySelector('.group-context');for(const node of [panel,...panel.querySelectorAll('section,li,summary')])if(node.scrollWidth>node.clientWidth+1)throw Error('长内容越栏');return {width:panel.clientWidth};})()`}
+  ]})),
+  {name:'team-context-wide-toolbar',query:'independent=groups&teamContext=1',width:1440,height:1050,colorScheme:'dark',storage:baseStorage({tab:'team',width:600,colorMode:'dark'}),clip:'.workspace-inspector',actions:[
+    {label:'宽协同栏工具条与内容不重叠',probe:`(() => {const bar=document.querySelector('.workspace-inspector__bar').getBoundingClientRect(),head=document.querySelector('.group-context__head h2').getBoundingClientRect();if(head.top<bar.bottom)throw Error('内容被宽栏工具条遮住');const tabs=[...document.querySelectorAll('.inspector-tab')];if(tabs.length!==5)throw Error('标签缺失');for(const tab of tabs){const r=tab.getBoundingClientRect();if(r.left<bar.left||r.right>bar.right)throw Error('标签被裁');}return {tabs:5};})()`}
+  ]},
+  {name:'team-context-ended',query:'independent=groups&teamContext=1&runStatus=completed',width:1440,height:1050,colorScheme:'light',storage:baseStorage({tab:'team',width:420}),clip:'.workspace-inspector',actions:[
+    {label:'结束后记录保留、任务只读',probe:`(() => {const panel=document.querySelector('.group-context');if(!panel.textContent.includes('只读'))throw Error('未只读');if([...panel.querySelectorAll('button')].some(button=>button.textContent==='新增任务'))throw Error('已结束仍能规划');if(panel.querySelectorAll('.group-context__messages li').length!==3)throw Error('同轮历史被清空');return {readonly:true};})()`}
+  ]},
+  {name:'team-context-create-task',query:'independent=groups&teamContext=1',width:1440,height:1050,colorScheme:'light',storage:baseStorage({tab:'team',width:420}),clip:'.workspace-inspector',actions:[
+    {eval:`[...document.querySelectorAll('.group-context button')].find(button=>button.textContent==='新增任务')?.click()`},{wait:200},
+    {eval:`(() => {const input=document.querySelector('input[name="task-title"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'检查协作组任务实际派发');input.dispatchEvent(new Event('input',{bubbles:true}));})()`},{wait:150},
+    {eval:`document.querySelector('.group-context__task-form').requestSubmit()`},{wait:400},
+    {label:'新任务真实进入同组快照',probe:`(() => {const panel=document.querySelector('.group-context');if(panel.querySelector('form'))throw Error('任务表单未收口');if(!panel.textContent.includes('检查协作组任务实际派发'))throw Error('新任务未投影');return {count:panel.querySelectorAll('.group-context__task').length};})()`}
+  ]},
+  {name:'team-context-header-focus',query:'independent=groups&teamContext=1',width:1440,height:900,colorScheme:'dark',storage:railStorage({colorMode:'dark'}),clip:'.workspace-inspector',actions:[
+    {click:'.workspace-group-chip'},{wait:350},
+    {label:'组入口展开协同但不离开会话',probe:`(() => {if(document.querySelector('.inspector-tab[aria-selected="true"]')?.getAttribute('aria-label')!=='协同')throw Error('未进入协同');if(!document.querySelector('.workspace-main'))throw Error('离开了会话');return {active:'team'};})()`}
+  ]},
+  {name:'team-context-large',query:'independent=groups&teamContext=large',width:1440,height:1050,colorScheme:'dark',storage:baseStorage({tab:'team',width:340,colorMode:'dark'}),clip:'.workspace-inspector',actions:[
+    {label:'大任务集明确分页而非默默丢数据',probe:`(() => {const panel=document.querySelector('.group-context');if(panel.querySelectorAll('.group-context__task').length!==40)throw Error('初始渲染数量错误');if(!panel.textContent.includes('剩余 45'))throw Error('剩余任务数缺失');return {visible:40,total:85};})()`}
+  ]},
+  ...['light','dark'].flatMap(colorMode => [340,500].map(width => ({
+    name:`team-context-${colorMode}-${width}`, query:'independent=groups&teamContext=1', width:1440, height:1050,
+    colorScheme:colorMode, storage:baseStorage({tab:'team',width,colorMode}),clip:'.workspace-inspector',
+    actions:[{label:'同组协作信息可见且无溢出',probe:`(() => {
+      const panel=document.querySelector('.group-context');if(!panel||!panel.textContent.includes('接口重构'))throw new Error('同组上下文缺失');
+      for(const node of [panel,...panel.querySelectorAll('section,li,details')])if(node.scrollWidth>node.clientWidth+1)throw new Error('协同信息溢出');
+      return {tasks:panel.querySelectorAll('.group-context__task').length,members:panel.querySelectorAll('.group-context__members li').length}
+    })()`}]
+  }))),
+  {name:'team-context-task-editor',query:'independent=groups&teamContext=1',width:1440,height:1050,colorScheme:'dark',storage:baseStorage({tab:'team',width:420,colorMode:'dark'}),clip:'.workspace-inspector',
+    actions:[{eval:`[...document.querySelectorAll('.group-context button')].find(button=>button.textContent==='新增任务')?.click()`},{wait:250}]},
   ...[540, 300].map((width) => ({
     name: `inspector-header-align-${width}`, width: width === 300 ? 1180 : 1440, height: 900,
     colorScheme: 'dark', storage: baseStorage({ width, colorMode: 'dark' }), clip: '.workspace-inspector',

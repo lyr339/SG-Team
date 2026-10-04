@@ -749,7 +749,7 @@ export function SessionWorkspace({
                 <button
                   type="button"
                   className="workspace-group-chip"
-                  title={`协作组「${group.name}」：查看运行页的组卡片`}
+                  title={`协作组「${group.name}」：查看同组目标、任务与协作记录`}
                   onClick={() => onOpenGroup(group.id)}
                 >
                   {group.name}

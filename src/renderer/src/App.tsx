@@ -5,6 +5,10 @@ import type {
   DesktopSnapshot
 } from '../../shared/desktop-api'
 import { emptyTaskPoolSnapshot, newestTaskPoolSnapshot } from '../../domain/task-pool'
+import { groupContextView } from './team/group-context-view'
+import { submitGroupTask } from './team/group-task-submit'
+import { GroupCollaborationDialog } from './team/GroupCollaborationDialog'
+import { collaborationMapFacts, groupCommunicationSummaries } from './team/collaboration-map-view'
 import type { CursorUsageSnapshot } from '../../domain/cursor-usage'
 import { emptyTeamControlSnapshot, type TeamMemberView, type TeamRunStatus } from '../../domain/team-control'
 import { emptyTeamCollaborationSnapshot } from '../../domain/team-collaboration'
@@ -49,10 +53,6 @@ import { RuntimeAccountGuardDialog } from './lobby/RuntimeAccountGuardDialog'
 import { resolveMembershipLaunchGate } from './lobby/membership-gate'
 import { MembershipGuardDialog } from './lobby/MembershipGuardDialog'
 import type { CursorWorkspaceDetection } from '../../domain/cursor-workspace'
-import {
-  shouldShowCollaborationForRun,
-  visibleTeamCollaborationSnapshot
-} from './team/team-collaboration-view'
 import {
   applyAppearancePreferences,
   isDiscreteAppearanceChange,
@@ -279,7 +279,7 @@ export function App(): React.JSX.Element {
   const acceptCollaboration = useCallback((incoming: ReturnType<typeof emptyTeamCollaborationSnapshot>) => {
     setCollaboration((previous) => {
       const activeRun = activeRunRef.current
-      if (!activeRun.id || !['launching', 'running', 'attention', 'paused'].includes(activeRun.status ?? '')) {
+      if (!activeRun.id || !['launching', 'running', 'attention', 'paused', 'completed'].includes(activeRun.status ?? '')) {
         return previous.runId === activeRun.id && previous.messageOrder.length === 0
           ? previous
           : emptyTeamCollaborationSnapshot(activeRun.id)
@@ -784,7 +784,8 @@ export function App(): React.JSX.Element {
     const run = teamControl.activeRun
     activeRunRef.current = { id: run?.id, status: run?.status }
     setCollaboration((previous) => {
-      if (!shouldShowCollaborationForRun(previous, run)) {
+      // Keep this run's history for the read-only group inspector; only a scope change clears it.
+      if (!run || previous.runId !== run.id) {
         return previous.runId === run?.id && previous.messageOrder.length === 0
           ? previous
           : emptyTeamCollaborationSnapshot(run?.id)
@@ -918,6 +919,7 @@ export function App(): React.JSX.Element {
   }), [acceptTeamControl, activeGroups, openGroupComposer, teamControl.groups, teamControl.members])
   /** 会话头部的组名跳转：运行页对应卡片滚入视野并短暂点亮。 */
   const [focusGroupId, setFocusGroupId] = useState<string>()
+  const [groupInspectorFocus, setGroupInspectorFocus] = useState<{ key: number; scopeKey: string }>()
   const selectedSession = visibleSnapshot.sessions.find((session) => session.channelId === selectedChannelId)
   const selectedMember = teamControl.members.find((member) => (
     (member.binding?.channelId ?? member.slot.channelId) === selectedSession?.channelId
@@ -934,6 +936,34 @@ export function App(): React.JSX.Element {
   // 会话工作区回调的引用稳定化：draft 每次按键都触发 App 重渲染，这些回调若内联新建，
   // 会把 SessionWorkspace 时间线的 memo 边界打穿（所有历史卡被迫参与 reconciliation）。
   const workspaceChannelId = selectedSession?.channelId ?? ''
+  const sessionGroupContext = useMemo(() => groupContextView(teamControl, workspaceChannelId, taskPool, collaboration),
+    [teamControl, workspaceChannelId, taskPool, collaboration])
+  const communicationSummaries = useMemo(() => groupCommunicationSummaries(teamControl, collaboration), [teamControl, collaboration])
+  const [collaborationTarget, setCollaborationTarget] = useState<{ runId: string; groupId: string }>()
+  const openCollaboration = useCallback((groupId: string): void => {
+    const run = teamControl.activeRun
+    if (!run || activeRunRef.current.id !== run.id || !teamControl.groups.some(view => view.group.id === groupId && view.group.runId === run.id)) return
+    setCollaborationTarget({ runId: run.id, groupId })
+    // One local read on explicit open, not another permanent poll or launch-chain precheck.
+    void window.sgDesktop.getTeamCollaborationSnapshot().then(acceptCollaboration).catch(() => {})
+  }, [teamControl.activeRun, teamControl.groups, acceptCollaboration])
+  const collaborationFacts = useMemo(() => {
+    const run = teamControl.activeRun
+    if (!collaborationTarget || !run || run.id !== collaborationTarget.runId) return undefined
+    const group = teamControl.groups.find(view => view.group.id === collaborationTarget.groupId && view.group.runId === run.id)
+    return group ? collaborationMapFacts(group, run, collaboration) : undefined
+  }, [collaborationTarget, teamControl.activeRun, teamControl.groups, collaboration])
+  useEffect(() => { if (collaborationTarget && !collaborationFacts) setCollaborationTarget(undefined) }, [collaborationTarget, collaborationFacts])
+  const closeCollaboration = useCallback(() => setCollaborationTarget(undefined), [])
+  const openCollaborationMember = useCallback((slotId: string): boolean => {
+    if (!collaborationTarget || activeRunRef.current.id !== collaborationTarget.runId) return false
+    const member = teamControl.members.find(item => item.slot.id === slotId && item.slot.runId === collaborationTarget.runId && item.slot.groupId === collaborationTarget.groupId)
+    const channelId = member?.binding?.channelId ?? member?.slot.channelId
+    const session = visibleSnapshot.sessions.find(item => item.channelId === channelId)
+    if (!member || !channelId || !session || member.binding?.agentSessionId && member.binding.agentSessionId !== session.id) return false
+    closeCollaboration(); selectSession(channelId)
+    return true
+  }, [collaborationTarget, teamControl.members, visibleSnapshot.sessions, closeCollaboration, selectSession])
   const handleWorkspaceDraftChange = useCallback((value: string): void => {
     if (!workspaceChannelId) return
     setComposerDrafts((current) => ({ ...current, [workspaceChannelId]: value }))
@@ -1014,9 +1044,6 @@ export function App(): React.JSX.Element {
       setSelectedChannelId(fallback.channelId)
     }
   }, [activeModule, selectedChannelId, sessionListRequested, visibleSnapshot.sessions])
-  const activeRunCollaboration = useMemo(() => (
-    visibleTeamCollaborationSnapshot(collaboration, teamControl.activeRun)
-  ), [collaboration, teamControl.activeRun])
   const changeModule = useCallback((module: AppModule): void => {
     setActiveModule(module)
     if (module === 'sessions') setSessionListRequested(false)
@@ -1445,8 +1472,34 @@ export function App(): React.JSX.Element {
           onQuoteToComposer={handleWorkspaceQuote}
           onReviewSummary={acceptWorkspaceReviewSummary}
           onClose={close}
+          groupFocus={groupInspectorFocus}
+          groupContext={{
+            view: sessionGroupContext,
+            communication: sessionGroupContext.group ? communicationSummaries.get(sessionGroupContext.group.group.id) : undefined,
+            onOpenCollaboration: openCollaboration,
+            onOpenSession: selectSession,
+            onManageGroup: (groupId) => {
+              if (!groupId && teamControl.activeRun?.status === 'running') {
+                openGroupComposer({ kind: 'create', preselectedChannelIds: [workspaceChannelId] })
+              } else {
+                setFocusGroupId(groupId)
+                changeModule('run')
+              }
+            },
+            onPlanTask: async (groupId, task) => {
+              const runId = teamControl.activeRun?.id
+              if (!sessionGroupContext.mutable || groupId !== sessionGroupContext.group?.group.id
+                || activeRunRef.current.id !== runId || activeRunRef.current.status !== 'running') {
+                throw new Error('协作上下文已变化，请在当前组重新创建任务')
+              }
+              const latest = await submitGroupTask(window.sgDesktop, runId!, groupId, task)
+              if (activeRunRef.current.id !== runId) return
+              acceptTaskPool(latest)
+            }
+          }}
         />
       ) : undefined}
+      rightPanelFocusKey={groupInspectorFocus?.key}
       cursorWorkspace={cursorWorkspace}
       workspace={activeWorkspace}
       wideContent={activeModule !== 'sessions'}
@@ -1472,6 +1525,8 @@ export function App(): React.JSX.Element {
           agentLaunchPlan={agentLaunchPlan}
           cursorModels={visibleSnapshot.cursorModels ?? []}
           taskPool={taskPool}
+          communicationSummaries={communicationSummaries}
+          onOpenCollaboration={openCollaboration}
           sessionWarmupRun={sessionWarmupRun}
           sessionWarmupEnabled={sessionWarmupEnabled}
           onToggleSessionWarmup={(enabled) => {
@@ -1531,8 +1586,8 @@ export function App(): React.JSX.Element {
           handoffTitle={handoffEntry.title}
           group={selectedMemberGroup}
           onOpenGroup={(groupId) => {
-            setFocusGroupId(groupId)
-            changeModule('run')
+            setGroupInspectorFocus(previous => ({ key: (previous?.key ?? 0) + 1,
+              scopeKey: `${teamControl.activeRun?.id ?? 'none'}:${groupId}` }))
           }}
           onWithdrawQueued={async (entryId) => {
             const withdrawn = (snapshot.conversations[selectedSession.channelId] ?? []).find((entry) => entry.id === entryId)
@@ -1574,6 +1629,9 @@ export function App(): React.JSX.Element {
         />
       )}
     </DesktopShell>
+    {collaborationFacts ? <GroupCollaborationDialog key={collaborationFacts.scopeKey} facts={collaborationFacts}
+      workspaceName={teamControl.workspaces.find(workspace => workspace.id === teamControl.activeRun?.workspaceId)?.name}
+      onClose={closeCollaboration} onOpenMember={openCollaborationMember} /> : null}
     {groupComposer ? (
       <GroupComposer
         key={groupComposer.kind === 'add' ? `add:${groupComposer.groupId}` : 'create'}

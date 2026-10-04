@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useId, useRef, type ReactNode } from 'react'
 
-export type InspectorTabId = 'review' | 'plan' | 'activity' | 'artifacts'
+export type InspectorTabId = 'review' | 'plan' | 'activity' | 'artifacts' | 'team'
 
 export interface InspectorTabSpec {
   id: InspectorTabId
@@ -20,7 +20,7 @@ interface InspectorShellProps {
 }
 
 export const INSPECTOR_TAB_STORAGE_KEY = 'sg-team.inspector:active-tab'
-export const INSPECTOR_TAB_IDS: readonly InspectorTabId[] = ['review', 'plan', 'activity', 'artifacts']
+export const INSPECTOR_TAB_IDS: readonly InspectorTabId[] = ['review', 'plan', 'activity', 'artifacts', 'team']
 
 /** 读取持久化标签；兼容旧值 `todos`（Plan 面板的前身）。 */
 export function readStoredInspectorTab(): InspectorTabId {
@@ -107,7 +107,7 @@ export function InspectorShell({ tabs, activeTab, onTabChange, onClose, children
     storeInspectorTab(activeTab)
   }, [activeTab])
 
-  // ⌥1–4（Windows：Alt+1–4）直达标签：右栏可见时才挂载本组件，快捷键随之生效。
+  // Shortcut indices follow the current tabs. A kept-mounted but collapsed pane must not steal them.
   useEffect(() => {
     const handler = (event: KeyboardEvent): void => {
       if (!event.altKey || event.metaKey || event.ctrlKey || event.shiftKey) return
@@ -115,6 +115,7 @@ export function InspectorShell({ tabs, activeTab, onTabChange, onClose, children
       if (!match) return
       const tab = tabs[Number(match[1]) - 1]
       if (!tab || isTypingTarget(event.target)) return
+      if (tabRefs.current.get(tab.id)?.closest('[inert], [aria-hidden="true"]')) return
       event.preventDefault()
       onTabChange(tab.id)
     }
@@ -138,6 +139,8 @@ export function InspectorShell({ tabs, activeTab, onTabChange, onClose, children
 
   const onShellKeyDown = (event: React.KeyboardEvent<HTMLElement>): void => {
     if (event.key !== 'Escape' || isTypingTarget(event.target)) return
+    // A portal dropdown consumes Escape at document level, after this React handler runs.
+    if (event.currentTarget.querySelector('.menu-select.is-open')) return
     // 面板内部的弹层（确认框）先消费 Escape：它们会 stopPropagation。
     event.preventDefault()
     onClose()
@@ -145,7 +148,7 @@ export function InspectorShell({ tabs, activeTab, onTabChange, onClose, children
 
   return (
     <ShellContext.Provider value={{ baseId, activeTab }}>
-      <aside className={`workspace-inspector${activeTab === 'review' ? ' is-review' : ''}`} aria-label="会话辅助工作区" onKeyDown={onShellKeyDown}>
+      <aside className={`workspace-inspector${activeTab === 'review' ? ' is-review' : ''}${tabs.some(tab => tab.id === 'team') ? ' has-team' : ''}`} aria-label="会话辅助工作区" onKeyDown={onShellKeyDown}>
         <header className="workspace-inspector__bar">
           <div className="workspace-inspector__tabs" role="tablist" aria-label="辅助工作区标签" onKeyDown={onTabListKeyDown}>
             {tabs.map((tab, index) => {

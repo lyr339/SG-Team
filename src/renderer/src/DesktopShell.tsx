@@ -30,6 +30,8 @@ interface DesktopShellProps {
    * `visible=false` 让面板自行暂停轮询之类的后台工作。
    */
   rightPanel?: (close: () => void, visible: boolean) => ReactNode
+  /** An explicit in-session context request; consume once, including when the session is selected in the same render. */
+  rightPanelFocusKey?: number
   cursorWorkspace?: CursorWorkspaceDetection
   workspace?: { id: string; name: string; path: string }
   wideContent?: boolean
@@ -100,6 +102,7 @@ export function DesktopShell({
   activeModule,
   sidebar,
   rightPanel,
+  rightPanelFocusKey,
   cursorWorkspace,
   workspace,
   wideContent = false,
@@ -160,6 +163,12 @@ export function DesktopShell({
   // 中栏本轮文件栏的「审查」：右栏收着就展开（标签与范围的切换由右栏自己订阅同一信号处理）。
   // rightPanel 是每次渲染新建的 render prop，订阅只跟随「有没有右栏」这个布尔。
   const hasRightPanel = Boolean(rightPanel)
+  const consumedPanelFocus = useRef<number | undefined>(undefined)
+  useEffect(() => {
+    if (!hasRightPanel || rightPanelFocusKey === undefined || rightPanelFocusKey === consumedPanelFocus.current) return
+    consumedPanelFocus.current = rightPanelFocusKey
+    setInspectorVisible(true)
+  }, [hasRightPanel, rightPanelFocusKey])
   useEffect(() => {
     if (!hasRightPanel) return undefined
     return subscribeReviewFocus(() => {

@@ -18,6 +18,7 @@ import { describeSelectionSpread, majoritySelection, type RunBatchConfigProps } 
 import { ConfirmSheet } from './ConfirmSheet'
 import { GroupCard } from './GroupCard'
 import type { GroupComposerMode } from './GroupComposer'
+import type { GroupCommunicationSummary } from '../team/collaboration-map-view'
 import { PoolHeader } from './PoolHeader'
 import { RunIndependentPanel, clampSessionCount } from './RunIndependentPanel'
 import { RunSeats, type RunSeatRow } from './RunSeats'
@@ -74,6 +75,8 @@ export interface PoolPageProps {
   onTransferMembership?: (slotId: string) => void
   /** 从会话头部的组名跳转而来：对应卡片滚入视野并短暂点亮。 */
   focusGroupId?: string
+  communicationSummaries?: ReadonlyMap<string, GroupCommunicationSummary>
+  onOpenCollaboration?: (groupId: string) => void
 }
 
 interface PendingSheet {
@@ -120,6 +123,8 @@ export function PoolPage({
   onOpenGroupComposer,
   onTransferMembership,
   focusGroupId,
+  communicationSummaries,
+  onOpenCollaboration
 }: PoolPageProps): React.JSX.Element {
   const view = useMemo(() => buildPoolView(team, detectedWorkspace, taskPool), [team, detectedWorkspace, taskPool])
   const [busy, setBusy] = useState('')
@@ -523,6 +528,8 @@ export function PoolPage({
         }}
         onDissolve={dissolve}
         onOpenSession={onOpenSession}
+        communication={communicationSummaries?.get(group.id)}
+        onOpenCollaboration={onOpenCollaboration ? () => onOpenCollaboration(group.id) : undefined}
       />
     )
   }

@@ -5,11 +5,13 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { AccountAutomationRun } from '../../../domain/account-automation'
+import { TaskPoolAggregate } from '../../../domain/task-pool'
 import { parseCursorAccountCard } from '../../../domain/cursor-account-card'
 import { cursorCompatibilityForVersion } from '../../../domain/cursor-compatibility'
 import type { ConversationEntry, ProcessBlock } from '../../../domain/conversation-entry'
 import { AGENT_AVATAR_IDS, TEAM_ROLE_TEMPLATES, createConfiguredTeamBundle, emptyTeamControlSnapshot } from '../../../domain/team-control'
 import type { TeamRunStatus } from '../../../domain/team-control'
+import { teamMessageNeedsAgentResponse, type TeamMessage } from '../../../domain/team-collaboration'
 import type { LiveProcessState, LiveStatusLineState, SgDesktopApi } from '../../../shared/desktop-api'
 import type { WorkspaceReviewSummary } from '../../../domain/workspace-review'
 import { estimateTurnCostUsd, estimateUsageFromReference, priceForModel, projectUsage, type CursorUsageSnapshot, type UsageTurn } from '../../../domain/cursor-usage'
@@ -61,6 +63,8 @@ const requestedRunStatus = previewParameters.get('runStatus')
 const automationScene = (['countdown', 'processing', 'hardening-countdown', 'importing', 'deleting', 'cleaning', 'done', 'failed', 'cancelled'] as const)
   .find((phase) => phase === previewParameters.get('automation'))
 const previewNow = Date.now()
+const collaborationMapScene = (['live', 'flat', 'ended', 'empty', 'many', 'offline', 'long', 'image', 'end', 'switch', 'transfer'] as const)
+  .find(scene => scene === previewParameters.get('collaborationMap'))
 const processingOnlyScene = previewParameters.get('postProcessing') === 'off'
 const automationSceneRunBase: AccountAutomationRun | undefined = automationScene ? ({
   countdown: { phase: 'countdown', message: '将在 6.5s 后自动处理当前账号（可取消）', remainingSec: 6.5, planId: 'preview-plan', startedAt: previewNow - 3_500 },
@@ -174,7 +178,7 @@ if (independentScene && initialTeam.activeRun) {
       : independentScene === 'spread'
         ? ['waiting', 'waiting', 'working', 'waiting'] as const
         : ['waiting', 'working', 'offline', 'unconfirmed'] as const
-  const status = independentScene === 'ended' ? 'completed' as const : 'running' as const
+  const status = independentScene === 'ended' || previewRunStatus === 'completed' ? 'completed' as const : 'running' as const
   const run = { ...initialTeam.activeRun, name: 'wedge-demo · 独立批次 #3', templateId: 'independent-session-v1', status }
   initialTeam.activeRun = run
   initialTeam.runs = [run]
@@ -285,6 +289,42 @@ const state = {
   desktop: structuredClone(desktopSnapshot),
   memory: structuredClone(memorySnapshot),
   team: initialTeam
+}
+// End-to-end renderer scenes use the SAME desktop snapshot contract, never the standalone concept DOM.
+if (collaborationMapScene && state.team.activeRun) {
+  const baseMember = state.team.members[0]!, baseSession = state.desktop.sessions[0]!, run = state.team.activeRun
+  run.templateId = 'independent-session-v1'
+  run.status = collaborationMapScene === 'ended' ? 'completed' : 'running'
+  const count = collaborationMapScene === 'many' ? 16 : 8, groupId = 'team-group:preview-map'
+  const roles = [
+    ['主控协调', 'lead', 'lead'], ['架构实现', 'builder', 'architect'], ['质量验证', 'reviewer', 'reviewer'], ['前端体验', 'frontend', 'frontend'],
+    ['后端开发', 'backend', 'backend'], ['工程运维', 'devops', 'devops'], ['产品规划', 'product', 'product'], ['技术研究', 'researcher', 'researcher']
+  ] as const
+  state.team.members = Array.from({ length: count }, (_, index) => {
+    const channelId = String(index + 1), preset = roles[index % roles.length]!, slotId = `slot:map-${channelId}`
+    const offline = collaborationMapScene === 'offline' && index === 2
+    const role = { ...baseMember.role, id: `role:map-${channelId}`, groupId, order: index, name: index === 0 && collaborationMapScene === 'flat' ? '协调成员' : preset[0],
+      templateKey: index === 0 && collaborationMapScene === 'flat' ? 'builder' : preset[1] }
+    return { ...baseMember, role,
+      slot: { ...baseMember.slot, id: slotId, runId: run.id, roleId: role.id, channelId, order: index, name: role.name, avatarId: preset[2], groupId, solo: false, groupJoinedAt: previewNow - 60_000 },
+      binding: baseMember.binding ? { ...baseMember.binding, id: `binding:map-${channelId}`, runId: run.id, slotId, channelId, agentSessionId: `session:map-${channelId}` } : undefined,
+      runtime: { channelId, status: offline ? 'offline' as const : index % 2 ? 'running' as const : 'waiting' as const, online: !offline, waiting: !offline && index % 2 === 0,
+        connectionPhase: offline ? 'cursor_stopped' : index % 2 ? 'processing' : 'waiting', runtimeEvidence: offline ? 'stopped' as const : 'active' as const,
+        queueDepth: 0, lastSeenAt: previewNow, healthEvidence: [], workingFiles: [] } }
+  })
+  const leadSlotId = collaborationMapScene === 'flat' ? undefined : state.team.members[0]!.slot.id
+  state.team.groups = [{ group: { id: groupId, runId: run.id, name: collaborationMapScene === 'long' ? '跨平台消息隔离与工作区适配 · 深度验收协作组' : '接口重构',
+    goal: '保留现有会话与任务逻辑，完善接口边界并独立验证组内隔离。', status: 'active', leadSlotId,
+    planPolicy: leadSlotId ? 'lead_only' : 'any_member', createdAt: previewNow - 120_000, updatedAt: previewNow },
+    members: state.team.members, effectiveLeadSlotId: leadSlotId, attention: collaborationMapScene === 'offline' }]
+  state.team.slots = state.team.members.map(member => member.slot); state.team.roles = state.team.members.map(member => member.role)
+  state.team.bindings = state.team.members.flatMap(member => member.binding ? [member.binding] : [])
+  state.team.runs = [run]
+  state.desktop.sessions = state.team.members.map(member => ({ ...baseSession, id: member.binding?.agentSessionId ?? '', channelId: member.slot.channelId!, displayName: member.role.name,
+    roleName: member.role.name, roleTemplateKey: member.role.templateKey, avatarId: member.slot.avatarId,
+    status: member.runtime!.status, online: member.runtime!.online, connected: member.runtime!.online, waiting: member.runtime!.waiting, queueDepth: 0,
+    connectionPhase: member.runtime!.connectionPhase ?? 'waiting', contextUsage: undefined }))
+  state.desktop.conversations = {}
 }
 // 编辑直播走查独立起一轮，避免通用样例里的已完成回复把运行标记结算为历史。
 if (previewParameters.get('editStream') === '1' && state.desktop.liveProcess?.['2']) {
@@ -831,6 +871,51 @@ function previewStatsUsage(): CursorUsageSnapshot {
 }
 
 const previewTasks = structuredClone(taskPoolSnapshot)
+const previewCollaboration = structuredClone(collaborationSnapshot)
+if (collaborationMapScene && state.team.activeRun) {
+  previewCollaboration.runId = state.team.activeRun.id; previewCollaboration.groupId = undefined
+  previewCollaboration.messages = {}; previewCollaboration.messageOrder = []; previewCollaboration.threads = []; previewCollaboration.events = []
+  previewTasks.runId = state.team.activeRun.id
+}
+if (previewParameters.has('teamContext')) {
+  const group = state.team.groups.find(view => view.group.status === 'active')
+  const runId = state.team.activeRun?.id
+  if (group && runId) {
+    const pool = new TaskPoolAggregate()
+    const large = previewParameters.get('teamContext') === 'large'
+    const titles = ['统一任务查询入口', '验证组作用域隔离', '审查成员交接边界', '补齐任务失败证据']
+    const planned = pool.plan(runId, Array.from({length:large ? 85 : 4},(_,index)=>({key:`context-${index}`,title:titles[index%titles.length]!+(large ? ` · ${index+1}` : ''),acceptance:'旧组消息不串入新组；失败路径保留可定位的证据。',targetSlotId:group.members[index%group.members.length]?.slot.id})),group.group.id)
+    const statuses = ['running','review','done','failed'] as const
+    Object.assign(previewTasks,pool.snapshot(),{runId,workspaceId:state.team.activeWorkspaceId,scopeRevision:previewTasks.scopeRevision+1})
+    for (const [index,task] of planned.entries()) {
+      previewTasks.tasks[task.id]!.status=statuses[index%statuses.length]!
+      if(previewTasks.tasks[task.id]!.status==='failed') previewTasks.tasks[task.id]!.failureReason='交接前后组归属发生变化，需要重新验证当前成员。'
+    }
+    previewCollaboration.runId=runId
+    previewCollaboration.groupId=group.group.id
+    previewCollaboration.threads=previewCollaboration.threads.map(thread=>({...thread,runId,groupId:group.group.id}))
+    previewCollaboration.messages=Object.fromEntries(Object.entries(previewCollaboration.messages).map(([id,message])=>[id,{
+      ...message,runId,groupId:group.group.id,
+      sender:message.sender.type==='agent'?{type:'agent' as const,slotId:group.members[0]!.slot.id}:message.sender,
+      recipient:message.recipient.type==='agent'?{type:'agent' as const,slotId:group.members.at(-1)!.slot.id}:message.recipient
+    }]))
+    if(previewParameters.get('teamContext')==='long') {
+      group.group.name='接口重构与消息隔离 · 长名称验收'
+      group.group.goal='检查路径 '+ 'src/really_long_unbroken_directory_name/'.repeat(8)+' 和成员切换边界，保留完整验收证据。'
+      previewTasks.tasks[planned[0]!.id]!.title='src/'+ 'unbroken_module_name_'.repeat(12)+'index.ts'
+      const first=Object.values(previewCollaboration.messages)[0]!
+      first.content='## 验收记录\n\n**同组隔离**已完成，请核对以下长路径：\n\n`'+ 'src/unbroken_directory/'.repeat(12)+'`\n\n```ts\nconst stableIdentity = "'+ 'very_long_identifier'.repeat(15)+'"\n```'
+    }
+    if(large) {
+      const sample=Object.values(previewCollaboration.messages)[0]!
+      previewCollaboration.messages=Object.fromEntries(Array.from({length:65},(_,index)=>{
+        const id=`context-message-${index}`
+        return [id,{...sample,id,clientMessageId:id,createdAt:previewNow-(65-index)*60_000,content:`协作记录 ${index+1}：核对组目标、依赖和验收结果。`}]
+      }))
+      previewCollaboration.messageOrder=Object.keys(previewCollaboration.messages)
+    }
+  }
+}
 if (previewRunStatus === 'completed') {
   for (const task of Object.values(previewTasks.tasks)) {
     if (!['done', 'failed', 'cancelled'].includes(task.status)) {
@@ -848,6 +933,63 @@ if (previewRunStatus === 'completed') {
 const desktopListeners = new Set<Listener<typeof state.desktop>>()
 const memoryListeners = new Set<Listener<typeof state.memory>>()
 const teamListeners = new Set<Listener<typeof state.team>>()
+const taskListeners = new Set<Listener<typeof previewTasks>>()
+const collaborationListeners = new Set<Listener<typeof previewCollaboration>>()
+let mapMessageSequence = 0
+function pushMapMessage(from: number, to: number, kind: TeamMessage['kind'] = 'status', ageMs = 0): void {
+  const group = state.team.groups[0], sender = group?.members[from], recipient = group?.members[to]
+  if (!group || !sender || !recipient || !state.team.activeRun) return
+  const id = `map-message-${++mapMessageSequence}`, at = Date.now() - ageMs
+  const message: TeamMessage = { id, clientMessageId: id, runId: state.team.activeRun.id, groupId: group.group.id, threadId: 'map-thread',
+    sender: { type: 'agent', slotId: sender.slot.id }, recipient: { type: 'agent', slotId: recipient.slot.id }, kind,
+    content: collaborationMapScene === 'image' ? `![协作验收图片](data:image/svg+xml;base64,${btoa('<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360"><rect width="640" height="360" rx="12" fill="#f2f5f9"/><path d="M90 250C160 250 190 90 310 90S440 250 550 250" fill="none" stroke="#5891aa" stroke-width="3"/><text x="70" y="310" fill="#3d4655" font-family="sans-serif" font-size="22">Interface boundary verification</text></svg>')})`
+      : collaborationMapScene === 'long' ? `请核对 src/${'long_unbroken_module_name/'.repeat(14)}boundary.ts 的验收结论。` : kind === 'response' ? '接口边界验证通过，已返回检查结论。' : '请复核接口边界与组内消息隔离，保留验收证据。', createdAt: at,
+    receipt: { notificationState: 'notified', notificationDetail: '', notifiedAt: at, readAt: at, updatedAt: at } }
+  if (kind === 'response') {
+    const original = [...previewCollaboration.messageOrder].reverse().map(key => previewCollaboration.messages[key]).find(item =>
+      item && item.sender.type === 'agent' && item.recipient.type === 'agent' && item.sender.slotId === recipient.slot.id
+      && item.recipient.slotId === sender.slot.id && teamMessageNeedsAgentResponse(item) && item.receipt.respondedAt === undefined)
+    if (original) { message.replyToMessageId = original.id; original.receipt.respondedAt = at; original.receipt.responseMessageId = id; original.receipt.updatedAt = at }
+  }
+  previewCollaboration.messages[id] = message; previewCollaboration.messageOrder.push(id)
+  previewCollaboration.revision++; previewCollaboration.updatedAt = Date.now()
+  for (const listener of collaborationListeners) listener(structuredClone(previewCollaboration))
+}
+if (collaborationMapScene && collaborationMapScene !== 'empty') {
+  pushMapMessage(0, 1, 'directive', 15_000); pushMapMessage(0, 2, 'question', 15_000)
+  pushMapMessage(1, 3, 'status', 15_000); pushMapMessage(5, 1, 'response', 15_000)
+  if (collaborationMapScene !== 'ended') pushMapMessage(2, 0, 'response')
+  const timer = setInterval(() => {
+    if (state.team.activeRun?.status !== 'running') return
+    const pairs = [[0, 1], [2, 0], [1, 3], [5, 1], [0, 4]] as const
+    const pair = pairs[mapMessageSequence % pairs.length]!
+    pushMapMessage(pair[0], pair[1], mapMessageSequence % 2 ? 'response' : 'status')
+  }, 4_200)
+  window.addEventListener('pagehide', () => clearInterval(timer), { once: true })
+  if (collaborationMapScene === 'end') setTimeout(() => {
+    if (state.team.activeRun) state.team.activeRun.status = 'completed'
+    state.team.revision++; pushTeam()
+  }, 10_000)
+  if (collaborationMapScene === 'switch') setTimeout(() => {
+    if (state.team.activeRun) state.team.activeRun = { ...state.team.activeRun, id: `${state.team.activeRun.id}:next`, name: '新批次' }
+    state.team.groups = []; state.team.members = []; state.team.revision++; pushTeam()
+  }, 10_000)
+  if (collaborationMapScene === 'transfer') setTimeout(() => {
+    const group = state.team.groups[0]
+    if (!group) return
+    const member = group.members.find(item => item.slot.channelId === '3')
+    if (!member) return
+    const replacement = { ...member, slot: { ...member.slot, id: 'slot:map-3:replacement', groupJoinedAt: Date.now() },
+      binding: member.binding ? { ...member.binding, slotId: 'slot:map-3:replacement', agentSessionId: 'session:map-3:replacement' } : undefined }
+    state.team.members = state.team.members.map(item => item.slot.id === member.slot.id ? replacement : item)
+    group.members = state.team.members
+    state.team.slots = state.team.members.map(item => item.slot)
+    state.team.bindings = state.team.members.flatMap(item => item.binding ? [item.binding] : [])
+    state.desktop.sessions = state.desktop.sessions.map(item => item.channelId === '3' ? { ...item, id: 'session:map-3:replacement' } : item)
+    state.team.revision++; pushTeam()
+    for (const listener of desktopListeners) listener(structuredClone(state.desktop))
+  }, 10_000)
+}
 let previewCursorAccounts: Array<{
   id: string; label: string; maskedToken: string; active: boolean; createdAt: number; updatedAt: number
   pendingMachineAlign?: boolean
@@ -993,6 +1135,13 @@ function pushMemory(): void {
 
 function pushTeam(): void {
   for (const listener of teamListeners) listener(structuredClone(state.team))
+}
+
+function updatePreviewGroup(groupId: string, update: (view: typeof state.team.groups[number]) => void): typeof state.team {
+  const view=state.team.groups.find(candidate=>candidate.group.id===groupId&&candidate.group.status==='active')
+  if(!view) throw new Error('协作组已不存在')
+  update(view);view.group.updatedAt=Date.now();state.team.revision++;pushTeam()
+  return structuredClone(state.team)
 }
 
 const api: SgDesktopApi = {
@@ -1547,12 +1696,23 @@ const api: SgDesktopApi = {
   createTeamGroup: async () => structuredClone(state.team),
   addTeamGroupMembers: async () => structuredClone(state.team),
   removeTeamGroupMember: async () => structuredClone(state.team),
-  setTeamGroupLead: async () => structuredClone(state.team),
-  updateTeamGroupGoal: async () => structuredClone(state.team),
-  setTeamGroupPlanPolicy: async () => structuredClone(state.team),
+  setTeamGroupLead: async ({groupId,slotId}) => updatePreviewGroup(groupId,view=>{
+    if(slotId && !view.members.some(member=>member.slot.id===slotId)) throw new Error('所选主控不在组内')
+    view.group.leadSlotId=slotId??undefined;view.group.actingLeadSlotId=undefined;view.effectiveLeadSlotId=slotId??undefined
+  }),
+  updateTeamGroupGoal: async ({groupId,goal}) => updatePreviewGroup(groupId,view=>{view.group.goal=goal}),
+  setTeamGroupPlanPolicy: async ({groupId,planPolicy}) => updatePreviewGroup(groupId,view=>{view.group.planPolicy=planPolicy}),
   dissolveTeamGroup: async () => structuredClone(state.team),
-  planTeamGroupTasks: async () => [],
-  getTeamCollaborationSnapshot: async () => structuredClone(collaborationSnapshot),
+  planTeamGroupTasks: async ({groupId,tasks}) => {
+    const group=state.team.groups.find(view=>view.group.id===groupId&&view.group.status==='active')
+    if(!group||state.team.activeRun?.status!=='running') throw new Error('当前协作组已不可规划')
+    const pool=new TaskPoolAggregate(previewTasks)
+    const planned=pool.plan(group.group.runId,tasks,groupId)
+    Object.assign(previewTasks,pool.snapshot())
+    for(const listener of taskListeners) listener(structuredClone(previewTasks))
+    return structuredClone(planned)
+  },
+  getTeamCollaborationSnapshot: async () => structuredClone(previewCollaboration),
   getMembershipTransferOptions: async (slotId) => {
     const view = state.team.groups.find((candidate) => (
       candidate.group.status === 'active' && candidate.members.some((member) => member.slot.id === slotId)
@@ -1771,12 +1931,12 @@ const api: SgDesktopApi = {
     }]
   }),
   onCursorUsageSnapshot: () => () => {},
-  onTaskPoolSnapshot: () => () => {},
+  onTaskPoolSnapshot: (listener) => {taskListeners.add(listener);return()=>{taskListeners.delete(listener)}},
   onTeamControlSnapshot: (listener) => {
     teamListeners.add(listener)
     return () => teamListeners.delete(listener)
   },
-  onTeamCollaborationSnapshot: () => () => {}
+  onTeamCollaborationSnapshot: listener => { collaborationListeners.add(listener); return () => collaborationListeners.delete(listener) }
 }
 
 window.sgDesktop = api

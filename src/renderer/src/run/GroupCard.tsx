@@ -6,6 +6,8 @@ import type { TeamGroupPlanPolicy } from '../../../domain/team-control'
 import { AccountActionsMenu } from '../settings/AccountActionsMenu'
 import { MenuSelect } from '../lobby/MenuSelect'
 import { SEAT_STATE_LABEL, type PoolGroup, type PoolGroupMember } from './pool-view'
+import { GroupCollaborationEntry } from '../team/GroupCollaborationEntry'
+import type { GroupCommunicationSummary } from '../team/collaboration-map-view'
 
 const NO_LEAD = ''
 
@@ -28,6 +30,8 @@ export interface GroupCardProps {
   onUpdateGoal: (goal: string) => Promise<boolean>
   onDissolve: () => void
   onOpenSession?: (channelId: string) => void
+  communication?: GroupCommunicationSummary
+  onOpenCollaboration?: () => void
 }
 
 /**
@@ -49,6 +53,8 @@ export function GroupCard({
   onUpdateGoal,
   onDissolve,
   onOpenSession,
+  communication,
+  onOpenCollaboration
 }: GroupCardProps): React.JSX.Element {
   const [editingGoal, setEditingGoal] = useState<string>()
   const [savingGoal, setSavingGoal] = useState(false)
@@ -168,6 +174,8 @@ export function GroupCard({
           {!group.goal && !dissolved && !ended ? <button type="button" className="run-link" disabled={disabled} onClick={editGoal}>补充目标</button> : null}
         </p>
       )}
+
+      {onOpenCollaboration ? <GroupCollaborationEntry groupName={group.name} members={group.members.length} summary={communication} onOpen={onOpenCollaboration} /> : null}
 
       {group.members.length ? (
         <ul className="group-card__members">

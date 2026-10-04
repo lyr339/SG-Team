@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AgentSession } from '../../domain/agent-session'
 import type { ConversationEntry } from '../../domain/conversation-entry'
 import type { WorkspaceReviewSummary } from '../../domain/workspace-review'
@@ -7,7 +7,9 @@ import { ActivityPanel } from './inspector/ActivityPanel'
 import { projectActivity } from './inspector/activity-view'
 import { ArtifactsPanel } from './inspector/ArtifactsPanel'
 import { projectArtifacts } from './inspector/artifacts-view'
-import { ActivityIcon, ArtifactIcon, DiffIcon, PlanIcon } from './inspector/InspectorIcons'
+import { ActivityIcon, ArtifactIcon, DiffIcon, PlanIcon, TeamIcon } from './inspector/InspectorIcons'
+import { GroupContextPanel, type GroupContextPanelProps } from './team/GroupContextPanel'
+import './team/group-context.css'
 import { InspectorPanel, InspectorShell, readStoredInspectorTab, type InspectorTabId, type InspectorTabSpec } from './inspector/InspectorShell'
 import { currentCursorTodos, PlanPanel } from './inspector/PlanPanel'
 import { ReviewPanel } from './inspector/ReviewPanel'
@@ -38,6 +40,8 @@ interface WorkspaceInspectorProps {
   /** 工作区变更摘要的镜像（输入区上方的本轮文件栏用它取增删行数，不重复拉取）。 */
   onReviewSummary?: (summary: WorkspaceReviewSummary | undefined) => void
   onClose: () => void
+  groupContext?: GroupContextPanelProps
+  groupFocus?: { key: number; scopeKey: string }
 }
 
 /**
@@ -57,9 +61,17 @@ export function WorkspaceInspector({
   onQuoteToComposer,
   hidden = false,
   onReviewSummary,
-  onClose
+  onClose,
+  groupContext,
+  groupFocus
 }: WorkspaceInspectorProps): React.JSX.Element {
   const [activeTab, setActiveTab] = useState<InspectorTabId>(readStoredInspectorTab)
+  const consumedGroupFocus = useRef<number | undefined>(undefined)
+  useEffect(() => {
+    if (!groupFocus || groupFocus.key === consumedGroupFocus.current || groupFocus.scopeKey !== groupContext?.view.scopeKey) return
+    consumedGroupFocus.current = groupFocus.key
+    setActiveTab('team')
+  }, [groupFocus, groupContext?.view.scopeKey])
   const workspaceKey = workspacePath || workspaceId || workspaceName || session.id
   const [summaryState, setSummaryState] = useState<{ workspaceKey: string; value: WorkspaceReviewSummary }>()
   const reviewSummary = summaryState?.workspaceKey === workspaceKey ? summaryState.value : undefined
@@ -90,9 +102,11 @@ export function WorkspaceInspector({
     { id: 'activity', label: '活动', icon: <ActivityIcon />, badge: activityItems || undefined, title: '本会话的文件、命令、来源与工具调用' },
     { id: 'artifacts', label: '产物', icon: <ArtifactIcon />, badge: artifacts.images.length + artifacts.files.length || undefined, title: '截图、图片与新增文件' }
   ]
+  if (groupContext) tabs.push({ id: 'team', label: '协同', icon: <TeamIcon />, title: '本会话所在组的目标、任务与协作记录' })
+  const visibleTab = activeTab === 'team' && !groupContext ? 'review' : activeTab
 
   return (
-    <InspectorShell tabs={tabs} activeTab={activeTab} onTabChange={setActiveTab} onClose={onClose}>
+    <InspectorShell tabs={tabs} activeTab={visibleTab} onTabChange={setActiveTab} onClose={onClose}>
       <InspectorPanel tab="review">
         <ReviewPanel key={workspaceKey} workspaceKey={workspaceKey} turnPaths={turnPaths} turnFiles={turnFiles} turnEdits={turnEdits} paused={reviewPaused} onQuote={onQuoteToComposer} onSummary={onSummary} />
       </InspectorPanel>
@@ -105,6 +119,7 @@ export function WorkspaceInspector({
       <InspectorPanel tab="artifacts">
         <ArtifactsPanel view={artifacts} onOpenTab={setActiveTab} />
       </InspectorPanel>
+      {groupContext ? <InspectorPanel tab="team"><GroupContextPanel key={groupContext.view.scopeKey} {...groupContext} /></InspectorPanel> : null}
     </InspectorShell>
   )
 }

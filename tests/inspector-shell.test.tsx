@@ -6,7 +6,8 @@ import type { AgentSession } from '../src/domain/agent-session'
 import type { ConversationEntry } from '../src/domain/conversation-entry'
 import type { WorkspaceReviewSummary } from '../src/domain/workspace-review'
 import { WorkspaceInspector } from '../src/renderer/src/WorkspaceInspector'
-import { INSPECTOR_TAB_STORAGE_KEY } from '../src/renderer/src/inspector/InspectorShell'
+import { INSPECTOR_TAB_STORAGE_KEY, InspectorShell, InspectorPanel } from '../src/renderer/src/inspector/InspectorShell'
+import { MenuSelect } from '../src/renderer/src/lobby/MenuSelect'
 
 const session: AgentSession = {
   id: 'session-2', channelId: '2', generation: 1, displayName: '实现席', roleName: '实现席',
@@ -41,6 +42,41 @@ function installDesktopApi(): void {
 }
 
 describe('WorkspaceInspector shell', () => {
+  it('does not collapse the whole inspector when Escape first closes an inner portal menu', async () => {
+    const root=createRoot(container), onClose=vi.fn()
+    await act(async()=>root.render(<InspectorShell tabs={[{id:'team',label:'协同',icon:null}]} activeTab="team" onTabChange={()=>{}} onClose={onClose}>
+      <InspectorPanel tab="team"><MenuSelect value="a" ariaLabel="测试成员" options={[{value:'a',label:'成员 A'}]} onChange={()=>{}}/></InspectorPanel>
+    </InspectorShell>))
+    const trigger=container.querySelector<HTMLButtonElement>('.menu-select__button')!
+    await act(async()=>trigger.click())
+    await act(async()=>trigger.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})))
+    expect(onClose).not.toHaveBeenCalled()
+    expect(document.body.querySelector('.menu-select__menu')).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+    await act(async()=>trigger.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})))
+    expect(onClose).toHaveBeenCalledOnce()
+    await act(async()=>root.unmount())
+  })
+  it('consumes an explicit same-scope team focus once without stealing later tab choices', async () => {
+    const root = createRoot(container)
+    const view = {scopeKey:'run:group',runId:'run',mutable:true,tasks:[],messages:[],pendingReplies:0,planningLabel:''}
+    const context = {view,onOpenSession:vi.fn(),onManageGroup:vi.fn(),onPlanTask:vi.fn(async()=>{})}
+    const render = async (focus={key:1,scopeKey:'run:group'}) => {
+      await act(async()=>root.render(<WorkspaceInspector session={session} entries={entries} onClose={()=>{}} groupContext={context} groupFocus={focus} />))
+    }
+    await render()
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('协同')
+    await act(async()=>[...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(button=>button.textContent?.startsWith('计划'))!.click())
+    await render()
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('计划1')
+    await render({key:2,scopeKey:'other-run:other-group'})
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('计划1')
+    await render({key:3,scopeKey:'run:group'})
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('协同')
+    await act(async()=>window.dispatchEvent(new KeyboardEvent('keydown',{altKey:true,code:'Digit5'})))
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('协同')
+    await act(async()=>root.unmount())
+  })
   let container: HTMLDivElement
 
   beforeEach(() => {
