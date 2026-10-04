@@ -240,7 +240,7 @@ describe('pool view · 会话池的协作组', () => {
       tasks: Object.fromEntries(tasks.map((item) => [item.id, item])),
       taskOrder: tasks.map((item) => item.id)
     })
-    expect(view.groups[0]!.counters).toEqual({ open: 3, review: 1, done: 1 })
+    expect(view.groups[0]!.counters).toEqual({ open: 3, review: 1, done: 1, cancelled: 1 })
     expect(view.groups[1]!.counters).toEqual({ open: 1, review: 0, done: 0 })
     // 不带任务快照时计数为零（组卡片不显示计数区）。
     expect(buildPoolView(snapshot).groups[0]!.counters).toEqual({ open: 0, review: 0, done: 0 })

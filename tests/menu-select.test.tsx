@@ -84,6 +84,7 @@ describe('MenuSelect（账号管线自绘下拉）', () => {
     await act(async () => { buttonOf().click() })
     await act(async () => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })) })
     expect(document.body.querySelector('.menu-select__menu')).toBeNull()
+    expect(document.activeElement).toBe(buttonOf())
   })
 
   it('无值时显示占位符；disabled 时按钮禁用且不可展开', async () => {
@@ -104,6 +105,19 @@ describe('MenuSelect（账号管线自绘下拉）', () => {
     expect((buttonOf() as HTMLButtonElement).disabled).toBe(true)
     await act(async () => { buttonOf().click() })
     expect(document.body.querySelector('.menu-select__menu')).toBeNull()
+  })
+
+  it('removes an already-open portal immediately when the caller becomes busy, without reopening after unlock', async () => {
+    const props={value:'a',options:[{value:'a',label:'选项 A'}],onChange:vi.fn()}
+    await renderSelect(props)
+    await act(async()=>buttonOf().click())
+    expect(document.body.querySelector('.menu-select__menu')).not.toBeNull()
+    await renderSelect({...props,disabled:true})
+    expect(document.body.querySelector('.menu-select__menu')).toBeNull()
+    expect(buttonOf().getAttribute('aria-expanded')).toBe('false')
+    await renderSelect({...props,disabled:false})
+    expect(document.body.querySelector('.menu-select__menu')).toBeNull()
+    expect(props.onChange).not.toHaveBeenCalled()
   })
 
   it('模型选项携带厂商色调与识别色块', async () => {

@@ -13,6 +13,27 @@ const candidates: UngroupedSeat[] = [
 ]
 
 describe('GroupComposer（建组 / 加人抽屉）', () => {
+  it('Escape closes only the role menu and restores focus, then a second Escape closes the drawer', async () => {
+    const { onClose } = await render({ kind: 'create', preselectedChannelIds: ['2'] })
+    const trigger = memberRows()[0]!.querySelector<HTMLButtonElement>('.menu-select__button')!
+    await click(trigger)
+    const option = document.body.querySelector<HTMLButtonElement>('.menu-select__menu button')!
+    option.focus()
+    await act(async () => option.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+    expect(onClose).not.toHaveBeenCalled()
+    expect(document.body.querySelector('.menu-select__menu')).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+    await act(async () => trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+    expect(onClose).toHaveBeenCalledOnce()
+  })
+
+  it('does not leave selected member role controls clickable while submission is busy', async () => {
+    await render({ kind: 'create', preselectedChannelIds: ['2'] }, { busy: true })
+    const trigger = memberRows()[0]!.querySelector<HTMLButtonElement>('.menu-select__button')!
+    expect(trigger.disabled).toBe(true)
+    await click(trigger)
+    expect(document.body.querySelector('.menu-select__menu')).toBeNull()
+  })
   let container: HTMLDivElement
   let root: Root
 

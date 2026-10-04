@@ -78,6 +78,8 @@ export function GroupComposer({
   useEffect(() => {
     const handler = (event: KeyboardEvent): void => {
       if (event.key === 'Escape' && !busy) {
+        // MenuSelect portals listen during bubbling; do not let this capture listener close their parent.
+        if (dialogRef.current?.querySelector('.menu-select.is-open')) return
         event.stopPropagation()
         onClose()
       }
@@ -157,7 +159,7 @@ export function GroupComposer({
         <header className="group-composer__head">
           <div>
             <strong id="group-composer-title">{creating ? '新建协作组' : `向「${mode.kind === 'add' ? mode.groupName : ''}」加人`}</strong>
-            <span>{creating ? '入组不重建会话：成员在下一次轮询收到入组通知并领取简报' : '新成员在下一次轮询收到入组通知'}</span>
+            <span>{creating ? '沿用现有会话，共享目标、任务与消息。' : '保留现有会话，加入后收到新的组简报。'}</span>
           </div>
           <button type="button" className="group-composer__close" disabled={busy} aria-label="关闭抽屉" onClick={onClose}>
             <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="1.5" /></svg>
@@ -172,9 +174,11 @@ export function GroupComposer({
                 <input
                   ref={nameRef}
                   type="text"
+                  name="group-name"
+                  autoComplete="off"
                   value={name}
                   maxLength={80}
-                  placeholder="例如：验收组"
+                  placeholder="例如：接口验收…"
                   disabled={busy}
                   onChange={(event) => setName(event.target.value)}
                 />
@@ -183,9 +187,11 @@ export function GroupComposer({
                 <span>组目标</span>
                 <textarea
                   rows={2}
+                  name="group-goal"
+                  autoComplete="off"
                   value={goal}
                   maxLength={8_000}
-                  placeholder="一句话说清这组要做什么（可稍后改）"
+                  placeholder="例如：完成接口重构与验收…"
                   disabled={busy}
                   onChange={(event) => setGoal(event.target.value)}
                 />
@@ -213,7 +219,7 @@ export function GroupComposer({
                   <MenuSelect
                     ariaLabel={`CH-${seat.channelId} 的组内角色`}
                     value={draft?.roleTemplateKey ?? DEFAULT_ROLE_TEMPLATE}
-                    disabled={!checked}
+                    disabled={busy || !checked}
                     menuMinWidth={148}
                     options={GROUP_ROLE_TEMPLATES.map((template) => ({ value: template.key, label: template.name }))}
                     onChange={(value) => setRole(seat.slotId, value)}
@@ -228,7 +234,7 @@ export function GroupComposer({
                         disabled={!checked}
                         onChange={() => setLeadSlotId(seat.slotId)}
                       />
-                      <span>lead</span>
+                      <span>主控</span>
                     </label>
                   ) : null}
                 </div>
@@ -246,7 +252,7 @@ export function GroupComposer({
                   checked={effectiveLead === NO_LEAD}
                   onChange={() => setLeadSlotId(NO_LEAD)}
                 />
-                <span>无 lead：只共享目标、消息与记忆，没有任务板调度</span>
+                <span>{membersMayPlan ? '不设主控，成员共同规划任务' : '不设主控，任务由你来规划'}</span>
               </label>
             ) : null}
           </fieldset>

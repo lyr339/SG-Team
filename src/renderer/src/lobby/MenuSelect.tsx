@@ -31,6 +31,9 @@ export function MenuSelect({ value, options, placeholder = '请选择…', disab
   const menuRef = useRef<HTMLUListElement>(null)
   const menuId = useId()
   const selected = options.find((option) => option.value === value)
+  const menuOpen = open && !disabled
+
+  useEffect(() => { if (disabled) setOpen(false) }, [disabled])
 
   const positionMenu = useCallback((): void => {
     const button = buttonRef.current
@@ -55,7 +58,7 @@ export function MenuSelect({ value, options, placeholder = '请选择…', disab
   }, [menuMinWidth])
 
   useEffect(() => {
-    if (!open) return
+    if (!menuOpen) return
     const onPointerDown = (event: PointerEvent): void => {
       const target = event.target as Node
       if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) setOpen(false)
@@ -65,6 +68,7 @@ export function MenuSelect({ value, options, placeholder = '请选择…', disab
       // Esc 只收掉最上层的面：菜单开着时不该同时清掉名册多选、关掉身后的抽屉或确认面。
       event.stopPropagation()
       setOpen(false)
+      buttonRef.current?.focus({ preventScroll: true })
     }
     document.addEventListener('pointerdown', onPointerDown)
     document.addEventListener('keydown', onKeyDown)
@@ -76,10 +80,10 @@ export function MenuSelect({ value, options, placeholder = '请选择…', disab
       window.removeEventListener('resize', positionMenu)
       document.removeEventListener('scroll', positionMenu, true)
     }
-  }, [open, positionMenu])
+  }, [menuOpen, positionMenu])
 
   return (
-    <div className={`menu-select${open ? ' is-open' : ''}${disabled ? ' is-disabled' : ''}${selected?.tone ? ` ${selected.tone}` : ''}`} ref={rootRef}>
+    <div className={`menu-select${menuOpen ? ' is-open' : ''}${disabled ? ' is-disabled' : ''}${selected?.tone ? ` ${selected.tone}` : ''}`} ref={rootRef}>
       <button
         ref={buttonRef}
         type="button"
@@ -87,8 +91,8 @@ export function MenuSelect({ value, options, placeholder = '请选择…', disab
         disabled={disabled}
         aria-label={ariaLabel}
         aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-controls={open ? menuId : undefined}
+        aria-expanded={menuOpen}
+        aria-controls={menuOpen ? menuId : undefined}
         onClick={() => {
           if (!open) positionMenu()
           setOpen((current) => !current)
@@ -97,7 +101,7 @@ export function MenuSelect({ value, options, placeholder = '请选择…', disab
         <span className="menu-select__value">{selected ? <>{selected.tone ? <i className="menu-select__swatch" aria-hidden="true" /> : null}{selected.label}</> : <em>{placeholder}</em>}</span>
         <ChevronDownIcon className="menu-select__chevron" />
       </button>
-      {open && menuStyle ? createPortal(
+      {menuOpen && menuStyle ? createPortal(
         <ul className="menu-select__menu is-portal" id={menuId} role="listbox" ref={menuRef} style={menuStyle}>
           {options.map((option) => (
             <li key={option.value} role="option" aria-selected={option.value === value}>

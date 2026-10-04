@@ -10,7 +10,8 @@ import type {
   IndependentWorkspaceSelection,
   TeamGroupGoalInput,
   TeamGroupLeadInput,
-  TeamGroupMemberRef
+  TeamGroupMemberRef,
+  TeamGroupPlanPolicyInput
 } from '../../../shared/desktop-api'
 import { cursorModelSelectionFromOption, cursorModelSelectionSummary, normalizeCursorModelSelection, sameCursorModelSelection } from '../cursor-model-selection'
 import { describeSelectionSpread, majoritySelection, type RunBatchConfigProps } from './RunBatchConfig'
@@ -37,6 +38,7 @@ export interface PoolGroupActions {
   setGroupLead: (input: TeamGroupLeadInput) => Promise<unknown>
   updateGroupGoal: (input: TeamGroupGoalInput) => Promise<unknown>
   dissolveGroup: (input: { groupId: string }) => Promise<unknown>
+  setGroupPlanPolicy?: (input: TeamGroupPlanPolicyInput) => Promise<unknown>
 }
 
 export interface PoolPageProps {
@@ -117,7 +119,7 @@ export function PoolPage({
   groupActions,
   onOpenGroupComposer,
   onTransferMembership,
-  focusGroupId
+  focusGroupId,
 }: PoolPageProps): React.JSX.Element {
   const view = useMemo(() => buildPoolView(team, detectedWorkspace, taskPool), [team, detectedWorkspace, taskPool])
   const [busy, setBusy] = useState('')
@@ -512,7 +514,13 @@ export function PoolPage({
         onRemoveMember={removeMember}
         onTransferMembership={onTransferMembership ? (member) => onTransferMembership(member.slotId) : undefined}
         onSetLead={(slotId) => void run('group-op', () => actions.setGroupLead({ groupId: group.id, slotId }))}
-        onUpdateGoal={async (goal) => (await run('group-op', () => actions.updateGroupGoal({ groupId: group.id, goal }))) !== undefined}
+        onSetPlanPolicy={actions.setGroupPlanPolicy ? (planPolicy) => void run('group-op', () => actions.setGroupPlanPolicy!({ groupId: group.id, planPolicy })) : undefined}
+        onUpdateGoal={async (goal) => {
+          // App callbacks may consume the returned snapshot and resolve void; success is completion, not a payload.
+          let saved = false
+          await run('group-op', async () => { await actions.updateGroupGoal({ groupId: group.id, goal }); saved = true })
+          return saved
+        }}
         onDissolve={dissolve}
         onOpenSession={onOpenSession}
       />

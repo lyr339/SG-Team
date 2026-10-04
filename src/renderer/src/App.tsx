@@ -1498,6 +1498,7 @@ export function App(): React.JSX.Element {
           groupActions={{
             removeGroupMember: async (input) => acceptTeamControl(await window.sgDesktop.removeTeamGroupMember(input)),
             setGroupLead: async (input) => acceptTeamControl(await window.sgDesktop.setTeamGroupLead(input)),
+            setGroupPlanPolicy: async (input) => acceptTeamControl(await window.sgDesktop.setTeamGroupPlanPolicy(input)),
             updateGroupGoal: async (input) => acceptTeamControl(await window.sgDesktop.updateTeamGroupGoal(input)),
             dissolveGroup: async (input) => acceptTeamControl(await window.sgDesktop.dissolveTeamGroup(input))
           }}

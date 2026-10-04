@@ -5,6 +5,7 @@ import { sameTaskGroup, type TaskPoolSnapshot } from '../../../domain/task-pool'
 import {
   isSessionPoolRun,
   type TeamControlSnapshot,
+  type TeamGroupPlanPolicy,
   type TeamMemberView,
   type TeamRun,
   type TeamWorkspace
@@ -43,6 +44,8 @@ export interface PoolGroupMember {
   roleTemplateKey: string
   state: PoolSeatState
   isLead: boolean
+  avatarId?: string
+  name?: string
 }
 
 /** 组的任务计数（来自任务板快照，按 groupId 归组）：未完成 / 待验收 / 已完成。 */
@@ -50,6 +53,8 @@ export interface PoolGroupCounters {
   open: number
   review: number
   done: number
+  failed?: number
+  cancelled?: number
 }
 
 /** 协作组卡片：active 组可操作；24h 内解散的组只读展示。 */
@@ -61,6 +66,7 @@ export interface PoolGroup {
   /** 有成员已确认离线：由用户决定移出或交接，系统不自动处理。 */
   attention: boolean
   leadSlotId?: string
+  planPolicy?: TeamGroupPlanPolicy
   members: PoolGroupMember[]
   counters: PoolGroupCounters
   updatedAt: number
@@ -156,6 +162,8 @@ function groupCountersOf(runId: string | undefined, groupId: string, tasks?: Poo
     if (OPEN_TASK_STATUSES.has(task.status)) counters.open += 1
     else if (task.status === 'review') counters.review += 1
     else if (task.status === 'done') counters.done += 1
+    else if (task.status === 'failed') counters.failed = (counters.failed ?? 0) + 1
+    else if (task.status === 'cancelled') counters.cancelled = (counters.cancelled ?? 0) + 1
   }
   return counters
 }
@@ -169,13 +177,16 @@ export function buildPoolGroups(team: TeamControlSnapshot, tasks?: PoolTaskFacts
     status: view.group.status,
     attention: view.attention,
     leadSlotId: view.effectiveLeadSlotId,
+    planPolicy: view.group.planPolicy,
     members: view.members.map((member): PoolGroupMember => ({
       slotId: member.slot.id,
       channelId: channelIdOf(member),
       roleName: member.role.name,
       roleTemplateKey: member.role.templateKey,
       state: seatStateOf(member),
-      isLead: member.slot.id === view.effectiveLeadSlotId
+      isLead: member.slot.id === view.effectiveLeadSlotId,
+      avatarId: member.slot.avatarId,
+      name: member.slot.name
     })),
     counters: groupCountersOf(team.activeRun?.id, view.group.id, tasks),
     updatedAt: view.group.updatedAt,

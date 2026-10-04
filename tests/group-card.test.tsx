@@ -122,7 +122,7 @@ describe('PoolPage · 协作组卡片网格', () => {
     expect(groupsSection().querySelector('.run-section-head span')?.textContent).toBe('2 个组 · 1 个独立会话')
     const refactor = card('接口重构')
     expect(refactor.querySelector('.group-card__goal')?.textContent).toContain('收口查询路径')
-    expect([...refactor.querySelectorAll('.group-card-member__who strong')].map((node) => node.textContent)).toEqual(['CH-1', 'CH-2'])
+    expect([...refactor.querySelectorAll('.group-card-member__who small')].map((node) => node.textContent)).toEqual(['CH-1', 'CH-2'])
     expect(refactor.querySelector('.group-card-member__lead')?.closest('.group-card-member')?.textContent).toContain('CH-1')
     expect(refactor.querySelector('.group-card__lead .menu-select__value')?.textContent).toContain('CH-1')
 
@@ -177,7 +177,7 @@ describe('PoolPage · 协作组卡片网格', () => {
     await click(buttonIn(document.body.querySelector('.menu-select__menu')!, 'CH-2 · 架构实现'))
     expect(actions.setGroupLead).toHaveBeenLastCalledWith({ groupId: pool().groupIds[0], slotId: 'slot:solo-2' })
     await click(leadSelect.querySelector('.menu-select__button')!)
-    await click(buttonIn(document.body.querySelector('.menu-select__menu')!, '无 lead'))
+    await click(buttonIn(document.body.querySelector('.menu-select__menu')!, '无主控'))
     expect(actions.setGroupLead).toHaveBeenLastCalledWith({ groupId: pool().groupIds[0], slotId: null })
   })
 
@@ -231,16 +231,69 @@ describe('PoolPage · 协作组卡片网格', () => {
       status, dependsOn: [], requiredCapabilities: [], maxAttempts: 3, attemptCount: 0, progress: 0,
       createdAt: 1, updatedAt: 1, groupId
     })
-    const tasks = [task('t1', 'queued'), task('t2', 'running'), task('t3', 'review'), task('t4', 'done')]
+    const tasks = [task('t1', 'queued'), task('t2', 'running'), task('t3', 'review'), task('t4', 'done'), task('t5', 'failed'), task('t6', 'cancelled')]
     await render(snapshot, {
       taskPool: { tasks: Object.fromEntries(tasks.map((item) => [item.id, item])), taskOrder: tasks.map((item) => item.id) }
     })
     const counters = card('接口重构').querySelector('.group-card__counters')!
-    expect(counters.textContent).toContain('进行 2')
+    expect(counters.textContent).toContain('待完成 2')
     expect(counters.textContent).toContain('验收 1')
     expect(counters.textContent).toContain('完成 1')
+    expect(counters.textContent).toContain('失败 1')
+    expect(counters.textContent).toContain('已取消 1')
     // 没有任务的组不显示计数区。
     expect(card('验收').querySelector('.group-card__counters')).toBeNull()
+  })
+
+  it('exposes the existing planning policy for a group without an effective lead', async () => {
+    const snapshot = pool(), group = snapshot.groups[0]!
+    group.effectiveLeadSlotId = undefined
+    group.group.leadSlotId = undefined
+    group.group.planPolicy = 'lead_only'
+    const save = vi.fn(async () => snapshot)
+    await render(snapshot, { groupActions: { setGroupPlanPolicy: save } })
+    const control = card('接口重构').querySelector('.group-card__policy .menu-select__button')!
+    expect(control.textContent).toContain('仅用户规划')
+    await click(control)
+    await click(buttonIn(document.body.querySelector('.menu-select__menu')!, '成员可规划'))
+    expect(save).toHaveBeenCalledWith({ groupId: group.group.id, planPolicy: 'any_member' })
+  })
+
+  it('keeps a failed goal draft editable and reports the save failure next to it', async () => {
+    await render(pool(), { groupActions: { updateGroupGoal: vi.fn(async () => { throw new Error('保存失败') }) } })
+    await click(buttonIn(card('验收'), '补充目标'))
+    const editor = card('验收').querySelector<HTMLTextAreaElement>('textarea')!
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
+      setter.call(editor, '保留这份目标草稿')
+      editor.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await click(buttonIn(card('验收'), '保存目标'))
+    expect(card('验收').querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('保留这份目标草稿')
+    expect(card('验收').querySelector('[role="alert"]')?.textContent).toContain('草稿已保留')
+    expect(buttonIn(card('验收'), '保存目标').disabled).toBe(false)
+  })
+
+  it('does not submit a goal with Ctrl+Enter while the IME is still composing', async () => {
+    const save=vi.fn(async()=>{})
+    await render(pool(), { groupActions: { updateGroupGoal: save } })
+    await click(buttonIn(card('验收'), '补充目标'))
+    const editor=card('验收').querySelector<HTMLTextAreaElement>('textarea')!
+    await act(async()=>editor.dispatchEvent(new KeyboardEvent('keydown',{
+      key:'Enter',ctrlKey:true,isComposing:true,bubbles:true,cancelable:true
+    })))
+    expect(save).not.toHaveBeenCalled()
+    expect(card('验收').querySelector('textarea')).not.toBeNull()
+  })
+
+  it('closes a successfully saved goal when the production-style callback consumes the snapshot and returns void', async () => {
+    const save = vi.fn(async () => {})
+    await render(pool(), { groupActions: { updateGroupGoal: save } })
+    await click(buttonIn(card('验收'), '补充目标'))
+    await click(buttonIn(card('验收'), '保存目标'))
+    expect(save).toHaveBeenCalledOnce()
+    expect(card('验收').querySelector('textarea')).toBeNull()
+    expect(card('验收').querySelector('[role="alert"]')).toBeNull()
   })
 
   it('keeps only cleanup actions once the pool has ended, and hides the section without group actions', async () => {
