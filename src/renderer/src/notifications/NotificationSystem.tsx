@@ -25,6 +25,9 @@ function NotificationEntry({ store, workspaceId, onNavigate, onAvailable, onSnoo
   const [position, setPosition] = useState({ top: 52, right: 16 })
   const [navigationError, setNavigationError] = useState('')
   const [otherModal, setOtherModal] = useState(false)
+  const [blockingDialog, setBlockingDialog] = useState(false)
+  const [nativeOpenToken, setNativeOpenToken] = useState('')
+  const consumedNativeOpen = useRef('')
   const [toastRecord, setToastRecord] = useState<NotificationRecord>()
   const [toastFocus, setToastFocus] = useState(0)
   const groupedToast = useRef(false)
@@ -42,13 +45,36 @@ function NotificationEntry({ store, workspaceId, onNavigate, onAvailable, onSnoo
       timer = setTimeout(() => {
         const element = document.activeElement
         const editing = element instanceof HTMLElement && (element.matches('textarea,input:not([type="checkbox"]):not([type="radio"]),[contenteditable="true"]') || element.isContentEditable)
-        setOtherModal(Boolean(editing || document.querySelector('[role="dialog"][aria-modal="true"]')))
+        const modal = Boolean(document.querySelector('[role="dialog"][aria-modal="true"]'))
+        setOtherModal(Boolean(editing || modal)); setBlockingDialog(modal)
       }, 0)
     }
     for (const name of ['pointerup', 'keyup', 'focusin']) document.addEventListener(name, check)
-    check()
-    return () => { if (timer) clearTimeout(timer); for (const name of ['pointerup', 'keyup', 'focusin']) document.removeEventListener(name, check) }
+    window.addEventListener('focus', check); check()
+    return () => { if (timer) clearTimeout(timer); window.removeEventListener('focus', check); for (const name of ['pointerup', 'keyup', 'focusin']) document.removeEventListener(name, check) }
   }, [])
+  useEffect(() => {
+    const request = snapshot.openRequested
+    if (!request || consumedNativeOpen.current === request.token || blockingDialog || document.querySelector('[role="dialog"][aria-modal="true"]')) return
+    consumedNativeOpen.current = request.token
+    const epoch = ++toastEpoch.current
+    let active = true, applied = false
+    setOpen(true); setFocusRecord(undefined); setNavigationError(''); setNativeOpenToken(request.token)
+    void store.api.getNotificationPage({ key: request.key, limit: 1 }).then(page => {
+      if (!active || toastEpoch.current !== epoch) return
+      applied = true
+      const record = page.records.find(record => record.id === request.recordId)
+      if (!record) { setNavigationError('这条通知已归档或清理。其他保存记录仍可查看。'); return }
+      if (!request.grouped) setFocusRecord(record)
+      if (record.revision !== request.revision) setNavigationError('这条通知已有新结果，当前显示的是已保存的最新内容。')
+    }).catch(() => { if (active && toastEpoch.current === epoch) { applied = true; setNavigationError('这条通知暂不可读取，可在通知中心重试。') } })
+    return () => {
+      active = false
+      // A blocking modal arriving during lookup is not a completed navigation.
+      // An explicit user close increments the epoch and intentionally consumes it.
+      if (!applied && toastEpoch.current === epoch && consumedNativeOpen.current === request.token) consumedNativeOpen.current = ''
+    }
+  }, [snapshot.openRequested, blockingDialog, store])
   useLayoutEffect(() => {
     if (!open) return
     const place = (): void => {
@@ -102,7 +128,7 @@ function NotificationEntry({ store, workspaceId, onNavigate, onAvailable, onSnoo
       {unread > 0 ? <span>{unread > 99 ? '99+' : unread}</span> : null}
     </button>
     {open ? createPortal(<div ref={panel} className="notification-panel-anchor" style={position}>
-      <NotificationCenter store={store} workspaceId={workspaceId} onClose={close} onNavigate={navigate} focusRecord={focusRecord} navigationError={navigationError} />
+      <NotificationCenter key={nativeOpenToken} store={store} workspaceId={workspaceId} onClose={close} onNavigate={navigate} focusRecord={focusRecord} navigationError={navigationError} />
     </div>, document.body) : null}
     <NotificationToast store={store} blocked={open || otherModal} onOpen={(record, grouped) => {
       // Open a focusable surface synchronously before removing the toast button; then navigate from an effect.

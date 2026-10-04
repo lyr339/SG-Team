@@ -65,7 +65,8 @@ export function reduceReplyNotifications(old: ReplyNotificationState | undefined
       detail: fact.failed ? '原消息链提供了失败记录。请打开对应会话核对，不会自动重发。' : '已收到完整的回复记录。新回复不等于所有后续工作都已结束，请查看原内容。',
       scope: fact.scope, target: { kind: 'session', scope: fact.scope, entryId: fact.entryId }, origin: { module: 'sessions', sessionId: fact.scope.sessionId },
       tone: fact.failed ? 'warning' : 'info', attention: 'notice', state: 'resolved', occurredAt: fact.at, sourceRevision: revision,
-      announce: !baseline && newFailure, renewAttention: !existed || newFailure, respectCleared: existed && !newFailure })
+      announce: !baseline && newFailure, renewAttention: !existed || newFailure, respectCleared: existed && !newFailure,
+      ...(!baseline && !existed && !fact.failed ? { liveSignal: 'reply' as const } : {}) })
   }
   const kept = [...seen].slice(-2_000)
   return { state: { version: 2 as const, key: input.key, seen: kept, rows: Object.fromEntries(kept.flatMap(key => rows[key] ? [[key, rows[key]]] : [])) }, drafts, complete }

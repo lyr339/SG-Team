@@ -52,12 +52,14 @@ export interface NotificationDraft {
   renewAttention?: boolean
   /** Live delivery only; never persisted or replayed when reopening the center. */
   announce?: boolean
+  /** Optional background-only opt-in signals; activity records do not become artificial unread work. */
+  liveSignal?: 'connection' | 'reply'
   /** Metadata repair must not resurrect a result the human already cleared. */
   respectCleared?: boolean
   origin?: { module: 'sessions' | 'run' | 'account'; section?: NotificationSettingsSection; sessionId?: string }
 }
 
-export interface NotificationRecord extends Omit<NotificationDraft, 'renewAttention' | 'announce' | 'respectCleared'> {
+export interface NotificationRecord extends Omit<NotificationDraft, 'renewAttention' | 'announce' | 'respectCleared' | 'liveSignal'> {
   id: string
   createdAt: number
   updatedAt: number
@@ -96,6 +98,8 @@ export interface NotificationPage {
   reset: boolean
   health?: NotificationPush['health']
   historyIncomplete?: boolean
+  delivery?: NotificationDeliveryStatus
+  openRequested?: NotificationOpenRequest
 }
 
 export interface NotificationChange {
@@ -118,8 +122,13 @@ export interface NotificationPush {
   health: 'ready' | 'degraded'
   /** Sticky for this process: recovery of storage does not pretend missing history was recovered too. */
   historyIncomplete: boolean
-  announcement?: { id: string; expiresAt: number; group?: { source: string; title: string; detail: string; tone?: NotificationTone; target?: NotificationTarget; recordIds: string[] } }
+  delivery?: NotificationDeliveryStatus
+  openRequested?: NotificationOpenRequest
+  announcement?: { id: string; expiresAt: number; signal?: 'connection' | 'reply'; group?: { source: string; title: string; detail: string; tone?: NotificationTone; target?: NotificationTarget; recordIds: string[] } }
 }
+export interface NotificationDeliveryStatus { nativeSupported: boolean; state: 'ready' | 'unsupported' | 'failed'; message?: string }
+export interface NotificationOpenRequest { token: string; key: string; recordId: string; revision: number; grouped?: boolean }
+export interface NotificationSessionPreference { scope: NotificationScope; mode: 'focus' | 'quiet' }
 export interface NotificationGroupPresentation {
   keys: string[]
   source: string
@@ -139,14 +148,34 @@ export interface NotificationPreferences {
   preview: boolean
   quiet: boolean
   mutedCategories: NotificationCategory[]
+  nativeMutedCategories?: NotificationCategory[]
+  inAppMutedCategories?: NotificationCategory[]
+  connectionUpdates?: boolean
+  replyUpdates?: boolean
+  quietHours?: { enabled: boolean; startMinute: number; endMinute: number }
+  sessionPreferences?: NotificationSessionPreference[]
 }
 
 export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
-  enabled: true, nativeEnabled: false, sound: false, preview: false, quiet: false, mutedCategories: []
+  enabled: true, nativeEnabled: false, sound: false, preview: false, quiet: false, mutedCategories: [], nativeMutedCategories: [], inAppMutedCategories: [],
+  connectionUpdates: false, replyUpdates: false, quietHours: { enabled: false, startMinute: 1_320, endMinute: 480 }, sessionPreferences: []
 }
 
 export function normalizeNotificationPreferences(value: unknown): NotificationPreferences {
   const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {}
+  const quietHours = raw.quietHours && typeof raw.quietHours === 'object' ? raw.quietHours as Record<string, unknown> : {}
+  const minute = (value: unknown, fallback: number) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && value < 1_440 ? value : fallback
+  const sessionPreferences: NotificationSessionPreference[] = []
+  const knownSessions = new Set<string>()
+  if (Array.isArray(raw.sessionPreferences)) for (const value of raw.sessionPreferences.slice(-256).reverse()) {
+    if (!value || typeof value !== 'object') continue
+    const item = value as NotificationSessionPreference
+    try { validateScope(item.scope) } catch { continue }
+    if (!item.scope.sessionId || item.scope.generation === undefined || !['focus', 'quiet'].includes(item.mode)) continue
+    const key = notificationSessionPreferenceKey(item.scope)
+    if (knownSessions.has(key)) continue
+    knownSessions.add(key); sessionPreferences.push({ scope: { ...item.scope }, mode: item.mode })
+  }
   return {
     enabled: raw.enabled !== false,
     nativeEnabled: raw.nativeEnabled === true,
@@ -155,8 +184,18 @@ export function normalizeNotificationPreferences(value: unknown): NotificationPr
     quiet: raw.quiet === true,
     mutedCategories: Array.isArray(raw.mutedCategories)
       ? [...new Set(raw.mutedCategories.filter((entry): entry is NotificationCategory => NOTIFICATION_CATEGORIES.includes(entry as NotificationCategory)))]
-      : []
+      : [],
+    nativeMutedCategories: Array.isArray(raw.nativeMutedCategories)
+      ? [...new Set(raw.nativeMutedCategories.filter((entry): entry is NotificationCategory => NOTIFICATION_CATEGORIES.includes(entry as NotificationCategory)))] : [],
+    inAppMutedCategories: Array.isArray(raw.inAppMutedCategories)
+      ? [...new Set(raw.inAppMutedCategories.filter((entry): entry is NotificationCategory => NOTIFICATION_CATEGORIES.includes(entry as NotificationCategory)))] : [],
+    connectionUpdates: raw.connectionUpdates === true, replyUpdates: raw.replyUpdates === true,
+    quietHours: { enabled: quietHours.enabled === true, startMinute: minute(quietHours.startMinute, 1_320), endMinute: minute(quietHours.endMinute, 480) }, sessionPreferences
   }
+}
+/** Exact generation/binding identity, never channel alone. Group changes do not change who the session is. */
+export function notificationSessionPreferenceKey(scope: NotificationScope): string {
+  return JSON.stringify([scope.workspaceId ?? null, scope.runId ?? null, scope.sessionId ?? null, scope.generation ?? null, scope.composerId ?? null, scope.bindingGeneration ?? null])
 }
 
 export function notificationIsPending(record: NotificationRecord): boolean {
@@ -174,6 +213,7 @@ export function validateNotificationDraft(input: NotificationDraft): void {
   if (input.eventType !== undefined && (typeof input.eventType !== 'string' || !/^[a-z][a-z0-9_.-]{0,60}$/.test(input.eventType))) throw new Error('通知事件类型无效')
   if (input.subjectState !== undefined && (typeof input.subjectState !== 'string' || input.subjectState.length > 80)) throw new Error('通知来源状态无效')
   if (input.respectCleared !== undefined && typeof input.respectCleared !== 'boolean') throw new Error('通知清理策略无效')
+  if (input.liveSignal !== undefined && !['connection', 'reply'].includes(input.liveSignal)) throw new Error('通知实时信号无效')
   if (!['info', 'success', 'warning', 'error'].includes(input.tone) || !['activity', 'notice', 'action'].includes(input.attention)
     || !['active', 'resolved', 'expired'].includes(input.state)) throw new Error('通知状态无效')
   if (!Number.isSafeInteger(input.sourceRevision) || input.sourceRevision < 0 || !Number.isSafeInteger(input.occurredAt) || input.occurredAt < 0 || input.occurredAt > 8_640_000_000_000_000) throw new Error('通知事件版本或时间无效')

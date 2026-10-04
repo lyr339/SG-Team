@@ -3,24 +3,37 @@ import type { NotificationService } from '../src/application/notification-servic
 import type { NotificationPush } from '../src/domain/notification'
 import { registerNotificationIpc } from '../src/main/register-notification-ipc'
 import { IPC } from '../src/shared/desktop-api'
+import type { NotificationDeliveryService } from '../src/application/notification-delivery-service'
 
 const { handlers, trusted } = vi.hoisted(() => ({ handlers: new Map<string, (event: unknown, payload?: unknown) => unknown>(), trusted: vi.fn() }))
 vi.mock('electron', () => ({ ipcMain: { handle: (name: string, handler: (event: unknown, payload?: unknown) => unknown) => handlers.set(name, handler), removeHandler: (name: string) => handlers.delete(name) } }))
 vi.mock('../src/main/ipc-security', () => ({ assertTrustedSender: trusted }))
 
-function harness() {
+function harness(delivery?: Pick<NotificationDeliveryService, 'subscribe' | 'status' | 'openRequested'>) {
   handlers.clear(); trusted.mockReset()
   let listener!: (event: NotificationPush) => void
   const unsubscribe = vi.fn()
   const service = { page: vi.fn(), read: vi.fn(), readAll: vi.fn(), archive: vi.fn(), clearRead: vi.fn(), preferences: vi.fn(), savePreferences: vi.fn(),
     subscribe: vi.fn((callback: typeof listener) => { listener = callback; return unsubscribe }) }
   const send = vi.fn(); const window = { isDestroyed: () => false, webContents: { send } }
-  const dispose = registerNotificationIpc(service as unknown as NotificationService, () => window as never)
+  const dispose = registerNotificationIpc(service as unknown as NotificationService, () => window as never, delivery)
   return { service, send, unsubscribe, dispose, emit: (event: NotificationPush) => listener(event),
     invoke: (channel: string, input?: unknown) => handlers.get(channel)!({}, input) }
 }
 
 describe('notification IPC permissions and data boundaries', () => {
+  it('routes through the single delivery owner and exposes read-only status/open references, never native-show or business commands', async () => {
+    let routed!: (event: NotificationPush) => void
+    const stop = vi.fn(), delivery = { subscribe: vi.fn((listener: typeof routed) => { routed = listener; return stop }),
+      status: () => ({ nativeSupported: true, state: 'ready' as const }), openRequested: () => ({ token: 'native:click', key: 'exact-key', recordId: 'original-id', revision: 3 }) }
+    const h = harness(delivery)
+    h.service.page.mockResolvedValue({ records: [], reset: false, summary: { revision: 3, total: 0, unread: 0, pending: 0, clearable: 0 } })
+    await expect(h.invoke(IPC.notificationPage, { key: 'exact-key', limit: 1 })).resolves.toMatchObject({ delivery: { nativeSupported: true, state: 'ready' }, openRequested: { recordId: 'original-id' } })
+    expect(h.service.subscribe).not.toHaveBeenCalled()
+    routed({ health: 'ready', historyIncomplete: false, openRequested: delivery.openRequested() }); expect(h.send).toHaveBeenCalledOnce()
+    expect([...handlers.keys()].some(key => /native.*show|deliver|execute|restart/.test(key))).toBe(false)
+    h.dispose(); expect(stop).toHaveBeenCalledOnce()
+  })
   it('allows only validated source identities in exact-result queries', () => {
     const { service, invoke, dispose } = harness()
     invoke(IPC.notificationPage, { sessionId: 'session-a', toolCallId: 'tool-a', entryId: 'reply:a', ignored: 'transcript' })

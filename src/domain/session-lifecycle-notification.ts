@@ -99,7 +99,8 @@ export function reduceSessionLifecycleNotifications(previous: SessionLifecycleCh
     if (!row) {
       // New hydration of an old binding is a baseline, not a freshly created session. Unknown timestamps stay conservative.
       if (fact.online && fact.boundAt !== undefined && fact.boundAt >= observation.monitorStartedAt) {
-        drafts.push(event(fact, { key: `session:${fact.identity}:online`, title: `${fact.name} 已上线`, detail: '已观察到当前会话的真实接入。', tone: 'info', attention: 'activity', state: 'resolved', announce: false }))
+        drafts.push(event(fact, { key: `session:${fact.identity}:online`, title: `${fact.name} 已上线`, detail: '已观察到当前会话的真实接入。', tone: 'info', attention: 'activity', state: 'resolved', announce: false,
+          ...(!baseline ? { liveSignal: 'connection' as const } : {}) }))
       }
       continue
     }
@@ -112,11 +113,12 @@ export function reduceSessionLifecycleNotifications(previous: SessionLifecycleCh
         if (!restored) continue
         drafts.push(event(fact, { key: row.incident.key, title: `${fact.name} 已恢复连接`, detail: '当前同一会话已出现新的生命证据。连接异常已收口，任务和回复结果仍以原记录为准。',
           tone: 'success', attention: row.incident.signalled ? 'notice' : 'activity', state: 'resolved', renewAttention: row.incident.signalled && !baseline,
-          announce: row.incident.signalled && !baseline }))
+          announce: row.incident.signalled && !baseline, ...(!baseline ? { liveSignal: 'connection' as const } : {}) }))
         delete next.incident
       } else if (!row.onlineObserved && (!baseline || fact.boundAt !== undefined && fact.boundAt >= observation.monitorStartedAt)
         && (observation.healthy || fact.evidence === 'active')) {
-        drafts.push(event(fact, { key: `session:${fact.identity}:online`, title: `${fact.name} 已上线`, detail: '已观察到当前会话的真实接入。', tone: 'info', attention: 'activity', state: 'resolved', announce: false }))
+        drafts.push(event(fact, { key: `session:${fact.identity}:online`, title: `${fact.name} 已上线`, detail: '已观察到当前会话的真实接入。', tone: 'info', attention: 'activity', state: 'resolved', announce: false,
+          ...(!baseline ? { liveSignal: 'connection' as const } : {}) }))
       }
       continue
     }

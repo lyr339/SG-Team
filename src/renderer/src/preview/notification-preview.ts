@@ -28,7 +28,7 @@ export function createNotificationPreview() {
   const offer = (draft: Omit<NotificationDraft, 'sourceRevision'>) => {
     const old = [...records.values()].find(record => record.key === draft.key)
     if (old && notificationContentSignature(old) === notificationContentSignature({ ...draft, sourceRevision: 0 })) return
-    const { announce, renewAttention, ...content } = draft; const next = ++revision
+    const { announce, renewAttention, liveSignal: _liveSignal, respectCleared: _respectCleared, ...content } = draft; const next = ++revision
     const record: NotificationRecord = { ...content, id: old?.id ?? `notification-preview-${next}`, sourceRevision: (old?.sourceRevision ?? 0) + 1,
       revision: next, attentionRevision: draft.attention === 'activity' ? 0 : !old || renewAttention ? next : old.attentionRevision,
       readRevision: old?.readRevision ?? 0, createdAt: old?.createdAt ?? Date.now(), updatedAt: Date.now() }
@@ -41,6 +41,7 @@ export function createNotificationPreview() {
     const reset = query.cursor !== undefined && query.cursor.revision !== revision
     const offset = reset ? 0 : query.cursor?.offset ?? 0; const limit = query.limit ?? 30
     return { records: structuredClone(rows.slice(offset, offset + limit)), summary: summary(query), reset, health: 'ready', historyIncomplete: false,
+      delivery: { nativeSupported: true, state: 'ready' }, // Pure preview capability; never calls Electron or system settings.
       ...(rows.length > offset + limit ? { nextCursor: { revision, offset: offset + limit } } : {}) }
   }
   const api: Pick<SgDesktopApi, 'getNotificationPage' | 'readNotification' | 'readAllNotifications' | 'archiveNotification' | 'clearReadNotifications' | 'getNotificationPreferences' | 'saveNotificationPreferences' | 'onNotificationChanged'> = {
@@ -92,6 +93,12 @@ export function createNotificationPreview() {
     }
     if (scenario === 'toast') setTimeout(() => {
       offer({ ...templates[2]!, key: 'preview:live-cleanup', scope: {}, occurredAt: Date.now(), announce: true })
+    }, 1_200)
+    if (scenario === 'native') setTimeout(() => {
+      const record = [...records.values()].find(record => record.key.startsWith('preview:cleanup:'))
+      if (record) for (const listener of listeners) listener({ health: 'ready', historyIncomplete: false, openRequested: {
+        token: 'preview-native-open:1', key: record.key, recordId: record.id, revision: record.revision
+      } })
     }, 1_200)
   }
   return { api, offer, observeUpdate: (status: AppUpdateStatus, live = false) => { const draft = appUpdateNotification(status, live); const receipt = appUpdateReceiptNotification(status); if (draft) offer(draft); if (receipt) offer(receipt) } }

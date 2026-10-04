@@ -1,4 +1,4 @@
-import type { NotificationChange, NotificationDraft, NotificationGroupPresentation, NotificationMarker, NotificationPage, NotificationPreferences, NotificationPush, NotificationQuery, NotificationSourceResult, NotificationSourceState } from '../domain/notification'
+import type { NotificationChange, NotificationDraft, NotificationGroupPresentation, NotificationMarker, NotificationPage, NotificationPreferences, NotificationPush, NotificationQuery, NotificationRecord, NotificationSourceResult, NotificationSourceState } from '../domain/notification'
 import { normalizeNotificationPreferences, notificationContentSignature, notificationIsUnread, notificationSafeText, NotificationActionError, validateNotificationDraft } from '../domain/notification'
 import type { NotificationRepository } from './notification-repository'
 
@@ -51,6 +51,16 @@ export class NotificationService {
     this.sourceTasks.add(task)
     return task.finally(() => { this.sourceTasks.delete(task) })
   }
+  private signal(draft: NotificationDraft | undefined, record: NotificationRecord | undefined): NotificationPush['announcement'] | undefined {
+    if (!draft || !record) return undefined
+    if (draft.announce && notificationIsUnread(record) && record.attentionRevision === record.revision) {
+      return { id: `${record.id}:${record.attentionRevision}`, expiresAt: draft.occurredAt + 60_000 }
+    }
+    if (draft.liveSignal && record.archivedAt === undefined && record.state !== 'expired') {
+      return { id: `${record.id}:${record.revision}:${draft.liveSignal}`, expiresAt: draft.occurredAt + 60_000, signal: draft.liveSignal }
+    }
+    return undefined
+  }
   sourceState(key: string): Promise<NotificationSourceState> {
     return this.tracked((async () => {
       try { const source = await this.repository.sourceState(key); this.recovered(); return source }
@@ -72,8 +82,8 @@ export class NotificationService {
         if (!change.changed || !change.record) continue
         this.markers.set(change.record.key, { sourceRevision: change.record.sourceRevision, signature: notificationContentSignature(change.record) })
         const draft = drafts.find(value => value.key === change.record?.key)
-        this.emit({ change, ...(draft?.announce && (!combine || !group!.keys.includes(change.record.key)) && notificationIsUnread(change.record) && change.record.attentionRevision === change.record.revision
-          ? { announcement: { id: `${change.record.id}:${change.record.attentionRevision}`, expiresAt: draft.occurredAt + 60_000 } } : {}) })
+        const signal = combine && group!.keys.includes(change.record.key) ? undefined : this.signal(draft, change.record)
+        this.emit({ change, ...(signal ? { announcement: signal } : {}) })
       }
       if (combine) {
         const last = grouped.at(-1)!
@@ -145,9 +155,7 @@ export class NotificationService {
         if (change.record) this.markers.set(key, { sourceRevision: change.record.sourceRevision, signature: notificationContentSignature(change.record) })
         if (this.markers.size > 512) this.markers.delete(this.markers.keys().next().value!)
         this.recovered()
-        if (change.changed) this.emit({ change,
-          ...(draft.announce && change.record && notificationIsUnread(change.record) && change.record.revision === change.record.attentionRevision
-            ? { announcement: { id: `${change.record.id}:${change.record.attentionRevision}`, expiresAt: draft.occurredAt + 60_000 } } : {}) })
+        if (change.changed) { const signal = this.signal(draft, change.record); this.emit({ change, ...(signal ? { announcement: signal } : {}) }) }
       } catch {
         this.markers.delete(key)
         // Explicitly signal possible historical loss, not another notification that recursively hits the same broken store.

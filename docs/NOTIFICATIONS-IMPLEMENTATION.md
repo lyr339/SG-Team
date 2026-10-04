@@ -134,6 +134,27 @@
 
 **仍须完成**：其他页面的重要长操作与跨重启未知结果、问卷动作失败/精确问题身份的更多真实序列、原生送达/完整偏好、历史保留/缺口确认、worker 真终止恢复以及正式打包/Windows与完整安装应用验收。队列/交接关联的更长容量/晚到持久序列也要继续压力审查，不能以这批基本路径测试取代整套完成审计。
 
+### 第八批：单渠道提醒、系统通知适配与完整提醒设置
+
+- `NotificationDeliveryService` 消费已保存的源事实，只负责送达。原记录/已读/业务结果立即推送；每个实时机会独立选择前台应用内或用户开启后的后台系统提醒，不同时发两种。该观察者不调用账号/会话/更新业务，不新增模型、余额、远端或业务数据库轮询，不让链路等通知。
+- 送达前后复核具体记录、attention/revision、已读/归档、前后台、类别、当前设置；私有 CAS claim 先确认受理身份再呈现。claim 不是已显示/已读证明，未知写入不会自动重放；跨 owner 重建可去重。队列最多 32、最近身份 1,024、记录缓存 512、同时管理的 OS handle 最多 8，满载仅在设置中披露短暂提醒可能缺失，原历史不被删掉。
+- macOS/Windows 原生 adapter 使用 Electron，Windows 使用与打包配置相同的 AppUserModelId。默认系统提醒、声音、摘要、额外连接和完整回复动态全关闭；能力查询不是权限授予。开设置/启用开关不发测试通知，显示仍服从 OS 权限及勿扰，不用 critical 绕过。原生失败只在设置披露并在还有效时给一次应用内机会；后续不逐条撞权限，需用户重新启用才尝试新的系统提醒，不补发旧结果。
+- 默认系统正文只有拾光通用提示；用户开启摘要后仍防御性隐藏凭据形态、邮件、用户本机路径。原消息全文不复制进 OS。系统点击/关闭不自动已读，不改变 Agent 消息回执，更不会直接执行重启/安装/回答。点击携带有限的 ledger 引用到通知中心，具体内容可见后才确认阅读；前景弹层与慢查询竞态不会被强行盖掉或错读。
+- 提醒设置成为单独可滚动子视图，不往历史列表底部塞长面板。总开关、安静、系统提示/声音/摘要、额外动态、定时安静与十类应用内/系统渠道各自可控，自动保存，失败保留原状态。旧全类别静音重新开启其中一个渠道时另一个不被悄悄开启。工作流与历史记录不受这些设置影响。
+- 定时安静使用本机时段，支持跨午夜，相同起止明确为全天安静。一个边界 timer + 原 power resume 事件复核，不周期查询业务；进入时关闭已有提醒，结束不补播普通成功。某会话详情可设默认/重点关注/安静，按确切 workspace/run/session/generation/Composer/binding 匹配，不把同 CH 新会话继承旧静音。重点关注不突破总开关/类别/安静规则；只提升待呈现机会，已悬停/聚焦卡不被顶替。
+- 额外上线/恢复和完整回复是单独背景 opt-in signal，不制造人工待办、虚假未读或前台刷屏；启动/休眠 baseline 不重放。源层仅增加显示用信号，持久记录不保存 `liveSignal`。重要异常与已有重要结果仍按原模型入记录，自动化正常完成也是合法候选，不限定失败。
+- 二次审查修正了两个实际计数/阅读问题：送达过程的 key 单条查询不能把全局徽标 3 条降成 1 条；系统点击展开具体正文、列表尚未返回时的已读回执不能伪称“有新业务更新”。分别保留全局 summary 流与精确只读回执序列，不重排已有记录；迟到旧状态也不能覆盖新送达故障或较新的系统点击引用。
+
+本批证据包括 `notification-delivery-policy.test.ts`、`notification-delivery-service.test.ts`（真实私有 SQLite owner/CAS）、`native-notification-port.test.ts`（macOS/Windows adapter API seam）、`notification-preferences-panel.test.tsx`、`notification-system-native-open.test.tsx` 与原 IPC/store/toast/center 回归。它们覆盖正常完成/默认静默、背景和前台竞态、按渠道静音、未知 claim、owner 重建、聚合成员改变、失败退避、定时进入/退出、原始正文可见读取、前景 modal/慢查询、精确代次和隐私。首轮新测试曾因测试 mock 调用自己而 OOM，已修 mock 实现引用并重新核验；这是隔离测试 fixture 问题，不作为通过证据隐藏。后续终态日志必须以最后源码重跑为准。
+
+最终证据为 `full-regression-native-verified.log`、`build-native-verified.log`、`dead-code-native-verified.log`、`electron-worker-native-verified.log`、`electron-lifecycle-native-verified.log`、`channel-smoke-native-verified.log`、`mcp-smoke-native-verified.log`；先前 final 日志是最后一项 claim 错误披露修正前的阶段证据。实际 macOS Electron 退出 fixture 已加载当前送达代码并只读确认原生 capability，五场景仍无退出时系统弹条/新建窗口，生产 main 未加载。**没有调用物理 Notification.show、没有改变 OS 通知权限/勿扰或声音设置，也没有 Windows 实机，不能说真实双平台系统弹窗及声音已经验收通过。**
+
+真实浏览器组件截图 `ui/preferences-dark.jpg`、`ui/preferences-light.jpg`、`ui/preferences-details-dark.jpg`、`ui/preferences-narrow-light.jpg` 使用隔离预览 capability 和内存开关，不是实际 OS 权限。字号主行 14px，类别两列基线差 0、独立内容区可滚动、console clean；模拟系统点击只读一条原内容，其他未读保留且不自动跳业务页，阅读后不再伪报“有更新”。380×640 的设置面板本身在视口内且无自身横向溢出；原应用主页面此极窄浏览器视口有横向越界，不能据此宣称整个软件的极窄布局完成，原生窗口最小尺寸及完整响应式验收仍需核对。
+
+保护报告 `protected-native-audit.json` 与上批一致；原 UI 树 675 源文件/Git 基线匹配，主目录已知四个预热文件漂移保留，未覆盖它们。未推送/发版/安装或重启当前软件/Cursor。
+
+**完整目标仍未完成**：其余页面重要源/跨重启未知操作、问卷动作失败等完整事实序列、历史保留与历史缺口确认/worker 真终止恢复、整体响应式及正式打包/完整应用/Windows验收、真实 OS 权限与实际通知/声音/系统勿扰行为。该批完成送达结构与设置，不把能力查询、fake adapter、静态开关或绿色测试代替真正系统效果证明。
+
 下面保留完整要求，不因前三批已有成果缩小。已实现部分仍需匹配该项范围验收；未实现部分继续开工。
 
 1. 通知中心、轻量顶栏入口、单张提醒和独立 renderer store。支持待处理／未读／全部、查询范围、分页、详情、关闭、阅读、归档、确认清理和适当偏好；减少动画、长内容、键盘与窄窗需验收。

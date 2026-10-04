@@ -1,5 +1,6 @@
 import type { SgDesktopApi } from '../../../shared/desktop-api'
-import { DEFAULT_NOTIFICATION_PREFERENCES, notificationIsUnread, type NotificationPreferences, type NotificationPush, type NotificationRecord, type NotificationSummary } from '../../../domain/notification'
+import { DEFAULT_NOTIFICATION_PREFERENCES, notificationIsUnread, type NotificationDeliveryStatus, type NotificationOpenRequest, type NotificationPreferences, type NotificationPush, type NotificationRecord, type NotificationSummary } from '../../../domain/notification'
+import { notificationIsQuiet, notificationSessionMode } from '../../../domain/notification-delivery-policy'
 
 export type NotificationApi = Pick<SgDesktopApi, 'getNotificationPage' | 'readNotification' | 'readAllNotifications' | 'archiveNotification' | 'clearReadNotifications' | 'getNotificationPreferences' | 'saveNotificationPreferences' | 'onNotificationChanged'>
 export interface ToastCandidate { key: string; record: NotificationRecord; expiresAt: number; grouped?: boolean }
@@ -13,6 +14,8 @@ interface StoreSnapshot {
   historyIncomplete: boolean
   error?: string
   preferencesError?: string
+  delivery?: NotificationDeliveryStatus
+  openRequested?: NotificationOpenRequest
   toasts: ToastCandidate[]
 }
 
@@ -37,7 +40,8 @@ export class NotificationStore {
   }
   private applyPreferences(preferences: NotificationPreferences): void {
     this.patch({ preferences, preferencesReady: true, preferencesError: undefined,
-      toasts: !preferences.enabled || preferences.quiet ? [] : this.state.toasts.filter(item => !preferences.mutedCategories.includes(item.record.category)) })
+      toasts: notificationIsQuiet(preferences, this.now()) ? [] : this.state.toasts.filter(item => !preferences.mutedCategories.includes(item.record.category)
+        && !preferences.inAppMutedCategories?.includes(item.record.category) && notificationSessionMode(item.record, preferences) !== 'quiet') })
   }
   private async pullPreferences(epoch: number): Promise<void> {
     const version = this.preferencesEpoch
@@ -57,6 +61,7 @@ export class NotificationStore {
         this.patch({ loaded: true, available: true, error: undefined,
           ...(page.summary.revision >= this.state.summary.revision ? { summary: page.summary } : {}),
           health: this.state.health === 'degraded' ? this.state.health : page.health ?? 'ready',
+          ...(page.delivery && this.state.delivery === undefined ? { delivery: page.delivery } : {}), ...(page.openRequested && !this.state.openRequested ? { openRequested: page.openRequested } : {}),
           historyIncomplete: this.state.historyIncomplete || page.historyIncomplete === true })
       }).catch(() => { if (epoch === this.epoch) this.patch({ loaded: true, error: '通知历史暂不可读取，原有功能仍可使用。', health: 'degraded' }) })
       void this.pullPreferences(epoch)
@@ -70,7 +75,8 @@ export class NotificationStore {
   }
   accept(event: NotificationPush): void {
     if (event.preferences) { ++this.preferencesEpoch; this.applyPreferences(event.preferences) }
-    const update: Partial<StoreSnapshot> = { health: event.health, historyIncomplete: this.state.historyIncomplete || event.historyIncomplete }
+    const update: Partial<StoreSnapshot> = { health: event.health, historyIncomplete: this.state.historyIncomplete || event.historyIncomplete,
+      ...(event.delivery ? { delivery: event.delivery } : {}), ...(event.openRequested ? { openRequested: event.openRequested } : {}) }
     const change = event.change
     if (change && event.announcement && !this.state.preferencesReady) void this.pullPreferences(this.epoch)
     const fresh = !change || change.summary.revision >= this.state.summary.revision
@@ -81,11 +87,12 @@ export class NotificationStore {
     this.patch(update, fresh ? event : { ...event, change: undefined, announcement: undefined })
     const record = change?.record; const announcement = event.announcement
     if (!change || change.summary.revision < this.state.summary.revision || !record || !announcement || announcement.expiresAt <= this.now()
-      || !notificationIsUnread(record) || record.attention === 'activity' || this.announced.has(announcement.id)) return
+      || announcement.signal || !notificationIsUnread(record) || record.attention === 'activity' || this.announced.has(announcement.id)) return
     this.announced.add(announcement.id)
     if (this.announced.size > 256) this.announced.delete(this.announced.values().next().value!)
     const preferences = this.state.preferences
-    if (!preferences.enabled || preferences.quiet || preferences.mutedCategories.includes(record.category)) return
+    if (notificationIsQuiet(preferences, this.now()) || preferences.mutedCategories.includes(record.category)
+      || preferences.inAppMutedCategories?.includes(record.category) || notificationSessionMode(record, preferences) === 'quiet') return
     const candidates = this.state.toasts.filter(item => item.expiresAt > this.now() && item.record.id !== record.id)
     const group = announcement.group
     const displayed = group ? { ...record, source: group.source, title: group.title, detail: group.detail, target: group.target, tone: group.tone ?? record.tone } : record
@@ -97,6 +104,7 @@ export class NotificationStore {
     try {
       const page = await this.api.getNotificationPage({ limit: 1 })
       if (epoch === this.epoch && page.summary.revision >= this.state.summary.revision) this.patch({ summary: page.summary, available: true, loaded: true, error: undefined,
+        ...(page.delivery ? { delivery: page.delivery } : {}),
         health: page.health ?? 'ready', historyIncomplete: this.state.historyIncomplete || page.historyIncomplete === true })
       if (epoch === this.epoch && !this.state.preferencesReady) await this.pullPreferences(epoch)
     } catch { if (epoch === this.epoch) this.patch({ error: '通知历史暂不可读取，原有功能仍可使用。', health: 'degraded' }) }

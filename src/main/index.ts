@@ -102,6 +102,8 @@ import { createElectronUpdaterPort } from '../infrastructure/app-update/electron
 import { createMacUpdaterPort } from '../infrastructure/app-update/mac-updater-port'
 import { registerAppUpdateIpc } from './register-app-update-ipc'
 import { NotificationService } from '../application/notification-service'
+import { NotificationDeliveryService } from '../application/notification-delivery-service'
+import { createNativeNotificationPort } from './native-notification-port'
 import { NotificationWorkerPort } from './notification-worker-port'
 import { NotificationQuitBarrier, drainNotificationsForQuit } from './notification-quit-barrier'
 import { NotificationRuntimeJournal } from '../infrastructure/notifications/runtime-journal'
@@ -163,6 +165,7 @@ let channelMessageRelay: ChannelMessageRelay | undefined
 let localSessionBridge: LocalSessionBridge | undefined
 let teamFailoverService: TeamFailoverService | undefined
 let notificationService: NotificationService | undefined
+let notificationDeliveryService: NotificationDeliveryService | undefined
 let notificationRuntimeJournal: NotificationRuntimeJournal | undefined
 let disposeNotificationIpc: (() => void) | undefined
 let disposeAppUpdateNotifications: (() => void) | undefined
@@ -176,6 +179,7 @@ let desktopDisposed = false
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
 if (!hasSingleInstanceLock) app.quit()
+if (hasSingleInstanceLock && process.platform === 'win32') app.setAppUserModelId('app.shiguang.team')
 
 // 会话正文里的本地图片（`![说明](/tmp/shot.png)`）经 sg-image:// 协议读盘；标准协议必须在 ready 前注册。
 registerLocalImageScheme()
@@ -355,7 +359,23 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
       notificationService.reportHistoryGap()
       console.warn('[notifications] 上次退出记录未确认，通知历史可能不完整')
     }
-    disposeNotificationIpc = registerNotificationIpc(notificationService, () => mainWindow)
+    notificationDeliveryService = new NotificationDeliveryService(notificationService, {
+      native: createNativeNotificationPort(),
+      subscribeResume: listener => { powerMonitor.on('resume', listener); return () => { powerMonitor.removeListener('resume', listener) } },
+      foreground: () => {
+        // Account/auth child windows are still the user's foreground work in
+        // this app; mainWindow losing focus alone is not leaving 拾光.
+        const focused = BrowserWindow.getFocusedWindow()
+        return Boolean(focused && !focused.isDestroyed() && focused.isVisible() && !focused.isMinimized())
+      },
+      openWindow: () => {
+        if (desktopDisposed) return
+        if (!mainWindow || mainWindow.isDestroyed()) createWindow()
+        if (mainWindow?.isMinimized()) mainWindow.restore()
+        mainWindow?.show(); mainWindow?.focus()
+      }
+    })
+    disposeNotificationIpc = registerNotificationIpc(notificationService, () => mainWindow, notificationDeliveryService)
   } catch {
     // Renderer can expose unavailable notification history; launching and account services must still initialize.
     console.warn('[notifications] 通知存储暂不可用，原有功能继续运行')
@@ -1018,6 +1038,7 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
 function disposeDesktopOnce(): void {
   if (desktopDisposed) return
   desktopDisposed = true
+  notificationDeliveryService?.dispose()
   disposeBatchLaunchNotifications?.()
   disposeAutomationNotifications?.()
   tray?.destroy()

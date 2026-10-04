@@ -6,6 +6,15 @@ import type { NotificationStore, ToastCandidate } from './notification-store'
 import { notificationIsUnread, type NotificationPush, type NotificationRecord } from '../../../domain/notification'
 import { notificationElementVisible } from './notification-visible'
 import { notificationSessionScopeMatches } from './notification-session-scope'
+import { notificationIsQuiet, notificationSessionMode } from '../../../domain/notification-delivery-policy'
+
+function nextReminder(store: NotificationStore): ToastCandidate[] {
+  const preferences = store.snapshot().preferences
+  const priority = (item: ToastCandidate) => (item.record.attention === 'action' ? 4 : 0) + (notificationSessionMode(item.record, preferences) === 'focus' ? 2 : 0)
+    + (item.record.tone === 'warning' || item.record.tone === 'error' ? 1 : 0)
+  // Sort only waiting opportunities. The active hovered/focused card stays pinned.
+  return [...store.snapshot().toasts].sort((a, b) => priority(b) - priority(a))
+}
 
 interface Props { store: NotificationStore; blocked: boolean; onOpen: (record: NotificationRecord, grouped?: boolean) => void; onSnoozeUpdate?: (record: NotificationRecord) => Promise<void> }
 function sourceResultVisible(record: NotificationRecord): boolean {
@@ -75,13 +84,14 @@ export function NotificationToast({ store, blocked, onOpen, onSnoozeUpdate }: Pr
       if (current.current) {
         if (event?.change?.record?.id === current.current.record.id && (!notificationIsUnread(event.change.record) || event.change.record.state === 'expired')) { finishRef.current(); return }
         const preferences = state.preferences
-        if (!preferences.enabled || preferences.quiet || preferences.mutedCategories.includes(current.current.record.category)) finishRef.current()
+        if (notificationIsQuiet(preferences, Date.now()) || preferences.mutedCategories.includes(current.current.record.category)
+          || preferences.inAppMutedCategories?.includes(current.current.record.category) || notificationSessionMode(current.current.record, preferences) === 'quiet') finishRef.current()
         return
       }
-      if (!state.preferencesReady || !state.preferences.enabled || state.preferences.quiet || !document.hasFocus() || blockedRef.current) return
+      if (!state.preferencesReady || notificationIsQuiet(state.preferences, Date.now()) || !document.hasFocus() || blockedRef.current) return
       const element = document.activeElement
       if (element instanceof HTMLElement && element.matches('textarea,input:not([type="checkbox"]):not([type="radio"]),[contenteditable="true"]')) return
-      for (const item of state.toasts) {
+      for (const item of nextReminder(store)) {
         if (item.expiresAt <= Date.now() || sourceResultVisible(item.record)) { store.dismissToast(item.key); continue }
         remaining.current = { key: item.key, ms: item.record.category === 'updates' ? 15_000 : item.record.target ? 10_000 : 5_000 }
         current.current = item; setActive(item); break
@@ -108,9 +118,9 @@ export function NotificationToast({ store, blocked, onOpen, onSnoozeUpdate }: Pr
     return () => { clearTimeout(timer); duration.ms = Math.max(0, duration.ms - (performance.now() - started)) }
   }, [active, blocked, focused, hovering, within, placement.visible])
   useEffect(() => {
-    if (active || blocked || !focused || !store.snapshot().preferencesReady || !store.snapshot().preferences.enabled || store.snapshot().preferences.quiet) return
+    if (active || blocked || !focused || !store.snapshot().preferencesReady || notificationIsQuiet(store.snapshot().preferences, Date.now())) return
     // Dismissal may be the last queue change. Re-check pending candidates once after the old card unmounts.
-    const item = store.snapshot().toasts.find(value => value.expiresAt > Date.now() && !sourceResultVisible(value.record))
+    const item = nextReminder(store).find(value => value.expiresAt > Date.now() && !sourceResultVisible(value.record))
     if (item) { remaining.current = { key: item.key, ms: item.record.category === 'updates' ? 15_000 : item.record.target ? 10_000 : 5_000 }; current.current = item; setActive(item) }
   }, [active, blocked, focused, store])
   if (!active || blocked) return null

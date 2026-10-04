@@ -3,6 +3,7 @@ import { NotificationService } from '../application/notification-service'
 import { NOTIFICATION_CATEGORIES, NotificationActionError, type NotificationCategory, type NotificationQuery } from '../domain/notification'
 import { IPC } from '../shared/desktop-api'
 import { assertTrustedSender } from './ipc-security'
+import type { NotificationDeliveryService } from '../application/notification-delivery-service'
 
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new NotificationActionError('通知请求无效')
@@ -37,9 +38,13 @@ function query(value: unknown): NotificationQuery {
 }
 
 /** No renderer publish endpoint: business adapters in main own the facts and allowed navigation references. */
-export function registerNotificationIpc(service: NotificationService, getWindow: () => BrowserWindow | undefined): () => void {
+export function registerNotificationIpc(service: NotificationService, getWindow: () => BrowserWindow | undefined,
+  delivery?: Pick<NotificationDeliveryService, 'subscribe' | 'status' | 'openRequested'>): () => void {
   const handlers: Array<[string, (payload: unknown) => unknown]> = [
-    [IPC.notificationPage, input => service.page(query(input))],
+    [IPC.notificationPage, input => {
+      const page = service.page(query(input))
+      return delivery ? page.then(value => ({ ...value, delivery: delivery.status(), ...(delivery.openRequested() ? { openRequested: delivery.openRequested() } : {}) })) : page
+    }],
     [IPC.notificationRead, input => { const value = object(input); return service.read(id(value.id), revision(value.revision)) }],
     [IPC.notificationReadAll, input => { const value = object(input); return service.readAll(query(value.query), revision(value.revision)) }],
     [IPC.notificationArchive, input => service.archive(id(input))],
@@ -52,7 +57,7 @@ export function registerNotificationIpc(service: NotificationService, getWindow:
     [IPC.notificationSavePreferences, input => service.savePreferences(object(input))]
   ]
   for (const [channel, handler] of handlers) ipcMain.handle(channel, (event, payload) => { assertTrustedSender(event, getWindow); return handler(payload) })
-  const unsubscribe = service.subscribe(event => {
+  const unsubscribe = (delivery ?? service).subscribe(event => {
     const window = getWindow()
     if (window && !window.isDestroyed()) window.webContents.send(IPC.notificationChanged, event)
   })

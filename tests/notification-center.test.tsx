@@ -66,7 +66,7 @@ describe('notification center real-ledger interactions', () => {
   })
   it('preferences do not reload or jump the history list', async () => {
     await click('提醒设置'); const count = vi.mocked(api.getNotificationPage).mock.calls.length
-    const checkbox = host.querySelector<HTMLInputElement>('input[type="checkbox"]')!
+    const checkbox = host.querySelector<HTMLInputElement>('input[aria-label="安静模式"]')!
     await act(async () => checkbox.click())
     expect(repository.preferences().quiet).toBe(true)
     expect(vi.mocked(api.getNotificationPage).mock.calls.length).toBe(count)

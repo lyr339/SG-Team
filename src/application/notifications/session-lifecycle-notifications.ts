@@ -174,7 +174,7 @@ export class SessionLifecycleNotifications {
         if (this.closed) return
         const latest = captured
         const reduced = reduceSessionLifecycleNotifications(old.checkpoint, latest, old.source.revision + 1, this.newId)
-        if (latest.quietDelivery || this.suspended || epoch !== this.epoch) for (const draft of reduced.drafts) draft.announce = false
+        if (latest.quietDelivery || this.suspended || epoch !== this.epoch) for (const draft of reduced.drafts) { draft.announce = false; delete draft.liveSignal }
         if (old.checkpoint && reduced.drafts.every(draft => draft.key.startsWith('cursor-restart:')) && checkpointSignature(old.checkpoint) === checkpointSignature(reduced.checkpoint)) {
           // Keep current-life evidence in memory without turning every heartbeat into a disk write.
           old.checkpoint = reduced.checkpoint; continue

@@ -131,7 +131,7 @@ export class SqliteNotificationRepository {
         return { changed: false, record: old, summary: this.summary() }
       }
       const revision = this.nextRevision()
-      const { renewAttention, announce: _announce, respectCleared: _respectCleared, ...content } = draft
+      const { renewAttention, announce: _announce, respectCleared: _respectCleared, liveSignal: _liveSignal, ...content } = draft
       const escalated = old && (old.attention === 'activity' && draft.attention !== 'activity'
         || draft.attention === 'action' && draft.state === 'active' && !notificationIsPending(old))
       const attentionRevision = draft.attention === 'activity' ? 0 : !old || renewAttention || escalated ? revision : old.attentionRevision

@@ -14,6 +14,16 @@ function harness() {
 }
 const flush = async () => { await Promise.resolve(); await Promise.resolve() }
 describe('notification renderer store', () => {
+  it('a stale initial pull cannot overwrite live delivery health or a newer native open request', async () => {
+    const h = harness(); let resolve!: (value: NotificationPage) => void
+    vi.mocked(h.api.getNotificationPage).mockImplementationOnce(() => new Promise(done => { resolve = done }))
+    const release = h.store.acquire()
+    const openRequested = { token: 'new-open', key: 'current-key', recordId: 'current-record', revision: 2 }
+    h.push({ health: 'ready', historyIncomplete: false, delivery: { nativeSupported: true, state: 'failed', message: 'actual failure' }, openRequested })
+    resolve({ records: [], summary: summary(0), reset: false, delivery: { nativeSupported: true, state: 'ready' }, openRequested: { ...openRequested, token: 'old-open', recordId: 'old-record' } }); await flush()
+    expect(h.store.snapshot().delivery?.state).toBe('failed'); expect(h.store.snapshot().openRequested).toEqual(openRequested)
+    release()
+  })
   it('cannot roll back a new push with an older initial pull or replay history as a toast', async () => {
     const h = harness(); let resolve!: (value: NotificationPage) => void
     vi.mocked(h.api.getNotificationPage).mockImplementationOnce(() => new Promise(done => { resolve = done }))

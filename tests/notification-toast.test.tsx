@@ -32,6 +32,12 @@ describe('single calm notification toast', () => {
     await act(async () => store.accept({ preferences: { ...DEFAULT_NOTIFICATION_PREFERENCES, quiet: true }, health: 'ready', historyIncomplete: false }))
     expect(document.querySelector('.notification-toast')).toBeNull(); expect(api.readNotification).not.toHaveBeenCalled()
   })
+  it('muting the displayed category only in-app closes its toast without native policy changes or human reading', async () => {
+    await push('first')
+    await act(async () => store.accept({ preferences: { ...DEFAULT_NOTIFICATION_PREFERENCES, nativeEnabled: true, inAppMutedCategories: ['storage'] }, health: 'ready', historyIncomplete: false }))
+    expect(document.querySelector('.notification-toast')).toBeNull(); expect(api.readNotification).not.toHaveBeenCalled()
+    expect(store.snapshot().preferences.nativeEnabled).toBe(true)
+  })
   it('hover pauses the remaining dwell time; the next queued card gets its own full timer', async () => {
     await push('first'); await push('second', 2)
     await act(async () => vi.advanceTimersByTime(3_000))
