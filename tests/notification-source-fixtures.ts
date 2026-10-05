@@ -9,6 +9,8 @@ import type { DesktopSnapshot } from '../src/shared/desktop-api'
 export function notificationSourceHarness(path = ':memory:') {
   const ledger = new SqliteNotificationRepository(path)
   const port: NotificationRepository = {
+    historyGap: async id => ledger.historyGap(id), recordHistoryGap: async (id, now) => ledger.recordHistoryGap(id, now),
+    acknowledgeHistoryGap: async (revision, now) => ledger.acknowledgeHistoryGap(revision, now), pruneRoutine: async now => ledger.pruneRoutine(now),
     marker: async key => ledger.marker(key), sourceState: vi.fn(async key => ledger.sourceState(key)),
     commitSource: vi.fn(async (key, expected, data, drafts, now) => ledger.commitSource(key, expected, data, drafts, now)),
     put: async (draft, now) => ledger.put(draft, now), page: async query => ledger.page(query), read: async (id, revision, now) => ledger.read(id, revision, now),

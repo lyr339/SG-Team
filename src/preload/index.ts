@@ -24,6 +24,7 @@ if (document.documentElement) {
 
 const api: SgDesktopApi = {
   getNotificationPage: input => ipcRenderer.invoke(IPC.notificationPage, input),
+  acknowledgeNotificationHistory: revision => ipcRenderer.invoke(IPC.notificationAcknowledgeHistory, revision),
   readNotification: input => ipcRenderer.invoke(IPC.notificationRead, input),
   readAllNotifications: input => ipcRenderer.invoke(IPC.notificationReadAll, input),
   archiveNotification: id => ipcRenderer.invoke(IPC.notificationArchive, id),

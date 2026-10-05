@@ -1,9 +1,14 @@
 import type { NotificationChange, NotificationDraft, NotificationMarker, NotificationPage, NotificationPreferences, NotificationQuery, NotificationSourceResult, NotificationSourceState } from '../domain/notification'
+import type { NotificationHistoryIntegrity, NotificationHistoryStatus } from '../domain/notification-history'
 
 /** Storage lifecycle, not a business event or proof that an interrupted write rolled back. */
 export interface NotificationRepositoryLifecycle { state: 'unavailable' | 'recovered'; generation: number }
 
 export interface NotificationRepository {
+  historyGap?(id?: string): Promise<NotificationHistoryStatus>
+  recordHistoryGap?(id: string, now: number): Promise<NotificationHistoryIntegrity>
+  acknowledgeHistoryGap?(revision: number, now: number): Promise<NotificationHistoryIntegrity>
+  pruneRoutine?(now: number): Promise<NotificationChange & { removed: number; more: boolean }>
   subscribeLifecycle?(listener: (event: NotificationRepositoryLifecycle) => void): () => void
   marker(key: string): Promise<NotificationMarker>
   sourceState(key: string): Promise<NotificationSourceState>

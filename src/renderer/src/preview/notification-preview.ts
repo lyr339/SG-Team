@@ -1,3 +1,4 @@
+import type { NotificationHistoryIntegrity } from '../../../domain/notification-history'
 import type { SgDesktopApi } from '../../../shared/desktop-api'
 import type { AppUpdateStatus } from '../../../domain/app-update'
 import { appUpdateNotification, appUpdateReceiptNotification } from '../../../domain/app-update-notification'
@@ -7,6 +8,8 @@ import { DEFAULT_NOTIFICATION_PREFERENCES, normalizeNotificationPreferences, not
 /** Browser-only fixtures. No native notifications, account operations or network connections. */
 export function createNotificationPreview() {
   const records = new Map<string, NotificationRecord>(); const listeners = new Set<(event: NotificationPush) => void>()
+  const scenario = new URLSearchParams(window.location.search).get('notifications')
+  let history: NotificationHistoryIntegrity = scenario?.startsWith('history') ? { revision: 1, acknowledgedRevision: 0, latestGapId: '11111111-1111-4111-8111-111111111111', observedAt: Date.now() - 120_000 } : { revision: 0, acknowledgedRevision: 0 }
   let revision = 0; let preferences = structuredClone(DEFAULT_NOTIFICATION_PREFERENCES)
   const filtered = (query: NotificationQuery = {}) => [...records.values()].filter(record => record.archivedAt === undefined
     && (!query.key || query.key === record.key)
@@ -24,7 +27,7 @@ export function createNotificationPreview() {
   }
   const emit = (record?: NotificationRecord, announcement?: NotificationPush['announcement']) => {
     const change = { changed: true, summary: summary(), ...(record ? { record: structuredClone(record) } : {}) }
-    for (const listener of listeners) listener({ change, health: 'ready', historyIncomplete: false, ...(announcement ? { announcement } : {}) })
+    for (const listener of listeners) listener({ change, health: 'ready', historyIncomplete: history.revision > 0, historyIntegrity: structuredClone(history), historyGapUnconfirmed: false, ...(announcement ? { announcement } : {}) })
     return change
   }
   const offer = (draft: Omit<NotificationDraft, 'sourceRevision'>) => {
@@ -42,12 +45,19 @@ export function createNotificationPreview() {
       .sort((a, b) => Number(notificationIsPending(b)) - Number(notificationIsPending(a)) || Number(a.attention === 'activity') - Number(b.attention === 'activity') || b.revision - a.revision)
     const reset = query.cursor !== undefined && query.cursor.revision !== revision
     const offset = reset ? 0 : query.cursor?.offset ?? 0; const limit = query.limit ?? 30
-    return { records: structuredClone(rows.slice(offset, offset + limit)), summary: summary(query), reset, health: 'ready', historyIncomplete: false,
+    return { records: structuredClone(rows.slice(offset, offset + limit)), summary: summary(query), reset, health: 'ready', historyIncomplete: history.revision > 0, historyIntegrity: structuredClone(history), historyGapUnconfirmed: false,
       delivery: { nativeSupported: true, state: 'ready' }, // Pure preview capability; never calls Electron or system settings.
       ...(rows.length > offset + limit ? { nextCursor: { revision, offset: offset + limit } } : {}) }
   }
-  const api: Pick<SgDesktopApi, 'getNotificationPage' | 'readNotification' | 'readAllNotifications' | 'archiveNotification' | 'clearReadNotifications' | 'getNotificationPreferences' | 'saveNotificationPreferences' | 'onNotificationChanged'> = {
+  const api: Pick<SgDesktopApi, 'getNotificationPage' | 'readNotification' | 'readAllNotifications' | 'archiveNotification' | 'clearReadNotifications' | 'getNotificationPreferences' | 'saveNotificationPreferences' | 'onNotificationChanged' | 'acknowledgeNotificationHistory'> = {
     getNotificationPage: page,
+    acknowledgeNotificationHistory: async shown => {
+      const before = { ...history, acknowledgedRevision: Math.max(history.acknowledgedRevision, shown), acknowledgedAt: Date.now() }
+      history = before
+      if (scenario === 'history-late' && shown === 1) history = { ...before, revision: 2, latestGapId: '22222222-2222-4222-8222-222222222222', observedAt: Date.now() }
+      for (const listener of listeners) listener({ health: 'ready', historyIncomplete: true, historyIntegrity: { ...history }, historyGapUnconfirmed: false })
+      return before
+    },
     readNotification: async ({ id, revision: observed }) => {
       const record = records.get(id)
       if (record && record.attention !== 'activity' && observed >= record.attentionRevision && notificationIsUnread(record)) {
@@ -75,12 +85,11 @@ export function createNotificationPreview() {
     getNotificationPreferences: async () => structuredClone(preferences),
     saveNotificationPreferences: async input => {
       preferences = normalizeNotificationPreferences(input)
-      for (const listener of listeners) listener({ preferences: structuredClone(preferences), health: 'ready', historyIncomplete: false })
+      for (const listener of listeners) listener({ preferences: structuredClone(preferences), health: 'ready', historyIncomplete: history.revision > 0, historyIntegrity: structuredClone(history), historyGapUnconfirmed: false })
       return structuredClone(preferences)
     },
     onNotificationChanged: callback => { listeners.add(callback); return () => { listeners.delete(callback) } }
   }
-  const scenario = new URLSearchParams(window.location.search).get('notifications')
   if (scenario && scenario !== 'empty' && scenario !== 'human') {
     const templates = [
       { key: 'preview:automation', category: 'automation' as const, source: '自动化', title: '主要步骤已完成，浏览器清场未完成', detail: '处理和加固已经完成；浏览器清场未结束。请查看本轮详情，不要重复执行已完成的步骤。', tone: 'warning' as const, attention: 'action' as const, state: 'active' as const, target: { kind: 'settings' as const, section: 'automation' as const } },
@@ -98,7 +107,7 @@ export function createNotificationPreview() {
     }, 1_200)
     if (scenario === 'native') setTimeout(() => {
       const record = [...records.values()].find(record => record.key.startsWith('preview:cleanup:'))
-      if (record) for (const listener of listeners) listener({ health: 'ready', historyIncomplete: false, openRequested: {
+      if (record) for (const listener of listeners) listener({ health: 'ready', historyIncomplete: history.revision > 0, historyIntegrity: structuredClone(history), historyGapUnconfirmed: false, openRequested: {
         token: 'preview-native-open:1', key: record.key, recordId: record.id, revision: record.revision
       } })
     }, 1_200)

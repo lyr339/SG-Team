@@ -1,3 +1,4 @@
+import { HistoryGapNotice, HistoryRetentionInfo } from './NotificationHistoryNotice'
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { notificationIsPending, notificationIsUnread, notificationSessionPreferenceKey, type NotificationPage, type NotificationQuery, type NotificationRecord } from '../../../domain/notification'
 import { formatFullClock, formatRelativeClock } from '../format'
@@ -201,7 +202,7 @@ export function NotificationCenter({ store, workspaceId, onClose, onNavigate, fo
     </div>
     {error ? <p className="notification-panel__feedback" role="alert">{error}</p> : null}
     {navigationError ? <p className="notification-panel__feedback" role="status">{navigationError}</p> : null}
-    {store.snapshot().historyIncomplete ? <p className="notification-panel__feedback" role="status">通知历史可能不完整。已保存记录和现有业务结果不受影响。</p> : null}
+    <HistoryGapNotice store={store} />
     {settingsOpen && store.snapshot().preferencesError ? <p className="notification-panel__feedback" role="status">{store.snapshot().preferencesError}</p> : null}
     <div className="notification-panel__body" id={panelId} role="tabpanel" aria-labelledby={`${panelId}-${filter}`}>
       {!page && loading ? <p className="notification-empty" role="status">正在读取通知…</p> : null}
@@ -217,6 +218,7 @@ export function NotificationCenter({ store, workspaceId, onClose, onNavigate, fo
       {page?.nextCursor ? <button type="button" className="notification-more" disabled={loading} onClick={() => void load(true)}>{loading ? '正在读取…' : '查看更多'}</button> : null}
     </div>
     <footer className="notification-panel__footer">
+      <HistoryRetentionInfo store={store} />
       {confirmation ? <div className="notification-confirm" role="group" aria-label="清理已读通知确认"><p>清理{currentWorkspace ? '当前工作区及全局' : '所有工作区'}的已读记录？待处理事项保留。</p><div>
         <button type="button" className="notification-text-button is-muted" disabled={loading} onClick={() => setConfirmation(false)}>取消</button>
         <button type="button" className="notification-text-button" disabled={loading} onClick={() => void perform(async () => {

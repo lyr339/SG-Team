@@ -1,7 +1,8 @@
+import { notificationFingerprint } from '../src/application/notification-fingerprint'
 import { describe, expect, it, vi } from 'vitest'
 import { NotificationService } from '../src/application/notification-service'
 import type { NotificationRepository } from '../src/application/notification-repository'
-import { notificationContentSignature, type NotificationDraft, type NotificationRecord } from '../src/domain/notification'
+import { type NotificationDraft, type NotificationRecord } from '../src/domain/notification'
 
 const draft = (patch: Partial<NotificationDraft> = {}): NotificationDraft => ({
   key: 'result:1', category: 'accounts', source: '账号', title: '导入完成', tone: 'success', attention: 'notice',
@@ -34,7 +35,7 @@ describe('non-blocking notification owner', () => {
   })
   it('initial current-state delivery deduplicates persisted markers, including cleared history, without using a wall-clock version', async () => {
     const port = repository(); const first = draft(); const { sourceRevision: _sequence, ...current } = first
-    vi.mocked(port.marker).mockResolvedValue({ sourceRevision: 9, signature: notificationContentSignature(first), cleared: true })
+    vi.mocked(port.marker).mockResolvedValue({ sourceRevision: 9, signature: notificationFingerprint(first), cleared: true })
     const service = new NotificationService(port)
     service.offerCurrent(current); await service.flush()
     expect(port.put).not.toHaveBeenCalled()
@@ -119,7 +120,7 @@ describe('storage recovery is history synchronization, not event replay', () => 
     // The old cached signature says "import finished", but the interrupted worker
     // committed something else before exit. Only its persisted marker is authority.
     const actual = { ...draft(), title: '原入口已确认另一结果' }
-    vi.mocked(port.marker).mockResolvedValue({ sourceRevision: 9, signature: notificationContentSignature(actual) })
+    vi.mocked(port.marker).mockResolvedValue({ sourceRevision: 9, signature: notificationFingerprint(actual) })
     lifecycle({ state: 'unavailable', generation: 1 }); lifecycle({ state: 'recovered', generation: 2 }); await service.flush()
     expect(service.status()).toMatchObject({ health: 'ready', historyIncomplete: true })
     expect(events.mock.calls.some(([event]) => event.historyReload && !event.announcement)).toBe(true)
@@ -133,7 +134,7 @@ describe('storage recovery is history synchronization, not event replay', () => 
     port.subscribeLifecycle = listener => { lifecycle = listener; return () => {} }
     const service = new NotificationService(port), events = vi.fn(); service.subscribe(events)
     const { sourceRevision: _revision, ...current } = draft()
-    vi.mocked(port.marker).mockResolvedValue({ sourceRevision: 9, signature: notificationContentSignature(draft()) })
+    vi.mocked(port.marker).mockResolvedValue({ sourceRevision: 9, signature: notificationFingerprint(draft()) })
     lifecycle({ state: 'unavailable', generation: 1 }); lifecycle({ state: 'recovered', generation: 2 }); await service.flush()
     service.offerCurrent({ ...current, announce: true }); await service.flush()
     expect(port.put).not.toHaveBeenCalled(); expect(events.mock.calls.every(([event]) => !event.announcement)).toBe(true)

@@ -1,6 +1,9 @@
 import type { NotificationChange, NotificationDraft, NotificationGroupPresentation, NotificationMarker, NotificationPage, NotificationPreferences, NotificationPush, NotificationQuery, NotificationRecord, NotificationSourceResult, NotificationSourceState } from '../domain/notification'
 import { normalizeNotificationPreferences, notificationContentSignature, notificationIsUnread, notificationSafeText, NotificationActionError, validateNotificationDraft } from '../domain/notification'
 import type { NotificationRepository, NotificationRepositoryLifecycle } from './notification-repository'
+import { NotificationHistoryController, notificationHistoryPort } from './notifications/history-controller'
+import type { NotificationHistoryIntegrity } from '../domain/notification-history'
+import { notificationFingerprint } from './notification-fingerprint'
 
 /** One asynchronous owner, independent from business transaction locks or renderer route lifetimes. */
 export class NotificationService {
@@ -21,8 +24,15 @@ export class NotificationService {
   private storageEpoch = 0
   private preferencesEpoch = 0
   private recovering?: Promise<void>
+  private readonly history?: NotificationHistoryController
 
   constructor(private readonly repository: NotificationRepository, private readonly now: () => number = Date.now) {
+    const historyPort = notificationHistoryPort(repository)
+    if (historyPort) this.history = new NotificationHistoryController(historyPort, {
+      state: value => { this.historyIncomplete ||= (value.integrity?.revision ?? 0) > 0 || value.unconfirmed; this.emit() },
+      changed: change => { this.markers.clear(); this.emit({ change }) },
+      failed: () => this.degraded()
+    }, now)
     this.detachStorage = repository.subscribeLifecycle?.(event => this.storageLifecycle(event))
   }
 
@@ -36,7 +46,9 @@ export class NotificationService {
     const preferencesEpoch = this.preferencesEpoch
     const task = this.tracked(Promise.all([this.repository.page({ limit: 1 }), this.repository.preferences()]).then(([page, preferences]) => {
       if (epoch !== this.storageEpoch || this.closed || this.shuttingDown) return
+      if (page.historyIntegrity) this.history?.absorb(page.historyIntegrity)
       this.recovered()
+      this.history?.retry(true)
       // Read persisted facts and controls, not business sources. No announcement
       // is reconstructed, even if a pre-exit write really reached the ledger.
       this.emit({ historyReload: true, change: { changed: false, summary: page.summary }, ...(preferencesEpoch === this.preferencesEpoch ? { preferences } : {}) })
@@ -53,25 +65,27 @@ export class NotificationService {
     // Quit draining is persistence work, not an opportunity to pop a late toast or OS alert.
     const delivered = this.shuttingDown ? { ...event, announcement: undefined } : event
     for (const listener of this.listeners) {
-      try { listener({ ...delivered, health: this.health, historyIncomplete: this.historyIncomplete }) } catch { /* A broken presentation must not fail a completed business operation. */ }
+      try { listener({ ...delivered, health: this.health, historyIncomplete: this.historyIncomplete,
+        historyIntegrity: this.history?.state().integrity, historyGapUnconfirmed: this.history?.state().unconfirmed }) } catch { /* A broken presentation must not fail a completed business operation. */ }
     }
   }
-  private degraded(historyLost = false): void {
+  private degraded(historyLost = false, gapId?: string): void {
     const changed = this.health !== 'degraded' || historyLost && !this.historyIncomplete
     this.historyIncomplete ||= historyLost
     if (this.shuttingDown && historyLost) this.shutdownFailed = true
     this.health = 'degraded'
+    if (historyLost) this.history?.report(gapId)
     if (changed) this.emit()
   }
   private recovered(): void {
-    if (this.health !== 'ready') { this.health = 'ready'; this.emit() }
+    if (this.health !== 'ready') { this.health = 'ready'; this.emit(); this.history?.retry() }
   }
-  reportHistoryGap(): void { this.degraded(true) }
-  status(): { health: NotificationPush['health']; historyIncomplete: boolean; shutdownConfirmed: boolean } {
-    return { health: this.health, historyIncomplete: this.historyIncomplete, shutdownConfirmed: this.closeConfirmed && !this.shutdownFailed && this.health === 'ready' }
+  reportHistoryGap(id?: string): void { this.degraded(true, id) }
+  status(): { health: NotificationPush['health']; historyIncomplete: boolean; shutdownConfirmed: boolean; historyGapId?: string } {
+    return { health: this.health, historyIncomplete: this.historyIncomplete, shutdownConfirmed: this.closeConfirmed && !this.shutdownFailed && this.health === 'ready' && !this.history?.state().unconfirmed, historyGapId: this.history?.journalGapId() }
   }
   /** Source producers must seal and drain before close rejects their remaining commits. */
-  beginShutdown(): void { this.shuttingDown = true }
+  beginShutdown(): void { this.shuttingDown = true; this.history?.seal() }
   private tracked<T>(task: Promise<T>): Promise<T> {
     this.sourceTasks.add(task)
     return task.finally(() => { this.sourceTasks.delete(task) })
@@ -105,7 +119,7 @@ export class NotificationService {
       const combine = group !== undefined && grouped.length > 1
       if (result.applied) for (const change of result.changes) {
         if (!change.changed || !change.record) continue
-        this.markers.set(change.record.key, { sourceRevision: change.record.sourceRevision, signature: notificationContentSignature(change.record) })
+        this.markers.set(change.record.key, { sourceRevision: change.record.sourceRevision, signature: notificationFingerprint(change.record) })
         const draft = drafts.find(value => value.key === change.record?.key)
         const signal = combine && group!.keys.includes(change.record.key) ? undefined : this.signal(draft, change.record)
         this.emit({ change, ...(signal ? { announcement: signal } : {}) })
@@ -172,12 +186,12 @@ export class NotificationService {
           // A newer state may arrive while the first marker is loading; do not write the stale captured state.
           const latest = this.queued.get(key)
           if (latest && this.orderedKeys.delete(key)) { draft = latest; this.queued.delete(key) }
-          if (marker.cleared && marker.signature === undefined) { this.markers.set(key, { ...marker, signature: notificationContentSignature(draft) }); continue }
-          if (marker.signature === notificationContentSignature(draft)) continue
+          if (marker.cleared && marker.signature === undefined) { this.markers.set(key, { ...marker, signature: notificationFingerprint(draft) }); continue }
+          if (marker.signature === notificationFingerprint(draft)) continue
           draft.sourceRevision = marker.sourceRevision + 1
         }
         const change = await this.repository.put(draft, this.now())
-        if (change.record) this.markers.set(key, { sourceRevision: change.record.sourceRevision, signature: notificationContentSignature(change.record) })
+        if (change.record) this.markers.set(key, { sourceRevision: change.record.sourceRevision, signature: notificationFingerprint(change.record) })
         if (this.markers.size > 512) this.markers.delete(this.markers.keys().next().value!)
         this.recovered()
         if (change.changed) { const signal = this.signal(draft, change.record); this.emit({ change, ...(signal ? { announcement: signal } : {}) }) }
@@ -188,9 +202,14 @@ export class NotificationService {
       }
     }
   }
-  async flush(): Promise<void> { while (this.pumping || this.recovering) await Promise.allSettled([this.pumping, this.recovering]) }
+  async flush(): Promise<void> { while (this.pumping || this.recovering) await Promise.allSettled([this.pumping, this.recovering]); await this.history?.flush() }
   async page(query?: NotificationQuery): Promise<NotificationPage> {
-    try { const page = await this.repository.page(query); this.recovered(); return { ...page, health: this.health, historyIncomplete: this.historyIncomplete } }
+    try {
+      const page = await this.repository.page(query)
+      if (page.historyIntegrity) this.history?.absorb(page.historyIntegrity)
+      this.recovered()
+      return { ...page, health: this.health, historyIncomplete: this.historyIncomplete, historyGapUnconfirmed: this.history?.state().unconfirmed }
+    }
     catch (error) { if (!(error instanceof NotificationActionError || error && typeof error === 'object' && 'code' in error && error.code === 'notification_action_invalid')) this.degraded(); throw error }
   }
   private async mutation(run: () => Promise<NotificationChange>): Promise<NotificationChange> {
@@ -202,6 +221,11 @@ export class NotificationService {
   archive(id: string): Promise<NotificationChange> { return this.mutation(() => this.repository.archive(id, this.now())) }
   clearRead(query: NotificationQuery): Promise<NotificationChange> { return this.mutation(() => this.repository.clearRead(query, this.now())) }
   preferences(): Promise<NotificationPreferences> { return this.repository.preferences() }
+  async acknowledgeHistoryGap(revision: number): Promise<NotificationHistoryIntegrity> {
+    if (!this.history) throw new NotificationActionError('历史说明暂不可确认，请稍后重试')
+    try { return await this.history.acknowledge(revision) }
+    catch (error) { if (!(error instanceof NotificationActionError || error && typeof error === 'object' && 'code' in error && error.code === 'notification_action_invalid')) this.degraded(); throw error }
+  }
   async savePreferences(value: unknown): Promise<NotificationPreferences> {
     ++this.preferencesEpoch
     const preferences = await this.repository.savePreferences(normalizeNotificationPreferences(value))
@@ -212,6 +236,7 @@ export class NotificationService {
     this.beginShutdown()
     this.closing = (async () => {
       await this.flush()
+      await this.history?.close()
       await Promise.allSettled([...this.sourceTasks])
       this.closed = true; this.detachStorage?.(); this.listeners.clear()
       try { await this.repository.close(); this.closeConfirmed = true }

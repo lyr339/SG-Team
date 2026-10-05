@@ -2,6 +2,7 @@ import type { Worker } from 'node:worker_threads'
 import type { NotificationRepository, NotificationRepositoryLifecycle } from '../application/notification-repository'
 import type { NotificationChange, NotificationDraft, NotificationMarker, NotificationPage, NotificationPreferences, NotificationQuery, NotificationSourceResult, NotificationSourceState } from '../domain/notification'
 import type { NotificationWorkerCommand, NotificationWorkerReply } from './notification-worker'
+import type { NotificationHistoryIntegrity, NotificationHistoryStatus } from '../domain/notification-history'
 
 type WorkerFactory = (options: { workerData: { databasePath: string } }) => Worker
 type Waiter = { resolve: (value: unknown) => void; reject: (reason: Error) => void; timer: ReturnType<typeof setTimeout> }
@@ -12,6 +13,7 @@ interface WorkerSession {
   pending: Map<number, Waiter>
   preparing: number
   initialized: boolean
+  initializationObservedLate: boolean
   exited: boolean
   failure?: Error
 }
@@ -61,7 +63,7 @@ export class NotificationWorkerPort implements NotificationRepository {
     let readyResolve!: () => void, readyReject!: (error: Error) => void
     const ready = new Promise<void>((resolve, reject) => { readyResolve = resolve; readyReject = reject })
     void ready.catch(() => {})
-    const session: WorkerSession = { worker, generation, ready, pending: new Map(), preparing: 0, initialized: false, exited: false }
+    const session: WorkerSession = { worker, generation, ready, pending: new Map(), preparing: 0, initialized: false, initializationObservedLate: false, exited: false }
     this.session = session
     const fail = (error: Error): void => {
       session.failure = error; this.failure = error; readyReject(error)
@@ -75,7 +77,7 @@ export class NotificationWorkerPort implements NotificationRepository {
         if (session.initialized || session.failure) return
         if (!reply.ok) { fail(Error(reply.error)); return }
         session.initialized = true; this.failure = undefined; readyResolve()
-        if (generation > 1) this.emit('recovered', generation)
+        if (generation > 1 || session.initializationObservedLate) this.emit('recovered', generation)
         return
       }
       const waiter = session.pending.get(reply.id)
@@ -122,7 +124,7 @@ export class NotificationWorkerPort implements NotificationRepository {
     ++session.preparing
     try {
       await new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(() => reject(Error('通知存储初始化未及时返回')), this.timeoutMs)
+        const timer = setTimeout(() => { session.initializationObservedLate = true; reject(Error('通知存储初始化未及时返回')) }, this.timeoutMs)
         session.ready.then(() => { clearTimeout(timer); resolve() }, error => { clearTimeout(timer); reject(error) })
       })
     } finally { --session.preparing }
@@ -152,6 +154,10 @@ export class NotificationWorkerPort implements NotificationRepository {
     }
   }
   put(draft: NotificationDraft, now: number): Promise<NotificationChange> { return this.call({ kind: 'put', draft, now }) }
+  historyGap(id?: string): Promise<NotificationHistoryStatus> { return this.call({ kind: 'historyGap', id }) }
+  recordHistoryGap(id: string, now: number): Promise<NotificationHistoryIntegrity> { return this.call({ kind: 'recordHistoryGap', id, now }) }
+  acknowledgeHistoryGap(revision: number, now: number): Promise<NotificationHistoryIntegrity> { return this.call({ kind: 'acknowledgeHistoryGap', revision, now }) }
+  pruneRoutine(now: number): Promise<NotificationChange & { removed: number; more: boolean }> { return this.call({ kind: 'pruneRoutine', now }) }
   marker(key: string): Promise<NotificationMarker> { return this.call({ kind: 'marker', key }) }
   sourceState(key: string): Promise<NotificationSourceState> { return this.call({ kind: 'sourceState', key }) }
   commitSource(key: string, expectedRevision: number, data: unknown, drafts: NotificationDraft[], now: number): Promise<NotificationSourceResult> {

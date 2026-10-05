@@ -1,8 +1,9 @@
 import type { SgDesktopApi } from '../../../shared/desktop-api'
 import { DEFAULT_NOTIFICATION_PREFERENCES, notificationIsUnread, type NotificationDeliveryStatus, type NotificationOpenRequest, type NotificationPreferences, type NotificationPush, type NotificationRecord, type NotificationSummary } from '../../../domain/notification'
 import { notificationIsQuiet, notificationSessionMode } from '../../../domain/notification-delivery-policy'
+import type { NotificationHistoryIntegrity } from '../../../domain/notification-history'
 
-export type NotificationApi = Pick<SgDesktopApi, 'getNotificationPage' | 'readNotification' | 'readAllNotifications' | 'archiveNotification' | 'clearReadNotifications' | 'getNotificationPreferences' | 'saveNotificationPreferences' | 'onNotificationChanged'>
+export type NotificationApi = Pick<SgDesktopApi, 'getNotificationPage' | 'readNotification' | 'readAllNotifications' | 'archiveNotification' | 'clearReadNotifications' | 'getNotificationPreferences' | 'saveNotificationPreferences' | 'onNotificationChanged' | 'acknowledgeNotificationHistory'>
 export interface ToastCandidate { key: string; record: NotificationRecord; expiresAt: number; grouped?: boolean }
 interface StoreSnapshot {
   summary: NotificationSummary
@@ -12,6 +13,8 @@ interface StoreSnapshot {
   preferencesReady: boolean
   health: 'ready' | 'degraded'
   historyIncomplete: boolean
+  historyIntegrity?: NotificationHistoryIntegrity
+  historyGapUnconfirmed?: boolean
   error?: string
   preferencesError?: string
   delivery?: NotificationDeliveryStatus
@@ -30,6 +33,7 @@ export class NotificationStore {
   private users = 0
   private epoch = 0
   private preferencesEpoch = 0
+  private historyEpoch = 0
   private readonly announced = new Set<string>()
   constructor(readonly api: NotificationApi, private readonly now: () => number = Date.now) {}
   snapshot = (): StoreSnapshot => this.state
@@ -37,6 +41,12 @@ export class NotificationStore {
   private patch(update: Partial<StoreSnapshot>, event?: NotificationPush): void {
     this.state = { ...this.state, ...update }
     for (const listener of this.listeners) { try { listener(event) } catch { /* One view must not prevent another from observing the state. */ } }
+  }
+  private historyUpdate(integrity?: NotificationHistoryIntegrity, unconfirmed?: boolean): Partial<StoreSnapshot> {
+    const current = this.state.historyIntegrity
+    const newer = integrity && (!current || integrity.revision > current.revision || integrity.revision === current.revision && integrity.acknowledgedRevision >= current.acknowledgedRevision)
+    return { ...(newer ? { historyIntegrity: integrity, ...(integrity.revision > 0 ? { historyIncomplete: true } : {}) } : {}),
+      ...(unconfirmed !== undefined ? { historyGapUnconfirmed: unconfirmed } : {}) }
   }
   private applyPreferences(preferences: NotificationPreferences): void {
     this.patch({ preferences, preferencesReady: true, preferencesError: undefined,
@@ -53,6 +63,7 @@ export class NotificationStore {
   acquire(): () => void {
     if (++this.users === 1) {
       const epoch = ++this.epoch
+      const historyEpoch = this.historyEpoch
       this.patch({ preferencesReady: false })
       this.unsubscribe = this.api.onNotificationChanged(event => { if (epoch === this.epoch) this.accept(event) })
       // Subscribe before pulling; a later stale pull may not rewind a live change.
@@ -62,7 +73,7 @@ export class NotificationStore {
           ...(page.summary.revision >= this.state.summary.revision ? { summary: page.summary } : {}),
           health: this.state.health === 'degraded' ? this.state.health : page.health ?? 'ready',
           ...(page.delivery && this.state.delivery === undefined ? { delivery: page.delivery } : {}), ...(page.openRequested && !this.state.openRequested ? { openRequested: page.openRequested } : {}),
-          historyIncomplete: this.state.historyIncomplete || page.historyIncomplete === true })
+          historyIncomplete: this.state.historyIncomplete || page.historyIncomplete === true, ...this.historyUpdate(page.historyIntegrity, historyEpoch === this.historyEpoch ? page.historyGapUnconfirmed : undefined) })
       }).catch(() => { if (epoch === this.epoch) this.patch({ loaded: true, error: '通知历史暂不可读取，原有功能仍可使用。', health: 'degraded' }) })
       void this.pullPreferences(epoch)
     }
@@ -74,8 +85,10 @@ export class NotificationStore {
     }
   }
   accept(event: NotificationPush): void {
+    if (event.historyIntegrity || event.historyGapUnconfirmed !== undefined) ++this.historyEpoch
     if (event.preferences) { ++this.preferencesEpoch; this.applyPreferences(event.preferences) }
     const update: Partial<StoreSnapshot> = { health: event.health, historyIncomplete: this.state.historyIncomplete || event.historyIncomplete,
+      ...this.historyUpdate(event.historyIntegrity, event.historyGapUnconfirmed),
       ...(event.delivery ? { delivery: event.delivery } : {}), ...(event.openRequested ? { openRequested: event.openRequested } : {}) }
     const change = event.change
     if (change && event.announcement && !this.state.preferencesReady) void this.pullPreferences(this.epoch)
@@ -101,11 +114,12 @@ export class NotificationStore {
   dismissToast(key: string): void { this.patch({ toasts: this.state.toasts.filter(item => item.key !== key) }) }
   async refresh(): Promise<void> {
     const epoch = this.epoch
+    const historyEpoch = this.historyEpoch
     try {
       const page = await this.api.getNotificationPage({ limit: 1 })
       if (epoch === this.epoch && page.summary.revision >= this.state.summary.revision) this.patch({ summary: page.summary, available: true, loaded: true, error: undefined,
         ...(page.delivery ? { delivery: page.delivery } : {}),
-        health: page.health ?? 'ready', historyIncomplete: this.state.historyIncomplete || page.historyIncomplete === true })
+        health: page.health ?? 'ready', historyIncomplete: this.state.historyIncomplete || page.historyIncomplete === true, ...this.historyUpdate(page.historyIntegrity, historyEpoch === this.historyEpoch ? page.historyGapUnconfirmed : undefined) })
       if (epoch === this.epoch && !this.state.preferencesReady) await this.pullPreferences(epoch)
     } catch { if (epoch === this.epoch) this.patch({ error: '通知历史暂不可读取，原有功能仍可使用。', health: 'degraded' }) }
   }
@@ -118,5 +132,10 @@ export class NotificationStore {
     return this.api.readNotification({ id: record.id, revision: record.revision }).then(change => {
       this.accept({ change, health: 'ready', historyIncomplete: this.state.historyIncomplete })
     })
+  }
+  async acknowledgeHistory(revision: number): Promise<void> {
+    if (!this.api.acknowledgeNotificationHistory) throw Error('历史说明暂不可确认，请重新读取')
+    const integrity = await this.api.acknowledgeNotificationHistory(revision)
+    this.patch(this.historyUpdate(integrity))
   }
 }

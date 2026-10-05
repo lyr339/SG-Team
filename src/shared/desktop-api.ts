@@ -1,3 +1,4 @@
+import type { NotificationHistoryIntegrity } from '../domain/notification-history'
 import type { AgentSession } from '../domain/agent-session'
 import type { ConversationEntry, ProcessBlock } from '../domain/conversation-entry'
 import type { PlanTaskInput, TaskPoolSnapshot, TeamTask } from '../domain/task-pool'
@@ -284,6 +285,7 @@ export interface SaveCursorAccountCardResult {
 
 export interface SgDesktopApi {
   getNotificationPage(query?: NotificationQuery): Promise<NotificationPage>
+  acknowledgeNotificationHistory?(revision: number): Promise<NotificationHistoryIntegrity>
   readNotification(input: { id: string; revision: number }): Promise<NotificationChange>
   readAllNotifications(input: { query?: NotificationQuery; revision: number }): Promise<NotificationChange>
   archiveNotification(id: string): Promise<NotificationChange>
@@ -519,6 +521,7 @@ export interface SgDesktopApi {
 
 export const IPC = {
   notificationPage: 'notification:page',
+  notificationAcknowledgeHistory: 'notification:acknowledge-history',
   notificationRead: 'notification:read',
   notificationReadAll: 'notification:read-all',
   notificationArchive: 'notification:archive',

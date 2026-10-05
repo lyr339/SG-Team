@@ -1,7 +1,7 @@
 .topbar__actions .notification-trigger { display: inline-flex; align-items: center; justify-content: center; gap: 5px; width: auto; min-width: 28px; padding-inline: 5px; }
 .notification-trigger > span { font: 600 var(--fs-11)/1 var(--mono); font-variant-numeric: tabular-nums; }
 .notification-panel-anchor { position: fixed; z-index: 150; width: min(440px, calc(100vw - 24px)); max-height: calc(100dvh - 72px); }
-.notification-panel { display: flex; flex-direction: column; max-height: min(720px, calc(100dvh - 72px)); min-height: 220px; color: var(--text); background: var(--surface-solid); border: 1px solid var(--color-border-secondary); border-radius: 13px; box-shadow: var(--shadow-lg); overflow: hidden; animation: notification-enter 170ms ease-out; }
+.notification-panel { display: flex; flex-direction: column; max-height: min(720px, var(--notification-panel-height, calc(100dvh - 72px))); min-height: min(220px, var(--notification-panel-height, calc(100dvh - 72px))); color: var(--text); background: var(--surface-solid); border: 1px solid var(--color-border-secondary); border-radius: 13px; box-shadow: var(--shadow-lg); overflow: hidden; animation: notification-enter 170ms ease-out; }
 .notification-panel:focus { outline: none; }
 .notification-panel button:focus-visible, .notification-toast button:focus-visible, .notification-panel input:focus-visible, .notification-panel select:focus-visible { outline: 2px solid var(--color-ring-primary); outline-offset: 2px; }
 .notification-panel__header { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 17px 18px 14px; }
@@ -109,3 +109,17 @@
 @keyframes notification-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @media (max-width: 520px) { .notification-panel-anchor { right: 12px !important; } .notification-panel__toolbar { gap: 8px; } .notification-tabs { gap: 12px; } }
 @media (prefers-reduced-motion: reduce) { .notification-panel, .notification-toast { animation: none; } .notification-row__open > svg:last-child, .notification-preference > i, .notification-preference > i::after { transition: none; } }
+
+/* Integrity is factual, local and quiet; no colored rail or success-like dismissal. */
+.notification-history-notice { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: start; gap: 12px; padding: 11px 18px 12px; border-bottom: 1px solid var(--line-faint); }
+.notification-history-notice strong { display: block; color: var(--text-soft); font-size: var(--fs-13); font-weight: 600; line-height: 1.5; }
+.notification-history-notice p { margin: 3px 0 0; color: var(--muted); font-size: var(--fs-12); line-height: 1.65; overflow-wrap: anywhere; }
+.notification-history-notice small { display: block; margin-top: 5px; color: var(--muted); font-size: var(--fs-12); line-height: 1.65; }
+.notification-history-notice > button { min-height: 30px; margin: -3px -4px 0 0; padding: 5px 4px; white-space: nowrap; }
+.notification-history-notice__error { color: var(--color-text-warning) !important; }
+.notification-history-policy { margin: 0 0 8px; color: var(--muted); font-size: var(--fs-12); line-height: 1.65; }
+.notification-history-policy summary { width: fit-content; min-height: 26px; cursor: pointer; line-height: 26px; }
+.notification-history-policy p { margin: 6px 0; overflow-wrap: anywhere; }
+.notification-history-policy summary:focus-visible { outline: 2px solid var(--color-ring-primary); outline-offset: 3px; border-radius: 4px; }
+
+.notification-history-policy[open] { max-block-size: 160px; overflow-y: auto; padding: 4px; margin-inline: -4px; scrollbar-width: thin; }

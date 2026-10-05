@@ -356,7 +356,8 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     notificationService = new NotificationService(new NotificationWorkerPort(createNotificationWorker, join(app.getPath('userData'), 'notifications.sqlite3')))
     try {
       notificationRuntimeJournal = new NotificationRuntimeJournal(join(app.getPath('userData'), 'notifications', 'runtime.json'))
-      if (notificationRuntimeJournal.open().historyIncomplete) notificationService.reportHistoryGap()
+      const previousHistory = notificationRuntimeJournal.open()
+      if (previousHistory.historyIncomplete) notificationService.reportHistoryGap(previousHistory.gapId)
     } catch {
       notificationService.reportHistoryGap()
       console.warn('[notifications] 上次退出记录未确认，通知历史可能不完整')
@@ -1103,7 +1104,7 @@ const notificationQuitBarrier = new NotificationQuitBarrier({
     () => operatorMessageNotificationSource?.close() ?? Promise.resolve()
   ], disposeDesktopOnce),
   settled: result => {
-    try { notificationRuntimeJournal?.finish(result.confirmed, notificationService?.status().historyIncomplete ?? true) }
+    try { notificationRuntimeJournal?.finish(result.confirmed, notificationService?.status().historyIncomplete ?? true, notificationService?.status().historyGapId) }
     catch { console.warn('[notifications] 通知退出记录未写入') }
     if (!result.confirmed) console.warn('[notifications] 通知落盘未确认，仍按用户请求退出')
   },

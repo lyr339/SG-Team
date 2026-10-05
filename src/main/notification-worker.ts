@@ -3,6 +3,10 @@ import { SqliteNotificationRepository, notificationSqliteIsBusy, notificationTra
 import type { NotificationDraft, NotificationPreferences, NotificationQuery } from '../domain/notification'
 
 export type NotificationWorkerCommand =
+  | { kind: 'historyGap'; id?: string }
+  | { kind: 'recordHistoryGap'; id: string; now: number }
+  | { kind: 'acknowledgeHistoryGap'; revision: number; now: number }
+  | { kind: 'pruneRoutine'; now: number }
   | { kind: 'sourceState'; key: string }
   | { kind: 'commitSource'; key: string; expectedRevision: number; data: unknown; drafts: NotificationDraft[]; now: number }
   | { kind: 'marker'; key: string }
@@ -27,6 +31,10 @@ if (parentPort) {
       try {
         let result: unknown
         switch (command.kind) {
+          case 'historyGap': result = repository.historyGap(command.id); break
+          case 'recordHistoryGap': result = repository.recordHistoryGap(command.id, command.now); break
+          case 'acknowledgeHistoryGap': result = repository.acknowledgeHistoryGap(command.revision, command.now); break
+          case 'pruneRoutine': result = repository.pruneRoutine(command.now); break
           case 'sourceState': result = repository.sourceState(command.key); break
           case 'commitSource': result = repository.commitSource(command.key, command.expectedRevision, command.data, command.drafts, command.now); break
           case 'marker': result = repository.marker(command.key); break
@@ -46,7 +54,7 @@ if (parentPort) {
         const message = error instanceof Error ? error.message : '通知存储不可用'
         // Negative transaction evidence, not an error-message guess. Read-only
         // queries may safely retry real SQLite BUSY/LOCKED without mutation evidence.
-        const readOnly = ['sourceState', 'marker', 'page', 'preferences'].includes(command.kind)
+        const readOnly = ['sourceState', 'marker', 'page', 'preferences', 'historyGap'].includes(command.kind)
         parentPort!.postMessage({ id, ok: false, error: message, retryable: notificationTransactionMayRetry(error) || readOnly && notificationSqliteIsBusy(error),
           ...(error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? { code: error.code } : {}) } satisfies NotificationWorkerReply)
       }

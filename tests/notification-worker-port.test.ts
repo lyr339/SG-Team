@@ -47,10 +47,12 @@ describe('notification worker RPC boundary', () => {
     vi.useFakeTimers()
     try {
       const worker = new FakeWorker(); const port = new NotificationWorkerPort(() => worker as unknown as Worker, 'file.sqlite', 50)
+      const lifecycle = vi.fn(); port.subscribeLifecycle(lifecycle)
       const reading = port.page(); const assertion = expect(reading).rejects.toThrow('初始化未及时返回')
       await vi.advanceTimersByTimeAsync(60); await assertion
       expect(worker.terminate).not.toHaveBeenCalled()
       worker.emit('message', { id: 0, ok: true })
+      expect(lifecycle).toHaveBeenLastCalledWith({ state: 'recovered', generation: 1 })
       const next = port.page(); await Promise.resolve(); await Promise.resolve()
       const request = worker.postMessage.mock.calls.at(-1)![0] as { id: number }
       worker.emit('message', { id: request.id, ok: true, result: { records: [] } }); await next

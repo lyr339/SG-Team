@@ -1,3 +1,4 @@
+import type { NotificationHistoryIntegrity } from './notification-history'
 export const NOTIFICATION_CATEGORIES = ['sessions', 'run', 'team', 'accounts', 'automation', 'processing', 'maintenance', 'storage', 'updates', 'usage'] as const
 export const NOTIFICATION_SOURCE_BATCH_LIMIT = 100
 /** Compact, bounded identity checkpoints only; conversation bodies are not source state. */
@@ -61,6 +62,8 @@ export interface NotificationDraft {
 }
 
 export interface NotificationRecord extends Omit<NotificationDraft, 'renewAttention' | 'announce' | 'respectCleared' | 'liveSignal'> {
+  /** Worker-owned and monotone: prior diagnostic/action importance cannot be lost on recovery. */
+  retentionProtected?: boolean
   id: string
   createdAt: number
   updatedAt: number
@@ -94,6 +97,8 @@ export interface NotificationQuery {
 }
 
 export interface NotificationPage {
+  historyIntegrity?: NotificationHistoryIntegrity
+  historyGapUnconfirmed?: boolean
   records: NotificationRecord[]
   summary: NotificationSummary
   nextCursor?: { revision: number; offset: number }
@@ -120,6 +125,8 @@ export interface NotificationSourceResult {
 }
 
 export interface NotificationPush {
+  historyIntegrity?: NotificationHistoryIntegrity
+  historyGapUnconfirmed?: boolean
   /** Storage was rebuilt; refresh history without replaying presentations or replacing an opened detail. */
   historyReload?: boolean
   change?: NotificationChange

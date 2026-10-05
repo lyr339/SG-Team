@@ -13,7 +13,7 @@ function harness(delivery?: Pick<NotificationDeliveryService, 'subscribe' | 'sta
   handlers.clear(); trusted.mockReset()
   let listener!: (event: NotificationPush) => void
   const unsubscribe = vi.fn()
-  const service = { page: vi.fn(), read: vi.fn(), readAll: vi.fn(), archive: vi.fn(), clearRead: vi.fn(), preferences: vi.fn(), savePreferences: vi.fn(),
+  const service = { acknowledgeHistoryGap: vi.fn(), page: vi.fn(), read: vi.fn(), readAll: vi.fn(), archive: vi.fn(), clearRead: vi.fn(), preferences: vi.fn(), savePreferences: vi.fn(),
     subscribe: vi.fn((callback: typeof listener) => { listener = callback; return unsubscribe }) }
   const send = vi.fn(); const window = { isDestroyed: () => false, webContents: { send } }
   const dispose = registerNotificationIpc(service as unknown as NotificationService, () => window as never, delivery)
@@ -33,6 +33,17 @@ describe('notification IPC permissions and data boundaries', () => {
     routed({ health: 'ready', historyIncomplete: false, openRequested: delivery.openRequested() }); expect(h.send).toHaveBeenCalledOnce()
     expect([...handlers.keys()].some(key => /native.*show|deliver|execute|restart/.test(key))).toBe(false)
     h.dispose(); expect(stop).toHaveBeenCalledOnce()
+  })
+  it('history acknowledgement is a trusted exact-revision operation, not clearing/reading or a publish endpoint', () => {
+    const h = harness()
+    try {
+      h.invoke(IPC.notificationAcknowledgeHistory, 7); expect(h.service.acknowledgeHistoryGap).toHaveBeenCalledWith(7)
+      for (const invalid of ['7', -1, {}, Number.POSITIVE_INFINITY]) expect(() => h.invoke(IPC.notificationAcknowledgeHistory, invalid)).toThrow()
+      trusted.mockImplementation(() => { throw Error('untrusted') })
+      expect(() => h.invoke(IPC.notificationAcknowledgeHistory, 8)).toThrow('untrusted')
+      expect(h.service.acknowledgeHistoryGap).toHaveBeenCalledOnce(); expect(h.service.read).not.toHaveBeenCalled(); expect(h.service.clearRead).not.toHaveBeenCalled()
+      expect([...handlers.keys()].some(key => /prune|record.*gap|publish/.test(key))).toBe(false)
+    } finally { h.dispose() }
   })
   it('allows only validated source identities in exact-result queries', () => {
     const { service, invoke, dispose } = harness()

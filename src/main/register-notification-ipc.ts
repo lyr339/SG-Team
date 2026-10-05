@@ -48,6 +48,7 @@ export function registerNotificationIpc(service: NotificationService, getWindow:
       const page = service.page(query(input))
       return delivery ? page.then(value => ({ ...value, delivery: delivery.status(), ...(delivery.openRequested() ? { openRequested: delivery.openRequested() } : {}) })) : page
     }],
+    [IPC.notificationAcknowledgeHistory, input => service.acknowledgeHistoryGap(revision(input))],
     [IPC.notificationRead, input => { const value = object(input); return service.read(id(value.id), revision(value.revision)) }],
     [IPC.notificationReadAll, input => { const value = object(input); return service.readAll(query(value.query), revision(value.revision)) }],
     [IPC.notificationArchive, input => service.archive(id(input))],

@@ -4,6 +4,8 @@ import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import type { NotificationChange, NotificationDraft, NotificationMarker, NotificationPage, NotificationPreferences, NotificationQuery, NotificationRecord, NotificationSummary, NotificationSourceResult, NotificationSourceState } from '../../domain/notification'
 import { normalizeNotificationPreferences, notificationContentSignature, notificationIsPending, notificationSafeText, NotificationActionError, validateNotificationDraft, NOTIFICATION_SOURCE_BATCH_LIMIT, NOTIFICATION_SOURCE_PAYLOAD_LIMIT } from '../../domain/notification'
+import { NOTIFICATION_ROUTINE_RETENTION_MS, validateNotificationGapId, validateNotificationIntegrity, type NotificationHistoryIntegrity, type NotificationHistoryStatus } from '../../domain/notification-history'
+import { notificationFingerprint, fingerprintSignature } from '../../application/notification-fingerprint'
 
 type StoredRow = { payload: string }
 const knownNegativeTransactions = new WeakSet<object>()
@@ -23,6 +25,7 @@ function decodeRecord(payload: string): NotificationRecord {
   try {
     const record = JSON.parse(payload) as NotificationRecord
     validateNotificationDraft(record)
+    if (record.retentionProtected !== undefined && typeof record.retentionProtected !== 'boolean') throw Error('invalid retention evidence')
     if (typeof record.id !== 'string' || !record.id || [record.revision, record.attentionRevision, record.readRevision].some(value => !Number.isSafeInteger(value) || value < 0)
       || [record.createdAt, record.updatedAt, record.readAt, record.archivedAt].some(value => value !== undefined && (!Number.isSafeInteger(value) || value < 0 || value > 8_640_000_000_000_000))) throw Error('invalid record')
     return record
@@ -55,11 +58,32 @@ export class SqliteNotificationRepository {
           if (!columns.some(column => column.name === 'content_signature')) this.db.exec('ALTER TABLE desktop_notification_tombstones ADD COLUMN content_signature TEXT')
           this.db.exec('UPDATE desktop_notification_meta SET schema_version=2 WHERE id=1')
         })
-      } else if (version !== 2 && version !== 3) throw new Error('通知历史格式暂不支持，原有数据未修改')
+      } else if (![2, 3, 4].includes(version)) throw new Error('通知历史格式暂不支持，原有数据未修改')
+      if (version === 4) {
+        for (const table of ['desktop_notification_sources', 'desktop_notification_integrity', 'desktop_notification_gap_keys'])
+          if (!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) throw Error('通知历史结构异常，原数据保留')
+        if (!this.db.prepare('SELECT 1 FROM desktop_notification_integrity WHERE id=1').get()) throw Error('通知历史完整性证据缺失，原数据保留')
+      }
       this.transaction(() => {
         this.db.exec(`CREATE TABLE IF NOT EXISTS desktop_notification_sources (source_key TEXT PRIMARY KEY, revision INTEGER NOT NULL, payload TEXT NOT NULL,updated_at INTEGER NOT NULL);
-          UPDATE desktop_notification_meta SET schema_version=3 WHERE id=1;`)
+          CREATE TABLE IF NOT EXISTS desktop_notification_integrity (id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL,acknowledged_revision INTEGER NOT NULL,latest_gap_id TEXT,observed_at INTEGER,acknowledged_at INTEGER);
+          INSERT OR IGNORE INTO desktop_notification_integrity VALUES(1,0,0,NULL,NULL,NULL);
+          CREATE TABLE IF NOT EXISTS desktop_notification_gap_keys (gap_id TEXT PRIMARY KEY);`)
+        // Older rows lack evidence of their past diagnostic/action importance.
+        // Migration preserves them rather than guessing they're disposable.
+        if (version !== 4) {
+          this.db.exec(`UPDATE desktop_notifications SET payload=json_set(payload,'$.retentionProtected',json('true'));
+            UPDATE desktop_notification_meta SET schema_version=4 WHERE id=1;`)
+          let after = ''
+          for (;;) {
+            const tombstones = this.db.prepare('SELECT semantic_key,content_signature FROM desktop_notification_tombstones WHERE content_signature IS NOT NULL AND semantic_key>? ORDER BY semantic_key LIMIT 100').all(after) as Array<{ semantic_key: string; content_signature: string }>
+            if (!tombstones.length) break
+            for (const tombstone of tombstones) if (!/^sha256:[a-f0-9]{64}$/.test(tombstone.content_signature)) this.db.prepare('UPDATE desktop_notification_tombstones SET content_signature=? WHERE semantic_key=?').run(fingerprintSignature(tombstone.content_signature), tombstone.semantic_key)
+            after = tombstones.at(-1)!.semantic_key
+          }
+        }
       })
+      this.historyGap() // Invalid v4 integrity never silently becomes a fresh, clean ledger.
     } catch (error) { this.db.close(); throw error }
   }
 
@@ -123,7 +147,7 @@ export class SqliteNotificationRepository {
 
   marker(key: string): NotificationMarker {
     const row = this.db.prepare('SELECT payload FROM desktop_notifications WHERE semantic_key=?').get(key) as StoredRow | undefined
-    if (row) { const record = decodeRecord(row.payload); return { sourceRevision: record.sourceRevision, signature: notificationContentSignature(record) } }
+    if (row) { const record = decodeRecord(row.payload); return { sourceRevision: record.sourceRevision, signature: notificationFingerprint(record) } }
     const tombstone = this.db.prepare('SELECT source_revision,content_signature FROM desktop_notification_tombstones WHERE semantic_key=?').get(key) as { source_revision: number; content_signature: string | null } | undefined
     return tombstone ? { sourceRevision: tombstone.source_revision, cleared: true, ...(tombstone.content_signature ? { signature: tombstone.content_signature } : {}) } : { sourceRevision: 0 }
   }
@@ -137,13 +161,13 @@ export class SqliteNotificationRepository {
       ...(draft.detail !== undefined ? { detail: notificationSafeText(draft.detail) } : {}) }
       const oldRow = this.db.prepare('SELECT payload FROM desktop_notifications WHERE semantic_key=?').get(draft.key) as StoredRow | undefined
       const old = oldRow ? decodeRecord(oldRow.payload) : undefined
-      const tombstone = this.db.prepare('SELECT source_revision FROM desktop_notification_tombstones WHERE semantic_key=?').get(draft.key) as { source_revision: number } | undefined
+      const tombstone = this.db.prepare('SELECT source_revision,content_signature FROM desktop_notification_tombstones WHERE semantic_key=?').get(draft.key) as { source_revision: number; content_signature: string | null } | undefined
       if ((!old && tombstone && draft.sourceRevision <= tombstone.source_revision) || (old && draft.sourceRevision <= old.sourceRevision)) {
         return { changed: false, record: old, summary: this.summary() }
       }
-      if (!old && tombstone && draft.respectCleared) {
+      if (!old && tombstone && (draft.respectCleared || tombstone.content_signature === notificationFingerprint(draft))) {
         this.db.prepare('UPDATE desktop_notification_tombstones SET source_revision=?,content_signature=? WHERE semantic_key=?')
-          .run(draft.sourceRevision, notificationContentSignature(draft), draft.key)
+          .run(draft.sourceRevision, notificationFingerprint(draft), draft.key)
         return { changed: false, summary: this.summary() }
       }
       if (old && notificationContentSignature(old) === notificationContentSignature(draft)) {
@@ -158,6 +182,7 @@ export class SqliteNotificationRepository {
       const attentionRevision = draft.attention === 'activity' ? 0 : !old || renewAttention || escalated ? revision : old.attentionRevision
       const record: NotificationRecord = {
         ...content, id: old?.id ?? randomUUID(), createdAt: old?.createdAt ?? now, updatedAt: now, revision, attentionRevision,
+        retentionProtected: Boolean(old?.retentionProtected || draft.attention === 'action' || ['warning', 'error'].includes(draft.tone)),
         readRevision: old?.readRevision ?? 0, ...(old?.readAt !== undefined ? { readAt: old.readAt } : {}),
         ...(old?.archivedAt !== undefined && !renewAttention && !escalated ? { archivedAt: old.archivedAt } : {})
       }
@@ -194,7 +219,7 @@ export class SqliteNotificationRepository {
     const where = this.where(query)
     const rows = this.db.prepare(`SELECT payload FROM desktop_notifications WHERE ${where.sql}
       ORDER BY CASE WHEN attention='action' AND state='active' THEN 0 WHEN attention='activity' THEN 2 ELSE 1 END,revision DESC LIMIT ? OFFSET ?`).all(...where.params, limit + 1, offset) as StoredRow[]
-    return { records: rows.slice(0, limit).map(row => decodeRecord(row.payload)), summary, reset,
+    return { records: rows.slice(0, limit).map(row => decodeRecord(row.payload)), summary, reset, historyIntegrity: this.historyGap().integrity,
       ...(rows.length > limit ? { nextCursor: { revision: summary.revision, offset: offset + limit } } : {}) }
   }
   read(id: string, observedRevision: number, now: number): NotificationChange {
@@ -236,12 +261,58 @@ export class SqliteNotificationRepository {
         AND attention<>'activity' AND read_revision>=attention_revision AND NOT (attention='action' AND state='active')`).all(...where.params) as StoredRow[]
       for (const row of rows) {
         const record = decodeRecord(row.payload)
-        this.db.prepare(`INSERT INTO desktop_notification_tombstones VALUES(?,?,?,?) ON CONFLICT(semantic_key)
-          DO UPDATE SET source_revision=MAX(source_revision,excluded.source_revision),cleared_at=excluded.cleared_at,content_signature=excluded.content_signature`).run(record.key, record.sourceRevision, now, notificationContentSignature(record))
-        this.db.prepare('DELETE FROM desktop_notifications WHERE id=?').run(record.id)
+        this.forget(record, now)
       }
       if (rows.length) this.nextRevision()
       return { changed: rows.length > 0, summary: this.summary() }
+    })
+  }
+  private forget(record: NotificationRecord, now: number): void {
+    this.db.prepare(`INSERT INTO desktop_notification_tombstones VALUES(?,?,?,?) ON CONFLICT(semantic_key)
+      DO UPDATE SET source_revision=MAX(source_revision,excluded.source_revision),cleared_at=excluded.cleared_at,content_signature=excluded.content_signature`).run(record.key, record.sourceRevision, now, notificationFingerprint(record))
+    this.db.prepare('DELETE FROM desktop_notifications WHERE id=?').run(record.id)
+  }
+  /** Bounded batches. Never size-truncate unread/active/diagnostic or legacy-unknown records. */
+  pruneRoutine(now: number): NotificationChange & { removed: number; more: boolean } {
+    if (!Number.isSafeInteger(now) || now < 0) throw Error('通知保留时间无效')
+    return this.transaction(() => {
+      const rows = this.db.prepare(`SELECT payload FROM desktop_notifications WHERE state IN ('resolved','expired')
+        AND attention<>'action' AND (attention='activity' OR read_revision>=attention_revision)
+        AND json_extract(payload,'$.retentionProtected')=0 AND json_extract(payload,'$.tone') IN ('info','success')
+        AND MAX(json_extract(payload,'$.updatedAt'),COALESCE(json_extract(payload,'$.readAt'),0),COALESCE(archived_at,0))<?
+        ORDER BY revision ASC LIMIT 101`).all(now - NOTIFICATION_ROUTINE_RETENTION_MS) as StoredRow[]
+      for (const row of rows.slice(0, 100)) this.forget(decodeRecord(row.payload), now)
+      if (rows.length) this.nextRevision()
+      return { changed: rows.length > 0, removed: Math.min(100, rows.length), more: rows.length > 100, summary: this.summary() }
+    })
+  }
+  historyGap(id?: string): NotificationHistoryStatus {
+    if (id) validateNotificationGapId(id)
+    const row = this.db.prepare('SELECT * FROM desktop_notification_integrity WHERE id=1').get() as {
+      revision: number; acknowledged_revision: number; latest_gap_id: string | null; observed_at: number | null; acknowledged_at: number | null }
+    const integrity: NotificationHistoryIntegrity = { revision: row.revision, acknowledgedRevision: row.acknowledged_revision,
+      ...(row.latest_gap_id ? { latestGapId: row.latest_gap_id } : {}), ...(row.observed_at !== null ? { observedAt: row.observed_at } : {}),
+      ...(row.acknowledged_at !== null ? { acknowledgedAt: row.acknowledged_at } : {}) }
+    validateNotificationIntegrity(integrity)
+    if (integrity.latestGapId && !this.db.prepare('SELECT 1 FROM desktop_notification_gap_keys WHERE gap_id=?').get(integrity.latestGapId)) throw Error('通知缺口去重证据缺失，原数据保留')
+    return { integrity, ...(id ? { known: Boolean(this.db.prepare('SELECT 1 FROM desktop_notification_gap_keys WHERE gap_id=?').get(id)) } : {}) }
+  }
+  recordHistoryGap(id: string, now: number): NotificationHistoryIntegrity {
+    validateNotificationGapId(id)
+    if (!Number.isSafeInteger(now) || now < 0) throw Error('通知缺口观察时间无效')
+    return this.transaction(() => {
+      const result = this.db.prepare('INSERT OR IGNORE INTO desktop_notification_gap_keys VALUES(?)').run(id)
+      if (result.changes) this.db.prepare('UPDATE desktop_notification_integrity SET revision=revision+1,latest_gap_id=?,observed_at=? WHERE id=1').run(id, now)
+      return this.historyGap().integrity
+    })
+  }
+  acknowledgeHistoryGap(revision: number, now: number): NotificationHistoryIntegrity {
+    if (!Number.isSafeInteger(now) || now < 0 || now > 8_640_000_000_000_000) throw Error('通知说明确认时间无效')
+    return this.transaction(() => {
+      const { integrity } = this.historyGap()
+      if (!Number.isSafeInteger(revision) || revision < 1 || revision > integrity.revision) throw new NotificationActionError('历史说明版本已变化，请刷新后确认')
+      if (revision > integrity.acknowledgedRevision) this.db.prepare('UPDATE desktop_notification_integrity SET acknowledged_revision=?,acknowledged_at=? WHERE id=1').run(revision, now)
+      return this.historyGap().integrity
     })
   }
   preferences(): NotificationPreferences {

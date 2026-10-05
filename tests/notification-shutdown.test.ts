@@ -127,17 +127,17 @@ describe('private runtime quit evidence', () => {
   it('clean shutdown restores without a historical-gap warning and stores no source/user data', () => {
     const path = join(folder, 'runtime.json'), journal = new NotificationRuntimeJournal(path, () => 100)
     expect(journal.open()).toEqual({ historyIncomplete: false }); expect(journal.open()).toEqual({ historyIncomplete: false }); journal.finish(true, false)
-    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ version: 1, startedAt: 100, closedAt: 100, historyIncomplete: false })
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toMatchObject({ version: 2, runtimeId: expect.any(String), startedAt: 100, closedAt: 100, historyIncomplete: false })
     expect(new NotificationRuntimeJournal(path, () => 200).open()).toEqual({ historyIncomplete: false })
   })
   it('crash/forced exit and deadline escape leave possible-gap evidence, not fabricated missing events or automatic recovery', () => {
     const path = join(folder, 'runtime.json'), first = new NotificationRuntimeJournal(path, () => 100)
     first.open()
     const restored = new NotificationRuntimeJournal(path, () => 200)
-    expect(restored.open()).toEqual({ historyIncomplete: true }); restored.finish(false, true)
+    expect(restored.open()).toMatchObject({ historyIncomplete: true, gapId: expect.any(String) }); restored.finish(false, true)
     expect(JSON.parse(readFileSync(path, 'utf8')).closedAt).toBeUndefined()
     const third = new NotificationRuntimeJournal(path, () => 300)
-    expect(third.open()).toEqual({ historyIncomplete: true }); third.finish(true, false)
+    expect(third.open()).toMatchObject({ historyIncomplete: true, gapId: expect.any(String) }); third.finish(true, false)
     expect(JSON.parse(readFileSync(path, 'utf8'))).toMatchObject({ closedAt: 300, historyIncomplete: true })
   })
   it('corrupt previous evidence is preserved rather than overwritten as a clean session', () => {
