@@ -1,6 +1,6 @@
 import type { NotificationChange, NotificationDraft, NotificationGroupPresentation, NotificationMarker, NotificationPage, NotificationPreferences, NotificationPush, NotificationQuery, NotificationRecord, NotificationSourceResult, NotificationSourceState } from '../domain/notification'
 import { normalizeNotificationPreferences, notificationContentSignature, notificationIsUnread, notificationSafeText, NotificationActionError, validateNotificationDraft } from '../domain/notification'
-import type { NotificationRepository } from './notification-repository'
+import type { NotificationRepository, NotificationRepositoryLifecycle } from './notification-repository'
 
 /** One asynchronous owner, independent from business transaction locks or renderer route lifetimes. */
 export class NotificationService {
@@ -17,8 +17,33 @@ export class NotificationService {
   private historyIncomplete = false
   private closing?: Promise<void>
   private readonly sourceTasks = new Set<Promise<unknown>>()
+  private readonly detachStorage?: () => void
+  private storageEpoch = 0
+  private preferencesEpoch = 0
+  private recovering?: Promise<void>
 
-  constructor(private readonly repository: NotificationRepository, private readonly now: () => number = Date.now) {}
+  constructor(private readonly repository: NotificationRepository, private readonly now: () => number = Date.now) {
+    this.detachStorage = repository.subscribeLifecycle?.(event => this.storageLifecycle(event))
+  }
+
+  private storageLifecycle(event: NotificationRepositoryLifecycle): void {
+    const epoch = ++this.storageEpoch
+    // An interrupted put may already have committed. Never retain pre-exit
+    // content markers or infer rollback from the missing acknowledgement.
+    this.markers.clear()
+    if (event.state === 'unavailable') { this.degraded(true); return }
+    if (this.closed || this.shuttingDown) return
+    const preferencesEpoch = this.preferencesEpoch
+    const task = this.tracked(Promise.all([this.repository.page({ limit: 1 }), this.repository.preferences()]).then(([page, preferences]) => {
+      if (epoch !== this.storageEpoch || this.closed || this.shuttingDown) return
+      this.recovered()
+      // Read persisted facts and controls, not business sources. No announcement
+      // is reconstructed, even if a pre-exit write really reached the ledger.
+      this.emit({ historyReload: true, change: { changed: false, summary: page.summary }, ...(preferencesEpoch === this.preferencesEpoch ? { preferences } : {}) })
+    }).catch(() => { if (epoch === this.storageEpoch) this.degraded(true) }))
+    this.recovering = task
+    void task.finally(() => { if (this.recovering === task) this.recovering = undefined })
+  }
 
   subscribe(listener: (event: NotificationPush) => void): () => void {
     this.listeners.add(listener)
@@ -163,7 +188,7 @@ export class NotificationService {
       }
     }
   }
-  async flush(): Promise<void> { while (this.pumping) await this.pumping }
+  async flush(): Promise<void> { while (this.pumping || this.recovering) await Promise.allSettled([this.pumping, this.recovering]) }
   async page(query?: NotificationQuery): Promise<NotificationPage> {
     try { const page = await this.repository.page(query); this.recovered(); return { ...page, health: this.health, historyIncomplete: this.historyIncomplete } }
     catch (error) { if (!(error instanceof NotificationActionError || error && typeof error === 'object' && 'code' in error && error.code === 'notification_action_invalid')) this.degraded(); throw error }
@@ -178,6 +203,7 @@ export class NotificationService {
   clearRead(query: NotificationQuery): Promise<NotificationChange> { return this.mutation(() => this.repository.clearRead(query, this.now())) }
   preferences(): Promise<NotificationPreferences> { return this.repository.preferences() }
   async savePreferences(value: unknown): Promise<NotificationPreferences> {
+    ++this.preferencesEpoch
     const preferences = await this.repository.savePreferences(normalizeNotificationPreferences(value))
     this.emit({ preferences }); return preferences
   }
@@ -187,7 +213,7 @@ export class NotificationService {
     this.closing = (async () => {
       await this.flush()
       await Promise.allSettled([...this.sourceTasks])
-      this.closed = true; this.listeners.clear()
+      this.closed = true; this.detachStorage?.(); this.listeners.clear()
       try { await this.repository.close(); this.closeConfirmed = true }
       catch (error) { this.degraded(true); throw error }
     })()

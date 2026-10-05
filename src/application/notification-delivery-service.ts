@@ -23,6 +23,8 @@ export class NotificationDeliveryService {
   private summary?: NotificationSummary
   private readonly shown = new Map<string, { handle: { close(): void }; event: NotificationPush }>()
   private nativeState: NotificationDeliveryStatus['state'] = 'ready'
+  private failureKind?: 'storage' | 'native'
+  private storageEpoch = 0
   private message?: string
   private processing?: Promise<void>
   private readonly initializing: Promise<void>
@@ -48,7 +50,7 @@ export class NotificationDeliveryService {
     this.initializing = owner.preferences().then(preferences => {
       if (this.stopped || version !== this.preferencesVersion) return
       this.preferences = preferences; this.preferencesReady = true; this.scheduleQuietBoundary(); this.start()
-    }).catch(() => { if (!this.stopped && version === this.preferencesVersion) this.fail('提醒设置暂不可读取；本次不会发送新的系统通知。') })
+    }).catch(() => { if (!this.stopped && version === this.preferencesVersion) this.fail('提醒设置暂不可读取；本次不会发送新的系统通知。', 'storage') })
     this.unsubscribeResume = ports.subscribeResume?.(() => {
       if (this.stopped || !this.preferencesReady) return
       this.closeMutedNative(); this.scheduleQuietBoundary()
@@ -67,16 +69,27 @@ export class NotificationDeliveryService {
     if (this.stopped) return
     for (const listener of this.listeners) { try { listener({ ...event, delivery: this.status() }) } catch {} }
   }
-  private fail(message: string): void {
-    this.nativeState = 'failed'; this.message = message
+  private fail(message: string, kind: 'storage' | 'native' = 'native'): void {
+    // Reopening SQLite is not evidence that an OS permission/display failure was repaired.
+    if (this.failureKind !== 'native' || kind === 'native') { this.nativeState = 'failed'; this.message = message; this.failureKind = kind }
     this.emit({ health: this.lastHealth, historyIncomplete: this.incomplete })
   }
   private accept(event: NotificationPush): void {
     if (this.stopped) return
+    const previousHealth = this.lastHealth
+    if (event.health === 'degraded' && previousHealth !== 'degraded') {
+      ++this.storageEpoch; this.ledger = undefined; this.pending.length = 0
+    }
+    // The exit already invalidated old opportunities. A delayed history refresh
+    // must not discard a genuinely new result committed by the recovered worker.
+    if (event.historyReload) this.ledger = undefined
+    if ((event.historyReload || previousHealth === 'degraded' && event.health === 'ready') && this.failureKind === 'storage') {
+      this.nativeState = 'ready'; this.message = undefined; this.failureKind = undefined
+    }
     this.lastHealth = event.health; this.incomplete ||= event.historyIncomplete
     if (event.change && (!this.summary || event.change.summary.revision >= this.summary.revision)) this.summary = event.change.summary
     if (event.preferences) {
-      if (!this.preferences.nativeEnabled && event.preferences.nativeEnabled) { this.nativeState = 'ready'; this.message = undefined }
+      if (!this.preferences.nativeEnabled && event.preferences.nativeEnabled) { this.nativeState = 'ready'; this.message = undefined; this.failureKind = undefined }
       ++this.preferencesVersion; this.preferences = event.preferences; this.preferencesReady = true
       this.closeMutedNative(); this.scheduleQuietBoundary()
     }
@@ -172,20 +185,22 @@ export class NotificationDeliveryService {
   private async drain(): Promise<void> {
     while (this.pending.length && !this.stopped) {
       const captured = this.pending.shift()!
+      const storageEpoch = this.storageEpoch
       try {
         let event = await this.current(captured)
-        if (!event || this.route(event) === 'none') continue
+        if (!event || storageEpoch !== this.storageEpoch || this.route(event) === 'none') continue
         if (!await this.claim(event.announcement!.id) || this.stopped) continue
+        if (storageEpoch !== this.storageEpoch) continue
         // Settings/focus/reading can change during the private commit. Recheck, do not use the stale elected route.
         event = await this.current(event)
-        if (!event || this.stopped) continue
+        if (!event || this.stopped || storageEpoch !== this.storageEpoch) continue
         const route = this.route(event)
         if (route === 'in-app') this.emit(event)
         else if (route === 'native') this.showNative(event)
       } catch {
         this.ledger = undefined
         // An unknown durable claim is not permission to resend. Keep the original result, disclose delivery locally.
-        this.fail('部分提醒送达未确认。原结果仍保留，不会自动重发系统通知。')
+        if (storageEpoch === this.storageEpoch || this.lastHealth === 'degraded') this.fail('部分提醒送达未确认。原结果仍保留，不会自动重发系统通知。', 'storage')
       }
     }
   }
@@ -218,7 +233,7 @@ export class NotificationDeliveryService {
       try { this.shown.get(record.id)?.handle.close() } catch {}
       this.shown.set(record.id, { handle, event })
       while (this.shown.size > 8) { const [id, first] = this.shown.entries().next().value!; try { first.handle.close() } catch {} this.shown.delete(id) }
-      this.nativeState = 'ready'; this.message = undefined
+      this.nativeState = 'ready'; this.message = undefined; this.failureKind = undefined
     } catch { failure() }
   }
   async flush(): Promise<void> { await this.initializing; while (this.processing) await this.processing }

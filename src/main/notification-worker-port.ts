@@ -1,72 +1,151 @@
 import type { Worker } from 'node:worker_threads'
-import type { NotificationRepository } from '../application/notification-repository'
+import type { NotificationRepository, NotificationRepositoryLifecycle } from '../application/notification-repository'
 import type { NotificationChange, NotificationDraft, NotificationMarker, NotificationPage, NotificationPreferences, NotificationQuery, NotificationSourceResult, NotificationSourceState } from '../domain/notification'
 import type { NotificationWorkerCommand, NotificationWorkerReply } from './notification-worker'
 
 type WorkerFactory = (options: { workerData: { databasePath: string } }) => Worker
 type Waiter = { resolve: (value: unknown) => void; reject: (reason: Error) => void; timer: ReturnType<typeof setTimeout> }
+interface WorkerSession {
+  worker: Worker
+  generation: number
+  ready: Promise<void>
+  pending: Map<number, Waiter>
+  preparing: number
+  initialized: boolean
+  exited: boolean
+  failure?: Error
+}
+export interface NotificationWorkerRecoveryOptions { delaysMs?: readonly number[]; windowMs?: number }
+const requestLimit = 64
 
-/** Long-lived worker, bounded RPCs; SQLite never waits for a lock in the Electron main thread. */
+/** One live SQLite owner. Only a confirmed exit permits bounded replacement; unknown RPCs are never replayed. */
 export class NotificationWorkerPort implements NotificationRepository {
-  private readonly worker: Worker
-  private readonly ready: Promise<void>
-  private readonly pending = new Map<number, Waiter>()
+  private session?: WorkerSession
+  private readonly listeners = new Set<(event: NotificationRepositoryLifecycle) => void>()
+  private readonly restarts: number[] = []
+  private readonly delays: readonly number[]
+  private readonly windowMs: number
+  private recoveryTimer?: ReturnType<typeof setTimeout>
   private sequence = 0
+  private generation = 0
   private closed = false
+  private stopping = false
   private failure?: Error
   private closing?: Promise<void>
 
-  constructor(createWorker: WorkerFactory, databasePath: string, private readonly timeoutMs = 5_000) {
-    this.worker = createWorker({ workerData: { databasePath } })
-    this.ready = new Promise<void>((resolve, reject) => {
-      this.worker.on('message', (reply: NotificationWorkerReply) => {
-        if (reply.id === 0) {
-          if (reply.ok) resolve()
-          else { this.failure = new Error(reply.error); reject(this.failure) }
-          return
-        }
-        const waiter = this.pending.get(reply.id)
-        if (!waiter) return
-        this.pending.delete(reply.id); clearTimeout(waiter.timer)
-        if (reply.ok) waiter.resolve(reply.result)
-        else waiter.reject(Object.assign(new Error(reply.error), { retryable: reply.retryable, code: reply.code }))
-      })
-      const fail = (error: Error): void => {
-        this.failure = error; reject(error)
-        for (const waiter of this.pending.values()) { clearTimeout(waiter.timer); waiter.reject(error) }
-        this.pending.clear()
-      }
-      this.worker.on('error', fail)
-      this.worker.on('exit', code => { if (!this.closed) fail(new Error(`通知工作线程已退出（${code}）`)) })
-    })
-    // Initialization failures are reported by subsequent reads; they must not crash unrelated business callbacks.
-    void this.ready.catch(() => {})
+  constructor(private readonly createWorker: WorkerFactory, private readonly databasePath: string, private readonly timeoutMs = 5_000, recovery: NotificationWorkerRecoveryOptions = {}) {
+    this.delays = recovery.delaysMs ?? [100, 500, 1_500]
+    this.windowMs = recovery.windowMs ?? 60_000
+    if (this.delays.some(delay => !Number.isSafeInteger(delay) || delay < 1) || this.delays.length > 10 || !Number.isSafeInteger(this.windowMs) || this.windowMs < 1) throw Error('通知恢复配置无效')
+    this.spawn()
   }
-
+  subscribeLifecycle(listener: (event: NotificationRepositoryLifecycle) => void): () => void {
+    this.listeners.add(listener)
+    if (this.failure) { try { listener({ state: 'unavailable', generation: this.generation }) } catch {} }
+    return () => { this.listeners.delete(listener) }
+  }
+  private emit(state: NotificationRepositoryLifecycle['state'], generation: number): void {
+    if (this.stopping || this.closed) return
+    for (const listener of this.listeners) { try { listener({ state, generation }) } catch { /* Storage diagnostics cannot fail business callbacks. */ } }
+  }
+  private spawn(): void {
+    if (this.session || this.stopping || this.closed) return
+    const generation = ++this.generation
+    let worker: Worker
+    try { worker = this.createWorker({ workerData: { databasePath: this.databasePath } }) }
+    catch (error) {
+      // No worker was created, so there is no live owner to kill or unknown command to replay.
+      this.failure = error instanceof Error ? error : Error('通知线程未能创建')
+      this.emit('unavailable', generation); this.scheduleRecovery(); return
+    }
+    let readyResolve!: () => void, readyReject!: (error: Error) => void
+    const ready = new Promise<void>((resolve, reject) => { readyResolve = resolve; readyReject = reject })
+    void ready.catch(() => {})
+    const session: WorkerSession = { worker, generation, ready, pending: new Map(), preparing: 0, initialized: false, exited: false }
+    this.session = session
+    const fail = (error: Error): void => {
+      session.failure = error; this.failure = error; readyReject(error)
+      for (const waiter of session.pending.values()) { clearTimeout(waiter.timer); waiter.reject(error) }
+      // On error alone the worker may still be alive; retain capacity until reply/exit.
+      this.emit('unavailable', generation)
+    }
+    const message = (reply: NotificationWorkerReply): void => {
+      if (session !== this.session || session.exited) return
+      if (reply.id === 0) {
+        if (session.initialized || session.failure) return
+        if (!reply.ok) { fail(Error(reply.error)); return }
+        session.initialized = true; this.failure = undefined; readyResolve()
+        if (generation > 1) this.emit('recovered', generation)
+        return
+      }
+      const waiter = session.pending.get(reply.id)
+      if (!waiter) return
+      session.pending.delete(reply.id); clearTimeout(waiter.timer)
+      if (reply.ok) waiter.resolve(reply.result)
+      else waiter.reject(Object.assign(Error(reply.error), { retryable: reply.retryable, code: reply.code }))
+    }
+    const exit = (code: number): void => {
+      session.exited = true
+      worker.off('message', message); worker.off('error', fail); worker.off('exit', exit)
+      if (session !== this.session) return
+      if (!this.stopping && !this.closed) fail(Error(`通知工作线程已退出（${code}）`))
+      else {
+        readyReject(Error('通知存储已关闭'))
+        for (const waiter of session.pending.values()) { clearTimeout(waiter.timer); waiter.reject(Error('通知存储已关闭')) }
+      }
+      session.pending.clear(); this.session = undefined
+      this.scheduleRecovery()
+    }
+    worker.on('message', message); worker.on('error', fail); worker.on('exit', exit)
+  }
+  private scheduleRecovery(): void {
+    if (this.session || this.recoveryTimer || this.stopping || this.closed) return
+    const now = Date.now()
+    while (this.restarts.length && this.restarts[0]! <= now - this.windowMs) this.restarts.shift()
+    const delay = this.delays[this.restarts.length]
+    // Exhaustion remains fail-soft. After the window, a new caller may request
+    // another bounded recovery; no periodic restart loop is left running.
+    if (delay === undefined) return
+    this.recoveryTimer = setTimeout(() => {
+      this.recoveryTimer = undefined
+      if (this.session || this.stopping || this.closed) return
+      this.restarts.push(Date.now()); this.spawn()
+    }, delay)
+    this.recoveryTimer.unref?.()
+  }
   private async request<T>(command: NotificationWorkerCommand): Promise<T> {
-    if (this.closed) throw new Error('通知存储已关闭')
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('通知存储初始化未及时返回')), this.timeoutMs)
-      this.ready.then(() => { clearTimeout(timer); resolve() }, error => { clearTimeout(timer); reject(error) })
-    })
-    if (this.failure) throw this.failure
-    if (this.pending.size >= 64) throw new Error('通知存储请求过多，请稍后重试')
+    if (this.closed || this.stopping && command.kind !== 'close') throw Error('通知存储已关闭')
+    const session = this.session
+    if (!session) { this.scheduleRecovery(); throw this.failure ?? Error('通知存储正在恢复，请稍后重试') }
+    if (session.failure) throw session.failure
+    if (command.kind !== 'close' && session.pending.size + session.preparing >= requestLimit) throw Error('通知存储请求过多，请稍后重试')
+    ++session.preparing
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(Error('通知存储初始化未及时返回')), this.timeoutMs)
+        session.ready.then(() => { clearTimeout(timer); resolve() }, error => { clearTimeout(timer); reject(error) })
+      })
+    } finally { --session.preparing }
+    if (session.failure || session.exited || session !== this.session) throw session.failure ?? Error('通知线程已更换，原请求不重放')
+    if (this.closed || this.stopping && command.kind !== 'close') throw Error('通知存储已关闭')
     const id = ++this.sequence
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
-        this.pending.delete(id)
-        // A timeout is not proof the transaction failed. Do not replay writes or terminate a live worker.
-        reject(new Error('通知存储未及时返回，操作结果待确认'))
+        // Keep the unknown RPC occupying its capacity until its real reply or
+        // exit. A caller timeout cannot create an unbounded queue in a live worker.
+        reject(Error('通知存储未及时返回，操作结果待确认'))
       }, this.timeoutMs)
-      this.pending.set(id, { resolve: value => resolve(value as T), reject, timer })
-      try { this.worker.postMessage({ id, command }) }
-      catch (error) { clearTimeout(timer); this.pending.delete(id); reject(error) }
+      session.pending.set(id, { resolve: value => resolve(value as T), reject, timer })
+      try { session.worker.postMessage({ id, command }) }
+      catch (error) { clearTimeout(timer); session.pending.delete(id); reject(error) }
     })
   }
   private async call<T>(command: NotificationWorkerCommand): Promise<T> {
     for (let attempt = 0; ; attempt++) {
       try { return await this.request<T>(command) }
       catch (error) {
+        // Only a worker's explicit rolled-back BUSY/LOCKED result is retryable.
+        // Ready/RPC timeouts, errors and exits never carry this permission.
         if (!(error && typeof error === 'object' && 'retryable' in error && error.retryable === true) || attempt >= 2) throw error
         await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1)))
       }
@@ -87,13 +166,19 @@ export class NotificationWorkerPort implements NotificationRepository {
   savePreferences(preferences: NotificationPreferences): Promise<NotificationPreferences> { return this.call({ kind: 'savePreferences', preferences }) }
   close(): Promise<void> {
     if (this.closing) return this.closing
+    this.stopping = true
+    if (this.recoveryTimer) { clearTimeout(this.recoveryTimer); this.recoveryTimer = undefined }
+    const session = this.session
     this.closing = (async () => {
       try { await this.request({ kind: 'close' }) }
       finally {
-        this.closed = true
-        for (const waiter of this.pending.values()) { clearTimeout(waiter.timer); waiter.reject(new Error('通知存储已关闭')) }
-        this.pending.clear()
-        await this.worker.terminate()
+        this.closed = true; this.listeners.clear()
+        if (session) {
+          for (const waiter of session.pending.values()) { clearTimeout(waiter.timer); waiter.reject(Error('通知存储已关闭')) }
+          session.pending.clear()
+          // Explicit app shutdown only; runtime timeouts never reach terminate.
+          if (!session.exited) await session.worker.terminate()
+        }
       }
     })()
     return this.closing

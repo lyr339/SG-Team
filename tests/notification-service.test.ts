@@ -105,3 +105,55 @@ describe('non-blocking notification owner', () => {
     await service.close()
   })
 })
+
+describe('storage recovery is history synchronization, not event replay', () => {
+  it('drops cached markers and rereads committed content after an acknowledgement was lost', async () => {
+    const port = repository()
+    let lifecycle!: Parameters<NonNullable<NotificationRepository['subscribeLifecycle']>>[0]
+    const detach = vi.fn(); port.subscribeLifecycle = listener => { lifecycle = listener; return detach }
+    const service = new NotificationService(port), events = vi.fn(); service.subscribe(events)
+    const { sourceRevision: _revision, ...current } = draft()
+    const record: NotificationRecord = { ...draft(), id: 'record', createdAt: 1, updatedAt: 2, revision: 3, attentionRevision: 3, readRevision: 0 }
+    vi.mocked(port.put).mockResolvedValue({ ...change, record })
+    service.offerCurrent(current); await service.flush(); expect(port.put).toHaveBeenCalledOnce()
+    // The old cached signature says "import finished", but the interrupted worker
+    // committed something else before exit. Only its persisted marker is authority.
+    const actual = { ...draft(), title: '原入口已确认另一结果' }
+    vi.mocked(port.marker).mockResolvedValue({ sourceRevision: 9, signature: notificationContentSignature(actual) })
+    lifecycle({ state: 'unavailable', generation: 1 }); lifecycle({ state: 'recovered', generation: 2 }); await service.flush()
+    expect(service.status()).toMatchObject({ health: 'ready', historyIncomplete: true })
+    expect(events.mock.calls.some(([event]) => event.historyReload && !event.announcement)).toBe(true)
+    service.offerCurrent(current); await service.flush()
+    expect(vi.mocked(port.put).mock.calls.at(-1)?.[0].sourceRevision).toBe(10)
+    await service.close(); expect(detach).toHaveBeenCalledOnce()
+  })
+  it('reloads an already committed unknown final result without a new write, unread bump or announcement', async () => {
+    const port = repository()
+    let lifecycle!: Parameters<NonNullable<NotificationRepository['subscribeLifecycle']>>[0]
+    port.subscribeLifecycle = listener => { lifecycle = listener; return () => {} }
+    const service = new NotificationService(port), events = vi.fn(); service.subscribe(events)
+    const { sourceRevision: _revision, ...current } = draft()
+    vi.mocked(port.marker).mockResolvedValue({ sourceRevision: 9, signature: notificationContentSignature(draft()) })
+    lifecycle({ state: 'unavailable', generation: 1 }); lifecycle({ state: 'recovered', generation: 2 }); await service.flush()
+    service.offerCurrent({ ...current, announce: true }); await service.flush()
+    expect(port.put).not.toHaveBeenCalled(); expect(events.mock.calls.every(([event]) => !event.announcement)).toBe(true)
+    await service.close()
+  })
+  it('a late old recovery snapshot cannot hide another outage or rewind newer user preferences', async () => {
+    const port = repository()
+    let lifecycle!: Parameters<NonNullable<NotificationRepository['subscribeLifecycle']>>[0]
+    port.subscribeLifecycle = listener => { lifecycle = listener; return () => {} }
+    let release!: (value: Awaited<ReturnType<NotificationRepository['page']>>) => void
+    vi.mocked(port.page).mockImplementationOnce(() => new Promise(done => { release = done }))
+    const service = new NotificationService(port), events = vi.fn(); service.subscribe(events)
+    lifecycle({ state: 'unavailable', generation: 1 }); lifecycle({ state: 'recovered', generation: 2 })
+    lifecycle({ state: 'unavailable', generation: 2 }); release({ records: [], summary: change.summary, reset: false }); await service.flush()
+    expect(service.status().health).toBe('degraded'); expect(events.mock.calls.some(([event]) => event.historyReload)).toBe(false)
+    let preferencesRelease!: (value: Awaited<ReturnType<NotificationRepository['preferences']>>) => void
+    const old = await port.preferences()
+    vi.mocked(port.preferences).mockImplementationOnce(() => new Promise(done => { preferencesRelease = done }))
+    lifecycle({ state: 'recovered', generation: 3 }); await service.savePreferences({ nativeEnabled: true }); preferencesRelease(old); await service.flush()
+    expect(events.mock.calls.filter(([event]) => event.preferences).at(-1)![0].preferences.nativeEnabled).toBe(true)
+    expect(service.status().health).toBe('ready'); await service.close()
+  })
+})

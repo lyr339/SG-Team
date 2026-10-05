@@ -1,5 +1,5 @@
 import { parentPort, workerData } from 'node:worker_threads'
-import { SqliteNotificationRepository } from '../infrastructure/notifications/sqlite-notification-repository'
+import { SqliteNotificationRepository, notificationSqliteIsBusy, notificationTransactionMayRetry } from '../infrastructure/notifications/sqlite-notification-repository'
 import type { NotificationDraft, NotificationPreferences, NotificationQuery } from '../domain/notification'
 
 export type NotificationWorkerCommand =
@@ -44,7 +44,10 @@ if (parentPort) {
         if (command.kind === 'close') parentPort!.close()
       } catch (error) {
         const message = error instanceof Error ? error.message : '通知存储不可用'
-        parentPort!.postMessage({ id, ok: false, error: message, retryable: /database.*locked|SQLITE_(BUSY|LOCKED)/i.test(message),
+        // Negative transaction evidence, not an error-message guess. Read-only
+        // queries may safely retry real SQLite BUSY/LOCKED without mutation evidence.
+        const readOnly = ['sourceState', 'marker', 'page', 'preferences'].includes(command.kind)
+        parentPort!.postMessage({ id, ok: false, error: message, retryable: notificationTransactionMayRetry(error) || readOnly && notificationSqliteIsBusy(error),
           ...(error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? { code: error.code } : {}) } satisfies NotificationWorkerReply)
       }
     })

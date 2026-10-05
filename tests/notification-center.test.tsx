@@ -48,6 +48,21 @@ describe('notification center real-ledger interactions', () => {
     await click('查看最新结果')
     expect(host.querySelector('.notification-row__detail')!.textContent).toContain('晚到的新结果')
   })
+  it('storage rebuild reloads an idle list, but preserves an opened old detail and unread newer revision', async () => {
+    const inserted = repository.put(draft({ key: 'after:exit', title: '退出前已保存的结果' }), Date.now())
+    await act(async () => { for (const listener of listeners) listener({ health: 'ready', historyIncomplete: true, historyReload: true, change: { changed: false, summary: inserted.summary } }) })
+    expect(host.textContent).toContain('退出前已保存的结果'); expect(repository.page().summary.unread).toBe(3)
+    await click('批量发起结束')
+    const next = repository.put(draft({ sourceRevision: 2, detail: '线程退出前提交但没有回执的新结果', renewAttention: true }), Date.now())
+    const reads = vi.mocked(api.readNotification).mock.calls.length
+    await act(async () => { for (const listener of listeners) listener({ health: 'ready', historyIncomplete: true, historyReload: true, change: { changed: false, summary: next.summary } }) })
+    expect(host.querySelector('.notification-row__detail')!.textContent).toContain('成员结果已保存。')
+    expect(host.querySelector('.notification-panel__refresh')).not.toBeNull(); expect(api.readNotification).toHaveBeenCalledTimes(reads)
+    expect(repository.page().summary.unread).toBe(3)
+    await act(async () => host.querySelector<HTMLButtonElement>('.notification-panel__refresh')!.click())
+    expect(host.querySelector('.notification-row__detail')!.textContent).not.toContain('没有回执')
+    await click('查看最新结果'); expect(host.querySelector('.notification-row__detail')!.textContent).toContain('没有回执')
+  })
   it('requires explicit clear confirmation and preserves pending actions when clearing read history', async () => {
     await click('全部已读')
     await click('清理已读…')

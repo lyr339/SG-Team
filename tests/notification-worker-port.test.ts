@@ -59,3 +59,97 @@ describe('notification worker RPC boundary', () => {
     } finally { vi.useRealTimers() }
   })
 })
+
+const settle = async () => { for (let i = 0; i < 4; i++) await Promise.resolve() }
+const acknowledgeClose = async (port: NotificationWorkerPort, worker: FakeWorker) => {
+  const closing = port.close(); await settle()
+  worker.emit('message', { id: (worker.postMessage.mock.calls.at(-1)![0] as { id: number }).id, ok: true })
+  await closing
+}
+
+describe('confirmed exit recovery without unknown RPC replay', () => {
+  it('an error alone is not permission to replace a live worker; a confirmed exit recovers fresh queries only', async () => {
+    vi.useFakeTimers()
+    try {
+      const old = new FakeWorker(), next = new FakeWorker(), factory = vi.fn().mockReturnValueOnce(old).mockReturnValue(next)
+      const port = new NotificationWorkerPort(factory, 'file.sqlite', 50, { delaysMs: [10, 20, 30] }), lifecycle = vi.fn()
+      port.subscribeLifecycle(lifecycle); old.emit('message', { id: 0, ok: true })
+      const request = port.commitSource('source:test', 0, { checked: true }, [], 1)
+      const rejected = expect(request).rejects.toThrow('lost'); await settle()
+      old.emit('error', Error('ack lost')); await rejected; await vi.advanceTimersByTimeAsync(100)
+      expect(factory).toHaveBeenCalledOnce(); expect(old.terminate).not.toHaveBeenCalled()
+      old.emit('exit', 1); old.emit('exit', 1); await vi.advanceTimersByTimeAsync(10)
+      expect(factory).toHaveBeenCalledTimes(2); expect(next.postMessage).not.toHaveBeenCalled()
+      next.emit('message', { id: 0, ok: true })
+      const reading = port.page(); await settle(); const message = next.postMessage.mock.calls[0]![0] as { id: number; command: { kind: string } }
+      expect(message.command.kind).toBe('page')
+      // Old acks/ready events cannot settle any request owned by the replacement.
+      old.emit('message', { id: message.id, ok: true, result: { old: true } })
+      next.emit('message', { id: message.id, ok: true, result: { records: [] } }); expect(await reading).toEqual({ records: [] })
+      expect(lifecycle).toHaveBeenLastCalledWith({ state: 'recovered', generation: 2 })
+      expect(old.listenerCount('message')).toBe(0); await acknowledgeClose(port, next)
+    } finally { vi.useRealTimers() }
+  })
+  it('ready failure still waits for actual exit before rebuilding; a pending initializer is not sent on the next worker', async () => {
+    vi.useFakeTimers()
+    try {
+      const old = new FakeWorker(), next = new FakeWorker(), factory = vi.fn().mockReturnValueOnce(old).mockReturnValue(next)
+      const port = new NotificationWorkerPort(factory, 'file.sqlite', 50, { delaysMs: [10] })
+      const writing = port.commitSource('source:accepted', 0, {}, [], 1), rejected = expect(writing).rejects.toThrow('disk')
+      old.emit('message', { id: 0, ok: false, error: 'disk not ready' }); await rejected
+      await vi.advanceTimersByTimeAsync(100); expect(factory).toHaveBeenCalledOnce()
+      old.emit('exit', 0); await vi.advanceTimersByTimeAsync(10); next.emit('message', { id: 0, ok: true }); await settle()
+      expect(old.postMessage).not.toHaveBeenCalled(); expect(next.postMessage).not.toHaveBeenCalled()
+      await acknowledgeClose(port, next)
+    } finally { vi.useRealTimers() }
+  })
+  it('restart failures have a strict rolling budget; cooldown does not itself run another restart loop', async () => {
+    vi.useFakeTimers()
+    try {
+      const workers: FakeWorker[] = []
+      const factory = vi.fn(() => { const worker = new FakeWorker(); workers.push(worker); return worker as unknown as Worker })
+      const port = new NotificationWorkerPort(factory, 'file.sqlite', 50, { delaysMs: [10, 20, 30], windowMs: 1_000 })
+      for (const delay of [10, 20, 30]) { workers.at(-1)!.emit('exit', 1); await vi.advanceTimersByTimeAsync(delay) }
+      workers.at(-1)!.emit('exit', 1); await vi.advanceTimersByTimeAsync(2_000)
+      expect(factory).toHaveBeenCalledTimes(4)
+      await expect(port.page()).rejects.toThrow('已退出'); await vi.advanceTimersByTimeAsync(10)
+      expect(factory).toHaveBeenCalledTimes(5); const next = workers.at(-1)!; next.emit('message', { id: 0, ok: true })
+      await acknowledgeClose(port, next); await vi.advanceTimersByTimeAsync(2_000); expect(factory).toHaveBeenCalledTimes(5)
+    } finally { vi.useRealTimers() }
+  })
+  it('a synchronous spawn failure is bounded and recoverable without crashing the notification owner', async () => {
+    vi.useFakeTimers()
+    try {
+      const worker = new FakeWorker(), factory = vi.fn().mockImplementationOnce(() => { throw Error('spawn failed') }).mockReturnValue(worker)
+      const port = new NotificationWorkerPort(factory, 'file.sqlite', 50, { delaysMs: [10] }), lifecycle = vi.fn()
+      port.subscribeLifecycle(lifecycle); expect(lifecycle).toHaveBeenCalledWith({ state: 'unavailable', generation: 1 })
+      await vi.advanceTimersByTimeAsync(10); worker.emit('message', { id: 0, ok: true })
+      expect(lifecycle).toHaveBeenLastCalledWith({ state: 'recovered', generation: 2 }); await acknowledgeClose(port, worker)
+    } finally { vi.useRealTimers() }
+  })
+  it('timed-out live RPCs retain bounded capacity until acknowledgement or exit, without killing their worker', async () => {
+    vi.useFakeTimers()
+    try {
+      const worker = new FakeWorker(), factory = vi.fn(() => worker as unknown as Worker)
+      const port = new NotificationWorkerPort(factory, 'file.sqlite', 50); worker.emit('message', { id: 0, ok: true })
+      const requests = Array.from({ length: 64 }, () => port.page().catch(error => error))
+      await settle(); await vi.advanceTimersByTimeAsync(60); expect((await Promise.all(requests)).every(value => value instanceof Error)).toBe(true)
+      await expect(port.page()).rejects.toThrow('请求过多'); expect(worker.postMessage).toHaveBeenCalledTimes(64)
+      expect(factory).toHaveBeenCalledOnce(); expect(worker.terminate).not.toHaveBeenCalled()
+      worker.emit('message', { id: (worker.postMessage.mock.calls[0]![0] as { id: number }).id, ok: true, result: { records: [] } })
+      const next = port.page(); await settle(); worker.emit('message', { id: (worker.postMessage.mock.calls.at(-1)![0] as { id: number }).id, ok: true, result: { records: [] } }); await next
+      await acknowledgeClose(port, worker)
+    } finally { vi.useRealTimers() }
+  })
+  it('waiting initializers are capped too, and closing during backoff cannot reopen storage', async () => {
+    vi.useFakeTimers()
+    try {
+      const worker = new FakeWorker(), factory = vi.fn(() => worker as unknown as Worker)
+      const port = new NotificationWorkerPort(factory, 'file.sqlite', 50, { delaysMs: [10] })
+      const requests = Array.from({ length: 64 }, () => port.page().catch(error => error)); await expect(port.page()).rejects.toThrow('请求过多')
+      worker.emit('exit', 1); await Promise.all(requests)
+      await expect(port.close()).rejects.toThrow('已退出'); await vi.advanceTimersByTimeAsync(2_000)
+      expect(factory).toHaveBeenCalledOnce(); await expect(port.page()).rejects.toThrow('已关闭')
+    } finally { vi.useRealTimers() }
+  })
+})

@@ -120,6 +120,8 @@ export interface NotificationSourceResult {
 }
 
 export interface NotificationPush {
+  /** Storage was rebuilt; refresh history without replaying presentations or replacing an opened detail. */
+  historyReload?: boolean
   change?: NotificationChange
   preferences?: NotificationPreferences
   health: 'ready' | 'degraded'

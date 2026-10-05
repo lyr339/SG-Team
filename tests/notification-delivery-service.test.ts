@@ -166,3 +166,53 @@ describe('native versus in-app election backed by real private ledger', () => {
     } finally { await h.close() }
   })
 })
+
+describe('delivery across storage recovery', () => {
+  it('a lost claim is not resent after recovery; fresh results can use the recovered ledger', async () => {
+    const h = await harness({ nativeEnabled: true }), original = vi.mocked(h.port.commitSource).getMockImplementation()!
+    vi.mocked(h.port.commitSource).mockImplementationOnce(async (...args) => { await original(...args); throw Error('reply lost') })
+    try {
+      await h.offer(); expect(h.delivery.status().state).toBe('failed'); expect(h.native.show).not.toHaveBeenCalled()
+      await h.owner.page()
+      h.replay({ health: 'ready', historyIncomplete: true, historyReload: true, preferences: await h.owner.preferences() })
+      h.replay(h.observed.find(event => event.announcement)!); await h.delivery.flush()
+      expect(h.native.show).not.toHaveBeenCalled()
+      await h.offer(draft({ key: 'after:recovery' })); expect(h.native.show).toHaveBeenCalledOnce()
+      expect(h.ledger.page().summary).toMatchObject({ total: 2, unread: 2 })
+    } finally { await h.close() }
+  })
+  it('an in-flight pre-exit claim cannot turn into a late OS alert after history was reopened', async () => {
+    const h = await harness({ nativeEnabled: true }), original = vi.mocked(h.port.commitSource).getMockImplementation()!
+    let committed!: () => void, release!: () => void
+    const reachedCommit = new Promise<void>(done => { committed = done }), acknowledgement = new Promise<void>(done => { release = done })
+    vi.mocked(h.port.commitSource).mockImplementationOnce(async (...args) => { const result = await original(...args); committed(); await acknowledgement; return result })
+    try {
+      h.owner.offer(draft()); await h.owner.flush(); await reachedCommit
+      h.replay({ health: 'degraded', historyIncomplete: true }); h.replay({ health: 'ready', historyIncomplete: true, historyReload: true })
+      release(); await h.delivery.flush(); expect(h.native.show).not.toHaveBeenCalled()
+      await h.offer(draft({ key: 'new:after:recovery' })); expect(h.native.show).toHaveBeenCalledOnce()
+    } finally { release(); await h.close() }
+  })
+  it('late recovery history synchronization does not discard a genuinely new post-recovery result', async () => {
+    const h = await harness({ nativeEnabled: true }), original = vi.mocked(h.port.commitSource).getMockImplementation()!
+    let committed!: () => void, release!: () => void
+    const reachedCommit = new Promise<void>(done => { committed = done }), acknowledgement = new Promise<void>(done => { release = done })
+    vi.mocked(h.port.commitSource).mockImplementationOnce(async (...args) => { const result = await original(...args); committed(); await acknowledgement; return result })
+    try {
+      h.replay({ health: 'degraded', historyIncomplete: true }); h.replay({ health: 'ready', historyIncomplete: true })
+      h.owner.offer(draft({ key: 'fresh:before:late:history:reload' })); await h.owner.flush(); await reachedCommit
+      h.replay({ health: 'ready', historyIncomplete: true, historyReload: true, preferences: await h.owner.preferences() })
+      release(); await h.delivery.flush(); expect(h.native.show).toHaveBeenCalledOnce()
+    } finally { release(); await h.close() }
+  })
+  it('a storage recovery does not pretend an OS display/permission failure was repaired', async () => {
+    const h = await harness({ nativeEnabled: true })
+    h.native.show.mockImplementationOnce((_content, callbacks) => { callbacks.failed(); return { close: vi.fn() } })
+    try {
+      await h.offer(); expect(h.delivery.status().state).toBe('failed')
+      h.replay({ health: 'degraded', historyIncomplete: true }); h.replay({ health: 'ready', historyIncomplete: true, historyReload: true, preferences: await h.owner.preferences() })
+      await h.offer(draft({ key: 'after:storage:not:os:recovery' })); expect(h.native.show).toHaveBeenCalledOnce()
+      expect(h.delivery.status().state).toBe('failed')
+    } finally { await h.close() }
+  })
+})

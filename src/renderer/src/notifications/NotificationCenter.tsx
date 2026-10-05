@@ -82,6 +82,11 @@ export function NotificationCenter({ store, workspaceId, onClose, onNavigate, fo
   useEffect(() => store.subscribe(event => {
     const snapshot = store.snapshot()
     setPreferences(snapshot.preferences)
+    if (event?.historyReload) {
+      if (expanded) setDirty(true)
+      else void loadRef.current(false)
+      return
+    }
     if (!event?.change?.changed) return
     if (currentWorkspace && workspaceId && event?.change?.record?.scope.workspaceId
       && event.change.record.scope.workspaceId !== workspaceId) return

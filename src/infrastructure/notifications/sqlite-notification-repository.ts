@@ -6,6 +6,19 @@ import type { NotificationChange, NotificationDraft, NotificationMarker, Notific
 import { normalizeNotificationPreferences, notificationContentSignature, notificationIsPending, notificationSafeText, NotificationActionError, validateNotificationDraft, NOTIFICATION_SOURCE_BATCH_LIMIT, NOTIFICATION_SOURCE_PAYLOAD_LIMIT } from '../../domain/notification'
 
 type StoredRow = { payload: string }
+const knownNegativeTransactions = new WeakSet<object>()
+export function notificationSqliteIsBusy(error: unknown): boolean {
+  if (!error || typeof error !== 'object' || !('code' in error) || error.code !== 'ERR_SQLITE_ERROR' || !('errcode' in error) || typeof error.errcode !== 'number') return false
+  return [5, 6].includes(error.errcode & 255) // SQLITE_BUSY / SQLITE_LOCKED, including extended codes.
+}
+export function notificationTransactionMayRetry(error: unknown): boolean {
+  return Boolean(error && typeof error === 'object' && knownNegativeTransactions.has(error))
+}
+function rememberNegative(error: unknown, confirmed: boolean): void {
+  if (!error || typeof error !== 'object') return
+  knownNegativeTransactions.delete(error)
+  if (confirmed && notificationSqliteIsBusy(error)) knownNegativeTransactions.add(error)
+}
 function decodeRecord(payload: string): NotificationRecord {
   try {
     const record = JSON.parse(payload) as NotificationRecord
@@ -60,9 +73,15 @@ export class SqliteNotificationRepository {
     return this.revision()
   }
   private transaction<T>(run: () => T): T {
-    this.db.exec('BEGIN IMMEDIATE')
+    try { this.db.exec('BEGIN IMMEDIATE') }
+    catch (error) { rememberNegative(error, true); throw error } // No transaction or mutation began.
     try { const result = run(); this.db.exec('COMMIT'); return result }
-    catch (error) { try { this.db.exec('ROLLBACK') } catch { /* Preserve the original commit/storage failure. */ } throw error }
+    catch (error) {
+      let rolledBack = false
+      try { this.db.exec('ROLLBACK'); rolledBack = true } catch { /* Preserve the original error, without granting unsafe retries. */ }
+      rememberNegative(error, rolledBack)
+      throw error
+    }
   }
   private where(query: NotificationQuery, filter = query.filter): { sql: string; params: Array<string | number> } {
     const clauses = ['archived_at IS NULL']; const params: Array<string | number> = []
