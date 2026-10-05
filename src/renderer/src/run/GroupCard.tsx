@@ -1,3 +1,5 @@
+import { GroupEffectsNotice } from '../notifications/GroupEffectsNotice'
+import type { NotificationRecord } from '../../../domain/notification'
 import { useEffect, useRef, useState, type Ref } from 'react'
 import { formatRelativeClock } from '../format'
 import { AgentAvatar } from '../AgentAvatar'
@@ -14,6 +16,7 @@ const NO_LEAD = ''
 export interface GroupCardProps {
   /** 卡片根元素：页面用它把会话头部跳转来的组滚入视野。 */
   ref?: Ref<HTMLElement>
+  effectNote?: NotificationRecord
   group: PoolGroup
   busy: boolean
   /** 池已结束：不再加人 / 换 lead / 改目标，仍可移出与解散以收拾残局。 */
@@ -42,6 +45,7 @@ export interface GroupCardProps {
 export function GroupCard({
   ref,
   group,
+  effectNote,
   busy,
   ended,
   focused,
@@ -175,6 +179,7 @@ export function GroupCard({
         </p>
       )}
 
+      <GroupEffectsNotice record={effectNote}/>
       {onOpenCollaboration ? <GroupCollaborationEntry groupName={group.name} members={group.members.length} summary={communication} onOpen={onOpenCollaboration} /> : null}
 
       {group.members.length ? (

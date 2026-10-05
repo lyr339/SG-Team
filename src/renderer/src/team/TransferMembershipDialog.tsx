@@ -1,3 +1,4 @@
+import { groupEffectsLines, groupEffectsProblem } from '../../../domain/group-effects'
 import { useRef, useState } from 'react'
 import type { MembershipTransferCandidate, MembershipTransferOptions, MembershipTransferOutcome } from '../../../domain/team-handoff'
 import { AgentAvatar } from '../AgentAvatar'
@@ -54,11 +55,12 @@ export function TransferMembershipDialog({ options, busy, error, onClose, onConf
                 : `组身份已迁移给 CH-${outcome.result.transfer.toChannelId ?? '?'}（${outcome.result.transfer.roleName}）`}
             </strong>
             <p>
-              目标席位会在下一次轮询收到入组通知并领取简报
+              {outcome.result.transfer.groupEffects?.effects.some(effect=>effect.kind==='membership'&&effect.notice==='joined'&&effect.status==='queued')?'入组通知已排队；目标仍需实际取走后才会领取简报':'入组通知受理尚未确认，请以目标成员的实际简报核对'}
               {outcome.result.transfer.releasedTaskIds.length
                 ? `；原成员的 ${outcome.result.transfer.releasedTaskIds.length} 项任务已释放回队列`
                 : ''}。
             </p>
+            {outcome.result.transfer.groupEffects&&groupEffectsProblem(outcome.result.transfer.groupEffects)?<p className="is-warning">{groupEffectsLines(outcome.result.transfer.groupEffects).join('\n')}</p>:null}
             {outcome.result.contextHandoff ? (
               outcome.result.contextHandoff.ok ? (
                 <>

@@ -1,3 +1,4 @@
+import { useGroupEffectNotes } from '../notifications/use-group-effect-notes'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AgentLaunchPlan, AgentLaunchRequest } from '../../../domain/agent-launch'
 import { batchLaunchNotification } from '../../../domain/batch-launch-notification'
@@ -128,6 +129,7 @@ export function PoolPage({
   communicationSummaries,
   onOpenCollaboration
 }: PoolPageProps): React.JSX.Element {
+  const groupEffectNotes=useGroupEffectNotes(team.activeWorkspaceId,team.activeRun?.id)
   const view = useMemo(() => buildPoolView(team, detectedWorkspace, taskPool), [team, detectedWorkspace, taskPool])
   const [busy, setBusy] = useState('')
   const actionInFlight = useRef(false)
@@ -529,6 +531,7 @@ export function PoolPage({
         key={group.id}
         ref={registerGroupCard(group.id)}
         group={group}
+        effectNote={groupEffectNotes.get(group.id)}
         busy={isBusy}
         ended={ended}
         focused={flashGroupId === group.id}

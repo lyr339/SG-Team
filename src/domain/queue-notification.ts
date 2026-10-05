@@ -1,3 +1,4 @@
+import {validateGroupEffectsDigest,type GroupEffectsDigest} from './group-effects'
 import { NOTIFICATION_SOURCE_BATCH_LIMIT, type NotificationDraft, type NotificationScope } from './notification'
 
 export type QueueNoticePhase = 'queued' | 'held' | 'delivered' | 'replied' | 'withdrawn' | 'retired' | 'unconfirmed'
@@ -9,7 +10,7 @@ export interface QueueHandoffAnnotation {
   transcript: 'expected' | 'older' | 'present' | 'unverified'; recordWritten: boolean
   scope: NotificationScope
   replyEntryId?: string
-  transfer?: { groupId: string; roleName: string; released: number; lead: boolean }
+  transfer?: { groupId: string; roleName: string; released: number; lead: boolean; effects?:GroupEffectsDigest }
 }
 export interface QueueNotificationInput { key: string; runId?: string; workspaceId?: string; now: number; facts: QueueNotificationFact[]; annotations: QueueHandoffAnnotation[]; signature?: string; monitorStartedAt?: number }
 export interface QueueNotificationState {
@@ -26,6 +27,7 @@ export function readQueueNotificationState(value: unknown, key: string): QueueNo
   for (const [id, row] of Object.entries(state.rows)) if (!/^[a-f0-9]{32}$/.test(id) || !Array.isArray(row) || row.length !== 2 || !Object.values(codes).includes(row[0]) || !/^\d+$/.test(row[1])) throw Error('队列通知身份异常')
   for (const [id, annotation] of Object.entries(state.handoffs)) if (!annotation || annotation.id !== id || typeof annotation.entryId !== 'string'
     || !annotation.scope || !['expected', 'older', 'present', 'unverified'].includes(annotation.transcript) || typeof annotation.recordWritten !== 'boolean') throw Error('交接通知检查点异常')
+  for(const annotation of Object.values(state.handoffs))if(annotation.transfer?.effects)validateGroupEffectsDigest(annotation.transfer.effects)
   return state
 }
 const terminal = (code?: Code) => code === 'a' || code === 'd' || code === 'w' || code === 'r'
@@ -53,7 +55,8 @@ export function reduceQueueNotifications(old: QueueNotificationState | undefined
     if (handoff) state.handoffs[fact.id] = handoff
     if (stock) continue
     const meaningful = Boolean(handoff)
-    const key = `queue:${fact.id}`, scope = handoff?.scope ?? fact.scope
+    const effects=handoff?.transfer?.effects,effectProblem=Boolean(effects?.problem),newEffectProblem=effectProblem&&oldHandoff?.transfer?.effects?.id!==effects?.id
+    const key = `queue:${fact.id}`, scope = {...(handoff?.scope ?? fact.scope),...(effects?{groupOperationId:effects.id,groupId:handoff!.transfer!.groupId}:{})}
     const title = handoff?.transfer ? phase === 'queued' || phase === 'held' ? '成员身份已迁移，上下文消息已排队' : phase === 'delivered' ? '成员身份已迁移，目标已取走上下文消息'
       : phase === 'replied' ? '成员身份已迁移，目标已返回交接回复' : '成员已迁移，原上下文消息已退出队列'
       : handoff ? phase === 'held' ? '上下文交接等待新会话取走' : phase === 'queued' ? '上下文交接已入队'
@@ -65,16 +68,16 @@ export function reduceQueueNotifications(old: QueueNotificationState | undefined
       unconfirmed: '原作用域已切换，但旧行的最终状态未能核对。不会称它即将送达，也不猜撤回、退役或交接失败。' })[phase]
     const document = handoff ? `\n交接时转录${handoff.transcript === 'expected' ? '尚未创建' : handoff.transcript === 'older' ? '早于本次发出时间' : handoff.transcript === 'present' ? '路径已存在' : '新鲜度未确认'}；不保证原会话已经完整落盘。`
       + (handoff.recordWritten ? ' 拾光补充记录已写入。' : ' 拾光补充记录未写入，原转录路径仍已入队。') : ''
-    const identity = handoff?.transfer ? `\n目标接过角色 ${handoff.transfer.roleName}；释放 ${handoff.transfer.released} 个任务${handoff.transfer.lead ? '，主控身份随迁' : ''}。身份迁移不因后续交接状态回滚。` : ''
+    const identity = handoff?.transfer ? `\n目标接过角色 ${handoff.transfer.roleName}；${effects&&!effects.releaseConfirmed?'任务释放结果尚未确认':`释放 ${handoff.transfer.released} 个任务`}${handoff.transfer.lead ? '，主控身份随迁' : ''}。身份迁移不因后续交接状态回滚。${effectProblem&&effects?`\n${effects.detail}`:''}` : ''
     drafts.push({ key, eventId: queueNotificationEvent(fact.id, phase), eventType: 'queue.state', subjectState: phase, category: 'sessions', source: handoff?.transfer ? '成员迁移与上下文' : handoff ? '上下文交接' : `会话队列 · CH-${fact.channelId}`,
-      title: phase === 'unconfirmed' && handoff ? '原上下文消息结果待核对' : title, detail: `CH-${fact.channelId} · ${stage}${document}${identity}`, scope, ...(scope.sessionId && phase !== 'retired' && phase !== 'withdrawn' && phase !== 'unconfirmed'
+      title: effectProblem?`${title} · 组后续事项待核对`:phase === 'unconfirmed' && handoff ? '原上下文消息结果待核对' : title, detail: `CH-${fact.channelId} · ${stage}${document}${identity}`, scope, ...(scope.sessionId && phase !== 'retired' && phase !== 'withdrawn' && phase !== 'unconfirmed'
         ? { target: { kind: 'session' as const, scope, entryId: phase === 'replied' ? fact.replyEntryId ?? handoff?.replyEntryId ?? fact.entryId : fact.entryId,
           ...(phase === 'queued' || phase === 'held' ? { surface: 'queue' as const } : {}) } } : {}),
       origin: { module: handoff?.transfer ? 'run' : 'sessions', sessionId: scope.sessionId },
-      attention: meaningful ? 'notice' : 'activity', tone: meaningful && (phase === 'retired' || phase === 'withdrawn' || phase === 'unconfirmed' || !handoff!.recordWritten || handoff!.transcript !== 'present') ? 'warning' : 'info',
-      state: phase === 'retired' || phase === 'withdrawn' ? 'expired' : phase === 'queued' || phase === 'held' || phase === 'unconfirmed' ? 'active' : 'resolved',
-      occurredAt: fact.at, sourceRevision: revision, renewAttention: meaningful && (previous !== code || !oldHandoff), respectCleared: previous === code && Boolean(oldHandoff),
-      announce: !baseline && meaningful && previous !== code && (phase === 'retired' || phase === 'unconfirmed') })
+      attention: meaningful ? 'notice' : 'activity', tone: effectProblem||meaningful && (phase === 'retired' || phase === 'withdrawn' || phase === 'unconfirmed' || !handoff!.recordWritten || handoff!.transcript !== 'present') ? 'warning' : 'info',
+      state: phase === 'retired' || phase === 'withdrawn' ? 'expired' : effectProblem||phase === 'queued' || phase === 'held' || phase === 'unconfirmed' ? 'active' : 'resolved',
+      occurredAt: fact.at, sourceRevision: revision, renewAttention: meaningful && (previous !== code || !oldHandoff||newEffectProblem), respectCleared: !newEffectProblem&&previous === code && Boolean(oldHandoff),
+      announce: !baseline && meaningful && (newEffectProblem||previous !== code && (phase === 'retired' || phase === 'unconfirmed')) })
   }
   if (Object.keys(state.rows).length > 50_000 || Object.keys(state.handoffs).length > 2_000) throw Error('队列通知检查点超过容量')
   return { state, drafts, complete }

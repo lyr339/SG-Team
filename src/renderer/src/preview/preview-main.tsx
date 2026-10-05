@@ -1,3 +1,5 @@
+import { reduceGroupEffects } from '../../../domain/group-effects-notification'
+import type { GroupEffectsFrame } from '../../../domain/group-effects'
 import { reduceMemoryIssueNotifications, type MemoryIssueState } from '../../../domain/memory-issue-notification'
 import type { MemoryOperatorReviewProof } from '../../../domain/memory-operator-review'
 import type { TeamMemoryInspectionRequest } from '../../../domain/team-memory-inspection'
@@ -187,7 +189,7 @@ if (previewRunStatus && initialTeam.activeRun) {
 //（席位形态：全部待命 / 待命+执行中+离线+待确认（CH-2 单独配置了另一模型）/ 各席配置分叉、没有多数 /
 //  已结束 / 会话池里两个协作组 + 一个刚解散的组）。
 const independentScene = (['live', 'mixed', 'spread', 'ended', 'groups'] as const).find((scene) => scene === previewParameters.get('independent'))
-  ?? (previewParameters.get('notifications') === 'operator-memory' ? 'groups' : undefined)
+  ?? (['operator-memory','group-effects'].includes(previewParameters.get('notifications')??'') ? 'groups' : undefined)
 const poolLayoutCase = previewParameters.get('poolLayout')
 if (independentScene && initialTeam.activeRun) {
   const solo = initialTeam.members.find((member) => member.slot.solo === true)!
@@ -1195,6 +1197,12 @@ const previewMemoryInspection = (request: TeamMemoryInspectionRequest) => {
   if (!item || state.team.activeRun?.id !== request.runId || state.team.activeWorkspaceId !== request.workspaceId || item.version !== request.version || item.groupId !== request.groupId) throw Error('原记忆范围已变化')
   return structuredClone({item, ...(item.supersedesId && state.memory.items[item.supersedesId] ? {predecessor: state.memory.items[item.supersedesId]} : {}), observedAt:Date.now(),revision:state.memory.revision,
     ...(operatorMemoryScene && item.status === 'proposed' ? {operatorReview:previewOperatorProof,canReview:state.team.activeRun.status==='running'&&(!item.groupId||state.team.groups.some(view=>view.group.id===item.groupId&&view.group.status==='active'))} : {canReview:false})})
+}
+if (previewParameters.get('notifications') === 'group-effects' && state.team.activeRun && state.team.groups[0]) {
+  const run=state.team.activeRun,group=state.team.groups[0].group
+  const frame:GroupEffectsFrame={version:1,id:'ab000000-0000-4000-8000-000000000006',owner:'ab000000-0000-4000-8000-000000000007',kind:'goal',scope:{workspaceId:run.workspaceId,runId:run.id,groupId:group.id},name:group.name,primary:'returned',projection:'confirmed',phase:'completed',sequence:4,observedAt:Date.now()-60000,effects:[{kind:'goal-notice',channelId:'1',status:'recorded',count:1},{kind:'goal-notice',channelId:'2',status:'unconfirmed',reason:'storage'}]}
+  const projected=reduceGroupEffects(undefined,{kind:'observe',frame},true,1)
+  projected.drafts.forEach(notificationPreview.offer)
 }
 if (['memory','restore'].includes(previewParameters.get('notifications')??'') && state.team.activeRun) {
   const run = state.team.activeRun, groupId = state.team.groups[0]?.group.id, exemplar = Object.values(state.memory.items)[0]!

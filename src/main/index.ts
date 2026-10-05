@@ -27,6 +27,7 @@ import { resolveTaskMcpServerPath } from './task-mcp-runtime'
 import { TeamFailoverService } from '../application/team-failover-service'
 import { TeamGroupService } from '../application/team-group-service'
 import { registerTeamGroupIpc } from './register-team-group-ipc'
+import { GroupEffectsNotifications } from '../application/notifications/group-effects-notifications'
 import { TaskDispatcher } from '../application/task-dispatcher'
 import { MemoryReviewCoordinator } from '../application/memory-review-coordinator'
 import { TeamOrchestrator } from '../application/team-orchestrator'
@@ -176,6 +177,7 @@ let pageOperationNotifications: PageOperationNotifications | undefined
 let workspaceNotifications: WorkspaceNotifications | undefined
 let compatibilityNotifications: CompatibilityNotifications | undefined
 let groupTopologyNotificationSource: ReturnType<typeof connectGroupTopologyNotifications> | undefined
+let groupEffectsNotifications: GroupEffectsNotifications | undefined
 let memoryIssueNotificationSource: ReturnType<typeof connectMemoryIssueNotifications> | undefined
 let disposeTeamMemoryInspectionIpc:(()=>void)|undefined
 let notificationRuntimeJournal: NotificationRuntimeJournal | undefined
@@ -736,8 +738,17 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     taskPoolService,
     teamCollaborationRepository,
     localSessionBridge,
-    { onerror: orchestrationError }
+    {
+      onerror: orchestrationError,
+      effects: {
+        observe: value => groupEffectsNotifications?.observe(value),
+        unavailable: () => notificationService?.reportHistoryGap()
+      }
+    }
   )
+  if (notificationService) {
+    groupEffectsNotifications = new GroupEffectsNotifications(notificationService, teamGroupService.getEffectsOwnerId())
+  }
   let activeRunId = teamControlService.getActiveRunId()
   disposeRunContext = teamControlService.subscribe((snapshot) => {
     const nextRunId = snapshot.activeRun?.id
@@ -1050,9 +1061,17 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     { isSessionLaunchRunning: () => agentSessionLauncher.getPlan()?.state === 'running', observeTransfer: (outcome, team) => {
       if (!notificationService) return undefined
       const linked = notificationRuntime?.queue?.registerTransfer(outcome)
-      if (linked) return linked
+      if (linked) {
+        if (outcome.transfer.groupEffects) {
+          groupEffectsNotifications?.linkTransfer(outcome.transfer.groupEffects.id, linked, notificationRuntime!.queue!.flush())
+        }
+        return linked
+      }
       const draft = membershipTransferNotification(outcome, team)
       notificationService.offerCurrent(draft)
+      if (outcome.transfer.groupEffects) {
+        groupEffectsNotifications?.linkTransfer(outcome.transfer.groupEffects.id, { key: draft.key, eventId: draft.eventId })
+      }
       return { key: draft.key, eventId: draft.eventId }
     } }
   )
@@ -1126,7 +1145,8 @@ const notificationQuitBarrier = new NotificationQuitBarrier({
     () => workspaceNotifications?.close() ?? Promise.resolve(),
     () => compatibilityNotifications?.close() ?? Promise.resolve(),
     () => groupTopologyNotificationSource?.close() ?? Promise.resolve(),
-    () => memoryIssueNotificationSource?.close() ?? Promise.resolve()
+    () => memoryIssueNotificationSource?.close() ?? Promise.resolve(),
+    () => groupEffectsNotifications?.close() ?? Promise.resolve()
   ], disposeDesktopOnce),
   settled: result => {
     try { notificationRuntimeJournal?.finish(result.confirmed, notificationService?.status().historyIncomplete ?? true, notificationService?.status().historyGapId) }

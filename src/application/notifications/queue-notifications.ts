@@ -1,3 +1,4 @@
+import { groupEffectsDigest, groupEffectsProblem } from '../../domain/group-effects'
 import { createHash, randomUUID } from 'node:crypto'
 import type { ChannelQueueFact } from '../../domain/channel-queue-fact'
 import type { DesktopSnapshot } from '../../shared/desktop-api'
@@ -104,7 +105,7 @@ export class QueueNotifications {
     if (!result?.entryId) return undefined
     const id = queueNotificationIdentity(result.entryId), annotation = this.annotations.get(id)
     if (!annotation) return undefined
-    annotation.value = { ...annotation.value, transfer: { groupId: outcome.transfer.groupId, roleName: outcome.transfer.roleName, released: outcome.transfer.releasedTaskIds.length, lead: outcome.transfer.transferredLead } }
+    annotation.value = { ...annotation.value, transfer: { groupId: outcome.transfer.groupId, roleName: outcome.transfer.roleName, released: outcome.transfer.releasedTaskIds.length, lead: outcome.transfer.transferredLead,...(outcome.transfer.groupEffects&&groupEffectsProblem(outcome.transfer.groupEffects)?{effects:groupEffectsDigest(outcome.transfer.groupEffects)}:{}) } }
     ++this.annotationRevision
     if (this.snapshot && this.team) this.observe(this.snapshot, this.team)
     return result.notification

@@ -28,6 +28,7 @@ function query(value: unknown): NotificationQuery {
   return {
     ...(input.key !== undefined ? { key: id(input.key) } : {}),
     ...(input.eventType !== undefined ? { eventType: input.eventType as string } : {}),
+    ...(input.runId !== undefined ? { runId: id(input.runId) } : {}),
     ...(input.operationFamilyId !== undefined ? { operationFamilyId: id(input.operationFamilyId) } : {}),
     ...(input.sessionId !== undefined ? { sessionId: id(input.sessionId) } : {}),
     ...(input.contextDomain !== undefined ? { contextDomain: id(input.contextDomain) } : {}),

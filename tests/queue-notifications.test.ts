@@ -144,3 +144,22 @@ describe('real-owner queue and handoff notification projections', () => {
     } finally { source.stop(); await h.owner.close() }
   })
 })
+
+it('a real newly linked group-cleanup warning renews one existing queue parent and persists uncertainty through delivery/reply without duplicating or claiming release zero',async()=>{
+  const h=notificationSourceHarness(),facts=[raw()],source=new QueueNotifications(h.owner,()=>({facts,historyIncomplete:false}))
+  try{
+    source.observe(notificationFrame(),notificationTeam());const accepted=source.registerHandoff(result(),'2');await source.flush()
+    const first=h.ledger.page().records[0]!;await h.owner.read(first.id,first.revision)
+    const effects:import('../src/domain/group-effects').GroupEffectsSummary={version:1,id:'ab000000-0000-4000-8000-000000000003',kind:'transfer',scope:{workspaceId:'workspace-a',runId:'run-a',groupId:'g'},name:'原组',observedAt:5000,sequence:5,primary:'returned',projection:'confirmed',phase:'completed',effects:[{kind:'release',status:'unconfirmed',reason:'storage'}]}
+    const outcome={transfer:{groupId:'g',fromSlotId:'a',toSlotId:'b',roleName:'架构',transferredLead:false,releasedTaskIds:[],groupEffects:effects,failover:{id:'failover-test',runId:'run-a',workspaceId:'workspace-a',slotId:'a',roleName:'builder',fromChannelId:'1',fromAgentSessionId:'a-session',status:'completed',reason:'manual_membership_transfer',taskIds:[],detectedAt:1,updatedAt:1}}} as import('../src/domain/team-handoff').MembershipTransferOutcome
+    outcome.contextHandoff={ok:true,result:{...result(),notification:accepted}}
+    source.registerTransfer(outcome);await source.flush()
+    const row=h.ledger.page().records[0]!
+    expect(row).toMatchObject({id:first.id,tone:'warning',scope:{groupId:'g',groupOperationId:effects.id}})
+    expect(row.detail).toContain('任务释放结果尚未确认');expect(row.detail).not.toContain('释放 0 个任务');expect(h.ledger.page().summary.unread).toBe(1)
+    await h.owner.read(row.id,row.revision)
+    source.registerTransfer(outcome);await source.flush();expect(h.ledger.page().summary.unread).toBe(0)
+    facts[0]={...facts[0]!,deliveredAt:6000};source.observe(notificationFrame(),notificationTeam());await source.flush()
+    expect(h.ledger.page().records[0]).toMatchObject({tone:'warning',state:'active'});expect(h.ledger.page().records[0]?.detail).toContain('任务释放结果尚未确认')
+  }finally{source.stop();await h.owner.close()}
+})

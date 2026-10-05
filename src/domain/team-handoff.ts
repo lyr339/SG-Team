@@ -44,6 +44,8 @@ export interface MembershipTransferInput {
 }
 
 export interface MembershipTransferResult {
+  /** Thin original post-mutation receipts; never a retry or a claim of Agent reading. */
+  groupEffects?: import('./group-effects').GroupEffectsSummary
   groupId: string
   fromSlotId: string
   toSlotId: string

@@ -1,4 +1,11 @@
-import type { TeamControlRepository, TeamGroupMutation, GroupMembershipChange } from './team-control-repository'
+import { randomUUID } from 'node:crypto'
+import type { GroupEffectsObserver, GroupOperationKind, GroupEffectFact } from '../domain/group-effects'
+import { GroupEffectsObservation, groupEffectErrorReason } from './group-effects-observation'
+import type {
+  TeamControlRepository,
+  TeamGroupMutation,
+  GroupMembershipChange
+} from './team-control-repository'
 import type { TeamCollaborationRepository } from './team-collaboration-repository'
 import type { TaskPoolService } from './task-pool-service'
 import type { TeamControlBridge } from './team-control-service'
@@ -27,6 +34,7 @@ interface TeamSource {
 }
 
 export interface TeamGroupServiceOptions {
+  effects?: GroupEffectsObserver
   now?: () => number
   onerror?: (error: unknown) => void
 }
@@ -61,6 +69,12 @@ const GROUP_DISSOLVED_REASON = 'group_dissolved'
  * 不触碰令牌 / Composer / generation / run 状态；`addSeats / removeSeat / registerSeat` 推后（任务书 §14.2）。
  */
 export class TeamGroupService {
+  private readonly effectsOwner = randomUUID()
+  private readonly effects?: GroupEffectsObserver
+  getEffectsOwnerId(): string {
+    return this.effectsOwner
+  }
+
   private readonly now: () => number
   private readonly onerror: (error: unknown) => void
 
@@ -68,16 +82,20 @@ export class TeamGroupService {
     private readonly repository: TeamControlRepository,
     private readonly team: TeamSource,
     private readonly tasks: Pick<TaskPoolService, 'closeGroup' | 'releaseAgentWork' | 'planTasks'>,
-    private readonly collaboration: Pick<TeamCollaborationRepository, 'createMessage' | 'orphanPendingReceipts'>,
+    private readonly collaboration: Pick<
+      TeamCollaborationRepository,
+      'createMessage' | 'orphanPendingReceipts'
+    >,
     private readonly bridge: Pick<TeamControlBridge, 'sendMessage'>,
     options: TeamGroupServiceOptions = {}
   ) {
+    this.effects = options.effects
     this.now = options.now ?? Date.now
     this.onerror = options.onerror ?? (() => undefined)
   }
 
   createGroup(input: CreateTeamGroupInput): TeamControlSnapshot {
-    const { runId } = this.requirePool()
+    const { runId, snapshot: before } = this.requirePool()
     const at = this.now()
     const mutation = this.repository.createGroup({
       runId,
@@ -88,17 +106,25 @@ export class TeamGroupService {
       planPolicy: input.planPolicy,
       at
     })
-    const after = this.team.getSnapshot()
-    this.notifyJoined(mutation, this.viewOf(after, mutation.group.id))
-    return after
+    return this.withEffects('create', before, mutation.group, (observation) => {
+      const after = this.projectAfter(observation)
+      this.notifyJoined(mutation, this.viewOf(after, mutation.group.id), observation)
+      return after
+    })
   }
 
   addGroupMembers(input: { groupId: string; members: TeamGroupMemberConfiguration[] }): TeamControlSnapshot {
-    this.requirePool()
-    const mutation = this.repository.addGroupMembers({ groupId: input.groupId, members: input.members, at: this.now() })
-    const after = this.team.getSnapshot()
-    this.notifyJoined(mutation, this.viewOf(after, mutation.group.id))
-    return after
+    const { snapshot: before } = this.requirePool()
+    const mutation = this.repository.addGroupMembers({
+      groupId: input.groupId,
+      members: input.members,
+      at: this.now()
+    })
+    return this.withEffects('add', before, mutation.group, (observation) => {
+      const after = this.projectAfter(observation)
+      this.notifyJoined(mutation, this.viewOf(after, mutation.group.id), observation)
+      return after
+    })
   }
 
   removeGroupMember(input: { groupId: string; slotId: string }): TeamControlSnapshot {
@@ -106,72 +132,118 @@ export class TeamGroupService {
     const at = this.now()
     const mutation = this.repository.removeGroupMember({ groupId: input.groupId, slotId: input.slotId, at })
     const [left] = mutation.left
-    const after = this.team.getSnapshot()
-    if (!left) return after
+    return this.withEffects('remove', before, mutation.group, (observation) => {
+      const after = this.projectAfter(observation)
+      if (!left) return after
 
-    const settled = this.settleDeparture({ runId, before, left, groupId: mutation.group.id, at })
-    this.sendMembershipNotice('left', left, mutation.group, undefined)
-
-    // 组内仍有有效 lead：告知它成员已移出、任务已回队（团队消息，会按接收方自动落进本组）。
-    const view = this.viewOf(after, mutation.group.id)
-    const lead = view ? effectiveLeadOf(view) : undefined
-    if (lead && lead.slot.id !== left.slotId) {
-      this.safely('通知 lead 成员已移出', () => this.collaboration.createMessage({
+      const settled = this.settleDeparture({
         runId,
-        sender: { type: 'operator' },
-        recipient: { type: 'agent', slotId: lead.slot.id },
-        kind: 'notice',
-        subject: '成员已移出协作组',
-        content: `【系统通知】成员「${left.roleName} · CH-${left.channelId ?? '?'}」已被移出协作组「${mutation.group.name}」，恢复为独立席位。`
-          + departureFollowUp(settled),
-        clientMessageId: `group-member-left:${shortId(mutation.group.id)}:${shortId(left.slotId)}:${at}`
-      }))
-    }
-    return after
+        before,
+        left,
+        groupId: mutation.group.id,
+        at,
+        observation
+      })
+      this.sendMembershipNotice('left', left, mutation.group, undefined, observation)
+
+      // 组内仍有有效 lead：告知它成员已移出、任务已回队（团队消息，会按接收方自动落进本组）。
+      const view = this.viewOf(after, mutation.group.id)
+      const lead = view ? effectiveLeadOf(view) : undefined
+      if (lead && lead.slot.id !== left.slotId) {
+        this.safely(
+          '通知 lead 成员已移出',
+          () =>
+            this.collaboration.createMessage({
+              runId,
+              sender: { type: 'operator' },
+              recipient: { type: 'agent', slotId: lead.slot.id },
+              kind: 'notice',
+              subject: '成员已移出协作组',
+              content:
+                `【系统通知】成员「${left.roleName} · CH-${left.channelId ?? '?'}」已被移出协作组「${mutation.group.name}」，恢复为独立席位。` +
+                departureFollowUp(settled),
+              clientMessageId: `group-member-left:${shortId(mutation.group.id)}:${shortId(left.slotId)}:${at}`
+            }),
+          observation,
+          { kind: 'lead-notice', slotId: lead.slot.id }
+        )
+      }
+      return after
+    })
   }
 
   setGroupLead(input: { groupId: string; slotId: string | null }): TeamControlSnapshot {
-    this.requirePool()
-    const mutation = this.repository.setGroupLead({ groupId: input.groupId, slotId: input.slotId, at: this.now() })
-    const after = this.team.getSnapshot()
-    const change = mutation.leadChange
-    if (!change || change.previousSlotId === change.nextSlotId) return after
-    const view = this.viewOf(after, mutation.group.id)
-    const leadLabel = view ? groupLeadLabel(view) : undefined
-    for (const slotId of [change.previousSlotId, change.nextSlotId]) {
-      if (!slotId) continue
-      const member = view?.members.find((candidate) => candidate.slot.id === slotId) ?? memberOf(after, slotId)
-      const channelId = member?.binding?.channelId ?? member?.slot.channelId
-      if (!channelId) continue
-      this.send(channelId, buildMembershipNotice({
-        kind: 'lead_changed',
-        channelId,
-        group: mutation.group,
-        leadLabel,
-        becameLead: slotId === change.nextSlotId
-      }))
-    }
-    return after
+    const { snapshot: before } = this.requirePool()
+    const mutation = this.repository.setGroupLead({
+      groupId: input.groupId,
+      slotId: input.slotId,
+      at: this.now()
+    })
+    return this.withEffects('lead', before, mutation.group, (observation) => {
+      const after = this.projectAfter(observation)
+      const change = mutation.leadChange
+      if (!change || change.previousSlotId === change.nextSlotId) return after
+      const view = this.viewOf(after, mutation.group.id)
+      const leadLabel = view ? groupLeadLabel(view) : undefined
+      for (const slotId of [change.previousSlotId, change.nextSlotId]) {
+        if (!slotId) continue
+        const member =
+          view?.members.find((candidate) => candidate.slot.id === slotId) ?? memberOf(after, slotId)
+        const channelId = member?.binding?.channelId ?? member?.slot.channelId
+        if (!channelId) {
+          observation?.effect({
+            kind: 'membership',
+            slotId,
+            notice: 'lead_changed',
+            status: 'not-attempted',
+            reason: 'no-channel'
+          })
+          continue
+        }
+        this.send(
+          channelId,
+          buildMembershipNotice({
+            kind: 'lead_changed',
+            channelId,
+            group: mutation.group,
+            leadLabel,
+            becameLead: slotId === change.nextSlotId
+          }),
+          observation,
+          slotId,
+          'lead_changed'
+        )
+      }
+      return after
+    })
   }
 
   updateGroupGoal(input: { groupId: string; goal: string }): TeamControlSnapshot {
-    const { runId } = this.requirePool()
+    const { runId, snapshot: before } = this.requirePool()
     const at = this.now()
     const mutation = this.repository.updateGroupGoal({ groupId: input.groupId, goal: input.goal, at })
-    const after = this.team.getSnapshot()
-    const view = this.viewOf(after, mutation.group.id)
-    for (const member of view?.members ?? []) {
-      this.safely('通知成员组目标已更新', () => this.collaboration.createMessage({
-        runId,
-        sender: { type: 'operator' },
-        recipient: { type: 'agent', slotId: member.slot.id },
-        kind: 'notice',
-        subject: '协作组目标已更新',
-        content: `【系统通知】协作组「${mutation.group.name}」的目标已更新：\n${mutation.group.goal || '（已清空，以用户随后指令为准）'}\n后续工作以新目标为准；如与进行中的任务冲突，向 lead 或用户确认。`,
-        clientMessageId: `group-goal:${shortId(mutation.group.id)}:${shortId(member.slot.id)}:${at}`
-      }))
-    }
-    return after
+    return this.withEffects('goal', before, mutation.group, (observation) => {
+      const after = this.projectAfter(observation)
+      const view = this.viewOf(after, mutation.group.id)
+      for (const member of view?.members ?? []) {
+        this.safely(
+          '通知成员组目标已更新',
+          () =>
+            this.collaboration.createMessage({
+              runId,
+              sender: { type: 'operator' },
+              recipient: { type: 'agent', slotId: member.slot.id },
+              kind: 'notice',
+              subject: '协作组目标已更新',
+              content: `【系统通知】协作组「${mutation.group.name}」的目标已更新：\n${mutation.group.goal || '（已清空，以用户随后指令为准）'}\n后续工作以新目标为准；如与进行中的任务冲突，向 lead 或用户确认。`,
+              clientMessageId: `group-goal:${shortId(mutation.group.id)}:${shortId(member.slot.id)}:${at}`
+            }),
+          observation,
+          { kind: 'goal-notice', slotId: member.slot.id }
+        )
+      }
+      return after
+    })
   }
 
   /**
@@ -182,25 +254,38 @@ export class TeamGroupService {
     const { runId, snapshot: before } = this.requirePool()
     const at = this.now()
     const previous = this.viewOf(before, input.groupId)?.group
-    const mutation = this.repository.setGroupPlanPolicy({ groupId: input.groupId, planPolicy: input.planPolicy, at })
-    const after = this.team.getSnapshot()
-    const view = this.viewOf(after, mutation.group.id)
-    if (!view || !previous || groupMembersMayPlan(previous) === groupMembersMayPlan(mutation.group)) return after
-    const opened = groupMembersMayPlan(mutation.group)
-    for (const member of view.members) {
-      this.safely('通知成员规划策略已更新', () => this.collaboration.createMessage({
-        runId,
-        sender: { type: 'operator' },
-        recipient: { type: 'agent', slotId: member.slot.id },
-        kind: 'notice',
-        subject: '协作组规划策略已更新',
-        content: opened
-          ? `【系统通知】协作组「${mutation.group.name}」现在允许全体成员规划任务：收到用户明确要求后可用 team_task({action:'plan', tasks:[...]}) 创建任务，系统会自动分派。先调用 team_check_in 刷新简报。`
-          : `【系统通知】协作组「${mutation.group.name}」不再允许成员规划任务：任务改由用户在拾光里创建并自动分派；已创建的任务不受影响。先调用 team_check_in 刷新简报。`,
-        clientMessageId: `group-plan-policy:${shortId(mutation.group.id)}:${shortId(member.slot.id)}:${at}`
-      }))
-    }
-    return after
+    const mutation = this.repository.setGroupPlanPolicy({
+      groupId: input.groupId,
+      planPolicy: input.planPolicy,
+      at
+    })
+    return this.withEffects('policy', before, mutation.group, (observation) => {
+      const after = this.projectAfter(observation)
+      const view = this.viewOf(after, mutation.group.id)
+      if (!view || !previous || groupMembersMayPlan(previous) === groupMembersMayPlan(mutation.group))
+        return after
+      const opened = groupMembersMayPlan(mutation.group)
+      for (const member of view.members) {
+        this.safely(
+          '通知成员规划策略已更新',
+          () =>
+            this.collaboration.createMessage({
+              runId,
+              sender: { type: 'operator' },
+              recipient: { type: 'agent', slotId: member.slot.id },
+              kind: 'notice',
+              subject: '协作组规划策略已更新',
+              content: opened
+                ? `【系统通知】协作组「${mutation.group.name}」现在允许全体成员规划任务：收到用户明确要求后可用 team_task({action:'plan', tasks:[...]}) 创建任务，系统会自动分派。先调用 team_check_in 刷新简报。`
+                : `【系统通知】协作组「${mutation.group.name}」不再允许成员规划任务：任务改由用户在拾光里创建并自动分派；已创建的任务不受影响。先调用 team_check_in 刷新简报。`,
+              clientMessageId: `group-plan-policy:${shortId(mutation.group.id)}:${shortId(member.slot.id)}:${at}`
+            }),
+          observation,
+          { kind: 'policy-notice', slotId: member.slot.id }
+        )
+      }
+      return after
+    })
   }
 
   /**
@@ -212,19 +297,37 @@ export class TeamGroupService {
     const { snapshot } = this.requirePool()
     const view = this.viewOf(snapshot, input.groupId)
     if (!view) throw new TaskPoolError('group_not_found', '协作组不存在或不属于当前会话池')
-    if (view.group.status !== 'active') throw new TaskPoolError('group_not_active', '协作组已解散，不能再规划任务')
+    if (view.group.status !== 'active')
+      throw new TaskPoolError('group_not_active', '协作组已解散，不能再规划任务')
     const memberBySlot = new Map(view.members.map((member) => [member.slot.id, member]))
     for (const task of input.tasks) {
-      const required = [...new Set((task.requiredCapabilities ?? []).map((item) => item.trim()).filter(Boolean))]
+      const required = [
+        ...new Set((task.requiredCapabilities ?? []).map((item) => item.trim()).filter(Boolean))
+      ]
       if (task.targetSlotId) {
         const target = memberBySlot.get(task.targetSlotId.trim())
-        if (!target) throw new TaskPoolError('target_slot_not_found', `指定席位不属于协作组「${view.group.name}」：${task.targetSlotId}`)
+        if (!target)
+          throw new TaskPoolError(
+            'target_slot_not_found',
+            `指定席位不属于协作组「${view.group.name}」：${task.targetSlotId}`
+          )
         const missing = required.filter((capability) => !target.role.capabilities.includes(capability))
         if (missing.length) {
-          throw new TaskPoolError('target_capability_mismatch', `${target.role.name} 不具备能力 ${missing.join('、')}`)
+          throw new TaskPoolError(
+            'target_capability_mismatch',
+            `${target.role.name} 不具备能力 ${missing.join('、')}`
+          )
         }
-      } else if (required.length && !view.members.some((member) => required.every((capability) => member.role.capabilities.includes(capability)))) {
-        throw new TaskPoolError('team_capability_unavailable', `协作组「${view.group.name}」没有成员同时具备能力：${required.join('、')}`)
+      } else if (
+        required.length &&
+        !view.members.some((member) =>
+          required.every((capability) => member.role.capabilities.includes(capability))
+        )
+      ) {
+        throw new TaskPoolError(
+          'team_capability_unavailable',
+          `协作组「${view.group.name}」没有成员同时具备能力：${required.join('、')}`
+        )
       }
     }
     return this.tasks.planTasks(view.group.id, input.tasks)
@@ -240,12 +343,16 @@ export class TeamGroupService {
       throw new TaskPoolError('group_run_inactive', '会话池已结束，不能再迁移成员身份')
     }
     const slotId = sourceSlotId.trim()
-    const view = snapshot.groups.find((candidate) => (
-      candidate.group.status === 'active' && candidate.members.some((member) => member.slot.id === slotId)
-    ))
+    const view = snapshot.groups.find(
+      (candidate) =>
+        candidate.group.status === 'active' && candidate.members.some((member) => member.slot.id === slotId)
+    )
     const source = view?.members.find((member) => member.slot.id === slotId)
     if (!view || !source) {
-      throw new TaskPoolError('transfer_source_not_grouped', '该席位不在任何协作组内；独立席位直接用会话上下文交接')
+      throw new TaskPoolError(
+        'transfer_source_not_grouped',
+        '该席位不在任何协作组内；独立席位直接用会话上下文交接'
+      )
     }
     const candidates: MembershipTransferCandidate[] = snapshot.members
       .filter((member) => member.slot.solo === true)
@@ -282,7 +389,11 @@ export class TeamGroupService {
    * 追加 lead_changed——那条模板会让它去 team_check_in）。审计行在 team_failovers
    *（reason='manual_membership_transfer'）。
    */
-  transferMembership(input: { groupId: string; fromSlotId: string; toSlotId: string }): MembershipTransferResult {
+  transferMembership(input: {
+    groupId: string
+    fromSlotId: string
+    toSlotId: string
+  }): MembershipTransferResult {
     const { runId, snapshot: before } = this.requirePool()
     const at = this.now()
     const mutation = this.repository.transferGroupMembership({
@@ -291,60 +402,138 @@ export class TeamGroupService {
       toSlotId: input.toSlotId,
       at
     })
-    const after = this.team.getSnapshot()
-    const view = this.viewOf(after, mutation.group.id)
-    const leadLabel = view ? groupLeadLabel(view) : undefined
+    return this.withEffects('transfer', before, mutation.group, (observation) => {
+      const after = this.projectAfter(observation)
+      const view = this.viewOf(after, mutation.group.id)
+      const leadLabel = view ? groupLeadLabel(view) : undefined
 
-    const settled = this.settleDeparture({ runId, before, left: mutation.from, groupId: mutation.group.id, at })
-    this.sendMembershipNotice('left', mutation.from, mutation.group, undefined)
-    this.sendMembershipNotice('joined', mutation.to, mutation.group, leadLabel)
-    if (mutation.transferredLead && mutation.to.channelId) {
-      this.send(mutation.to.channelId, buildMembershipNotice({
-        kind: 'lead_changed', channelId: mutation.to.channelId, group: mutation.group, leadLabel, becameLead: true
-      }))
-    }
-
-    // 有效 lead 是 B 之外的成员：告知它成员换人与任务回队（团队消息，非成员关系通知）。
-    const lead = view ? effectiveLeadOf(view) : undefined
-    if (lead && lead.slot.id !== mutation.to.slotId) {
-      this.safely('通知 lead 成员身份已迁移', () => this.collaboration.createMessage({
+      const settled = this.settleDeparture({
         runId,
-        sender: { type: 'operator' },
-        recipient: { type: 'agent', slotId: lead.slot.id },
-        kind: 'notice',
-        subject: '成员身份已迁移',
-        content: `【系统通知】协作组「${mutation.group.name}」的成员身份已迁移：「${mutation.from.roleName} · CH-${mutation.from.channelId ?? '?'}」→「CH-${mutation.to.channelId ?? '?'}」（角色不变）。`
-          + departureFollowUp(settled),
-        clientMessageId: `group-membership-transfer:${shortId(mutation.group.id)}:${shortId(mutation.to.slotId)}:${at}`
-      }))
-    }
+        before,
+        left: mutation.from,
+        groupId: mutation.group.id,
+        at,
+        observation
+      })
+      this.sendMembershipNotice('left', mutation.from, mutation.group, undefined, observation)
+      this.sendMembershipNotice('joined', mutation.to, mutation.group, leadLabel, observation)
+      if (mutation.transferredLead && mutation.to.channelId) {
+        this.send(
+          mutation.to.channelId,
+          buildMembershipNotice({
+            kind: 'lead_changed',
+            channelId: mutation.to.channelId,
+            group: mutation.group,
+            leadLabel,
+            becameLead: true
+          }),
+          observation,
+          mutation.to.slotId,
+          'lead_changed'
+        )
+      }
 
-    return {
-      groupId: mutation.group.id,
-      fromSlotId: mutation.from.slotId,
-      toSlotId: mutation.to.slotId,
-      toChannelId: mutation.to.channelId,
-      roleName: mutation.to.roleName,
-      transferredLead: mutation.transferredLead,
-      failover: mutation.failover,
-      releasedTaskIds: settled.released
-    }
+      // 有效 lead 是 B 之外的成员：告知它成员换人与任务回队（团队消息，非成员关系通知）。
+      const lead = view ? effectiveLeadOf(view) : undefined
+      if (lead && lead.slot.id !== mutation.to.slotId) {
+        this.safely(
+          '通知 lead 成员身份已迁移',
+          () =>
+            this.collaboration.createMessage({
+              runId,
+              sender: { type: 'operator' },
+              recipient: { type: 'agent', slotId: lead.slot.id },
+              kind: 'notice',
+              subject: '成员身份已迁移',
+              content:
+                `【系统通知】协作组「${mutation.group.name}」的成员身份已迁移：「${mutation.from.roleName} · CH-${mutation.from.channelId ?? '?'}」→「CH-${mutation.to.channelId ?? '?'}」（角色不变）。` +
+                departureFollowUp(settled),
+              clientMessageId: `group-membership-transfer:${shortId(mutation.group.id)}:${shortId(mutation.to.slotId)}:${at}`
+            }),
+          observation,
+          { kind: 'lead-notice', slotId: lead.slot.id }
+        )
+      }
+
+      return {
+        groupId: mutation.group.id,
+        fromSlotId: mutation.from.slotId,
+        toSlotId: mutation.to.slotId,
+        toChannelId: mutation.to.channelId,
+        roleName: mutation.to.roleName,
+        transferredLead: mutation.transferredLead,
+        failover: mutation.failover,
+        releasedTaskIds: settled.released
+      }
+    })
   }
 
   dissolveGroup(input: { groupId: string }): TeamControlSnapshot {
-    const { runId } = this.requirePool()
+    const { runId, snapshot: before } = this.requirePool()
     const at = this.now()
     const mutation = this.repository.dissolveGroup({ groupId: input.groupId, at })
-    const after = this.team.getSnapshot()
-    // 任务书 §7 规则 5：未完成任务取消（attempt / review 一并收口）；消息与记忆由各自仓储保留只读。
-    this.safely('取消已解散协作组的任务', () => this.tasks.closeGroup(runId, mutation.group.id, GROUP_DISSOLVED_REASON))
-    for (const left of mutation.left) {
-      this.safely('标记已解散协作组成员的待回应消息', () => this.collaboration.orphanPendingReceipts({
-        runId, slotId: left.slotId, groupId: mutation.group.id, at
-      }))
-      this.sendMembershipNotice('dissolved', left, mutation.group, undefined)
+    return this.withEffects('dissolve', before, mutation.group, (observation) => {
+      const after = this.projectAfter(observation)
+      // 任务书 §7 规则 5：未完成任务取消（attempt / review 一并收口）；消息与记忆由各自仓储保留只读。
+      this.safely(
+        '取消已解散协作组的任务',
+        () => this.tasks.closeGroup(runId, mutation.group.id, GROUP_DISSOLVED_REASON),
+        observation,
+        { kind: 'close-tasks' }
+      )
+      for (const left of mutation.left) {
+        this.safely(
+          '标记已解散协作组成员的待回应消息',
+          () =>
+            this.collaboration.orphanPendingReceipts({
+              runId,
+              slotId: left.slotId,
+              groupId: mutation.group.id,
+              at
+            }),
+          observation,
+          { kind: 'orphan', slotId: left.slotId }
+        )
+        this.sendMembershipNotice('dissolved', left, mutation.group, undefined, observation)
+      }
+      return after
+    })
+  }
+
+  private withEffects<T>(
+    kind: GroupOperationKind,
+    before: TeamControlSnapshot,
+    group: TeamGroup,
+    operation: (observation?: GroupEffectsObservation) => T
+  ): T {
+    let observation: GroupEffectsObservation | undefined
+    try {
+      if (this.effects)
+        observation = new GroupEffectsObservation(kind, before, group, this.effectsOwner, this.effects)
+    } catch {
+      try {
+        this.effects?.unavailable?.()
+      } catch {}
     }
-    return after
+    try {
+      const result = operation(observation)
+      const summary = observation?.finish('completed')
+      return kind === 'transfer' && summary ? { ...result, groupEffects: summary } : result
+    } catch (error) {
+      observation?.finish('interrupted')
+      throw error
+    }
+  }
+  private projectAfter(observation?: GroupEffectsObservation): TeamControlSnapshot {
+    const snapshot = this.team.getSnapshot()
+    try {
+      observation?.project(snapshot)
+    } catch {
+      try {
+        this.effects?.unavailable?.()
+      } catch {}
+    }
+    return snapshot
   }
 
   /** 组操作只在会话池（独立批次 run）里有意义；仓储还会再校验一次池状态。 */
@@ -353,7 +542,10 @@ export class TeamGroupService {
     const run = snapshot.activeRun
     if (!run) throw new TaskPoolError('run_not_found', '当前没有活动的运行')
     if (!isSessionPoolRun(run)) {
-      throw new TaskPoolError('group_requires_pool_run', '协作组只能在会话池（独立批次）内创建；一次性团队 run 不支持分组')
+      throw new TaskPoolError(
+        'group_requires_pool_run',
+        '协作组只能在会话池（独立批次）内创建；一次性团队 run 不支持分组'
+      )
     }
     return { runId: run.id, snapshot }
   }
@@ -362,9 +554,14 @@ export class TeamGroupService {
     return snapshot.groups.find((view) => view.group.id === groupId)
   }
 
-  private notifyJoined(mutation: TeamGroupMutation, view: TeamGroupView | undefined): void {
+  private notifyJoined(
+    mutation: TeamGroupMutation,
+    view: TeamGroupView | undefined,
+    observation?: GroupEffectsObservation
+  ): void {
     const leadLabel = view ? groupLeadLabel(view) : undefined
-    for (const joined of mutation.joined) this.sendMembershipNotice('joined', joined, mutation.group, leadLabel)
+    for (const joined of mutation.joined)
+      this.sendMembershipNotice('joined', joined, mutation.group, leadLabel, observation)
   }
 
   /**
@@ -378,47 +575,138 @@ export class TeamGroupService {
     left: GroupMembershipChange
     groupId: string
     at: number
+    observation?: GroupEffectsObservation
   }): DepartureSettlement {
+    const observation = input.observation
     const agentSessionId = memberOf(input.before, input.left.slotId)?.binding?.agentSessionId
     const released = agentSessionId
-      ? this.safely('释放出组成员的任务租约', () => this.tasks.releaseAgentWork({
-        agentSessionId, slotId: input.left.slotId, reason: MEMBER_LEFT_REASON
-      })) ?? []
-      : []
-    const orphaned = this.safely('标记出组成员的待回应消息', () => this.collaboration.orphanPendingReceipts({
-      runId: input.runId, slotId: input.left.slotId, groupId: input.groupId, at: input.at
-    })) ?? []
-    return { released, orphaned: orphaned.length }
+      ? this.safely(
+          '释放出组成员的任务租约',
+          () =>
+            this.tasks.releaseAgentWork({
+              agentSessionId,
+              slotId: input.left.slotId,
+              reason: MEMBER_LEFT_REASON
+            }),
+          observation,
+          { kind: 'release', slotId: input.left.slotId }
+        )
+      : undefined
+    if (!agentSessionId)
+      observation?.effect({
+        kind: 'release',
+        slotId: input.left.slotId,
+        status: 'not-attempted',
+        reason: 'no-binding'
+      })
+    const orphaned = this.safely(
+      '标记出组成员的待回应消息',
+      () =>
+        this.collaboration.orphanPendingReceipts({
+          runId: input.runId,
+          slotId: input.left.slotId,
+          groupId: input.groupId,
+          at: input.at
+        }),
+      observation,
+      { kind: 'orphan', slotId: input.left.slotId }
+    )
+    return {
+      released: released ?? [],
+      orphaned: orphaned?.length ?? 0,
+      releaseConfirmed: Array.isArray(released),
+      orphanConfirmed: Array.isArray(orphaned)
+    }
   }
 
   private sendMembershipNotice(
     kind: Exclude<MembershipNoticeKind, 'lead_changed'>,
     change: GroupMembershipChange,
     group: Pick<TeamGroup, 'name' | 'goal'>,
-    leadLabel: string | undefined
+    leadLabel: string | undefined,
+    observation?: GroupEffectsObservation
   ): void {
-    if (!change.channelId) return
-    this.send(change.channelId, buildMembershipNotice({
-      kind, channelId: change.channelId, group, roleName: change.roleName, leadLabel
-    }))
+    if (!change.channelId) {
+      observation?.effect({
+        kind: 'membership',
+        slotId: change.slotId,
+        notice: kind,
+        status: 'not-attempted',
+        reason: 'no-channel'
+      })
+      return
+    }
+    this.send(
+      change.channelId,
+      buildMembershipNotice({
+        kind,
+        channelId: change.channelId,
+        group,
+        roleName: change.roleName,
+        leadLabel
+      }),
+      observation,
+      change.slotId,
+      kind
+    )
   }
 
-  private send(channelId: string, text: string): void {
-    this.safely(`向 CH-${channelId} 投递成员关系通知`, () => this.bridge.sendMessage({ channelId, text, kind: 'membership' }))
+  private send(
+    channelId: string,
+    text: string,
+    observation?: GroupEffectsObservation,
+    slotId?: string,
+    notice?: GroupEffectFact['notice']
+  ): void {
+    this.safely(
+      `向 CH-${channelId} 投递成员关系通知`,
+      () => this.bridge.sendMessage({ channelId, text, kind: 'membership' }),
+      observation,
+      { kind: 'membership', channelId, ...(slotId ? { slotId } : {}), ...(notice ? { notice } : {}) }
+    )
   }
 
-  private safely<T>(step: string, operation: () => T): T | undefined {
+  private safely<T>(
+    step: string,
+    operation: () => T,
+    observation?: GroupEffectsObservation,
+    fact?: Pick<GroupEffectFact, 'kind' | 'slotId' | 'channelId' | 'notice'>
+  ): T | undefined {
+    let value: T
     try {
-      return operation()
+      value = operation()
     } catch (error) {
-      this.onerror(new Error(`[team-group] ${step}失败：${error instanceof Error ? error.message : String(error)}`))
+      try {
+        this.onerror(
+          new Error(`[team-group] ${step}失败：${error instanceof Error ? error.message : String(error)}`)
+        )
+      } finally {
+        try {
+          if (observation && fact)
+            observation.effect({ ...fact, status: 'unconfirmed', reason: groupEffectErrorReason(error) })
+        } catch {
+          try {
+            this.effects?.unavailable?.()
+          } catch {}
+        }
+      }
       return undefined
     }
+    try {
+      if (observation && fact) observation.effect({ ...fact, ...observation.receipt(fact.kind, value) })
+    } catch {
+      try {
+        this.effects?.unavailable?.()
+      } catch {}
+    }
+    return value
   }
 }
 
 /** 出组收尾的结果：释放回队列的任务 id、标为孤儿的待回应消息数。 */
 interface DepartureSettlement {
+  releaseConfirmed: boolean
+  orphanConfirmed: boolean
   released: string[]
   orphaned: number
 }
@@ -426,10 +714,16 @@ interface DepartureSettlement {
 /** 给 lead 的系统通知里、紧接在事由之后的收尾说明（任务回队 / 消息孤儿）。 */
 function departureFollowUp(settled: DepartureSettlement): string {
   return [
-    settled.released.length
-      ? `与其相关的 ${settled.released.length} 项任务已回到队列（持有的租约与验收已释放，定向给该席位的已清空定向），等待组内其他成员领取。`
-      : '其名下没有进行中或定向给它的任务。',
-    settled.orphaned ? `发给该成员、尚未回应的 ${settled.orphaned} 条消息已标记为无人应答，不会再催办。` : ''
+    !settled.releaseConfirmed
+      ? '原服务未确认任务释放结果；不能据此断言没有任务或已全部回队。'
+      : settled.released.length
+        ? `与其相关的 ${settled.released.length} 项任务已回到队列（持有的租约与验收已释放，定向给该席位的已清空定向），等待组内其他成员领取。`
+        : '其名下没有进行中或定向给它的任务。',
+    !settled.orphanConfirmed
+      ? ' 待回应消息收尾结果未确认，不据此推断已经停止催办。'
+      : settled.orphaned
+        ? `发给该成员、尚未回应的 ${settled.orphaned} 条消息已标记为无人应答，不会再催办。`
+        : ''
   ].join('')
 }
 

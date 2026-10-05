@@ -281,6 +281,22 @@ UI 只沿用原中心/只读查看器，隔离 `notifications=restore` mock 和 
 
 **完整目标仍未完成**：人工记忆请求这一点已接入闭环，其余结构化 MCP 写／组副作用诊断、模型／用量／统计源健康、整个旧 scope 消失与相等 revision 异内容、其他 feed 的恢复关联、长期容量与完整序列、正式包／完整应用及 Windows/macOS 真权限／声音／勿扰验收仍须逐项完成。本批不安装、重启 Cursor、处理真实账号、push 或发版；完整通知目标继续 active，不能把本批通过称为整套完成。
 
+### 第十六批：原组操作后续结果诊断
+
+建组、加人、移出、主控、目标、规划策略、迁移、解散这八类原操作接入 post-return 观察。记录关系仓储已经返回与后续步骤是否确有回执，不能仅凭关系快照成功推断全部副作用完成。原服务仍按同一顺序、参数和次数运行，没有新业务查询、等待、重试或回滚。观察接收数据而非业务 thunk；通知异常不进入原 onerror，原 onerror 若抛出仍按原位置中断。读展示失败保留原异常与已经返回的关系事实，不假称原事务未发生。
+
+实测修正了原出组说明的一个错误：任务释放／待回应消息收尾抛错后回退空数组，会被错误描述为“没有任务”。现在区分真正返回空数组、绑定未确认未调用、调用没返回确认；失败路径不再向主控伪报无任务或已停止催办。原成功正文、消息数量、令牌、代次、目标选择和释放逻辑均保留。
+
+私有 CAS 保存原实例、操作身份、范围、结构化步骤与有界进度。正常完成不写成功历史；普通设置也不会因此刷中心。已保存开始但没有最终回执的旧实例只恢复为待核对，不补播、不执行协调器或原操作。该阶段不能证明任何没有保存的步骤，也不声称崩溃后逐步无损恢复。迁移的副作用警告归入既有身份／队列父提醒，真正核验父提醒落盘且原身份／范围一致才安静化独立诊断；没有落盘证明不会静默吞掉提醒。排队／原协作记录返回不是 Agent 阅读，交接回复也不能证明任务释放已确认。队列检查点用有界摘要而非复制完整目标列表。
+
+运行页沿用原卡片，只加一条“先前的组后续事项待核对”，默认折叠，详细事实自行展开；原页精确可见时不重复全局提醒。一次私有 run 范围查询＋版本化推送，无新业务轮询，不因消息到达刷新整个会话树。迁移原结果页也区分角色写入和未确认的通知／收尾；没有回执不再保证下一次轮询一定收到。无彩色左轨、装饰胶囊或通知重跑按钮。阅读不解决原任务或改 Agent 回执。
+
+本批证据位于实现树 preview-screenshots/notification-implementation：full-regression-group-effects-final.log、typecheck-group-effects-final.log、build-group-effects-final.log、dead-code-group-effects-final.log、node-group-effects-final.log／electron-group-effects-group-effects-final.log，及 mcp-smoke-group-effects-final.log／channel-smoke-group-effects-final.log。原真实编译 worker、退出恢复、保留、排空、原 native 备份恢复及上下文隔离脚本同时回归。实际隔离 repositories＋原服务测试检查发送／读取次数、拒绝写的零 post-return 观察、读取中断、失败仍继续其他副作用、observer／logger 隔离、不同原实例恢复、未知私有 ACK、迁移父关联、队列晚到和当前 UI 读取／作用域。真实 Node/macOS Electron built-worker fixture 验证原角色改动仍生效、发送次数不变、真未确认回执、一份未读、无目标／原错误进入通知，无任何模型／账号／Cursor 调用。
+
+ui/group-effects-compact-light.jpg、ui/group-effects-details-light.jpg、ui/group-effects-details-dark-narrow.jpg 是真实产品组件的 mock UI；深色有效 CSS viewport 400×323，入口和文字换行正常，局部 clientWidth=scrollWidth，无横向溢出。阅读后未读收口但原记录内容仍保留。临时样板／视口／主题／标签已恢复并关闭；构造失败的九个自有临时 fixture 也已精确清理，之后成功与异常路径均会清理。
+
+**完整目标仍未完成**：这里只证明桌面原组仓储返回后的观察，不把所有 MCP 写入失败宣称接入。事务返回前的未知结果、结构化 MCP 写诊断、模型／用量／统计源健康、旧 scope 消失／同 revision 异内容、其他 feeds 恢复、长期容量／全序列、正式应用／打包与 Windows/macOS 真通知权限／声音／勿扰仍需后续完成。未 production main、实际账号处理、Cursor 重启、OS 送达、安装、推送或发布。本批是本地提交，不缩小或结束完整目标。
+
 下面保留完整要求，不因前三批已有成果缩小。已实现部分仍需匹配该项范围验收；未实现部分继续开工。
 
 1. 通知中心、轻量顶栏入口、单张提醒和独立 renderer store。支持待处理／未读／全部、查询范围、分页、详情、关闭、阅读、归档、确认清理和适当偏好；减少动画、长内容、键盘与窄窗需验收。
