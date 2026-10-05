@@ -4,7 +4,7 @@ import type { ConversationEntry, ProcessBlock } from '../domain/conversation-ent
 import type { PlanTaskInput, TaskPoolSnapshot, TeamTask } from '../domain/task-pool'
 import type { TeamControlSnapshot, TeamGroupPlanPolicy } from '../domain/team-control'
 import type { TeamCollaborationSnapshot } from '../domain/team-collaboration'
-import type { TeamMemoryInspection,TeamMemoryInspectionRequest } from '../domain/team-memory-inspection'
+import type { TeamMemoryInspection,TeamMemoryInspectionRequest,TeamMemoryReviewRequest,TeamMemoryReviewResult } from '../domain/team-memory-inspection'
 import type { CursorAccountMetadata, CursorRuntimeAccountMatch } from '../domain/cursor-account'
 import type { CursorProUpgradeResult } from '../domain/cursor-checkout-profile'
 import type { CursorMembershipStatus } from '../domain/cursor-membership'
@@ -501,6 +501,7 @@ export interface SgDesktopApi {
   planTeamGroupTasks(input: TeamGroupPlanTasksInput): Promise<TeamTask[]>
   getTeamCollaborationSnapshot(): Promise<TeamCollaborationSnapshot>
   getTeamMemoryInspection?(request:TeamMemoryInspectionRequest):Promise<TeamMemoryInspection>
+  reviewTeamMemory?(request:TeamMemoryReviewRequest):Promise<TeamMemoryReviewResult>
   onSnapshot(listener: (snapshot: DesktopSnapshot) => void): () => void
   /** 当前 TeamRun 的 Cursor 会话用量快照；结束冻结，下轮启动清零。 */
   getCursorUsageSnapshot(): Promise<CursorUsageSnapshot>
@@ -643,5 +644,6 @@ export const IPC = {
   teamGroupPlanTasks: 'team-group:plan-tasks',
   teamCollaborationGet: 'team-collaboration:get',
   teamMemoryInspect:'team-memory:inspect',
+  teamMemoryReview:'team-memory:review',
   teamCollaborationSnapshot: 'team-collaboration:snapshot'
 } as const

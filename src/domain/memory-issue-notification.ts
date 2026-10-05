@@ -1,12 +1,24 @@
-import { NOTIFICATION_SOURCE_BATCH_LIMIT, validateNotificationDraft, type NotificationDraft, type NotificationScope } from './notification'
+import {
+  NOTIFICATION_SOURCE_BATCH_LIMIT,
+  validateNotificationDraft,
+  type NotificationDraft,
+  type NotificationScope
+} from './notification'
 import type { memoryRevisionIssue } from './team-memory-inspection'
-import { nativeRevisionRegressed, validateNativeRebaseState, type NativeVersionEvidence, type NativeRebaseState } from './native-rebase'
+import { validateMemoryOperatorProof, type MemoryOperatorReviewProof } from './memory-operator-review'
+import {
+  nativeRevisionRegressed,
+  validateNativeRebaseState,
+  type NativeVersionEvidence,
+  type NativeRebaseState
+} from './native-rebase'
 export interface MemoryIssueFact {
   identity: string
   id: string
   version: number
   title: string
-  state: ReturnType<typeof memoryRevisionIssue>
+  state: ReturnType<typeof memoryRevisionIssue> | 'operator-review' | 'operator-unconfirmed'
+  operatorReview?: MemoryOperatorReviewProof
   scope: NotificationScope
   ceased: boolean
 }
@@ -19,6 +31,7 @@ export interface MemoryIssueInput extends NativeVersionEvidence {
 }
 interface MemoryIssueRow extends MemoryIssueFact {
   priorData?: boolean
+  requestEpoch?: number
   recorded: boolean
 }
 export interface MemoryIssueState extends NativeRebaseState {
@@ -34,7 +47,9 @@ const previousMemoryLabel: Record<NonNullable<MemoryIssueFact['state']>, string>
   proposed: '待审查',
   accepted: '已采纳',
   rejected: '已驳回',
-  superseded: '已被取代'
+  superseded: '已被取代',
+  'operator-review': '等待用户审核',
+  'operator-unconfirmed': '原人工请求待核对'
 }
 export function readMemoryIssueState(value: unknown, key: string): MemoryIssueState | undefined {
   if (value === undefined) return undefined
@@ -65,9 +80,24 @@ export function readMemoryIssueState(value: unknown, key: string): MemoryIssueSt
       typeof row.recorded !== 'boolean' ||
       typeof row.ceased !== 'boolean' ||
       (row.priorData !== undefined && typeof row.priorData !== 'boolean') ||
-      (row.state !== undefined && !['conflict', 'eligible', 'unconfirmed', 'proposed', 'accepted', 'rejected', 'superseded'].includes(row.state))
+      (row.requestEpoch !== undefined && (!Number.isSafeInteger(row.requestEpoch) || row.requestEpoch < 0)) ||
+      (row.state !== undefined &&
+        ![
+          'conflict',
+          'eligible',
+          'unconfirmed',
+          'proposed',
+          'accepted',
+          'rejected',
+          'superseded',
+          'operator-review',
+          'operator-unconfirmed'
+        ].includes(row.state))
     )
       throw Error('记忆通知事实无效')
+    if (row.operatorReview !== undefined) validateMemoryOperatorProof(row.operatorReview)
+    if (['operator-review', 'operator-unconfirmed'].includes(row.state ?? '') && !row.operatorReview)
+      throw Error('人工审核事项缺少原请求证据')
     validateNotificationDraft({
       key: 'memory-decode',
       category: 'team',
@@ -83,8 +113,14 @@ export function readMemoryIssueState(value: unknown, key: string): MemoryIssueSt
   }
   return state
 }
-export function reduceMemoryIssueNotifications(previous: MemoryIssueState | undefined, input: MemoryIssueInput, baseline: boolean, revision: number) {
-  if (previous && input.revision < previous.revision && !input.currentRead) return { state: previous, drafts: [] }
+export function reduceMemoryIssueNotifications(
+  previous: MemoryIssueState | undefined,
+  input: MemoryIssueInput,
+  baseline: boolean,
+  revision: number
+) {
+  if (previous && input.revision < previous.revision && !input.currentRead)
+    return { state: previous, drafts: [] }
   const rows = { ...previous?.rows },
     drafts: NotificationDraft[] = []
   const regression = nativeRevisionRegressed(previous, input),
@@ -97,7 +133,10 @@ export function reduceMemoryIssueNotifications(previous: MemoryIssueState | unde
         missing: Object.keys(rows).filter((id) => !present.has(id))
       }
     : previous?.pendingRebase
-      ? { ...previous.pendingRebase, missing: [...previous.pendingRebase.missing] }
+      ? {
+          ...previous.pendingRebase,
+          missing: [...previous.pendingRebase.missing]
+        }
       : undefined
   if (pending) {
     while (pending.missing.length && drafts.length < NOTIFICATION_SOURCE_BATCH_LIMIT - 1) {
@@ -115,7 +154,11 @@ export function reduceMemoryIssueNotifications(previous: MemoryIssueState | unde
         source: '共享记忆',
         title: '这项提醒属于先前数据版本',
         detail: `此前修订 ${pending.from} 保存了这项提醒。本次较早修订 ${pending.to} 的完整读取没有这项修订事项；不推断已采纳、驳回、删除或清理。`,
-        scope: { ...old.scope, memoryId: old.id, memoryVersion: String(old.version) },
+        scope: {
+          ...old.scope,
+          memoryId: old.id,
+          memoryVersion: String(old.version)
+        },
         tone: 'info',
         attention: 'notice',
         state: 'expired',
@@ -129,36 +172,59 @@ export function reduceMemoryIssueNotifications(previous: MemoryIssueState | unde
     }
   }
   let complete = true
-  for (const fact of input.facts) {
-    const old = rows[fact.identity]
-    if (!old && fact.state !== 'conflict') continue
-    const next = { ...fact, recorded: true }
+  for (const original of input.facts) {
+    const old = rows[original.identity]
+    const mutable = !['accepted', 'rejected', 'superseded'].includes(original.state ?? '') && !original.ceased
+    const operatorReview = original.operatorReview ?? old?.operatorReview
+    const newOperatorRequest = Boolean(
+      original.operatorReview && original.operatorReview.messageId !== old?.operatorReview?.messageId
+    )
+    const requestEpoch = (old?.requestEpoch ?? 0) + (newOperatorRequest ? 1 : 0)
+    const effective =
+      mutable && original.state !== 'conflict' && (original.operatorReview || old?.operatorReview)
+        ? original.operatorReview
+          ? ('operator-review' as const)
+          : ('operator-unconfirmed' as const)
+        : original.state
+    const fact = {
+      ...original,
+      state: effective,
+      ...(operatorReview ? { operatorReview } : {})
+    }
+    if (!old && fact.state !== 'conflict' && fact.state !== 'operator-review') continue
+    const next = { ...fact, recorded: true, ...(operatorReview ? { requestEpoch } : {}) }
     if (JSON.stringify(old) === JSON.stringify(next)) continue
     if (drafts.length >= NOTIFICATION_SOURCE_BATCH_LIMIT - (pending ? 1 : 0)) {
       complete = false
       break
     }
     rows[fact.identity] = next
-    const active = !fact.ceased && ['conflict', 'unconfirmed'].includes(fact.state ?? ''),
+    const active =
+        !fact.ceased &&
+        ['conflict', 'unconfirmed', 'operator-review', 'operator-unconfirmed'].includes(fact.state ?? ''),
       resolved = !fact.ceased && !active
     const state = fact.ceased ? 'expired' : (fact.state ?? 'unconfirmed'),
       key = `memory-issue:${fact.identity}`
     const title = fact.ceased
       ? '这项记忆提醒的运行范围已结束'
-      : state === 'conflict'
-        ? '共享记忆修订需要重新核对'
-        : state === 'unconfirmed'
-          ? '原记忆前置状态待核对'
-          : state === 'accepted'
-            ? '原记录确认这项记忆已采纳'
-            : state === 'rejected'
-              ? '原记录确认这项记忆已驳回'
-              : state === 'superseded'
-                ? '这项记忆已被后续条目取代'
-                : '这项修订在当前读取中仍待审查'
+      : state === 'operator-review'
+        ? '有一项共享记忆需要你审核'
+        : state === 'operator-unconfirmed'
+          ? '原人工审核请求待核对'
+          : state === 'conflict'
+            ? '共享记忆修订需要重新核对'
+            : state === 'unconfirmed'
+              ? '原记忆前置状态待核对'
+              : state === 'accepted'
+                ? '原记录确认这项记忆已采纳'
+                : state === 'rejected'
+                  ? '原记录确认这项记忆已驳回'
+                  : state === 'superseded'
+                    ? '这项记忆已被后续条目取代'
+                    : '这项修订在当前读取中仍待审查'
     drafts.push({
       key,
-      eventId: `${key}:${state}`,
+      eventId: `${key}:${state}${state === 'operator-review' ? `:${requestEpoch}` : ''}`,
       eventType: 'memory.issue',
       subjectState: state,
       category: 'team',
@@ -171,14 +237,25 @@ export function reduceMemoryIssueNotifications(previous: MemoryIssueState | unde
         `${fact.title}\n` +
         (fact.ceased
           ? '原提案状态没有被通知改写。结束提醒不等于提案已采纳、驳回或清理。'
-          : state === 'conflict'
-            ? '这项提案要取代的前置记忆已不再满足原审核条件。它本身仍待审查；不能把调度请求或冲突当作已采纳。'
-            : state === 'unconfirmed'
-              ? '当前快照没有确认前置条目，不能把缺失推断为冲突已解决。'
-              : state === 'eligible'
-                ? '当前前置条件允许原流程继续审查，提案本身仍未被采纳。通知没有代为审核或重提。'
-                : '这里只陈述原条目已确认的状态；通知没有代为审核，也没有写入新的记忆。'),
-      scope: { ...fact.scope, memoryId: fact.id, memoryVersion: String(fact.version) },
+          : state === 'operator-review'
+            ? `原流程${fact.operatorReview?.reason === 'timeout' ? '在本次观察中确认审核已超过等待时限' : '在本次观察中未找到独立且有权限的审核成员'}，已留下发给用户的原请求。你可以先查看提案与引用，再明确选择采纳或驳回；通知不会代为审核。`
+            : state === 'operator-unconfirmed'
+              ? '先前有原流程发给用户的审核请求；当前读取没有重新确认该请求，提案本身仍未采纳。通知保持待核对，不自动重提或推测已经处理。'
+              : state === 'conflict'
+                ? '这项提案要取代的前置记忆已不再满足原审核条件。它本身仍待审查；不能把调度请求或冲突当作已采纳。'
+                : state === 'unconfirmed'
+                  ? '当前快照没有确认前置条目，不能把缺失推断为冲突已解决。'
+                  : state === 'eligible'
+                    ? '当前前置条件允许原流程继续审查，提案本身仍未被采纳。通知没有代为审核或重提。'
+                    : '这里只陈述原条目已确认的状态；通知没有代为审核，也没有写入新的记忆。'),
+      scope: {
+        ...fact.scope,
+        memoryId: fact.id,
+        memoryVersion: String(fact.version),
+        ...(state === 'operator-review' && fact.operatorReview
+          ? { operatorRequestId: fact.operatorReview.messageId }
+          : {})
+      },
       target:
         fact.scope.workspaceId && fact.scope.runId
           ? {
@@ -197,10 +274,21 @@ export function reduceMemoryIssueNotifications(previous: MemoryIssueState | unde
       occurredAt: input.now,
       timeBasis: 'observed',
       sourceRevision: revision,
-      announce: !pending && !baseline && ((state === 'conflict' && !old) || (resolved && ['conflict', 'unconfirmed'].includes(old?.state ?? ''))),
+      announce:
+        !pending &&
+        !baseline &&
+        ((state === 'conflict' && !old) ||
+          (state === 'operator-review' && fact.operatorReview?.live && newOperatorRequest) ||
+          (resolved &&
+            ['conflict', 'unconfirmed', 'operator-review', 'operator-unconfirmed'].includes(
+              old?.state ?? ''
+            ))),
       renewAttention:
         (state === 'conflict' && (!old?.recorded || Boolean(pending && old?.state !== 'conflict'))) ||
-        (!pending && resolved && ['conflict', 'unconfirmed'].includes(old?.state ?? '')),
+        (state === 'operator-review' && newOperatorRequest) ||
+        (!pending &&
+          resolved &&
+          ['conflict', 'unconfirmed', 'operator-review', 'operator-unconfirmed'].includes(old?.state ?? '')),
       respectCleared: !pending || !active
     })
   }
@@ -215,7 +303,11 @@ export function reduceMemoryIssueNotifications(previous: MemoryIssueState | unde
       source: '共享记忆核对',
       title: '检测到较早的记忆数据版本',
       detail: `源修订 ${pending.from} → ${pending.to}。${complete ? '已按本次原读取重新投影提醒。' : '旧事项正在分批核对。'}先前已发生的确认结果只属于先前数据版本；没有重放提案、审核、队列或 Agent 回执，也不声明业务恢复完成。`,
-      scope: input.scope ?? input.facts[0]?.scope ?? (previous ? Object.values(previous.rows)[0]?.scope : undefined) ?? {},
+      scope:
+        input.scope ??
+        input.facts[0]?.scope ??
+        (previous ? Object.values(previous.rows)[0]?.scope : undefined) ??
+        {},
       target: input.scope?.runId ? { kind: 'run', runId: input.scope.runId } : undefined,
       tone: 'warning',
       attention: 'notice',

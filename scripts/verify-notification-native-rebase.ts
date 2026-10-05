@@ -11,6 +11,8 @@ import { SqliteTeamMemoryRepository } from '../src/infrastructure/team-memory/sq
 import { SqliteTaskPoolRepository } from '../src/infrastructure/task-pool/sqlite-task-pool-repository'
 import { TeamControlService } from '../src/application/team-control-service'
 import { TeamMemoryService } from '../src/application/team-memory-service'
+import { MemoryReviewCoordinator } from '../src/application/memory-review-coordinator'
+import { SqliteTeamCollaborationRepository } from '../src/infrastructure/team-collaboration/sqlite-team-collaboration-repository'
 import { TaskPoolService } from '../src/application/task-pool-service'
 import { connectGroupTopologyNotifications } from '../src/application/notifications/group-topology-notifications'
 import { connectMemoryIssueNotifications } from '../src/application/notifications/memory-issue-notifications'
@@ -40,7 +42,8 @@ let sends = 0
 function open() {
   const controlRepository = new SqliteTeamControlRepository(path),
     memoryRepository = new SqliteTeamMemoryRepository(path),
-    tasksRepository = new SqliteTaskPoolRepository(path)
+    tasksRepository = new SqliteTaskPoolRepository(path),
+    messages = new SqliteTeamCollaborationRepository(path)
   const control = new TeamControlService(controlRepository, {
     getSnapshot: () => frame,
     subscribe: () => () => {},
@@ -86,6 +89,7 @@ function open() {
     memory.dispose()
     control.dispose()
     tasksRepository.close()
+    messages.close()
     memoryRepository.close()
     controlRepository.close()
   }
@@ -93,6 +97,7 @@ function open() {
     controlRepository,
     memoryRepository,
     tasksRepository,
+    messages,
     control,
     memory,
     tasks,
@@ -111,7 +116,13 @@ try {
     workspaceId: 'restore-test',
     workspaceName: 'test',
     workspacePath: '/fixture-no-cursor',
-    members: ['1', '2'].map((channelId) => ({ channelId, roleTemplateKey: 'solo', avatarId: 'lead', skills: [], solo: true }))
+    members: ['1', '2'].map((channelId) => ({
+      channelId,
+      roleTemplateKey: 'solo',
+      avatarId: 'lead',
+      skills: [],
+      solo: true
+    }))
   })
   const runId = team.activeRun!.id,
     slots = team.members.map((member) => member.slot.id)
@@ -182,17 +193,28 @@ try {
   assert.ok(currentTasks.revision < before.tasks)
   assert.equal((await active.owner.page({ memoryId: second.id })).records[0]!.subjectState, 'conflict')
   assert.equal((await active.owner.page({ eventType: 'memory.issue' })).summary.pending, 1)
-  assert.equal((await active.owner.page({ key: `task:${originalTask.id}` })).records[0]!.subjectState, 'queued')
-  assert.equal((await active.owner.page({ key: `task:${newTask.id}` })).records[0]!.subjectState, 'prior-data')
   assert.equal(
-    (await active.owner.page({ eventType: 'group.topology' })).records.find((record) => record.scope.groupId === newGroup.id)!.subjectState,
+    (await active.owner.page({ key: `task:${originalTask.id}` })).records[0]!.subjectState,
+    'queued'
+  )
+  assert.equal(
+    (await active.owner.page({ key: `task:${newTask.id}` })).records[0]!.subjectState,
     'prior-data'
   )
   assert.equal(
-    (await active.owner.page({ eventType: 'group.topology' })).records.find((record) => record.scope.groupId === group.id)!.subjectState,
+    (await active.owner.page({ eventType: 'group.topology' })).records.find(
+      (record) => record.scope.groupId === newGroup.id
+    )!.subjectState,
+    'prior-data'
+  )
+  assert.equal(
+    (await active.owner.page({ eventType: 'group.topology' })).records.find(
+      (record) => record.scope.groupId === group.id
+    )!.subjectState,
     'active'
   )
-  for (const type of ['group.rebase', 'memory.rebase', 'task.rebase']) assert.equal((await active.owner.page({ eventType: type })).summary.total, 1)
+  for (const type of ['group.rebase', 'memory.rebase', 'task.rebase'])
+    assert.equal((await active.owner.page({ eventType: type })).summary.total, 1)
   assert.equal(
     active.events.some((event) => event.announcement),
     false
@@ -200,18 +222,129 @@ try {
   assert.equal(sends, 0)
   assert.equal(active.memory.getSnapshot().items[second.id]!.status, 'proposed')
   assert.equal(currentTasks.tasks[originalTask.id]!.status, 'queued')
-  assert.equal(active.tasksRepository.load().attempts && Object.keys(active.tasksRepository.load().attempts).length, 0)
+  assert.equal(
+    active.tasksRepository.load().attempts && Object.keys(active.tasksRepository.load().attempts).length,
+    0
+  )
   await active.close()
   active = open()
   active.control.getSnapshot()
   active.memory.getSnapshot()
   active.tasks.getSnapshot()
   await active.flush()
-  for (const type of ['group.rebase', 'memory.rebase', 'task.rebase']) assert.equal((await active.owner.page({ eventType: type })).summary.total, 1)
+  for (const type of ['group.rebase', 'memory.rebase', 'task.rebase'])
+    assert.equal((await active.owner.page({ eventType: type })).summary.total, 1)
   assert.equal(
     active.events.some((event) => event.announcement),
     false
   )
+  // The older backup contains the proposal, but not the later human request or
+  // adoption. Restoring native data must not certify that newer receipt merely
+  // because the item ID/version is identical, and must not run the coordinator.
+  const manual = active.memoryRepository.propose({
+    workspaceId: team.activeWorkspaceId!,
+    runId,
+    scope: 'run',
+    kind: 'fact',
+    title: '人工处理恢复 fixture',
+    content: 'private manual restoration body',
+    proposedBy: { type: 'agent', slotId: slots[0]! },
+    sources: [{ type: 'file', ref: 'src/private-restore.ts', label: 'original' }],
+    clientProposalId: 'manual-restoration-fixture'
+  })
+  active.memory.getSnapshot()
+  await active.flush()
+  const manualBackup = join(directory, 'before-manual-request.sqlite')
+  vacuumDatabaseInto(path, manualBackup)
+  new MemoryReviewCoordinator(
+    active.memory,
+    active.control,
+    active.messages,
+    (error) => {
+      throw error
+    },
+    Date.now,
+    active.memorySource
+  ).reconcile()
+  await active.flush()
+  const ref = {
+    workspaceId: manual.workspaceId,
+    runId: manual.runId,
+    memoryId: manual.id,
+    version: manual.version,
+    ...(manual.groupId ? { groupId: manual.groupId } : {})
+  }
+  const newerProof = active.memorySource.operatorReviewProof(ref)!
+  assert.ok(newerProof.messageId)
+  active.memory.review(manual.id, 'accept', 'private restored human note', manual.version, {
+    workspaceId: manual.workspaceId,
+    runId: manual.runId,
+    ...(manual.groupId ? { groupId: manual.groupId } : {})
+  })
+  await active.flush()
+  const settled = (await active.owner.page({ memoryId: manual.id })).records[0]!
+  assert.equal(settled.subjectState, 'accepted')
+  await active.owner.read(settled.id, settled.revision)
+  await active.close()
+  copyFileSync(manualBackup, path)
+  active = open()
+  active.memory.getSnapshot()
+  await active.flush()
+  assert.equal(active.memorySource.operatorReviewProof(ref), undefined)
+  assert.equal(
+    (await active.owner.page({ memoryId: manual.id })).records[0]!.subjectState,
+    'operator-unconfirmed'
+  )
+  assert.equal(active.memory.getSnapshot().items[manual.id]?.status, 'proposed')
+  assert.equal(active.messages.loadRun(runId).messageOrder.length, 0)
+  assert.equal(
+    active.events.some((event) => event.announcement),
+    false
+  )
+  const beforeRequest = (await active.owner.page({ memoryId: manual.id })).records[0]!
+  await active.owner.read(beforeRequest.id, beforeRequest.revision)
+  // Explicitly exercising the existing coordinator is separate from notification
+  // restore. This actual fresh request is allowed to renew one actionable item.
+  const coordinator = new MemoryReviewCoordinator(
+    active.memory,
+    active.control,
+    active.messages,
+    (error) => {
+      throw error
+    },
+    Date.now,
+    active.memorySource
+  )
+  coordinator.reconcile()
+  await active.flush()
+  const currentProof = active.memorySource.operatorReviewProof(ref)!
+  assert.notEqual(currentProof.messageId, newerProof.messageId)
+  const requested = (await active.owner.page({ memoryId: manual.id })).records[0]!
+  assert.equal(requested.id, settled.id)
+  assert.equal(requested.subjectState, 'operator-review')
+  assert.equal((await active.owner.page({ memoryId: manual.id })).summary.unread, 1)
+  const receipts = JSON.stringify(active.messages.loadRun(runId).messages)
+  coordinator.reconcile()
+  await active.flush()
+  assert.equal((await active.owner.page({ memoryId: manual.id })).records[0]!.revision, requested.revision)
+  assert.equal(JSON.stringify(active.messages.loadRun(runId).messages), receipts)
+  await active.owner.read(requested.id, requested.revision)
+  assert.equal(active.memory.getSnapshot().items[manual.id]?.status, 'proposed')
+  active.memory.review(manual.id, 'reject', 'private human restored decision', manual.version, {
+    workspaceId: manual.workspaceId,
+    runId: manual.runId,
+    ...(manual.groupId ? { groupId: manual.groupId } : {})
+  })
+  await active.flush()
+  assert.equal((await active.owner.page({ memoryId: manual.id })).summary.pending, 0)
+  assert.equal(JSON.stringify(active.messages.loadRun(runId).messages), receipts)
+  assert.equal(
+    /private manual restoration body|private human restored decision|src\/private-restore.ts/.test(
+      JSON.stringify(await active.owner.page())
+    ),
+    false
+  )
+  assert.equal(sends, 0)
   console.log(
     JSON.stringify(
       {
@@ -224,6 +357,10 @@ try {
         restoredTaskNotStuckCancelled: true,
         absentGroupAndTaskLabelledPriorData: true,
         restartRebaseSummaryNotDuplicated: true,
+        restoredProposalDoesNotReuseNewerManualRequestProof: true,
+        manualRestorationDoesNotRunCoordinator: true,
+        actualDifferentOriginalRequestRenewsSameItemOnce: true,
+        restoredOriginalHumanDecisionDoesNotWriteAgentReceipts: true,
         noPresentationReplay: true,
         noBusinessSendsOrLeaseReplay: true,
         isolatedFixture: true
@@ -234,6 +371,8 @@ try {
   )
 } finally {
   await active.close().catch(() => {})
-  await Promise.allSettled(workers.filter((worker) => worker.threadId !== -1).map((worker) => worker.terminate()))
+  await Promise.allSettled(
+    workers.filter((worker) => worker.threadId !== -1).map((worker) => worker.terminate())
+  )
   rmSync(directory, { recursive: true, force: true })
 }

@@ -7,12 +7,29 @@ export interface TeamMemoryInspectionRequest {
   groupId?: string
 }
 export interface TeamMemoryInspection {
+  operatorReview?: import('./memory-operator-review').MemoryOperatorReviewProof
+  canReview?: boolean
   item: TeamMemoryItem
   predecessor?: TeamMemoryItem
   observedAt: number
   revision: number
 }
-export function memoryInspectionMatches(request: TeamMemoryInspectionRequest, value: TeamMemoryInspection): boolean {
+export interface TeamMemoryReviewRequest extends TeamMemoryInspectionRequest {
+  decision: 'accept' | 'reject'
+  confirmed: boolean
+  note?: string
+  notificationId?: string
+}
+export interface TeamMemoryReviewResult {
+  inspection: TeamMemoryInspection
+  conclusion?: 'accepted' | 'rejected'
+  inspectionPending?: boolean
+  notification?: import('./notification-reference').NotificationReference
+}
+export function memoryInspectionMatches(
+  request: TeamMemoryInspectionRequest,
+  value: TeamMemoryInspection
+): boolean {
   return (
     value.item.id === request.memoryId &&
     value.item.version === request.version &&

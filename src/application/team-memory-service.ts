@@ -1,8 +1,14 @@
 import type { TeamControlSnapshot } from '../domain/team-control'
 import { randomUUID } from 'node:crypto'
-import type { TeamMemoryItem, TeamMemorySnapshot, TeamMemoryReadObservation } from '../domain/team-memory'
+import type {
+  TeamMemoryItem,
+  TeamMemorySnapshot,
+  TeamMemoryReadObservation,
+  ReviewTeamMemoryInput
+} from '../domain/team-memory'
 import { emptyTeamMemorySnapshot } from '../domain/team-memory'
 import type { TeamMemoryRepository } from './team-memory-repository'
+import { TaskPoolError } from '../domain/task-pool'
 
 export interface TeamMemoryTeamSource {
   getSnapshot(): TeamControlSnapshot
@@ -33,21 +39,39 @@ export class TeamMemoryService {
     const run = team.activeRun
     const workspaceId = team.activeWorkspaceId
     try {
-      const snapshot = run && workspaceId ? this.repository.load(workspaceId, run.id) : emptyTeamMemorySnapshot(workspaceId, run?.id)
-      this.observeRead({ kind: 'snapshot', snapshot, context: team, stamp: { owner: this.readOwner, sequence: ++this.readSequence } })
+      const snapshot =
+        run && workspaceId
+          ? this.repository.load(workspaceId, run.id)
+          : emptyTeamMemorySnapshot(workspaceId, run?.id)
+      this.observeRead({
+        kind: 'snapshot',
+        snapshot,
+        context: team,
+        stamp: { owner: this.readOwner, sequence: ++this.readSequence }
+      })
       return snapshot
     } catch (error) {
-      this.observeRead({ kind: 'unavailable', workspaceId, runId: run?.id,context:team })
+      this.observeRead({ kind: 'unavailable', workspaceId, runId: run?.id, context: team })
       throw error
     }
   }
   subscribeReadObservation(listener: (value: TeamMemoryReadObservation) => void): () => void {
     this.readObservers.add(listener)
-    return () => { this.readObservers.delete(listener) }
+    return () => {
+      this.readObservers.delete(listener)
+    }
   }
-  getReadOwnerId(): string { return this.readOwner }
+  getReadOwnerId(): string {
+    return this.readOwner
+  }
   private observeRead(value: TeamMemoryReadObservation): void {
-    for (const listener of this.readObservers) { try { listener(value) } catch { /* Original read consumers remain authoritative. */ } }
+    for (const listener of this.readObservers) {
+      try {
+        listener(value)
+      } catch {
+        /* Original read consumers remain authoritative. */
+      }
+    }
   }
 
   subscribe(listener: Listener): () => void {
@@ -61,30 +85,57 @@ export class TeamMemoryService {
    * 操作员拥有最高审核权限，不受角色/自审/项目级限制——提案均来自 Agent，
    * 人的裁决天然独立。状态与取代链校验由 repository.review 保证。
    */
-  review(memoryId: string, decision: 'accept' | 'reject', note?: string): TeamMemoryItem {
+  review(
+    memoryId: string,
+    decision: 'accept' | 'reject',
+    note?: string,
+    expectedVersion?: number,
+    expectedScope?: ReviewTeamMemoryInput['expectedScope']
+  ): TeamMemoryItem {
     const current = this.getSnapshot().items[memoryId.trim()]
+    if (expectedVersion !== undefined && current?.version !== expectedVersion)
+      throw new TaskPoolError('memory_version_changed', '原记忆版本已变化，请重新读取后审查')
     const completedStatus = decision === 'accept' ? 'accepted' : 'rejected'
-    if (current?.status === completedStatus
-      && current.reviewedBy?.type === 'operator'
-      && (current.reviewNote ?? '') === (note?.trim() ?? '')) {
+    if (
+      !expectedScope &&
+      current?.status === completedStatus &&
+      current.reviewedBy?.type === 'operator' &&
+      (current.reviewNote ?? '') === (note?.trim() ?? '')
+    ) {
       return structuredClone(current)
     }
     const item = this.repository.review({
       memoryId,
       decision,
       reviewer: { type: 'operator' },
-      note
+      note,
+      ...(expectedVersion !== undefined ? { expectedVersion } : {}),
+      ...(expectedScope ? { expectedScope } : {})
     })
-    this.emit()
+    if (expectedScope) {
+      // The explicitly confirmed human command already committed in the original
+      // repository. A subsequent observation failure must not erase that known
+      // conclusion; its IPC boundary separately reports a pending refresh.
+      try {
+        this.emit()
+      } catch {
+        /* No retry of the original review. */
+      }
+    } else {
+      this.emit()
+    }
     return item
   }
 
   startWatcher(intervalMs = 750): void {
     this.stopWatcher()
-    this.watchTimer = setInterval(() => {
-      const revision = this.repository.revision()
-      if (revision !== this.lastRevision) this.emit()
-    }, Math.max(250, intervalMs))
+    this.watchTimer = setInterval(
+      () => {
+        const revision = this.repository.revision()
+        if (revision !== this.lastRevision) this.emit()
+      },
+      Math.max(250, intervalMs)
+    )
     this.watchTimer.unref?.()
   }
 

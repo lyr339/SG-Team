@@ -147,6 +147,7 @@ const api: SgDesktopApi = {
   planTeamGroupTasks: (input) => ipcRenderer.invoke(IPC.teamGroupPlanTasks, input),
   getTeamCollaborationSnapshot: () => ipcRenderer.invoke(IPC.teamCollaborationGet),
   getTeamMemoryInspection: request=>ipcRenderer.invoke(IPC.teamMemoryInspect,request),
+  reviewTeamMemory: request=>ipcRenderer.invoke(IPC.teamMemoryReview,request),
   setWindowChromeColorMode: (mode) => ipcRenderer.invoke(IPC.windowSetChromeColorMode, mode),
   onSnapshot: (listener: (snapshot: DesktopSnapshot) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, snapshot: DesktopSnapshot): void => listener(snapshot)

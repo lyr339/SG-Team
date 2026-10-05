@@ -3,6 +3,7 @@ import type { TeamMemoryItem, TeamMemorySnapshot } from '../domain/team-memory'
 import { memoryReviewNeedsOperator, selectMemoryReviewMember } from '../domain/team-orchestration'
 import type { TeamCollaborationRepository } from './team-collaboration-repository'
 import { orchestratorMessageId, type OrchestrationSource } from './orchestration-source'
+import type { MemoryOperatorReviewObserver } from '../domain/memory-operator-review'
 
 export class MemoryReviewCoordinator {
   private unsubscribers: Array<() => void> = []
@@ -13,7 +14,8 @@ export class MemoryReviewCoordinator {
     private readonly team: OrchestrationSource<TeamControlSnapshot>,
     private readonly collaboration: TeamCollaborationRepository,
     private readonly onerror: (error: unknown) => void = () => undefined,
-    private readonly now: () => number = Date.now
+    private readonly now: () => number = Date.now,
+    private readonly observation?: MemoryOperatorReviewObserver
   ) {}
 
   start(): void {
@@ -70,7 +72,7 @@ export class MemoryReviewCoordinator {
           `标题：${item.title}`,
           `内容：${item.content}`,
           `来源数量：${item.sources.length}`,
-          '请调用 team_memory({action:\'search\', includeProposed:true}) 核对来源，再调用 team_memory({action:\'review\', memoryId, decision}) 给出采纳或拒绝结论；审核结论本身就是回应。',
+          "请调用 team_memory({action:'search', includeProposed:true}) 核对来源，再调用 team_memory({action:'review', memoryId, decision}) 给出采纳或拒绝结论；审核结论本身就是回应。",
           '禁止审核自己提出的记忆；项目级记忆必须由质量角色确认。'
         ].join('\n'),
         clientMessageId: orchestratorMessageId('memory', item.id, item.version)
@@ -79,7 +81,7 @@ export class MemoryReviewCoordinator {
     }
 
     if (item.proposedBy.type === 'agent') {
-      this.collaboration.createMessage({
+      const message = this.collaboration.createMessage({
         runId: item.runId,
         sender: item.proposedBy,
         recipient: { type: 'operator' },
@@ -90,6 +92,23 @@ export class MemoryReviewCoordinator {
           : `记忆 ${item.id} 找不到独立且有权限的审核 Agent，请由用户决定是否采纳。`,
         clientMessageId: orchestratorMessageId('memory-escalation', item.id, item.version)
       })
+      // Original create/duplicate return is the evidence. Display failure cannot
+      // retry it, change its receipt, or turn a sent request into adoption.
+      try {
+        this.observation?.observeOperatorReview({
+          workspaceId: item.workspaceId,
+          runId: item.runId,
+          ...(item.groupId ? { groupId: item.groupId } : {}),
+          memoryId: item.id,
+          memoryVersion: item.version,
+          title: item.title,
+          proof: {
+            messageId: message.id,
+            createdAt: message.createdAt,
+            reason: reviewer ? 'timeout' : 'no-reviewer'
+          }
+        })
+      } catch {}
     }
   }
 }

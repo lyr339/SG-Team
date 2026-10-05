@@ -677,7 +677,6 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   )
   teamCollaborationSweeper.startSweeper()
   teamMemoryService = new TeamMemoryService(teamMemoryRepository, teamControlService)
-  disposeTeamMemoryInspectionIpc=registerTeamMemoryInspectionIpc(teamMemoryService,()=>teamControlService!.getSnapshot(),()=>mainWindow)
   // 租约在岗判定（阶段 2 · 2F）：席位的 runtime.online 就是 relay 按 presence 算好的那一个判定，
   // 与 MCP 进程同源；只有到期的租约才会问到这里。
   taskPoolService = new TaskPoolService(taskPoolRepository, teamControlService, (agentSessionId) =>
@@ -694,6 +693,9 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
       memoryIssueNotificationSource = connectMemoryIssueNotifications(teamMemoryService, getTeam, notificationService)
     } catch { notificationService.reportHistoryGap() }
   }
+  disposeTeamMemoryInspectionIpc=registerTeamMemoryInspectionIpc(teamMemoryService,()=>teamControlService!.getSnapshot(),()=>mainWindow,{
+    operatorReviewProof:request=>memoryIssueNotificationSource?.operatorReviewProof(request),operations:pageOperationNotifications
+  })
   const orchestrationError = (error: unknown): void => {
     process.stderr.write(`[team-orchestrator] ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`)
   }
@@ -707,7 +709,9 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     teamMemoryService,
     teamControlService,
     teamCollaborationRepository,
-    orchestrationError
+    orchestrationError,
+    Date.now,
+    memoryIssueNotificationSource
   )
   teamOrchestrator = new TeamOrchestrator(
     teamControlService,

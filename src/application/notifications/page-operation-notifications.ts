@@ -39,8 +39,13 @@ export class PageOperationNotifications implements PageOperationObserver {
     if (!definition.id || definition.id.length > 100) throw Error('页面通知身份无效')
     if (this.current.has(pageOperationReference(definition.kind, definition.id).key)) definition.id = randomUUID()
     const session = definition.scope
-    definition.familyId = input.familyId ?? createHash('sha256').update(JSON.stringify([definition.kind, session?.workspaceId, session?.runId, session?.accountId,
-      session?.sessionId, session?.generation, session?.composerId, session?.bindingGeneration, definition.target?.kind === 'session' ? definition.target.toolCallId : undefined])).digest('hex')
+    const family = [definition.kind, session?.workspaceId, session?.runId, session?.accountId,
+      session?.sessionId, session?.generation, session?.composerId, session?.bindingGeneration,
+      definition.target?.kind === 'session' ? definition.target.toolCallId : undefined]
+    // Only the new memory operations extend their identity. Inserting empty
+    // fields into every kind would orphan existing saved login/question attempts.
+    if (definition.kind === 'memory-accept' || definition.kind === 'memory-reject') family.push(session?.memoryId, session?.memoryVersion)
+    definition.familyId = input.familyId ?? createHash('sha256').update(JSON.stringify(family)).digest('hex')
     if (scopedOperationKinds.has(definition.kind) && !input.familyId && !session?.accountId && !session?.sessionId && !session?.composerId) {
       // A global patch/version, selected browser or unbound Composer can change
       // between calls. Without exact object evidence, do not auto-resolve the old attempt.

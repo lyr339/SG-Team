@@ -28,6 +28,8 @@ export interface NotificationScope {
   cursorVersion?: string
   memoryId?: string
   memoryVersion?: string
+  /** Identity returned by the original coordinator, not a UI confirmation or Agent receipt. */
+  operatorRequestId?: string
 }
 
 /** Navigation references only. Installing, restarting, answering or processing remain original workflow actions. */
@@ -265,7 +267,7 @@ export function validateNotificationDraft(input: NotificationDraft): void {
 
 function validateScope(scope: NotificationScope): void {
   if (!scope || typeof scope !== 'object' || Array.isArray(scope)) throw new Error('通知作用域无效')
-  const keys = ['workspaceId', 'runId', 'groupId', 'slotId', 'sessionId', 'generation', 'bindingGeneration', 'channelId', 'composerId', 'accountId', 'providerId', 'operationFamilyId', 'contextDomain', 'installationId', 'cursorVersion','memoryId','memoryVersion']
+  const keys = ['workspaceId', 'runId', 'groupId', 'slotId', 'sessionId', 'generation', 'bindingGeneration', 'channelId', 'composerId', 'accountId', 'providerId', 'operationFamilyId', 'contextDomain', 'installationId', 'cursorVersion','memoryId','memoryVersion','operatorRequestId']
   for (const [key, value] of Object.entries(scope)) {
     if (!keys.includes(key) || value !== undefined && (typeof value !== 'string' || value.length > 300)) throw new Error('通知作用域无效')
   }

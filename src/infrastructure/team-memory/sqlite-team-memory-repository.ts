@@ -244,17 +244,35 @@ export class SqliteTeamMemoryRepository implements TeamMemoryRepository {
   }
 
   review(input: ReviewTeamMemoryInput): TeamMemoryItem {
-    const item = this.requireItem(input.memoryId)
-    if (item.status !== 'proposed') throw new TaskPoolError('memory_not_proposed', '只有待确认记忆可以审核')
-    const reviewerGroupId = this.assertActor(item.runId, input.reviewer)
-    // 组内记忆只能由本组成员审核（操作员不受限）。
-    if (input.reviewer.type === 'agent' && item.groupId && reviewerGroupId !== item.groupId) {
-      throw new TaskPoolError('memory_group_mismatch', '只能审核本协作组的记忆提案')
-    }
     const now = Date.now()
     const note = input.note?.trim().slice(0, 4_000) ?? ''
+    let reviewed: TeamMemoryItem
     this.database.exec('BEGIN IMMEDIATE')
     try {
+      // Read the candidate under the original write transaction. Another MCP
+      // reviewer cannot settle it between our status check and UPDATE.
+      const item = this.requireItem(input.memoryId)
+      if (input.expectedScope) {
+        const scope = input.expectedScope
+        if (item.workspaceId !== scope.workspaceId || item.runId !== scope.runId || item.groupId !== scope.groupId) {
+          throw new TaskPoolError('memory_scope_changed', '原记忆作用域已变化，请重新读取')
+        }
+        const run = this.database.prepare('SELECT status FROM team_runs WHERE id=? AND workspace_id=?').get(item.runId, item.workspaceId)
+        const group = item.groupId
+          ? this.database.prepare('SELECT status FROM team_groups WHERE id=? AND run_id=?').get(item.groupId, item.runId)
+          : undefined
+        if (run?.status !== 'running' || item.groupId && group?.status !== 'active') {
+          throw new TaskPoolError('memory_scope_ended', '原运行或协作组已结束，只能查看原记忆')
+        }
+      }
+      if (input.expectedVersion !== undefined && (!Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 1 || item.version !== input.expectedVersion)) {
+        throw new TaskPoolError('memory_version_changed', '原记忆版本已变化，请重新读取后审查')
+      }
+      if (item.status !== 'proposed') throw new TaskPoolError('memory_not_proposed', '只有待确认记忆可以审核')
+      const reviewerGroupId = this.assertActor(item.runId, input.reviewer)
+      if (input.reviewer.type === 'agent' && item.groupId && reviewerGroupId !== item.groupId) {
+        throw new TaskPoolError('memory_group_mismatch', '只能审核本协作组的记忆提案')
+      }
       if (input.decision === 'accept') {
         if (item.supersedesId) {
           const previous = this.requireItem(item.supersedesId)
@@ -291,12 +309,15 @@ export class SqliteTeamMemoryRepository implements TeamMemoryRepository {
         detail: note,
         at: now
       })
+      reviewed = this.requireItem(input.memoryId)
       this.database.exec('COMMIT')
     } catch (error) {
       if (this.database.isTransaction) this.database.exec('ROLLBACK')
       throw error
     }
-    return this.requireItem(item.id)
+    // Return the locked conclusion only after COMMIT succeeded. A later read
+    // cannot turn a known write into a guessed failure or substitute a peer edit.
+    return reviewed
   }
 
   close(): void {

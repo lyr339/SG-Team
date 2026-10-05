@@ -1,9 +1,26 @@
 import { describe, expect, it, vi } from 'vitest'
+import { createHash } from 'node:crypto'
 import { PageOperationNotifications, beginPageOperation, finishPageOperation, failPageOperation, type PageOperationObserver } from '../src/application/notifications/page-operation-notifications'
 import { pageOperationReference } from '../src/domain/page-operation-notification'
 import { notificationSourceHarness } from './notification-source-fixtures'
 
 describe('page operation observations do not become workflow execution', () => {
+  it('new memory identity does not change the legacy saved login family, and different memory items cannot share a family',async()=>{
+    const h=notificationSourceHarness(),source=new PageOperationNotifications(h.owner)
+    const legacyFamily=createHash('sha256').update(JSON.stringify(['account-login','w','r','account-a',undefined,undefined,undefined,undefined,undefined])).digest('hex')
+    try{
+      source.begin({kind:'account-login',id:'before-memory-feature',familyId:legacyFamily,scope:{workspaceId:'w',runId:'r',accountId:'account-a'}}).finish({state:'unconfirmed'})
+      await source.flush()
+      source.begin({kind:'account-login',id:'after-memory-feature',scope:{workspaceId:'w',runId:'r',accountId:'account-a'}}).finish({state:'success'})
+      source.begin({kind:'memory-accept',id:'memory-a',scope:{workspaceId:'w',runId:'r',memoryId:'a',memoryVersion:'1'}}).finish({state:'success'})
+      source.begin({kind:'memory-accept',id:'memory-b',scope:{workspaceId:'w',runId:'r',memoryId:'b',memoryVersion:'1'}}).finish({state:'success'})
+      await source.flush()
+      const records=h.ledger.page().records
+      expect(records.find(row=>row.key.endsWith('after-memory-feature'))?.scope.operationFamilyId).toBe(legacyFamily)
+      expect(records.find(row=>row.key.endsWith('before-memory-feature'))?.subjectState).toBe('superseded')
+      expect(records.find(row=>row.key.endsWith('memory-a'))?.scope.operationFamilyId).not.toBe(records.find(row=>row.key.endsWith('memory-b'))?.scope.operationFamilyId)
+    }finally{source.dispose();await h.owner.close()}
+  })
   it('a later confirmation closes only exact same-object unknown attempts, never another account or generation', async () => {
     const h = notificationSourceHarness(), source = new PageOperationNotifications(h.owner)
     try {

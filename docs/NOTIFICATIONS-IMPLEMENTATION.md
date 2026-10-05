@@ -19,7 +19,7 @@
 
 ## 当前证据
 
-证据目录：`/Users/lyr/Downloads/SG-Team-review-design/preview-screenshots/notification-implementation/`。
+第一至十四批证据目录：`/Users/lyr/Downloads/SG-Team-review-design/preview-screenshots/notification-implementation/`。第十五批起的新增证据保存在当前实现树的 `preview-screenshots/notification-implementation/`，不写入受保护的原开发目录。
 
 - `foundation-audit-tests.log`：ledger、service、worker port、IPC 边界测试。
 - `full-regression-foundation-final.log`：当前阶段全部测试通过；不是完整通知系统验收。
@@ -264,6 +264,22 @@
 UI 只沿用原中心/只读查看器，隔离 `notifications=restore` mock 和 `ui/native-rebase-center-light.jpg` 明确 21→4、先前“已驳回”和当前待核对不同，仍可看原记忆；无恢复成功绿条、业务重试按钮或彩色左轨。Preview 不证明真实工作区/系统通知。`protected-native-rebase-audit.json` 保持两份原开发树和四个已知外部预热漂移。未 production main/Cursor/账号/模型/OS 动作、安装、push 或发布；fixture 与临时 UI 资源清理。
 
 **完整目标仍未完成**：本批证明当前仍准确可定位的 workspace/run 的实际较低 native revision。整个旧作用域消失、相等 revision 不同内容（尤其活句柄/cache）、跨来源聚合与历史裁剪复杂序列仍需完成；session/question/reply/queue/operator 等其他来源在业务备份恢复后的关联还需逐项测试。普通记忆人工升级、结构化写/组副作用失败、模型/用量/统计源异常，以及完整矩阵/正式打包/Windows/macOS 真通知权限/声音/勿扰/全 UI 验收仍在范围内。无 blocker，不缩小或完成目标。
+
+### 第十五批：原人工记忆请求与明确审核闭环
+
+普通 proposed 条目不制造人工待办。只有原 `MemoryReviewCoordinator` 确实创建／去重返回了用户请求，才把原 messageId、createdAt 和 no-reviewer／timeout 原因送入同一记忆事项；原创建顺序、调用数和错误处理不变，观察失败不重做业务。泛化 notice 仍为安静动态，不重复产生人工未读。前置冲突优先，真实 accepted／rejected／superseded 或明确范围结束驱动收口。
+
+人工请求证据不能仅靠相同条目 ID 跨越数据恢复。未确认读取、作用域离开／组缺失、原读取证明的较低 revision 都撤去本次有效证明；保存历史留作“原请求待核对”，不会谎称已经处理。重新读取本身不确认消息，仍需原协调器真实返回。相同请求在启动／去重／未知私有 ACK 后不补播、不重复未读；不同真实请求只更新同一事项的一次 requestEpoch 和原请求身份。原页只阅读对得上这次请求的通知，不能提前读掉另一条回执。
+
+原查看器新增独立的“采纳…”／“驳回…”二次确认，查看、阅读、关闭都不会审核。trusted IPC 核对 exact workspace/run/group/item/version 和明确 confirmed，再且仅再调用一次原 `TeamMemoryService.review`。原事务锁内再次检查候选状态、版本与新人工 scope expectation，阻止锁前 peer 已审核／结束 run 后被迟到确认覆盖。锁内读取的结论只在 COMMIT 成功后返回；人工命令的后续展示读取失败不抹掉已知审核结论。已知结论与刷新待核对分开呈现；未知回执保留附言，要求显式重读、不自动重试。最终差异审查修正了 family 兼容问题：只有新的记忆操作追加 memoryId/version；旧账号、问卷等操作的关联散列保持原值，不让历史未知尝试失去后续核对关系。后续原快照才对齐事项现状，不把尝试结果或人类已读改成 Agent 回执。
+
+视觉沿用原主题、字号和表面，不加彩色左轨或装饰胶囊。实测抓到确认区在短窗遮住动作的问题，改为单一正文／确认滚动区、固定操作 footer；长内容、附言与按钮不互相挤压。关闭已提交操作不撤回请求，迟到回执不重开弹层、不抢新页面焦点。无 canReview 或审核 API 时仍是只读查看器。
+
+当前证据在实现树 `preview-screenshots/notification-implementation/`：`full-regression-operator-memory-final.log`、`typecheck-operator-memory-final.log`、`build-operator-memory-final.log`、`dead-code-operator-memory-final.log`、原 `mcp-smoke-operator-memory-final.log`／`channel-smoke-operator-memory-final.log`，以及 `node-team-operator-memory-final.log`／`electron-team-observations-operator-memory-final.log`、`node-native-operator-memory-final.log`／`electron-native-rebase-operator-memory-final.log`。其余真实编译 worker／退出恢复／保留／排空／上下文隔离脚本也在本批重新执行。真实 trusted IPC＋原 repositories、锁前 peer 竞态、源恢复／未知 ACK、二次确认／输入保留／晚到焦点／精确阅读均有当前测试。VACUUM 备份恢复验证原提案还在而较新的人工请求不存在时不冒用旧证据、不运行协调器／审核；随后另行调用原协调器返回的新请求只更新同一事项一次。脚本不是 production main，也没有覆盖用户库。
+
+`ui/operator-memory-confirm-light.jpg`、`ui/operator-memory-confirm-dark-short.jpg`、`ui/operator-memory-reviewed-dark-short.jpg`、`ui/operator-memory-unknown-dark-short.jpg`、`ui/operator-memory-partial-dark-short.jpg` 和 `ui/operator-memory-ui-audit.json` 记录真实产品组件的隔离 mock 验收。短窗有效 CSS viewport 约 400×323，确认／取消／重新读取均可达，无横向溢出；Tab 不逃出模态、Escape 回铃铛。修改时的过渡 HMR scope 不一致单独留在日志，最终整页重载再核对当前控制台；不以 HMR 旧 DOM 或旧异常代替当前验收。Browser preview 不证明真实业务、完整应用或系统通知。`protected-operator-memory-audit.json` 保持原两个开发目录及四个既有外部预热漂移。
+
+**完整目标仍未完成**：人工记忆请求这一点已接入闭环，其余结构化 MCP 写／组副作用诊断、模型／用量／统计源健康、整个旧 scope 消失与相等 revision 异内容、其他 feed 的恢复关联、长期容量与完整序列、正式包／完整应用及 Windows/macOS 真权限／声音／勿扰验收仍须逐项完成。本批不安装、重启 Cursor、处理真实账号、push 或发版；完整通知目标继续 active，不能把本批通过称为整套完成。
 
 下面保留完整要求，不因前三批已有成果缩小。已实现部分仍需匹配该项范围验收；未实现部分继续开工。
 

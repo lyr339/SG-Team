@@ -82,6 +82,8 @@ export interface ProposeTeamMemoryInput {
 }
 
 export interface ReviewTeamMemoryInput {
+  expectedScope?:{workspaceId:string;runId:string;groupId?:string}
+  expectedVersion?:number
   memoryId: string
   decision: 'accept' | 'reject'
   reviewer: TeamMessageActor

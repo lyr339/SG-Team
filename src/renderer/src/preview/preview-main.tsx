@@ -1,4 +1,6 @@
-import { reduceMemoryIssueNotifications } from '../../../domain/memory-issue-notification'
+import { reduceMemoryIssueNotifications, type MemoryIssueState } from '../../../domain/memory-issue-notification'
+import type { MemoryOperatorReviewProof } from '../../../domain/memory-operator-review'
+import type { TeamMemoryInspectionRequest } from '../../../domain/team-memory-inspection'
 import { reduceCompatibilityNotifications } from '../../../domain/cursor-compatibility-notification'
 import { reduceContextThresholdNotifications } from '../../../domain/context-threshold-notification'
 /**
@@ -185,6 +187,7 @@ if (previewRunStatus && initialTeam.activeRun) {
 //（席位形态：全部待命 / 待命+执行中+离线+待确认（CH-2 单独配置了另一模型）/ 各席配置分叉、没有多数 /
 //  已结束 / 会话池里两个协作组 + 一个刚解散的组）。
 const independentScene = (['live', 'mixed', 'spread', 'ended', 'groups'] as const).find((scene) => scene === previewParameters.get('independent'))
+  ?? (previewParameters.get('notifications') === 'operator-memory' ? 'groups' : undefined)
 const poolLayoutCase = previewParameters.get('poolLayout')
 if (independentScene && initialTeam.activeRun) {
   const solo = initialTeam.members.find((member) => member.slot.solo === true)!
@@ -1167,6 +1170,32 @@ function updatePreviewGroup(groupId: string, update: (view: typeof state.team.gr
 }
 
 const notificationPreview = createNotificationPreview()
+let previewMemoryIssueState: MemoryIssueState | undefined
+let previewOperatorProof: MemoryOperatorReviewProof | undefined
+const operatorMemoryScene = previewParameters.get('notifications') === 'operator-memory'
+const previewMemoryFacts = () => Object.values(state.memory.items).filter(item => item.id === 'preview-memory-operator').map(item => ({
+  identity: '5'.repeat(64), id: item.id, version: item.version, title: item.title, state: item.status === 'proposed' ? undefined : item.status,
+  ...(item.status === 'proposed' && previewOperatorProof ? {operatorReview: previewOperatorProof} : {}),
+  scope: {workspaceId: item.workspaceId, runId: item.runId, ...(item.groupId ? {groupId: item.groupId} : {})}, ceased: false
+}))
+if (operatorMemoryScene && state.team.activeRun) {
+  const run = state.team.activeRun, exemplar = Object.values(state.memory.items)[0]!, groupId = state.team.groups[0]?.group.id
+  const proposal = { ...exemplar, id: 'preview-memory-operator', workspaceId: run.workspaceId, runId: run.id, groupId, version: 2, status: 'proposed' as const,
+    title: '发布前的接口兼容约定', supersedesId: undefined, supersededById: undefined, reviewNote: undefined, reviewedBy: undefined,
+    content: '新版本继续保留原有字段与调用方式。新增能力只通过明确入口启用，不让普通读取触发业务操作。\n\n审核前请核对原引用；采纳后这项约定可被协作成员引用。' + (previewParameters.get('memoryLong')==='1' ? '\n\n长内容布局验收：'.repeat(80) : ''),
+    sources: [{type: 'file' as const, ref: 'src/shared/interface.ts', label: '原接口约定'}, {type: 'file' as const, ref: 'tests/compatibility.test.ts', label: '兼容性回归'}] }
+  state.memory.items = {[proposal.id]: proposal}; state.memory.itemOrder = [proposal.id]; state.memory.workspaceId = run.workspaceId; state.memory.runId = run.id; state.memory.revision = 4
+  previewOperatorProof = {messageId:'preview-original-review-request',createdAt:Date.now()-120_000,reason:'no-reviewer',live:false}
+  const projection = reduceMemoryIssueNotifications(undefined,{key:'preview-operator-memory',scope:{workspaceId:run.workspaceId,runId:run.id},revision:4,now:Date.now(),facts:previewMemoryFacts()},true,1)
+  previewMemoryIssueState = projection.state
+  projection.drafts.forEach(notificationPreview.offer)
+}
+const previewMemoryInspection = (request: TeamMemoryInspectionRequest) => {
+  const item = state.memory.items[request.memoryId]
+  if (!item || state.team.activeRun?.id !== request.runId || state.team.activeWorkspaceId !== request.workspaceId || item.version !== request.version || item.groupId !== request.groupId) throw Error('原记忆范围已变化')
+  return structuredClone({item, ...(item.supersedesId && state.memory.items[item.supersedesId] ? {predecessor: state.memory.items[item.supersedesId]} : {}), observedAt:Date.now(),revision:state.memory.revision,
+    ...(operatorMemoryScene && item.status === 'proposed' ? {operatorReview:previewOperatorProof,canReview:state.team.activeRun.status==='running'&&(!item.groupId||state.team.groups.some(view=>view.group.id===item.groupId&&view.group.status==='active'))} : {canReview:false})})
+}
 if (['memory','restore'].includes(previewParameters.get('notifications')??'') && state.team.activeRun) {
   const run = state.team.activeRun, groupId = state.team.groups[0]?.group.id, exemplar = Object.values(state.memory.items)[0]!
   const proposed = { ...exemplar, id: 'preview-memory-conflict', workspaceId: run.workspaceId, runId: run.id, groupId, version: 2, status: 'proposed' as const,
@@ -1831,10 +1860,19 @@ const api: SgDesktopApi = {
     return structuredClone(planned)
   },
   getTeamCollaborationSnapshot: async () => structuredClone(previewCollaboration),
-  getTeamMemoryInspection: async request => {
-    const item = state.memory.items[request.memoryId]
-    if (!item || state.team.activeRun?.id !== request.runId || state.team.activeWorkspaceId !== request.workspaceId || item.version !== request.version || item.groupId !== request.groupId) throw Error('原记忆范围已变化')
-    return structuredClone({ item, ...(item.supersedesId && state.memory.items[item.supersedesId] ? { predecessor: state.memory.items[item.supersedesId] } : {}), observedAt: Date.now(), revision: state.memory.revision })
+  getTeamMemoryInspection: async request => previewMemoryInspection(request),
+  reviewTeamMemory: async request => {
+    const original=previewMemoryInspection(request)
+    if(!operatorMemoryScene||!original.canReview||request.confirmed!==true||!['accept','reject'].includes(request.decision))throw Error('preview only accepts its explicit fixture review')
+    await new Promise(resolve=>setTimeout(resolve, previewParameters.get('memoryReview')==='slow'?1800:220))
+    if(previewParameters.get('memoryReview')==='fail')throw Error('isolated preview unknown result')
+    const item={...original.item,status:request.decision==='accept'?'accepted' as const:'rejected' as const,reviewedBy:{type:'operator' as const},reviewNote:request.note}
+    state.memory.items[item.id]=item;state.memory.revision++
+    const projection=reduceMemoryIssueNotifications(previewMemoryIssueState,{key:'preview-operator-memory',scope:{workspaceId:item.workspaceId,runId:item.runId},revision:state.memory.revision,now:Date.now(),facts:previewMemoryFacts()},false,state.memory.revision)
+    previewMemoryIssueState=projection.state;projection.drafts.forEach(notificationPreview.offer)
+    const partial=previewParameters.get('memoryReview')==='partial'
+    const notification=previewPageResult(request.decision==='accept'?'memory-accept':'memory-reject',request.notificationId,{state:partial?'partial':'success',facts:[partial?'原结论已确认，展示刷新待核对；不重做审核。':'原结论已确认。附言和正文只保留在原条目。']})
+    return{inspection:previewMemoryInspection(request),conclusion:item.status,...(partial?{inspectionPending:true}:{}),notification}
   },
   getMembershipTransferOptions: async (slotId) => {
     const view = state.team.groups.find((candidate) => (
