@@ -313,6 +313,9 @@ export function enrichDesktopSnapshot(
       // 同通道、同一 TeamRun 内的转录定位 Composer 做字段级回退，不能因为绑定
       // 对象存在但该字段暂缺就让会话卡的上下文条整块消失。
       contextUsage: composer?.contextUsage ?? channelComposerInScope?.contextUsage,
+      contextUsageSource: composer?.contextUsage ? 'bound' : channelComposerInScope?.contextUsage ? 'channel-fallback' : undefined,
+      contextUsageComposerId: composer?.contextUsage ? composer.composerId : channelComposerInScope?.contextUsage ? channelComposerInScope.composerId : undefined,
+      contextUsageModelId: composer?.contextUsage ? composer.modelProfile?.modelId ?? composer.modelName : undefined,
       changes: composer?.changes,
       telemetry: status,
       healthEvidence: [
@@ -336,6 +339,7 @@ export class DesktopSessionService implements DesktopSessionBridge {
   private emitScheduled = false
   private disposed = false
   private telemetry = emptyCursorTelemetrySnapshot()
+  private contextUsageSampledAt?: number
   private telemetryFingerprint = ''
   private watchTimer?: ReturnType<typeof setInterval>
   private activeWorkspaceId?: string
@@ -450,6 +454,7 @@ export class DesktopSessionService implements DesktopSessionBridge {
       this.activeRunId = snapshot.activeRun?.id
       this.activeRunStatus = snapshot.activeRun?.status
       if (workspaceChanged) {
+        this.contextUsageSampledAt = undefined
         this.telemetry = emptyCursorTelemetrySnapshot()
         this.telemetryFingerprint = ''
         this.durationBySession.clear()
@@ -468,6 +473,7 @@ export class DesktopSessionService implements DesktopSessionBridge {
         this.refreshTelemetry()
       }
       if (runChanged && !workspaceChanged) {
+        this.contextUsageSampledAt = undefined
         this.durationBySession.clear()
         this.liveAgentResponses.clear()
         this.finalizedLiveResponseIds.clear()
@@ -495,6 +501,7 @@ export class DesktopSessionService implements DesktopSessionBridge {
     const enriched = enrichDesktopSnapshot(base, team, this.telemetry)
     const snapshot: DesktopSnapshot = {
       ...enriched,
+      contextUsageSampledAt: this.contextUsageSampledAt,
       runtimeScope: { workspaceId: team.activeWorkspaceId, runId: team.activeRun?.id, teamRevision: team.revision },
       nativeProcessStream: this.nativeProcessStream,
       sessions: enriched.sessions.map((session) => {
@@ -512,6 +519,7 @@ export class DesktopSessionService implements DesktopSessionBridge {
         const awaitingUserEvidence = runtimeAwaitingUser !== undefined ? 'runtime' as const : processAwaitingUser ? 'process' as const : 'unknown' as const
         if (session.contextUsage) this.contextUsageByComposer.set(key, session.contextUsage)
         const contextUsage = session.contextUsage ?? this.contextUsageByComposer.get(key)
+        const contextUsageSource = session.contextUsage ? session.contextUsageSource : contextUsage ? 'cached' as const : undefined
         const activeDurationMs = this.trackActiveDuration(key, session)
         const composerBubbleCount = session.composerId ? this.composerBubbleCounts.get(session.composerId)?.count : undefined
         // 增量缓存：值指纹命中即复用上轮视图引用。时长按分钟桶参与指纹
@@ -542,6 +550,9 @@ export class DesktopSessionService implements DesktopSessionBridge {
           session.executionProfile?.contextTokenLimit ?? '',
           session.telemetry?.state ?? '',
           session.telemetry?.detail ?? '',
+          contextUsageSource ?? '',
+          session.contextUsageComposerId ?? '',
+          session.contextUsageModelId ?? '',
           contextUsage?.ratio ?? '',
           contextUsage?.used ?? '',
           contextUsage?.limit ?? '',
@@ -563,6 +574,7 @@ export class DesktopSessionService implements DesktopSessionBridge {
           awaitingUser,
           awaitingUserEvidence,
           contextUsage,
+          contextUsageSource,
           activeDurationMs,
           ...(composerBubbleCount === undefined ? {} : { composerBubbleCount })
         }
@@ -1240,6 +1252,7 @@ export class DesktopSessionService implements DesktopSessionBridge {
       // 变了就得推——Cursor 登录后首次写入目录、冷切换后重写目录，都可能发生在其余遥测静止时。
       const catalogChanged = !sameModelCatalog(this.telemetry.cursorModels, next.cursorModels)
       this.telemetry = next
+      this.contextUsageSampledAt = next.availability === 'available' ? Date.now() : undefined
       this.telemetryFingerprint = fingerprint
       if (changed || catalogChanged || transcriptResponseChanged) this.emit()
       // 用量采样不依赖 changed 分支（记账语义独立于快照推送），也不进 getSnapshot()：
@@ -1258,6 +1271,7 @@ export class DesktopSessionService implements DesktopSessionBridge {
       })
       const changed = fingerprint !== this.telemetryFingerprint
       this.telemetry = failed
+      this.contextUsageSampledAt = undefined
       this.telemetryFingerprint = fingerprint
       if (changed) this.emit()
     } finally {

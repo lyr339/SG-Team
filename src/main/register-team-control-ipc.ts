@@ -8,6 +8,7 @@ import type { CursorModelSelection } from '../domain/cursor-model'
 import { resolveIndependentSessionMembers } from '../application/team-setup'
 import { assertTrustedSender } from './ipc-security'
 import type { CursorWorkspaceDetection } from '../domain/cursor-workspace'
+import type { WorkspaceDetectionObserver } from '../application/notifications/workspace-notifications'
 
 function requiredString(value: unknown, field: string, maxLength: number): string {
   if (typeof value !== 'string' || !value.trim() || value.length > maxLength) {
@@ -17,6 +18,7 @@ function requiredString(value: unknown, field: string, maxLength: number): strin
 }
 
 export interface TeamControlIpcOptions {
+  workspaceObserver?: WorkspaceDetectionObserver
   onRunEnded?: (snapshot: TeamControlSnapshot) => void | Promise<void>
   /** Cursor 当前 IDE 窗口的工作区（CDP 读窗口配置）：展示与创建前核对的唯一来源。 */
   detectCurrentWorkspace: () => Promise<CursorWorkspaceDetection>
@@ -35,6 +37,18 @@ export function registerTeamControlIpc(
   getWindow: () => BrowserWindow | undefined,
   options: TeamControlIpcOptions
 ): () => void {
+  const detectWorkspace = async (): Promise<CursorWorkspaceDetection> => {
+    let observation: ReturnType<WorkspaceDetectionObserver['begin']> | undefined
+    try { observation = options.workspaceObserver?.begin() } catch { /* Display observation is not a gate. */ }
+    try {
+      const result = await options.detectCurrentWorkspace()
+      try { observation?.complete(result) } catch {}
+      return result
+    } catch (error) {
+      try { observation?.complete({ state:'unavailable', cause:'connection-unavailable', candidates:[], detail:'原探测未返回工作区身份', observedAt:Date.now() }) } catch {}
+      throw error
+    }
+  }
   const assertNoSessionLaunch = (): void => {
     if (options.isSessionLaunchRunning?.()) {
       throw new Error('一键会话创建正在进行，请等待其完成后再替换或结束运行')
@@ -47,7 +61,7 @@ export function registerTeamControlIpc(
   })
   ipcMain.handle(IPC.teamControlDetectWorkspace, (event) => {
     assertTrustedSender(event, getWindow)
-    return options.detectCurrentWorkspace()
+    return detectWorkspace()
   })
   ipcMain.handle(IPC.teamControlCreateIndependent, async (event, value: unknown) => {
     assertTrustedSender(event, getWindow)
@@ -57,7 +71,7 @@ export function registerTeamControlIpc(
     const workspacePath = requiredString(input.workspacePath, '工作区路径', 2_000)
     const workspace = workspaceIdentityOf(workspacePath)
     // 在替换旧 run / 签发新身份之前核对窗口；检测过程不产生业务写入。
-    const detected = await options.detectCurrentWorkspace()
+    const detected = await detectWorkspace()
     if (detected.state !== 'detected' || !detected.workspace) throw new Error(detected.detail)
     if (detected.workspace.id !== workspace.id) {
       throw new Error(`Cursor 当前工程为「${detected.workspace.name}」，创建配置仍为「${workspace.name}」。请按当前工程重新发起；原批次已保留。`)

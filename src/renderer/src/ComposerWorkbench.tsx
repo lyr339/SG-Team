@@ -29,6 +29,8 @@ import { EraseIcon, ExportIcon, HandoffIcon } from './UiIcons'
 
 interface ComposerWorkbenchProps {
   session: AgentSession
+  contextUsageSampledAt?: number
+  contextNotificationScope?: import('../../domain/notification').NotificationScope
   currentProjectName?: string
   draft: string
   canSend: boolean
@@ -169,6 +171,8 @@ function readFileAsAttachment(file: File, index: number): Promise<MessageAttachm
 
 export function ComposerWorkbench({
   session,
+  contextUsageSampledAt,
+  contextNotificationScope,
   currentProjectName,
   draft,
   canSend,
@@ -534,7 +538,7 @@ export function ComposerWorkbench({
             </span>
           )}
         </div>
-        <ContextUsagePopover usage={session.contextUsage} />
+        <ContextUsagePopover usage={session.contextUsage} notificationSession={session} notificationScope={contextNotificationScope} sampledAt={contextUsageSampledAt} />
         {sendError && <span className="composer-error" role="alert">{sendError}</span>}
         <div className="composer-submit">
           <kbd title="Enter 发送；Shift + Enter 换行">↵</kbd>

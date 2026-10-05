@@ -208,6 +208,25 @@
 
 **全目标仍未完成**：其他重要来源（工作区/兼容版本/可靠上下文与用量阈值/组和共享记忆等）还须逐源接入及关联页面验证；长序列容量/更完整响应式、正式打包/完整应用/macOS 与 Windows 真通知权限/声音/勿扰验收仍未完成。历史保留和确认机制已经落地，但不能用它替代完整事件矩阵、所有真实平台或从未落盘阶段的证明。未 push、发版或安装软件。
 
+### 第十二批：工作区观测与可靠上下文阈值
+
+- 复核发现界面会保留上一笔上下文，并允许同通道转录 Composer 回退；它们是合理显示，但不能当作当前绑定的新鲜证据。`DesktopSessionService` 增加纯只读 provenance：bound / channel-fallback / cached、实际读数 Composer、原生逐 Composer 模型，以及原有本机遥测读取/缓存验证成功的观察时间。没有新增遥测读、CDP 请求或推送节拍，时间戳自己变化不重新生成 session 引用或整帧业务推送；回退/缓存数值照旧显示。
+- `nativeContextReading` 是主进程与可见阅读共用的纯规则，不另造两套可信判断。阈值只读 exact workspace/run/slot/session/generation/Composer/binding，接受原生整数 used/limit、有效比例和相互一致值；本机读取证据超过三秒、未绑定/回退/缓存、错误/重连、未来不合理时间等都不触发或假称恢复。观察时间指**现有本机持久数据读/缓存校验**，不是证明模型服务账单或 Cursor 内存/网络当下精确用量，也不改变估算器。
+- 80% / 95% 是通知阈值，不修改原执行闸门/上下文圆环颜色。77% / 92% 退出滞回避免边缘抖动；同一代次与原生模型/容量域，各阈值只新提醒一次，持续增长不逐 Token 写记录/增未读/发弹窗。模型/容量变化安静重建新的范围、使旧提醒不再适用；回到先前域不重新武装旧阈值。初始/唤醒水合保持安静，已有偏高占用可留中心。
+- 真停止、退役、明确运行完成以及准确投影的绑定身份替换使相应提醒过期，不推测缺失的会话死亡；单纯切工作区不等于旧 run 完成。原读数中断更新同记录为读数待更新，而不是绿色降占用或重复刷失败。通知域检查点和记录使用已有私有 CAS 事务；多于 100 个旧身份的收口分批完成，不截掉重要历史。作用域容量超出仍显式报告历史缺口，不无界增长。
+- 上下文通知动作名为“查看上下文”，只打开对应现有原生统计弹层；点击前/重绘后复核模型/限额、代次与绑定，不自动交接、换模型、发消息或新建会话。只在确切原生正文实际可见、读数仍可信、比例与该提醒级别一致时确认相同通知阅读，旧域或旧代次不被顺手全已读。查询增加有限 generation/contextDomain 筛选，不允许 renderer 发布事件。
+- CUA 真组件检查发现原弹层的 hover/focus 会先打开，随后 click 反向 toggle 把它关掉；点击改为明确打开，X/Escape/离开原交互仍可关闭，不增一套展示控件或改视觉。真实导航、焦点和深浅色布局分别检查，保留原模型牌、圆环、统计表、会话和左右栏样式。
+- 工作区 observer 复用每一次原来的 `detectCurrentWorkspace`：加只读原因，不靠中文错误 regex 判别。latest-started probe 才能更新通知投影，晚到旧结果仍按原接口返回但不能倒改历史观察；原检测/创建前 gate、调用次数、返回引用和异常保持。正常识别/变化只进日常动态，工作区路径/候选窗口列表/原诊断不复制进 ledger；没有把识别成功说成旧会话结束或自动切换运行范围。
+- 原探测暂不可用/未开文件夹/多窗口等不一上来刷失败。已有识别后，至少两次原负面回执且跨度三秒才在中心更新一个未确认事项，恢复按实际新身份收口；无新探测则无编造的持续失败计时。此观测来源默认安静，不产生工作区 toast/OS 风暴。应用退出先封口/排空该来源；source-close 不被提前 stop 抹掉已接受事实。
+
+当前终态证据：`full-regression-context-workspace-final.log`、`build-context-workspace-final.log`、`dead-code-context-workspace-final.log`、`node-context-workspace-final.log`、`electron-context-workspace-final.log`、`electron-worker-context-workspace-final.log`、`electron-recovery-context-workspace-final.log`、`electron-history-context-workspace-final.log`、`electron-quit-context-workspace-final.log`、`channel-smoke-context-workspace-final.log`、`mcp-smoke-context-workspace-final.log`。隔离 `scripts/verify-notification-context.ts` 用当前 observer + 最新真实编译 worker 验证 source CAS/准确查询/两阈值/陈旧不伪恢复/清理和重启不复活/工作区事项持久化；输入事实是 fixture，不宣称真实 Cursor 正跑到 95% 或真实 OS 送达。
+
+`context-threshold-notifications.test.ts`/`context-notification-read.test.tsx`/`workspace-notifications.test.ts`、原 Desktop/创建/IPCs/Context/导航和共用源测试覆盖新代次/域 A→B→A、睡眠、旧 pull/晚到旧探测、同域无写入增长、旧 run 明确结束、220 身份分三批、清理后再读/重启、真实可见正文与未挂载拒绝、原 observer 抛错不破坏业务 gate/调用。Provenance 测试明确正常缓存展示仍在、只更新 sample 时间不生成额外 source 请求或 session 对象。
+
+真实组件预览：`ui/context-threshold-center-light.jpg`、`ui/context-threshold-source-light.jpg`、`ui/context-threshold-source-dark.jpg`。中心详情明确非计费/非会话完成，来源按钮实际切到正确 CH 并打开 Context。HMR 重挂载后先复核当前 DOM 再重新导航，未把先前关闭后的过期 selector 当成功；hover/focus-click 的原问题经复测已修。Console 无 warn/error，普通窗口弹层边界无溢出。没有生产主进程/真实 Cursor/模型请求/账号操作/OS 通知或安装、push、发版；临时预览和 fixture 清理，保护报告 `protected-context-workspace-audit.json` 的原目录状态保持，四个已知预热文件漂移保留。
+
+**全目标仍未完成**：兼容版本/补丁支持变化、模型目录/统计源持续异常、可靠用量差异、组关系/共享记忆的重要诊断还须逐源实现和页面对应；工作区安静检测只是展示观测，不替代使用检测前 gate 拦截/原地反馈。其他已有操作的开始/未知恢复、完整队列/问卷长序列和容量审查仍须按矩阵查漏；正式打包/安装环境、macOS/Windows 真 OS 权限/声音/勿扰以及全 UI 响应式/生命周期实机未完成。本批没有改用更窄的目标，不以两个新来源宣称整套通知闭环。
+
 下面保留完整要求，不因前三批已有成果缩小。已实现部分仍需匹配该项范围验收；未实现部分继续开工。
 
 1. 通知中心、轻量顶栏入口、单张提醒和独立 renderer store。支持待处理／未读／全部、查询范围、分页、详情、关闭、阅读、归档、确认清理和适当偏好；减少动画、长内容、键盘与窄窗需验收。

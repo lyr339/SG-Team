@@ -24,6 +24,7 @@ import { useReplyNotificationRead } from './notifications/use-reply-notification
 
 interface SessionWorkspaceProps {
   session: AgentSession
+  contextUsageSampledAt?: number
   entries: ConversationEntry[]
   currentProjectName?: string
   onSend: (text: string, attachments?: MessageAttachment[]) => Promise<void>
@@ -153,6 +154,7 @@ function ListenIcon(): React.JSX.Element {
 
 export function SessionWorkspace({
   session,
+  contextUsageSampledAt,
   entries,
   currentProjectName,
   onSend,
@@ -296,7 +298,7 @@ export function SessionWorkspace({
   // 贴底跟随按既有意图模型自动暂停。等过程卡把目标步骤展开提交后再定位，并把
   // 「是否找到」回给右栏——找不到时右栏会给出提示，而不是静默无事发生。
   useEffect(() => subscribeReveal((target) => (
-    target.surface === 'queue' ? false : revealAfterPaint(() => follow.viewportRef.current, target)
+    target.surface ? false : revealAfterPaint(() => follow.viewportRef.current, target)
   )), [follow.viewportRef])
 
   const pendingBelow = follow.awayFromBottom ? Math.max(0, timelineEntries.length - seenCount.current) : 0
@@ -852,6 +854,8 @@ export function SessionWorkspace({
 
       <ComposerWorkbench
         session={session}
+        contextUsageSampledAt={contextUsageSampledAt}
+        contextNotificationScope={{ ...questionActions?.notificationScope, sessionId: session.id, channelId: session.channelId, generation: String(session.generation), composerId: session.composerId }}
         currentProjectName={currentProjectName}
         draft={draft}
         canSend={canSend}

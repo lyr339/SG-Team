@@ -1,5 +1,6 @@
 import {
   useId,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -8,10 +9,18 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import type { ContextUsage, ContextUsageCategory } from '../../domain/agent-session'
+import type { AgentSession } from '../../domain/agent-session'
+import type { NotificationScope } from '../../domain/notification'
+import { subscribeReveal } from './inspector/reveal-bus'
+import { notificationSessionScopeMatches } from './notifications/notification-session-scope'
+import { useContextNotificationRead } from './notifications/use-context-notification-read'
 import { contextPercent, contextTone, formatTokenCount } from './format'
 
 interface ContextUsagePopoverProps {
   usage?: ContextUsage
+  notificationSession?: AgentSession
+  notificationScope?: NotificationScope
+  sampledAt?: number
 }
 
 const CATEGORY_TONES: Record<string, string> = {
@@ -34,13 +43,16 @@ function categoryTone(category: ContextUsageCategory): string {
   return CATEGORY_TONES[category.id] ?? 'other'
 }
 
-export function ContextUsagePopover({ usage }: ContextUsagePopoverProps): React.JSX.Element {
+export function ContextUsagePopover({ usage, notificationSession, notificationScope, sampledAt }: ContextUsagePopoverProps): React.JSX.Element {
   const [open, setOpen] = useState(false)
   const [position, setPosition] = useState({ left: 12, bottom: 12, width: 420 })
   const titleId = useId()
   const popoverId = useId()
   const triggerRef = useRef<HTMLButtonElement>(null)
   const popoverRef = useRef<HTMLElement>(null)
+  useContextNotificationRead(popoverRef, open, notificationScope, notificationSession, sampledAt)
+  const notificationCurrent = useRef({ session: notificationSession, scope: notificationScope })
+  notificationCurrent.current = { session: notificationSession, scope: notificationScope }
   const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const percent = contextPercent(usage)
   const tone = contextTone(percent)
@@ -56,6 +68,24 @@ export function ContextUsagePopover({ usage }: ContextUsagePopoverProps): React.
     closeTimer.current = undefined
   }
   useLayoutEffect(() => cancelClose, [])
+  useEffect(() => subscribeReveal(target => {
+    if (target.surface !== 'context' || !target.sessionScope) return false
+    const current = notificationCurrent.current
+    const scope = current.scope, session = current.session, rect = triggerRef.current?.getBoundingClientRect()
+    if (!scope || !session || session.contextUsageSource !== 'bound' || session.contextUsageComposerId !== session.composerId
+      || !notificationSessionScopeMatches(target.sessionScope, scope) || !rect?.width || !rect.height
+      || target.sessionScope.contextDomain !== JSON.stringify([session.contextUsageModelId ?? null, session.contextUsage?.limit])) return false
+    triggerRef.current?.focus({ preventScroll: true })
+    cancelClose(); setOpen(true)
+    return new Promise<boolean>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => {
+      const latest = notificationCurrent.current
+      const valid = Boolean(popoverRef.current?.isConnected && latest.scope && notificationSessionScopeMatches(target.sessionScope!, latest.scope)
+        && latest.session?.contextUsageSource === 'bound' && latest.session.contextUsageComposerId === latest.session.composerId
+        && target.sessionScope!.contextDomain === JSON.stringify([latest.session?.contextUsageModelId ?? null, latest.session?.contextUsage?.limit]))
+      if (!valid) setOpen(false)
+      resolve(valid)
+    })))
+  }), [])
   const show = (): void => {
     cancelClose()
     setOpen(true)
@@ -115,7 +145,7 @@ export function ContextUsagePopover({ usage }: ContextUsagePopoverProps): React.
         aria-controls={popoverId}
         aria-haspopup="dialog"
         aria-label={`上下文占用 ${compactPercent(percent)}，查看原生统计`}
-        onClick={() => setOpen((value) => !value)}
+        onClick={show}
       >
         <svg className="composer-context-ring" viewBox="0 0 32 32" aria-hidden="true">
           <circle className="composer-context-ring__track" cx="16" cy="16" r="13" />

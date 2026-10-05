@@ -1980,6 +1980,8 @@ describe('channel composer context fallback', () => {
 
     expect(snapshot.sessions[0]?.composerId).toBe('composer-bound-no-context')
     expect(snapshot.sessions[0]?.contextUsage).toEqual({ ratio: 0.42 })
+    expect(snapshot.sessions[0]?.contextUsageSource).toBe('channel-fallback')
+    expect(snapshot.sessions[0]?.contextUsageComposerId).toBe('composer-channel-context')
   })
 
   it('keeps the last known context value across a transient telemetry hole', () => {
@@ -2003,9 +2005,11 @@ describe('channel composer context fallback', () => {
     try {
       service.refreshTelemetry()
       expect(service.getSnapshot().sessions[0]?.contextUsage).toEqual({ ratio: 0.63 })
+      expect(service.getSnapshot().sessions[0]?.contextUsageSource).toBe('bound')
       includeContext = false
       service.refreshTelemetry()
       expect(service.getSnapshot().sessions[0]?.contextUsage).toEqual({ ratio: 0.63 })
+      expect(service.getSnapshot().sessions[0]?.contextUsageSource).toBe('cached')
     } finally {
       service.dispose()
     }
@@ -3744,5 +3748,29 @@ describe('Composer 气泡数事实（名册悬停详情的会话体积）', () =
     } finally {
       service.dispose()
     }
+  })
+})
+
+
+describe('native context alert provenance does not increase telemetry work',()=>{
+  it('stamps only original successful telemetry reads, preserves session identity, and does not push on timestamp-only refresh',async()=>{
+    vi.useFakeTimers()
+    try{
+      vi.setSystemTime(10000)
+      let available=true
+      const source={readWorkspace:vi.fn(()=>available?telemetry():emptyCursorTelemetrySnapshot('error','test unavailable'))}
+      const service=new DesktopSessionService(new FakeBridge(),new FakeTeam(teamSnapshot('composer-alpha-123')),source)
+      try{
+        service.refreshTelemetry();await Promise.resolve();await Promise.resolve();const listener=vi.fn();service.subscribe(listener)
+        const first=service.getSnapshot();expect(first.contextUsageSampledAt).toBe(10000)
+        const count=listener.mock.calls.length,reads=source.readWorkspace.mock.calls.length
+        vi.setSystemTime(11000);service.refreshTelemetry();await Promise.resolve();await Promise.resolve()
+        expect(service.getSnapshot().contextUsageSampledAt).toBe(11000)
+        expect(service.getSnapshot().sessions[0]).toBe(first.sessions[0]);expect(listener.mock.calls.length).toBe(count)
+        expect(source.readWorkspace.mock.calls.length).toBe(reads+1)
+        available=false;service.refreshTelemetry()
+        expect(service.getSnapshot().contextUsageSampledAt).toBeUndefined();expect(service.getSnapshot().sessions[0]?.contextUsageSource).toBe('cached')
+      }finally{service.dispose()}
+    }finally{vi.useRealTimers()}
   })
 })

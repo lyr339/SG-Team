@@ -1,3 +1,4 @@
+import { reduceContextThresholdNotifications } from '../../../domain/context-threshold-notification'
 /**
  * 设计走查入口：mock 掉 preload API，在纯浏览器里渲染完整应用。
  * 仅供 preview.html 使用，不进入生产构建，不连接任何端口。
@@ -1164,6 +1165,26 @@ function updatePreviewGroup(groupId: string, update: (view: typeof state.team.gr
 }
 
 const notificationPreview = createNotificationPreview()
+if (previewParameters.get('notifications') === 'context' && state.team.activeRun) {
+  const channel = state.desktop.sessions[0]?.channelId, member = state.team.members.find(value => (value.binding?.channelId ?? value.slot.channelId) === channel)
+  const session = state.desktop.sessions.find(value => value.channelId === channel)
+  if (session && member?.binding) {
+    const binding = member.binding, sampledAt = Date.now()
+    session.composerId = binding.composerId ?? 'preview-context-composer'
+    binding.composerId = session.composerId
+    session.contextUsage = { ratio: .96, used: 960_000, limit: 1_000_000 }
+    session.contextUsageSource = 'bound'; session.contextUsageComposerId = session.composerId; session.contextUsageModelId = 'preview-native-model'
+    session.telemetry = { state: 'bound', detail: 'isolated preview native fact' }
+    state.desktop.contextUsageSampledAt = sampledAt
+    const scope = { workspaceId: state.team.activeWorkspaceId, runId: state.team.activeRun.id, slotId: member.slot.id, bindingGeneration: binding.generation,
+      channelId: session.channelId, sessionId: session.id, composerId: session.composerId, generation: String(session.generation) }
+    const projection = reduceContextThresholdNotifications(undefined,{key:'preview-context',completed:false,now:sampledAt,facts:[{
+      identity:'1'.repeat(64),scope,name:session.roleName,domain:JSON.stringify(['preview-native-model',1_000_000]),domainKey:'2'.repeat(64),zone:'critical',ended:false
+    }]},true,1)
+    projection.drafts.forEach(notificationPreview.offer)
+  }
+}
+
 function previewPageResult(kind: PageNotificationOperation, id: string | undefined, outcome: PageOperationOutcome) {
   const actualId = id ?? crypto.randomUUID()
   notificationPreview.offer(pageOperationNotification({ kind, id: actualId }, outcome, Date.now()))

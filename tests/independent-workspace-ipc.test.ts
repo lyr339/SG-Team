@@ -71,3 +71,21 @@ it('显式结束后补收最终样本再冻结；结束失败不冻结', async (
     expect(onRunEnded).toHaveBeenCalledTimes(1)
   } finally { tracker.dispose(); dispose() }
 })
+
+
+it('workspace observation adds no probe, gate or result rewrite, including observer failure',async()=>{
+  const root=mkdtempSync(join(tmpdir(),'sg-workspace-observe-'));mkdirSync(join(root,'A'))
+  const workspace=workspaceIdentityOf(join(root,'A')),result={state:'detected' as const,workspace,candidates:[],detail:'native',observedAt:1}
+  const detected=vi.fn(async()=>result),configured=vi.fn(()=>({activeWorkspaceId:workspace.id})),complete=vi.fn(()=>{throw Error('observer failed')})
+  const dispose=registerTeamControlIpc({subscribe:()=>()=>{},createSessionPool:configured} as unknown as Parameters<typeof registerTeamControlIpc>[0],
+    {getSnapshot:()=>({cursorModels:[]})} as unknown as Parameters<typeof registerTeamControlIpc>[1],()=>undefined,
+    {detectCurrentWorkspace:detected,workspaceObserver:{begin:()=>({complete})}})
+  try{
+    expect(await handlers.get(IPC.teamControlDetectWorkspace)!({})).toBe(result);expect(detected).toHaveBeenCalledOnce()
+    await handlers.get(IPC.teamControlCreateIndependent)!({},{workspacePath:workspace.path,sessions:[{}]})
+    expect(detected).toHaveBeenCalledTimes(2);expect(configured).toHaveBeenCalledOnce()
+    const original=Error('original probe error');detected.mockRejectedValueOnce(original)
+    await expect(handlers.get(IPC.teamControlDetectWorkspace)!({})).rejects.toBe(original)
+    expect(detected).toHaveBeenCalledTimes(3)
+  }finally{dispose();rmSync(root,{recursive:true,force:true})}
+})

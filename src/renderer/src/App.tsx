@@ -1092,11 +1092,11 @@ export function App(): React.JSX.Element {
       setCollaborationTarget({ runId: target.runId, groupId: target.groupId, messageId: target.messageId }); return true
     }
     changeModule('sessions'); selectSession(target.scope.channelId!)
-    if (target.entryId || target.blockId) {
+    if (target.entryId || target.blockId || target.surface) {
       await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
       const latest = notificationContext.current
       if (!notificationTargetAvailable(target, latest.sessions, latest.team)) return false
-      return requestReveal({ ...(target.entryId ? { entryId: target.entryId } : {}), ...(target.blockId ? { blockId: target.blockId } : {}), ...(target.surface ? { surface: target.surface } : {}) })
+      return requestReveal({ ...(target.entryId ? { entryId: target.entryId } : {}), ...(target.blockId ? { blockId: target.blockId } : {}), ...(target.surface ? { surface: target.surface } : {}), ...(target.surface === 'context' ? { sessionScope: target.scope } : {}) })
     }
     return true
   }, [changeModule, selectSession, openCollaboration, acceptCollaboration])
@@ -1657,6 +1657,7 @@ export function App(): React.JSX.Element {
         <SessionWorkspace
           key={selectedSession.channelId}
           session={selectedSession}
+          contextUsageSampledAt={visibleSnapshot.contextUsageSampledAt}
           entries={snapshot.conversations[selectedSession.channelId] ?? []}
           currentProjectName={activeProjectName}
           onBack={() => { setSessionListRequested(true); setSelectedChannelId(undefined) }}

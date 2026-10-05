@@ -12,6 +12,8 @@ export interface DetectedCursorWorkspace {
  * 只做展示与创建前核对，不会替用户切换运行作用域；多窗口或未开工作区时给出说明。
  */
 export interface CursorWorkspaceDetection {
+  /** Display-only cause from the existing probe; never an additional check or permission gate. */
+  cause?: 'no-window' | 'multiple-windows' | 'no-folder' | 'remote' | 'multi-root' | 'unconfirmed' | 'connection-unavailable'
   state: CursorWorkspaceDetectionState
   workspace?: DetectedCursorWorkspace
   candidates: DetectedCursorWorkspace[]

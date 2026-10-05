@@ -30,6 +30,8 @@ function query(value: unknown): NotificationQuery {
     ...(input.eventType !== undefined ? { eventType: input.eventType as string } : {}),
     ...(input.operationFamilyId !== undefined ? { operationFamilyId: id(input.operationFamilyId) } : {}),
     ...(input.sessionId !== undefined ? { sessionId: id(input.sessionId) } : {}),
+    ...(input.contextDomain !== undefined ? { contextDomain: id(input.contextDomain) } : {}),
+    ...(input.generation !== undefined ? { generation: id(input.generation) } : {}),
     ...(input.toolCallId !== undefined ? { toolCallId: id(input.toolCallId) } : {}),
     ...(input.entryId !== undefined ? { entryId: id(input.entryId) } : {}),
     ...(input.filter ? { filter: input.filter as NotificationQuery['filter'] } : {}),

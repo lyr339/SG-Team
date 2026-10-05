@@ -113,6 +113,8 @@ export class SqliteNotificationRepository {
     if (query.eventType) { clauses.push("json_extract(payload,'$.eventType')=?"); params.push(query.eventType) }
     if (query.operationFamilyId) { clauses.push("json_extract(payload,'$.scope.operationFamilyId')=?"); params.push(query.operationFamilyId) }
     if (query.sessionId) { clauses.push("json_extract(payload,'$.scope.sessionId')=?"); params.push(query.sessionId) }
+    if (query.contextDomain) { clauses.push("json_extract(payload,'$.scope.contextDomain')=?"); params.push(query.contextDomain) }
+    if (query.generation) { clauses.push("json_extract(payload,'$.scope.generation')=?"); params.push(query.generation) }
     if (query.toolCallId) { clauses.push("json_extract(payload,'$.target.toolCallId')=?"); params.push(query.toolCallId) }
     if (query.entryId) { clauses.push("json_extract(payload,'$.target.entryId')=?"); params.push(query.entryId) }
     if (query.workspaceId) { clauses.push('(workspace_id=? OR workspace_id IS NULL)'); params.push(query.workspaceId) }

@@ -103,6 +103,10 @@ export interface AgentSession {
   deliveryMode?: 'live' | 'queued'
   waiting: boolean
   contextUsage?: ContextUsage
+  /** Read-only provenance; retained display values are not fresh native samples for alerts. */
+  contextUsageSource?: 'bound' | 'channel-fallback' | 'cached'
+  contextUsageComposerId?: string
+  contextUsageModelId?: string
   /**
    * 绑定 Composer 的气泡总数（Cursor 原生会话体积；hook 帧 / inspect 同源）。持续会话的
    * 回合永不结束，气泡只增不减——名册悬停详情据此告知会话体积。未观测到时缺省。

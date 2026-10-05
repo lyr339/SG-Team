@@ -6,12 +6,14 @@
  * 滚动并高亮）。请求方拿到的是「是否有人真的找到了目标」——找不到时右栏可以给出
  * 反馈，而不是静默无事发生。
  */
+import type { NotificationScope } from '../../../domain/notification'
 export interface RevealTarget {
   /** 过程块 id（ProcessTurnCard 渲染为 data-step-id="block:<id>"）。 */
   blockId?: string
   /** 会话条目 id（用户消息 / 回复）。 */
   entryId?: string
-  surface?: 'queue'
+  surface?: 'queue' | 'context'
+  sessionScope?: NotificationScope
 }
 
 /** 返回 true 表示已定位到目标；准备方（只展开、不定位）返回 undefined。 */

@@ -12,6 +12,8 @@ export function notificationTargetAvailable(target: NotificationTarget, sessions
   const session = sessions.find(value => value.channelId === scope.channelId)
   if (!session || scope.sessionId && session.id !== scope.sessionId || scope.composerId && session.composerId !== scope.composerId
     || scope.generation && String(session.generation) !== scope.generation) return false
+  if (scope.contextDomain && (session.contextUsageSource !== 'bound' || session.contextUsageComposerId !== session.composerId
+    || scope.contextDomain !== JSON.stringify([session.contextUsageModelId ?? null, session.contextUsage?.limit]))) return false
   const member = team.members.find(value => (value.binding?.channelId ?? value.slot.channelId) === scope.channelId)
   if (scope.slotId && member?.slot.id !== scope.slotId || scope.groupId && member?.slot.groupId !== scope.groupId
     || scope.bindingGeneration && member?.binding?.generation !== scope.bindingGeneration) return false

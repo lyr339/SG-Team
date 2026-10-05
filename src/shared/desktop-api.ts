@@ -108,6 +108,8 @@ export interface BridgeConnection {
 }
 
 export interface DesktopSnapshot {
+  /** Last successful existing local-telemetry read/cache validation, not a runtime heartbeat or estimate timestamp. */
+  contextUsageSampledAt?: number
   /** The topology used for this final runtime projection; prevents cross-callback old-team/new-session pairing. */
   runtimeScope?: { workspaceId?: string; runId?: string; teamRevision: number }
   connection: BridgeConnection

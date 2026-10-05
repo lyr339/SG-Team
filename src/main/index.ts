@@ -116,6 +116,7 @@ import { connectAutomationNotifications } from '../application/notifications/aut
 import { connectTaskNotifications } from '../application/notifications/task-notifications'
 import { connectOperatorMessageNotifications } from '../application/notifications/team-message-notifications'
 import { PageOperationNotifications } from '../application/notifications/page-operation-notifications'
+import { WorkspaceNotifications } from '../application/notifications/workspace-notifications'
 import { membershipTransferNotification } from '../domain/membership-transfer-notification'
 // electron-updater 是 CJS，`autoUpdater` 是 exports 上的惰性 getter：主进程是 ESM，命名导入会在链接期
 // 找不到该导出（cjs-module-lexer 认不出 getter），只能默认导入整个 module.exports 再取属性。
@@ -168,6 +169,7 @@ let teamFailoverService: TeamFailoverService | undefined
 let notificationService: NotificationService | undefined
 let notificationDeliveryService: NotificationDeliveryService | undefined
 let pageOperationNotifications: PageOperationNotifications | undefined
+let workspaceNotifications: WorkspaceNotifications | undefined
 let notificationRuntimeJournal: NotificationRuntimeJournal | undefined
 let disposeNotificationIpc: (() => void) | undefined
 let disposeAppUpdateNotifications: (() => void) | undefined
@@ -380,6 +382,7 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     })
     disposeNotificationIpc = registerNotificationIpc(notificationService, () => mainWindow, notificationDeliveryService)
     pageOperationNotifications = new PageOperationNotifications(notificationService)
+    workspaceNotifications = new WorkspaceNotifications(notificationService)
   } catch {
     // Renderer can expose unavailable notification history; launching and account services must still initialize.
     console.warn('[notifications] 通知存储暂不可用，原有功能继续运行')
@@ -989,6 +992,7 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     desktopSessionService,
     () => mainWindow,
     { isSessionLaunchRunning: () => agentSessionLauncher.getPlan()?.state === 'running',
+      workspaceObserver: workspaceNotifications,
       detectCurrentWorkspace: () => cursorCdpCreator.detectCurrentWorkspace(),
       onRunEnded: async (ended) => {
         const endedRunId = ended.activeRun?.id
@@ -1101,7 +1105,8 @@ const notificationQuitBarrier = new NotificationQuitBarrier({
   drain: () => drainNotificationsForQuit(notificationService!, [
     () => notificationRuntime?.close() ?? Promise.resolve(),
     () => taskNotificationSource?.close() ?? Promise.resolve(),
-    () => operatorMessageNotificationSource?.close() ?? Promise.resolve()
+    () => operatorMessageNotificationSource?.close() ?? Promise.resolve(),
+    () => workspaceNotifications?.close() ?? Promise.resolve()
   ], disposeDesktopOnce),
   settled: result => {
     try { notificationRuntimeJournal?.finish(result.confirmed, notificationService?.status().historyIncomplete ?? true, notificationService?.status().historyGapId) }

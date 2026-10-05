@@ -70,6 +70,17 @@ describe('ContextUsagePopover', () => {
     expect(dialog.querySelector('.context-breakdown-bar > .is-tools')).not.toBeNull()
   })
 
+  it('a click after hover/focus keeps the native statistics open instead of cancelling its own opening',async()=>{
+    await act(async()=>root.render(<ContextUsagePopover usage={usage}/>))
+    const button=container.querySelector<HTMLButtonElement>('button')!
+    await act(async()=>button.focus())
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull()
+    await act(async()=>button.click())
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull()
+    await act(async()=>button.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})))
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+  })
+
   it('supports keyboard/click access and a truthful no-breakdown fallback', async () => {
     await act(async () => root.render(
       <ContextUsagePopover usage={{ used: 20_000, limit: 200_000, ratio: 0.1 }} />

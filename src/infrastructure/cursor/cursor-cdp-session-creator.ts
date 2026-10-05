@@ -1044,20 +1044,20 @@ export class CursorCdpSessionCreator {
 
   /** 每次重新枚举窗口，覆盖 Cursor 在同一进程内更换工作区/重载页面的情况。 */
   async detectCurrentWorkspace(): Promise<CursorWorkspaceDetection> {
-    const unavailable = (detail: string): CursorWorkspaceDetection => ({
-      state: 'unavailable', candidates: [], detail, observedAt: Date.now()
+    const unavailable = (detail: string, cause: CursorWorkspaceDetection['cause'] = 'unconfirmed'): CursorWorkspaceDetection => ({
+      state: 'unavailable', candidates: [], detail, cause, observedAt: Date.now()
     })
     try {
       const targets = await this.fetchTargets(this.port, PROBE_TIMEOUT_MS)
-      if (!targets.length) return unavailable('未发现 Cursor IDE 窗口')
+      if (!targets.length) return unavailable('未发现 Cursor IDE 窗口', 'no-window')
       if (targets.length !== 1) return {
-        ...unavailable('检测到多个 Cursor IDE 窗口，请保留一个工作区窗口'), state: 'ambiguous'
+        ...unavailable('检测到多个 Cursor IDE 窗口，请保留一个工作区窗口', 'multiple-windows'), state: 'ambiguous'
       }
       const value = await this.evaluate(targets[0]!.webSocketDebuggerUrl, CURRENT_WORKSPACE_EXPRESSION, PROBE_TIMEOUT_MS)
       if (!isRecord(value)) return unavailable('正在识别 Cursor 工作区')
-      if (value.state === 'empty') return unavailable('Cursor 未打开工作区')
-      if (value.state === 'remote') return unavailable('当前为远程工作区，暂仅识别本地文件夹')
-      if (value.state === 'workspace-file') return unavailable('当前为多根工作区，暂仅识别本地文件夹')
+      if (value.state === 'empty') return unavailable('Cursor 未打开工作区', 'no-folder')
+      if (value.state === 'remote') return unavailable('当前为远程工作区，暂仅识别本地文件夹', 'remote')
+      if (value.state === 'workspace-file') return unavailable('当前为多根工作区，暂仅识别本地文件夹', 'multi-root')
       if (value.state !== 'folder' || typeof value.path !== 'string' || !value.path.startsWith('/')) {
         return unavailable('正在识别 Cursor 工作区')
       }
@@ -1071,7 +1071,7 @@ export class CursorCdpSessionCreator {
       }
       return { state: 'detected', workspace, candidates: [workspace], detail: '由 Cursor 当前 IDE 窗口确认', observedAt: Date.now() }
     } catch {
-      return unavailable('Cursor 检测连接未就绪，请确认 Cursor 已启动且调试连接可用')
+      return unavailable('Cursor 检测连接未就绪，请确认 Cursor 已启动且调试连接可用', 'connection-unavailable')
     }
   }
 
