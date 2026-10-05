@@ -45,7 +45,7 @@ interface DesktopShellProps {
   /** 背景预设 id（缺省折光）；未传 onBackgroundChange 时弹层不出现背景行。 */
   background?: string
   onModuleChange: (module: AppModule) => void
-  onNotificationTarget?: (target: NotificationTarget, scope?: NotificationScope) => boolean | Promise<boolean>
+  onNotificationTarget?: (target: NotificationTarget, scope?: NotificationScope,stillRelevant?:()=>boolean) => boolean | Promise<boolean>
   onOpenProjectConfiguration: () => void
   onCardOpacityChange: (value: number) => void
   onColorModeChange: (value: 'system' | 'light' | 'dark') => void

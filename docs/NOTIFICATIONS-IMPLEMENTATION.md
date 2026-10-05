@@ -227,6 +227,25 @@
 
 **全目标仍未完成**：兼容版本/补丁支持变化、模型目录/统计源持续异常、可靠用量差异、组关系/共享记忆的重要诊断还须逐源实现和页面对应；工作区安静检测只是展示观测，不替代使用检测前 gate 拦截/原地反馈。其他已有操作的开始/未知恢复、完整队列/问卷长序列和容量审查仍须按矩阵查漏；正式打包/安装环境、macOS/Windows 真 OS 权限/声音/勿扰以及全 UI 响应式/生命周期实机未完成。本批没有改用更窄的目标，不以两个新来源宣称整套通知闭环。
 
+### 第十三批：原兼容检测、组关系与可定位记忆修订事项
+
+- 兼容 observer 挂在原 `CursorSwitchPumpInstaller.status` 完成边界；调用原定位、metadata/bundle 分析各一次，原返回/异常与安装/卸载/锁/配置读法不改。观察者只得到 opaque installationId、version、明确 compatibility/kind 和 profile-refresh boolean，端口/key/path/原诊断不进入它。异步检查按 latest-started 排序，旧结果仍照原接口返回但不倒改通知。
+- 支持的 release 不等于 bundle 实际能力通过；installed 不等于运行中的 Cursor 已加载；切号泵与 profile hook 分开，未知状态不被叫作补丁丢失。新版本变化安静记录，明确版本/能力/profile 问题在原事项中更新，短暂未确认只进中心。另一份安装被选中不能把原安装警告自动改成功；维护导航验证当前安装身份。原页同安装/版本的明确可见结果才读取相应最新通知，旧/不完整接口不假确认。
+- 组关系使用现有 TeamControl 订阅的准确 group/member/effective-lead/实际 planning 投影；没有新增 group-events 查询或 timer。正常创建、成员/主控/有效规划权变化和明确 dissolved 只安静更新每组一条关系摘要，Runtime 心跳/顺序调整/无实际效果的 planning 预设不刷历史。缺失的 clipped/过期组不是新解散；原关系确认不代表成员通知已取走、租约/任务/消息收尾全部成功。这个来源覆盖**关系摘要**，不是对所有事务外副作用成功的承诺。
+- 原共享记忆服务当前没有启动自己的 watcher；仅挂 subscribe 会漏 MCP 更新。本批使用原 `getSnapshot` 读取/失败的 main-only observer，沿用编排器原来每秒的读取，不启动另一个 watcher、不复读记忆库。原已使用的 TeamControl context 一同交给观察者，避免它再查询上下文和混入另一作用域；观察者抛错不重复查询、不改返回对象、不吞原错误。metadata revision/明确范围终态未变时重用 thin facts 和签名，普通无取代关系条目直接排除；私有未知提交仍有下一原读取机会核对原子检查点，不因性能缓存丢恢复。
+- 记忆事项只依据原条目/前置引用的实际状态识别**修订前置条件冲突**，不是用 LLM 判断正文矛盾，也不把尚未采纳的普通提案都交给人类。先前已记录冲突的读取暂不可用/前置缺失保持待核对，正面 eligible/accepted/rejected/superseded 或明确原范围结束才收束相应通知。阅读仍保留待处理；只看到调度消息/调用失败不算采纳或回滚。当前只覆盖已确认前置冲突，其他审核升级/写入错误见剩余要求。
+- 新的“查看原记忆”是有限只读目标和单项 IPC：trusted sender、当前 workspace/run/group、精确 id/version 校验后，从原服务取单项与其前置。不向 renderer 暴露 propose/review/消息回执，也不发送回答。正文/引用仍在原业务源，通知库只留脱敏标题与枚举事实；独立查看器支持原文/前置/引用折叠、显式重新读取、滚动和键盘。显示读取时间，不把它说成提案创建时间；关闭/阅读不会替你采纳/驳回。
+- 查看器沿用现有中性表面与字号，均匀边框，无左彩轨/胶囊/渐变光效。只读检查也有 UI intent 边界：用户关闭通知或另开交互后，迟到查询不能抢焦点/重新打开中心；查询成功后再次验证对象范围。不因慢读取就自动重试或调用业务动作。新的控件不覆盖现有会话/模型/账号/批量功能样式。
+- 复核未知私有提交时还补齐活 worker 的 summary 恢复：atomic checkpoint 证明数据已写但 ACK 丢失时，后续原成功读/事务只额外异步同步一次**私有全局摘要**，更新铃铛/当前列表，不重建 announcement。旧 scope 查询计数不冒充全局；线程已确认退出已有独立同步不重复。新存储代次/退出门禁继续有效，未知写不重放，业务不等待这次只读同步。
+
+当前终态证据：`typecheck-team-compat-final.log`、`full-regression-team-compat-final.log`、`build-team-compat-final.log`、`dead-code-team-compat-final.log`、`node-team-compat-final.log`、`electron-team-compat-final.log`、`electron-worker-team-compat-final.log`、`electron-recovery-team-compat-final.log`、`electron-history-team-compat-final.log`、`electron-quit-team-compat-final.log`、`channel-smoke-team-compat-final.log`、`mcp-smoke-team-compat-final.log`。新隔离 fixture `verify-notification-team-observations.ts` 用真实业务 repositories/原记忆服务 + 最新真实编译通知 worker，生成两项竞争修订，证明原 accept 因前置状态变化照旧拒绝、通知不能越权、原 reject 提交后才收束；Fake installation 只读 status 证明 metadata supported 与能力 unsupported 分离、身份准确查询。No body/key/path persists。Fake 文件和桥不属于正式 Cursor，不宣称真机补丁或 OS 通知通过。
+
+`team-observation-notifications`/`compatibility-notifications`/`team-memory-inspection`/`team-memory-inspection-ipc`、原 Memory/Group/installer/maintenance/IPC/native-open/source 等测试复核原异常/调用/返回与闸门、真实 repo 前置冲突、未知 ACK/缓存重用、同范围复核、MCP 读取入口、不同代次/安装、旧/新异步界面 intent、只读字段/无审核端点、人类已读与 pending 独立。记忆 readonly 对测试数据的原 review 属于 fixture 原业务验证，不是通知或 GUI 在真实项目执行审核。
+
+真实产品组件仅在 mock browser：`ui/memory-inspection-light.jpg`、`ui/memory-inspection-dark-narrow.jpg`、`ui/compatibility-maintenance-dark.jpg`。查看/重读后中心仍有 1 个待处理、原提案仍 proposed；Escape 返回铃铛、inert 恢复；深色有效 CSS 视口约 615×492，modal 边界 20px、无横向溢出，正文滚动而 footer 保持可用。维护页同时说 release 3.21.12 supported 与当前能力未通过，切号开关保持原 gate 禁用。HMR 重挂载/重置 mock 未读计数后读取新 DOM 重验，不把旧 selector 超时当业务结果。Console clean；临时 viewport/theme/tab/server 都恢复/清理，`protected-team-compat-audit.json` 保持原两个开发根与四个外部预热漂移。未生产 main/真实 Cursor 请求、账号处理/退款/清理/付款、OS 通知、安装、push 或发布。
+
+**完整目标仍未完成**：普通记忆提案的真实人工升级、跨 MCP 的写/审核失败结构化事实、组事务外副作用/权限变更失败与精确操作关联仍须接入；不能因有 topology 摘要或只读查看器就称这些完整完成。模型目录/用量/统计源持续缺失、原 native 修订号回退/数据库回滚的安全重基线、更多已接入来源的开始/跨重启未知与长序列压力、完整 UI/布局和正式打包/macOS/Windows 真通知权限/声音/勿扰仍未验收。尤其 native revision 下退目前按 stale 保守拒绝，不能把这个 gate 当“真实数据库回滚序列已验证”；后续必须用真实恢复序列复核。整套按原矩阵继续，不以本批绿测试缩小目标或发版。
+
 下面保留完整要求，不因前三批已有成果缩小。已实现部分仍需匹配该项范围验收；未实现部分继续开工。
 
 1. 通知中心、轻量顶栏入口、单张提醒和独立 renderer store。支持待处理／未读／全部、查询范围、分页、详情、关闭、阅读、归档、确认清理和适当偏好；减少动画、长内容、键盘与窄窗需验收。

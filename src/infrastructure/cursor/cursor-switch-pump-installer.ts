@@ -8,6 +8,7 @@ import { writeStoreFileSync } from '../fs/store-file'
 import { appRootOfBundle, cursorWorkbenchBundleCandidates, locateCursorWorkbenchBundle } from './cursor-install-paths'
 import { cursorRuntimeBackupPath, readCursorCompatibility } from './cursor-compatibility'
 import { WINDOWS_POWERSHELL_PROBE_TIMEOUT_MS, resolveWindowsCursorWorkbench } from './cursor-windows-launch'
+import type { CursorCompatibilityObserver } from '../../domain/cursor-compatibility-notification'
 
 const execFileAsync = promisify(execFile)
 
@@ -373,6 +374,8 @@ export async function resignMacApp(
 }
 
 export interface SwitchPumpInstallerOptions {
+  /** Presentation only. It receives neither credentials nor patch config and cannot control any command. */
+  statusObserver?: CursorCompatibilityObserver
   bundlePath?: string
   locateBundle?: () => Promise<string | undefined>
   execFn?: (file: string, args: string[]) => Promise<void>
@@ -424,6 +427,26 @@ export class CursorSwitchPumpInstaller {
 
   /** 只读检测（零副作用）：维护页状态卡与热切降级判定共用。 */
   async status(): Promise<SwitchPumpStatus> {
+    let observation: ReturnType<CursorCompatibilityObserver['begin']> | undefined
+    try { observation = this.options.statusObserver?.begin() } catch { /* Observation cannot block original status inspection. */ }
+    let result: SwitchPumpStatus
+    try { result = await this.inspectStatus() }
+    catch (error) {
+      try { observation?.complete({ compatibility: 'unavailable', patch: 'unavailable' }) } catch {}
+      throw error
+    }
+    if (result.bundlePath) result.installationId = createHash('sha256').update(normalize(result.bundlePath)).digest('hex')
+    try {
+      observation?.complete({
+        ...(result.installationId ? { installationId: result.installationId } : {}),
+        ...(result.compatibility?.version ? { version: result.compatibility.version } : {}),
+        compatibility: result.compatibility?.state ?? 'unavailable', patch: result.kind,
+        ...(result.profileRefreshReady !== undefined ? { profileRefreshReady: result.profileRefreshReady } : {})
+      })
+    } catch { /* Config, secrets and original diagnostics remain at their source. */ }
+    return result
+  }
+  private async inspectStatus(): Promise<SwitchPumpStatus> {
     let bundlePath: string
     try {
       bundlePath = await this.resolveBundlePath()

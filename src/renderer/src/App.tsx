@@ -1,3 +1,6 @@
+import { TeamMemoryInspectionDialog } from './notifications/TeamMemoryInspectionDialog'
+import type { TeamMemoryInspection,TeamMemoryInspectionRequest } from '../../domain/team-memory-inspection'
+import { memoryInspectionMatches } from '../../domain/team-memory-inspection'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { QuestionActions } from './QuestionCard'
 import type {
@@ -1060,12 +1063,14 @@ export function App(): React.JSX.Element {
     if (module !== 'run') setFocusGroupId(undefined)
   }, [])
 
-  const notificationContext = useRef({ sessions: visibleSnapshot.sessions, team: teamControl, accounts: cursorAccounts, providerId: accountAutomationSettings.processingProvider })
-  notificationContext.current = { sessions: visibleSnapshot.sessions, team: teamControl, accounts: cursorAccounts, providerId: accountAutomationSettings.processingProvider }
-  const openNotificationTarget = useCallback(async (target: NotificationTarget, scope?: NotificationScope): Promise<boolean> => {
+  const notificationContext = useRef({ sessions: visibleSnapshot.sessions, team: teamControl, accounts: cursorAccounts, providerId: accountAutomationSettings.processingProvider,installationId:switchPumpStatus?.installationId,activeModule,selectedChannelId })
+  notificationContext.current = { sessions: visibleSnapshot.sessions, team: teamControl, accounts: cursorAccounts, providerId: accountAutomationSettings.processingProvider,installationId:switchPumpStatus?.installationId,activeModule,selectedChannelId }
+  const [memoryInspection,setMemoryInspection] = useState<{request:TeamMemoryInspectionRequest;value:TeamMemoryInspection}>()
+  const openNotificationTarget = useCallback(async (target: NotificationTarget, scope?: NotificationScope,stillRelevant?:()=>boolean): Promise<boolean> => {
     const context = notificationContext.current
     if (!notificationTargetAvailable(target, context.sessions, context.team)) return false
     if (target.kind === 'settings') {
+      if(scope?.installationId&&scope.installationId!==context.installationId)return false
       if (scope?.accountId && target.section === 'accounts' && !context.accounts.some(account => account.id === scope.accountId)) return false
       if (scope?.providerId && (target.section === 'aozai' || target.section === 'accounts') && scope.providerId !== context.providerId) return false
       window.location.hash = `#account:${target.section}`; changeModule('account')
@@ -1078,12 +1083,21 @@ export function App(): React.JSX.Element {
       }
       return true
     }
+    if(target.kind==='memory') {
+      if(!window.sgDesktop.getTeamMemoryInspection)return false
+      const sourceFocus=document.activeElement
+      const value=await window.sgDesktop.getTeamMemoryInspection(target)
+      if(stillRelevant&&!stillRelevant()||!sourceFocus?.isConnected||document.querySelector('[role="dialog"][aria-modal="true"]')||notificationContext.current.activeModule!==context.activeModule||notificationContext.current.selectedChannelId!==context.selectedChannelId)return false
+      if(!notificationTargetAvailable(target,notificationContext.current.sessions,notificationContext.current.team)
+        ||!memoryInspectionMatches(target,value))return false
+      setMemoryInspection({request:target,value});return true
+    }
     if (target.kind === 'run') { setFocusGroupId(target.groupId); changeModule('run'); return true }
     if (target.kind === 'collaboration') {
       if (!target.messageId) { openCollaboration(target.groupId); return true }
       const snapshot = await window.sgDesktop.getTeamCollaborationSnapshot()
       const message = snapshot.messages[target.messageId]
-      if (!notificationTargetAvailable(target, notificationContext.current.sessions, notificationContext.current.team)
+      if (stillRelevant&&!stillRelevant()||!notificationTargetAvailable(target, notificationContext.current.sessions, notificationContext.current.team)
         || snapshot.runId !== target.runId || !message || message.runId !== target.runId || message.groupId !== target.groupId) return false
       const latestTeam = notificationContext.current.team
       const group = latestTeam.groups.find(view => view.group.id === target.groupId && view.group.runId === target.runId)!
@@ -1739,6 +1753,12 @@ export function App(): React.JSX.Element {
         onOpenSession={(channelId) => { setSelectedChannelId(channelId); setSessionListRequested(false) }}
       />
     ) : null}
+    {memoryInspection ? <TeamMemoryInspectionDialog key={`${memoryInspection.request.memoryId}:${memoryInspection.request.version}`} request={memoryInspection.request} initial={memoryInspection.value}
+      onClose={() => setMemoryInspection(undefined)} onOpenGroup={memoryInspection.request.groupId ? () => {
+        const target = { kind: 'run' as const, runId: memoryInspection.request.runId, groupId: memoryInspection.request.groupId }
+        if (notificationContext.current.team.activeWorkspaceId!==memoryInspection.request.workspaceId||!notificationTargetAvailable(target, notificationContext.current.sessions, notificationContext.current.team)) return false
+        setFocusGroupId(target.groupId); changeModule('run'); return true
+      } : undefined} /> : null}
     {contextHandoffChannel && contextHandoffSession ? (
       <SessionHandoffDialog
         key={contextHandoffChannel}

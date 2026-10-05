@@ -1,0 +1,24 @@
+.memory-inspection-backdrop { position: fixed; inset: 0; z-index: 170; display: grid; place-items: center; padding: 20px; background: rgba(10, 16, 22, .28); }
+.memory-inspection { display: flex; flex-direction: column; width: min(600px, 100%); max-height: calc(100dvh - 40px); color: var(--text); background: var(--surface-solid); border: 1px solid var(--line); border-radius: 13px; box-shadow: var(--shadow-lg); overflow: hidden; }
+.memory-inspection > header { display: flex; align-items: start; justify-content: space-between; gap: 18px; padding: 20px 20px 12px; }
+.memory-inspection > header > div { min-width: 0; }
+.memory-inspection > header span { color: var(--muted); font-size: var(--fs-12); line-height: 1.6; }
+.memory-inspection h2 { margin: 5px 0 0; font-size: var(--fs-16); font-weight: 600; line-height: 1.6; overflow-wrap: anywhere; }
+.memory-inspection > header button { display: grid; place-items: center; flex: none; width: 30px; height: 30px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; cursor: pointer; }
+.memory-inspection > header button:hover { background: var(--surface-soft); }
+.memory-inspection > header svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; }
+.memory-inspection__meta { display: flex; flex-wrap: wrap; gap: 7px 16px; padding: 0 20px 15px; color: var(--muted); font-size: var(--fs-12); border-bottom: 1px solid var(--line-faint); }
+.memory-inspection__meta time { margin-left: auto; font-variant-numeric: tabular-nums; }
+.memory-inspection__notice { margin: 12px 20px 0; color: var(--text-soft); font-size: var(--fs-13); line-height: 1.65; text-wrap: pretty; }
+.memory-inspection__body { min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 6px 20px 18px; }
+.memory-inspection__body h3 { margin: 15px 0 6px; color: var(--muted); font-size: var(--fs-12); font-weight: 500; line-height: 1.6; }
+.memory-inspection__body p { margin: 6px 0 14px; font-size: var(--fs-14); line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
+.memory-inspection__body details { padding-top: 10px; margin-top: 10px; border-top: 1px solid var(--line-faint); font-size: var(--fs-13); }
+.memory-inspection__body summary { min-height: 28px; line-height: 28px; color: var(--text-soft); cursor: pointer; }
+.memory-inspection__body ul { list-style: none; margin: 8px 0 0; padding: 0; }
+.memory-inspection__body li { display: grid; gap: 4px; padding: 8px 0; font-size: var(--fs-13); overflow-wrap: anywhere; }
+.memory-inspection__body li strong { font-weight: 500; }.memory-inspection__body code { color: var(--muted); font-size: var(--fs-12); }
+.memory-inspection > footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 20px 16px; border-top: 1px solid var(--line-faint); }
+.memory-inspection > footer small { max-width: 250px; color: var(--muted); font-size: var(--fs-12); line-height: 1.6; }
+.memory-inspection > footer > div { display: flex; gap: 12px; }.memory-inspection > footer button { min-height: 32px; padding: 4px 0; color: var(--accent-deep); font-size: var(--fs-13); background: none; border: 0; cursor: pointer; }
+.memory-inspection button:disabled { cursor: default; color: var(--muted); }.memory-inspection :is(button,summary,[tabindex]):focus-visible { outline: 2px solid var(--color-ring-primary); outline-offset: 3px; border-radius: 4px; }

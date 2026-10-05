@@ -9,7 +9,7 @@ import { notificationPanelPlacement } from './notification-panel-placement'
 
 interface Props {
   workspaceId?: string
-  onNavigate: (target: NotificationTarget, scope?: NotificationScope) => boolean | Promise<boolean>
+  onNavigate: (target: NotificationTarget, scope?: NotificationScope,stillRelevant?:()=>boolean) => boolean | Promise<boolean>
   onAvailable: (available: boolean) => void
   onSnoozeUpdate: (record: NotificationRecord) => Promise<void>
 }
@@ -97,7 +97,7 @@ function NotificationEntry({ store, workspaceId, onNavigate, onAvailable, onSnoo
     const epoch = ++toastEpoch.current
     void (async () => {
       try {
-        if (toastRecord.target && await navigationRef.current(toastRecord.target, toastRecord.scope)) {
+        if (toastRecord.target && await navigationRef.current(toastRecord.target, toastRecord.scope,()=>epoch===toastEpoch.current)) {
           // Navigating to a route is not proof the specific result was rendered.
           // Source visibility hooks or explicit center reading own the human receipt.
           if (epoch === toastEpoch.current) close(false)
@@ -122,10 +122,13 @@ function NotificationEntry({ store, workspaceId, onNavigate, onAvailable, onSnoo
   }, [open, close])
   const navigate = async (record: NotificationRecord): Promise<void> => {
     if (!record.target) { setFocusRecord(record); setOpen(true); return }
+    const epoch=++toastEpoch.current
     try {
-      if (await onNavigate(record.target, record.scope)) close(false)
+      const available=await onNavigate(record.target, record.scope,()=>epoch===toastEpoch.current)
+      if(epoch!==toastEpoch.current)return // A user close/new navigation cancels presentation, not the original read.
+      if (available) close(false)
       else { setOpen(true); setFocusRecord(record); setNavigationError('来源对象或执行范围已变化。原结果保留，可在此阅读详情。') }
-    } catch { setOpen(true); setNavigationError('暂时无法打开来源，记录仍保留。') }
+    } catch { if(epoch===toastEpoch.current){setOpen(true);setNavigationError('暂时无法打开来源，记录仍保留。')} }
   }
   const unread = snapshot.summary.unread
   return <>

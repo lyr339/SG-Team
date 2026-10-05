@@ -31,6 +31,8 @@ function query(value: unknown): NotificationQuery {
     ...(input.operationFamilyId !== undefined ? { operationFamilyId: id(input.operationFamilyId) } : {}),
     ...(input.sessionId !== undefined ? { sessionId: id(input.sessionId) } : {}),
     ...(input.contextDomain !== undefined ? { contextDomain: id(input.contextDomain) } : {}),
+    ...(input.installationId !== undefined ? { installationId: id(input.installationId) } : {}),
+    ...(input.memoryId !== undefined ? { memoryId: id(input.memoryId) } : {}),
     ...(input.generation !== undefined ? { generation: id(input.generation) } : {}),
     ...(input.toolCallId !== undefined ? { toolCallId: id(input.toolCallId) } : {}),
     ...(input.entryId !== undefined ? { entryId: id(input.entryId) } : {}),

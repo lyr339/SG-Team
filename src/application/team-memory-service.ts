@@ -1,5 +1,5 @@
 import type { TeamControlSnapshot } from '../domain/team-control'
-import type { TeamMemoryItem, TeamMemorySnapshot } from '../domain/team-memory'
+import type { TeamMemoryItem, TeamMemorySnapshot, TeamMemoryReadObservation } from '../domain/team-memory'
 import { emptyTeamMemorySnapshot } from '../domain/team-memory'
 import type { TeamMemoryRepository } from './team-memory-repository'
 
@@ -12,6 +12,7 @@ type Listener = (snapshot: TeamMemorySnapshot) => void
 
 export class TeamMemoryService {
   private readonly listeners = new Set<Listener>()
+  private readonly readObservers = new Set<(value: TeamMemoryReadObservation) => void>()
   private readonly unsubscribeTeam: () => void
   private watchTimer?: ReturnType<typeof setInterval>
   private lastRevision: number
@@ -28,9 +29,21 @@ export class TeamMemoryService {
     const team = this.team.getSnapshot()
     const run = team.activeRun
     const workspaceId = team.activeWorkspaceId
-    return run && workspaceId
-      ? this.repository.load(workspaceId, run.id)
-      : emptyTeamMemorySnapshot(workspaceId, run?.id)
+    try {
+      const snapshot = run && workspaceId ? this.repository.load(workspaceId, run.id) : emptyTeamMemorySnapshot(workspaceId, run?.id)
+      this.observeRead({ kind: 'snapshot', snapshot,context:team })
+      return snapshot
+    } catch (error) {
+      this.observeRead({ kind: 'unavailable', workspaceId, runId: run?.id,context:team })
+      throw error
+    }
+  }
+  subscribeReadObservation(listener: (value: TeamMemoryReadObservation) => void): () => void {
+    this.readObservers.add(listener)
+    return () => { this.readObservers.delete(listener) }
+  }
+  private observeRead(value: TeamMemoryReadObservation): void {
+    for (const listener of this.readObservers) { try { listener(value) } catch { /* Original read consumers remain authoritative. */ } }
   }
 
   subscribe(listener: Listener): () => void {
@@ -80,6 +93,7 @@ export class TeamMemoryService {
     this.stopWatcher()
     this.unsubscribeTeam()
     this.listeners.clear()
+    this.readObservers.clear()
   }
 
   private emit(): void {

@@ -1,4 +1,5 @@
 import type { TeamMessageActor } from './team-collaboration'
+import type { TeamControlSnapshot } from './team-control'
 
 export type TeamMemoryScope = 'run' | 'project'
 export type TeamMemoryKind = 'decision' | 'constraint' | 'fact' | 'risk' | 'lesson'
@@ -61,6 +62,8 @@ export interface TeamMemorySnapshot {
   events: TeamMemoryEvent[]
   updatedAt: number
 }
+/** Main-only read evidence from existing consumers, never a request to poll or change the memory workflow. */
+export type TeamMemoryReadObservation = {kind:'snapshot';snapshot:TeamMemorySnapshot;context?:TeamControlSnapshot}|{kind:'unavailable';workspaceId?:string;runId?:string;context?:TeamControlSnapshot}
 
 export interface ProposeTeamMemoryInput {
   workspaceId: string

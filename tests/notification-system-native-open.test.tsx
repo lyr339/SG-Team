@@ -4,12 +4,12 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { NotificationSystem } from '../src/renderer/src/notifications/NotificationSystem'
 import { SqliteNotificationRepository } from '../src/infrastructure/notifications/sqlite-notification-repository'
-import type { NotificationPage, NotificationPush, NotificationRecord } from '../src/domain/notification'
+import type { NotificationPage, NotificationPush, NotificationRecord, NotificationTarget, NotificationScope } from '../src/domain/notification'
 import type { NotificationApi } from '../src/renderer/src/notifications/notification-store'
 
 describe('explicit native click opens exact ledger content, never a saved business action', () => {
   let host: HTMLDivElement, root: Root, ledger: SqliteNotificationRepository, api: NotificationApi, record: NotificationRecord
-  const listeners = new Set<(value: NotificationPush) => void>(), navigate = vi.fn(async () => true)
+  const listeners = new Set<(value: NotificationPush) => void>(), navigate = vi.fn(async (_target:NotificationTarget,_scope?:NotificationScope,_stillRelevant?:()=>boolean) => true)
   const push = (value: NotificationPush) => { for (const listener of listeners) listener(value) }
   beforeEach(async () => {
     ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -74,6 +74,18 @@ describe('explicit native click opens exact ledger content, never a saved busine
       await act(async () => { window.dispatchEvent(new Event('focus')); await vi.advanceTimersByTimeAsync(0) })
       expect(document.querySelector('.notification-row__detail')?.textContent).toContain('原始具体结果'); expect(api.readNotification).toHaveBeenCalledOnce()
     } finally { modal.remove() }
+  })
+  it('a user close while source lookup is pending revokes presentation and never reopens the center on its late result',async()=>{
+    record=ledger.put({...record,sourceRevision:2,target:{kind:'settings',section:'maintenance'}},200).record!
+    let release!:(value:boolean)=>void,stillRelevant!:(()=>boolean)
+    navigate.mockImplementationOnce(async(_target,_scope,guard)=>{stillRelevant=guard!;return new Promise(done=>{release=done})})
+    await open('lookup-close')
+    const source=[...document.querySelectorAll<HTMLButtonElement>('button')].find(button=>button.textContent==='查看维护')!
+    await act(async()=>source.click());expect(stillRelevant()).toBe(true)
+    await act(async()=>document.querySelector<HTMLButtonElement>('[aria-label="关闭通知中心"]')!.click())
+    expect(stillRelevant()).toBe(false)
+    await act(async()=>release(false))
+    expect(document.querySelector('.notification-panel')).toBeNull();expect(navigate).toHaveBeenCalledOnce()
   })
   it('a cleared original opens an explanation, not a reused entity or a different notification', async () => {
     ledger.read(record.id, record.revision, 200); ledger.clearRead({ key: record.key }, 200)

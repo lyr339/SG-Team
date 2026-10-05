@@ -24,10 +24,15 @@ export interface NotificationScope {
   operationFamilyId?: string
   /** Native model/limit domain for a context alert; never an estimated billing domain. */
   contextDomain?: string
+  installationId?: string
+  cursorVersion?: string
+  memoryId?: string
+  memoryVersion?: string
 }
 
 /** Navigation references only. Installing, restarting, answering or processing remain original workflow actions. */
 export type NotificationTarget =
+  | { kind:'memory';workspaceId:string;runId:string;groupId?:string;memoryId:string;version:number }
   | { kind: 'settings'; section: NotificationSettingsSection }
   | { kind: 'run'; runId?: string; groupId?: string }
   | { kind: 'collaboration'; runId: string; groupId: string; messageId?: string }
@@ -85,6 +90,8 @@ export interface NotificationSummary {
 }
 
 export interface NotificationQuery {
+  memoryId?: string
+  installationId?: string
   contextDomain?: string
   generation?: string
   key?: string
@@ -249,13 +256,16 @@ export function validateNotificationDraft(input: NotificationDraft): void {
     } else if (target.kind === 'run' || target.kind === 'collaboration') {
       for (const value of [target.runId, target.groupId]) if (value !== undefined && (typeof value !== 'string' || value.length > 300)) throw new Error('通知目标无效')
       if (target.kind === 'collaboration' && (!target.runId || !target.groupId || target.messageId !== undefined && (typeof target.messageId !== 'string' || target.messageId.length > 300))) throw new Error('协作通知目标无效')
-    } else throw new Error('通知目标无效')
+    } else if(target.kind==='memory'){
+      for(const value of[target.workspaceId,target.runId,target.memoryId,target.groupId])if(value!==undefined&&(typeof value!=='string'||!value||value.length>300))throw Error('记忆通知目标无效')
+      if(!Number.isSafeInteger(target.version)||target.version<1)throw Error('记忆通知版本无效')
+    }else throw new Error('通知目标无效')
   }
 }
 
 function validateScope(scope: NotificationScope): void {
   if (!scope || typeof scope !== 'object' || Array.isArray(scope)) throw new Error('通知作用域无效')
-  const keys = ['workspaceId', 'runId', 'groupId', 'slotId', 'sessionId', 'generation', 'bindingGeneration', 'channelId', 'composerId', 'accountId', 'providerId', 'operationFamilyId', 'contextDomain']
+  const keys = ['workspaceId', 'runId', 'groupId', 'slotId', 'sessionId', 'generation', 'bindingGeneration', 'channelId', 'composerId', 'accountId', 'providerId', 'operationFamilyId', 'contextDomain', 'installationId', 'cursorVersion','memoryId','memoryVersion']
   for (const [key, value] of Object.entries(scope)) {
     if (!keys.includes(key) || value !== undefined && (typeof value !== 'string' || value.length > 300)) throw new Error('通知作用域无效')
   }
@@ -279,6 +289,7 @@ export function notificationContentSignature(draft: NotificationDraft): string {
   const target = reference?.kind === 'session' ? { kind: reference.kind, scope: scope(reference.scope), entryId: reference.entryId, toolCallId: reference.toolCallId, blockId: reference.blockId, surface: reference.surface }
     : reference?.kind === 'settings' ? { kind: reference.kind, section: reference.section }
       : reference?.kind === 'collaboration' ? { kind: reference.kind, runId: reference.runId, groupId: reference.groupId, messageId: reference.messageId }
+        :reference?.kind==='memory'?{kind:reference.kind,workspaceId:reference.workspaceId,runId:reference.runId,groupId:reference.groupId,memoryId:reference.memoryId,version:reference.version}
         : reference ? { kind: reference.kind, runId: reference.runId, groupId: reference.groupId } : undefined
   return JSON.stringify([draft.category, draft.source, draft.eventId, draft.eventType, draft.subjectState, draft.title, draft.detail ?? '', draft.tone, draft.attention, draft.state, draft.timeBasis, scope(draft.scope), target, draft.origin])
 }

@@ -3,6 +3,8 @@ import type { CursorCompatibility } from './cursor-compatibility'
 /** 切号泵补丁（ZMO_SWITCH_V1）的共享类型：IPC 契约与安装器实现的单一出处。 */
 
 export interface CursorSwitchPumpStatus {
+  /** Opaque read identity for the exact inspected installation, never a command or credential. */
+  installationId?: string
   /**
    * installed    补丁在位且配置可解析（含 port/key）；
    * not-installed 未安装但当前 Cursor 版本锚点支持安装；

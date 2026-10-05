@@ -1,6 +1,7 @@
 import type { NotificationTarget } from '../../../domain/notification'
 
 export function notificationTargetLabel(target?: NotificationTarget): string {
+  if(target?.kind==='memory')return'查看原记忆'
   if (target?.kind === 'session') return target.surface === 'context' ? '查看上下文' : '打开会话'
   if (target?.kind === 'run') return '查看运行'
   if (target?.kind === 'collaboration') return '查看协作记录'

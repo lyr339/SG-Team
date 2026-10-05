@@ -1,3 +1,5 @@
+import { reduceMemoryIssueNotifications } from '../../../domain/memory-issue-notification'
+import { reduceCompatibilityNotifications } from '../../../domain/cursor-compatibility-notification'
 import { reduceContextThresholdNotifications } from '../../../domain/context-threshold-notification'
 /**
  * 设计走查入口：mock 掉 preload API，在纯浏览器里渲染完整应用。
@@ -1165,6 +1167,23 @@ function updatePreviewGroup(groupId: string, update: (view: typeof state.team.gr
 }
 
 const notificationPreview = createNotificationPreview()
+if (previewParameters.get('notifications') === 'memory' && state.team.activeRun) {
+  const run = state.team.activeRun, groupId = state.team.groups[0]?.group.id, exemplar = Object.values(state.memory.items)[0]!
+  const proposed = { ...exemplar, id: 'preview-memory-conflict', workspaceId: run.workspaceId, runId: run.id, groupId, version: 2, status: 'proposed' as const,
+    title: '接口重构后的身份校验边界', content: '请求到达原处理入口后，按当前工作区和运行身份核对。\n\n未确认的旧请求不重放；记录阅读不会改变成员侧回执。', supersedesId: 'preview-memory-prior' }
+  const prior = { ...proposed, id: 'preview-memory-prior', version: 1, status: 'superseded' as const, supersedesId: undefined, supersededById: 'preview-memory-other',
+    title: '旧的身份校验约定', content: '此前只按通道标识对应当前对象。这条前置约定已被另一项修订取代。' }
+  state.memory.items = { [proposed.id]: proposed, [prior.id]: prior }; state.memory.itemOrder = [proposed.id, prior.id]
+  state.memory.workspaceId = run.workspaceId; state.memory.runId = run.id; state.memory.revision = 4
+  const result = reduceMemoryIssueNotifications(undefined,{key:'preview-memory',revision:4,now:Date.now(),facts:[{identity:'3'.repeat(64),id:proposed.id,version:proposed.version,
+    title:proposed.title,state:'conflict',scope:{workspaceId:run.workspaceId,runId:run.id,...(groupId?{groupId}:{})},ceased:false}]},true,1)
+  result.drafts.forEach(notificationPreview.offer)
+}
+if (previewParameters.get('notifications') === 'compatibility') {
+  const result = reduceCompatibilityNotifications(undefined,{key:'preview-compatibility',now:Date.now(),fact:{installationId:'4'.repeat(64),version:'3.21.12',compatibility:'supported',patch:'unsupported',profileRefreshReady:false}},true,1)
+  result.drafts.forEach(notificationPreview.offer)
+}
+
 if (previewParameters.get('notifications') === 'context' && state.team.activeRun) {
   const channel = state.desktop.sessions[0]?.channelId, member = state.team.members.find(value => (value.binding?.channelId ?? value.slot.channelId) === channel)
   const session = state.desktop.sessions.find(value => value.channelId === channel)
@@ -1316,6 +1335,7 @@ const api: SgDesktopApi = {
   verifyCursorRuntimeAccount: async () => ({ status: 'matched' as const, cursorLabel: 'preview@cursor.com', activeLabel: 'preview@cursor.com' }),
   switchCursorAccountLive: async () => ({ switched: true }),
   getCursorSwitchPumpStatus: async () => {
+    if(previewParameters.get('notifications')==='compatibility')return{kind:'unsupported',installationId:'4'.repeat(64),compatibility:cursorCompatibilityForVersion('3.21.12'),profileRefreshReady:false,message:'当前安装的补丁运行体尚未通过检查；通知不会自动覆盖。'}
     const compatibility = cursorCompatibilityForVersion(previewParameters.get('cursorVersion') ?? '3.21.12')
     if (compatibility.state !== 'supported') return { kind: 'unsupported', message: compatibility.detail, compatibility }
     const status = pumpScene === 'external'
@@ -1805,6 +1825,11 @@ const api: SgDesktopApi = {
     return structuredClone(planned)
   },
   getTeamCollaborationSnapshot: async () => structuredClone(previewCollaboration),
+  getTeamMemoryInspection: async request => {
+    const item = state.memory.items[request.memoryId]
+    if (!item || state.team.activeRun?.id !== request.runId || state.team.activeWorkspaceId !== request.workspaceId || item.version !== request.version || item.groupId !== request.groupId) throw Error('原记忆范围已变化')
+    return structuredClone({ item, ...(item.supersedesId && state.memory.items[item.supersedesId] ? { predecessor: state.memory.items[item.supersedesId] } : {}), observedAt: Date.now(), revision: state.memory.revision })
+  },
   getMembershipTransferOptions: async (slotId) => {
     const view = state.team.groups.find((candidate) => (
       candidate.group.status === 'active' && candidate.members.some((member) => member.slot.id === slotId)

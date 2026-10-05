@@ -47,9 +47,9 @@ describe('notification IPC permissions and data boundaries', () => {
   })
   it('allows only validated source identities in exact-result queries', () => {
     const { service, invoke, dispose } = harness()
-    invoke(IPC.notificationPage, { sessionId: 'session-a', toolCallId: 'tool-a', entryId: 'reply:a', contextDomain: '[null,100000]', generation:'2', ignored: 'transcript' })
-    expect(service.page).toHaveBeenCalledWith({ sessionId: 'session-a', toolCallId: 'tool-a', entryId: 'reply:a', contextDomain:'[null,100000]', generation:'2' })
-    for (const key of ['sessionId', 'toolCallId', 'entryId', 'contextDomain', 'generation']) expect(() => invoke(IPC.notificationPage, { [key]: { injected: true } })).toThrow()
+    invoke(IPC.notificationPage, { sessionId: 'session-a', toolCallId: 'tool-a', entryId: 'reply:a', contextDomain: '[null,100000]', generation:'2', installationId:'opaque-install',memoryId:'memory-a', ignored: 'transcript' })
+    expect(service.page).toHaveBeenCalledWith({ sessionId: 'session-a', toolCallId: 'tool-a', entryId: 'reply:a', contextDomain:'[null,100000]', generation:'2',installationId:'opaque-install',memoryId:'memory-a' })
+    for (const key of ['sessionId', 'toolCallId', 'entryId', 'contextDomain', 'generation', 'installationId', 'memoryId']) expect(() => invoke(IPC.notificationPage, { [key]: { injected: true } })).toThrow()
     dispose()
   })
   it('authenticates every read and mutation and never exposes a renderer publish endpoint', () => {

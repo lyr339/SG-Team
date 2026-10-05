@@ -250,3 +250,18 @@ describe('CursorSwitchPumpInstaller', () => {
     expect(() => assertJavaScriptSyntax('import { from "missing.js";')).toThrow(/语法解析失败/)
   })
 })
+
+
+describe('status-only compatibility observation',()=>{
+  it('does not pass configuration/path/message or run an extra locator/command, and observer failure preserves status',async()=>{
+    const app=appFixture('3.21.12',installProfileRefreshHook(installSwitchPump(source,config).source).source)
+    const locate=vi.fn(async()=>app.bundlePath),exec=vi.fn(async()=>{}),complete=vi.fn((_fact:unknown)=>{throw Error('observer unavailable')})
+    const installer=new CursorSwitchPumpInstaller({locateBundle:locate,execFn:exec,statusObserver:{begin:()=>({complete})}})
+    const before=readFileSync(app.bundlePath,'utf8'),status=await installer.status()
+    expect(status).toMatchObject({kind:'installed',config,compatibility:{version:'3.21.12'},installationId:expect.stringMatching(/^[a-f0-9]{64}$/)})
+    expect(locate).toHaveBeenCalledOnce();expect(exec).not.toHaveBeenCalled();expect(readFileSync(app.bundlePath,'utf8')).toBe(before)
+    const fact=complete.mock.calls[0]?.[0]
+    expect(JSON.stringify(fact)).not.toContain(config.key);expect(JSON.stringify(fact)).not.toContain(app.bundlePath)
+    expect(fact).toMatchObject({compatibility:'supported',patch:'installed',profileRefreshReady:true})
+  })
+})

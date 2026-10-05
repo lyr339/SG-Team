@@ -5,6 +5,7 @@ import { isActiveAutomationPhase } from './settings-view'
 import { SettingsSection } from './SettingsSection'
 import { useNotificationResultRead } from '../notifications/use-notification-result-read'
 import type { NotificationReference } from '../../../domain/notification-reference'
+import { useCompatibilityNotificationRead } from '../notifications/use-compatibility-notification-read'
 
 type MaintenanceProps = Pick<SettingsPageProps,
   | 'cursorUpdatePreferences' | 'cursorUpdateBusy' | 'cursorUpdateError'
@@ -46,6 +47,8 @@ export function SettingsMaintenance({
   useNotificationResultRead(policyResultRef, policyFeedback?.notification?.key, policyFeedback?.notification?.eventId)
   useNotificationResultRead(patchResultRef, switchPumpFeedback?.notification?.key, switchPumpFeedback?.notification?.eventId)
   const [detectBusy, setDetectBusy] = useState(false)
+  const compatibilityRef=useRef<HTMLDivElement>(null)
+  useCompatibilityNotificationRead(compatibilityRef,switchPumpStatus,detectBusy||switchPumpBusy)
   const [detectError, setDetectError] = useState('')
   const detectVersion = useCallback(async (): Promise<void> => {
     if (!onRefreshSwitchPumpStatus) return
@@ -74,13 +77,13 @@ export function SettingsMaintenance({
     : externalCompatiblePump
       ? `已安装（端口 ${pumpPort ?? '—'}）；由其他工具管理，拾光只复用、不覆盖或卸载`
       : pumpInstalled
-        ? `已安装（端口 ${pumpPort ?? '—'}）；安装或更新后需重启 Cursor 才生效`
+        ? switchPumpStatus?.profileRefreshReady===false?'切号泵已在位；账号资料刷新需补全':`已安装（端口 ${pumpPort ?? '—'}）；安装或更新后需重启 Cursor 才生效`
         : switchPumpStatus?.kind === 'not-installed'
           ? switchPumpStatus.managed
             ? '补丁需要更新；重新安装后重启一次 Cursor 即可启用无感换号'
             : '未安装；安装后重启一次 Cursor 即可启用无感换号'
           : switchPumpStatus?.kind === 'unsupported'
-            ? '当前 Cursor 版本装不了切号补丁'
+            ? compatibility?.state==='supported'?'当前安装未通过补丁能力检查；请核对原诊断':'当前 Cursor 版本装不了切号补丁'
             : '切号补丁状态未检测'
 
   if (!(onSetCursorAutoUpdateDisabled && cursorUpdatePreferences) && !onSetModelDataPolicyAutoAcknowledge && !onEnsureSwitchPump) {
@@ -93,7 +96,7 @@ export function SettingsMaintenance({
       description={cursorUpdatePreferences ? 'settings.json' : 'Roxy profile'}
       descriptionTitle={cursorUpdatePreferences?.settingsPath}
     >
-      <div className="settings-maintenance">
+      <div ref={compatibilityRef} className="settings-maintenance">
         {onEnsureSwitchPump ? (
           <div className="settings-row cursor-maintenance__compatibility">
             <div className="settings-row__copy">

@@ -19,6 +19,8 @@ export function createNotificationPreview() {
     && (!query.sessionId || record.scope.sessionId === query.sessionId)
     && (!query.generation || record.scope.generation === query.generation)
     && (!query.contextDomain || record.scope.contextDomain === query.contextDomain)
+    && (!query.installationId || record.scope.installationId === query.installationId)
+    && (!query.memoryId || record.scope.memoryId === query.memoryId)
     && (!query.entryId || record.target?.kind === 'session' && record.target.entryId === query.entryId)
     && (!query.toolCallId || record.target?.kind === 'session' && record.target.toolCallId === query.toolCallId)
     && (!query.category || query.category === record.category))
@@ -92,7 +94,7 @@ export function createNotificationPreview() {
     },
     onNotificationChanged: callback => { listeners.add(callback); return () => { listeners.delete(callback) } }
   }
-  if (scenario && scenario !== 'empty' && scenario !== 'human' && scenario !== 'context') {
+  if (scenario && scenario !== 'empty' && scenario !== 'human' && scenario !== 'context' && scenario !== 'memory' && scenario !== 'compatibility') {
     const templates = [
       { key: 'preview:automation', category: 'automation' as const, source: '自动化', title: '主要步骤已完成，浏览器清场未完成', detail: '处理和加固已经完成；浏览器清场未结束。请查看本轮详情，不要重复执行已完成的步骤。', tone: 'warning' as const, attention: 'action' as const, state: 'active' as const, target: { kind: 'settings' as const, section: 'automation' as const } },
       { key: 'preview:batch', category: 'run' as const, source: '运行 · 接口重构', title: '6 个会话已就绪，2 个尚未接入', detail: '批量发起已结束。未接入成员的结果可在运行页逐项查看；已就绪会话保持可用。', tone: 'warning' as const, attention: 'notice' as const, state: 'resolved' as const, target: { kind: 'run' as const } },

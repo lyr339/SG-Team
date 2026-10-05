@@ -19,6 +19,7 @@ import { TeamCollaborationService } from '../application/team-collaboration-serv
 import { TeamCollaborationSweeper } from '../application/team-collaboration-sweeper'
 import { TeamMemoryService } from '../application/team-memory-service'
 import { registerTeamCollaborationIpc } from './register-team-collaboration-ipc'
+import { registerTeamMemoryInspectionIpc } from './register-team-memory-inspection-ipc'
 import { SqliteChannelMessageRepository } from '../infrastructure/channel-messages/sqlite-channel-message-repository'
 import { ChannelMessageRelay } from '../application/channel-message-relay'
 import { globalMcpConfigPath, reconcileGlobalChannelServers } from '../infrastructure/cursor/global-mcp-registrar'
@@ -117,6 +118,9 @@ import { connectTaskNotifications } from '../application/notifications/task-noti
 import { connectOperatorMessageNotifications } from '../application/notifications/team-message-notifications'
 import { PageOperationNotifications } from '../application/notifications/page-operation-notifications'
 import { WorkspaceNotifications } from '../application/notifications/workspace-notifications'
+import { CompatibilityNotifications } from '../application/notifications/compatibility-notifications'
+import { connectGroupTopologyNotifications } from '../application/notifications/group-topology-notifications'
+import { connectMemoryIssueNotifications } from '../application/notifications/memory-issue-notifications'
 import { membershipTransferNotification } from '../domain/membership-transfer-notification'
 // electron-updater 是 CJS，`autoUpdater` 是 exports 上的惰性 getter：主进程是 ESM，命名导入会在链接期
 // 找不到该导出（cjs-module-lexer 认不出 getter），只能默认导入整个 module.exports 再取属性。
@@ -170,6 +174,10 @@ let notificationService: NotificationService | undefined
 let notificationDeliveryService: NotificationDeliveryService | undefined
 let pageOperationNotifications: PageOperationNotifications | undefined
 let workspaceNotifications: WorkspaceNotifications | undefined
+let compatibilityNotifications: CompatibilityNotifications | undefined
+let groupTopologyNotificationSource: ReturnType<typeof connectGroupTopologyNotifications> | undefined
+let memoryIssueNotificationSource: ReturnType<typeof connectMemoryIssueNotifications> | undefined
+let disposeTeamMemoryInspectionIpc:(()=>void)|undefined
 let notificationRuntimeJournal: NotificationRuntimeJournal | undefined
 let disposeNotificationIpc: (() => void) | undefined
 let disposeAppUpdateNotifications: (() => void) | undefined
@@ -383,6 +391,7 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     disposeNotificationIpc = registerNotificationIpc(notificationService, () => mainWindow, notificationDeliveryService)
     pageOperationNotifications = new PageOperationNotifications(notificationService)
     workspaceNotifications = new WorkspaceNotifications(notificationService)
+    compatibilityNotifications = new CompatibilityNotifications(notificationService)
   } catch {
     // Renderer can expose unavailable notification history; launching and account services must still initialize.
     console.warn('[notifications] 通知存储暂不可用，原有功能继续运行')
@@ -568,7 +577,7 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   accountBrowserHostDisposeRef = () => resolveAccountBrowserHost().dispose()
   // 冷热切换互斥锁：热切（运行中泵票）与冷切换（杀进程写库）绝不能并发。
   const cursorSwitchMutex = new CursorSwitchMutex()
-  const cursorSwitchPumpInstaller = new CursorSwitchPumpInstaller()
+  const cursorSwitchPumpInstaller = new CursorSwitchPumpInstaller({statusObserver:compatibilityNotifications})
   // 无感换号核心：换票（纯 HTTP PKCE）→ 回环泵票 → 补丁回执 → vault.select。
   const cursorLiveSwitcher = new CursorLiveSwitcher({
     vault: cursorAccountVault,
@@ -668,6 +677,7 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   )
   teamCollaborationSweeper.startSweeper()
   teamMemoryService = new TeamMemoryService(teamMemoryRepository, teamControlService)
+  disposeTeamMemoryInspectionIpc=registerTeamMemoryInspectionIpc(teamMemoryService,()=>teamControlService!.getSnapshot(),()=>mainWindow)
   // 租约在岗判定（阶段 2 · 2F）：席位的 runtime.online 就是 relay 按 presence 算好的那一个判定，
   // 与 MCP 进程同源；只有到期的租约才会问到这里。
   taskPoolService = new TaskPoolService(taskPoolRepository, teamControlService, (agentSessionId) =>
@@ -680,6 +690,8 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
       const getTeam = () => notificationRuntime?.currentTeam() ?? teamControlService!.getSnapshot()
       taskNotificationSource = connectTaskNotifications(taskPoolService, getTeam, notificationService)
       operatorMessageNotificationSource = connectOperatorMessageNotifications(teamCollaborationService, getTeam, notificationService)
+      groupTopologyNotificationSource = connectGroupTopologyNotifications(teamControlService, notificationService)
+      memoryIssueNotificationSource = connectMemoryIssueNotifications(teamMemoryService, getTeam, notificationService)
     } catch { notificationService.reportHistoryGap() }
   }
   const orchestrationError = (error: unknown): void => {
@@ -1073,6 +1085,7 @@ function disposeDesktopOnce(): void {
   disposeMcpInstallerIpc?.()
   disposeTeamControlIpc?.()
   disposeTeamCollaborationIpc?.()
+  disposeTeamMemoryInspectionIpc?.()
   disposeTeamGroupIpc?.()
   disposeRunContext?.()
   disposeCursorAccountIpc?.()
@@ -1106,7 +1119,10 @@ const notificationQuitBarrier = new NotificationQuitBarrier({
     () => notificationRuntime?.close() ?? Promise.resolve(),
     () => taskNotificationSource?.close() ?? Promise.resolve(),
     () => operatorMessageNotificationSource?.close() ?? Promise.resolve(),
-    () => workspaceNotifications?.close() ?? Promise.resolve()
+    () => workspaceNotifications?.close() ?? Promise.resolve(),
+    () => compatibilityNotifications?.close() ?? Promise.resolve(),
+    () => groupTopologyNotificationSource?.close() ?? Promise.resolve(),
+    () => memoryIssueNotificationSource?.close() ?? Promise.resolve()
   ], disposeDesktopOnce),
   settled: result => {
     try { notificationRuntimeJournal?.finish(result.confirmed, notificationService?.status().historyIncomplete ?? true, notificationService?.status().historyGapId) }

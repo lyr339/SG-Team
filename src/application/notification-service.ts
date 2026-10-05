@@ -47,7 +47,7 @@ export class NotificationService {
     const task = this.tracked(Promise.all([this.repository.page({ limit: 1 }), this.repository.preferences()]).then(([page, preferences]) => {
       if (epoch !== this.storageEpoch || this.closed || this.shuttingDown) return
       if (page.historyIntegrity) this.history?.absorb(page.historyIntegrity)
-      this.recovered()
+      this.recovered(false)
       this.history?.retry(true)
       // Read persisted facts and controls, not business sources. No announcement
       // is reconstructed, even if a pre-exit write really reached the ledger.
@@ -77,8 +77,23 @@ export class NotificationService {
     if (historyLost) this.history?.report(gapId)
     if (changed) this.emit()
   }
-  private recovered(): void {
-    if (this.health !== 'ready') { this.health = 'ready'; this.emit(); this.history?.retry() }
+  private recovered(syncHistory=true): void {
+    if (this.health !== 'ready') {
+      this.health = 'ready'; this.emit(); this.history?.retry()
+      // A live worker can commit before losing its acknowledgement. On the next
+      // proven successful read/transaction, reload the PRIVATE global summary
+      // once; source checkpoint recovery alone cannot update a stale bell.
+      if(syncHistory&&this.historyIncomplete&&!this.recovering&&!this.closed&&!this.shuttingDown){
+        const epoch=this.storageEpoch
+        const task=this.tracked(Promise.resolve().then(()=>this.repository.page({limit:1})).then(page=>{
+          if(epoch!==this.storageEpoch||this.closed||this.shuttingDown||this.health!=='ready')return
+          if(page.historyIntegrity)this.history?.absorb(page.historyIntegrity)
+          this.emit({historyReload:true,change:{changed:false,summary:page.summary}})
+        }).catch(()=>{if(epoch===this.storageEpoch&&!this.closed)this.degraded()}))
+        this.recovering=task
+        void task.finally(()=>{if(this.recovering===task)this.recovering=undefined})
+      }
+    }
   }
   reportHistoryGap(id?: string): void { this.degraded(true, id) }
   status(): { health: NotificationPush['health']; historyIncomplete: boolean; shutdownConfirmed: boolean; historyGapId?: string } {

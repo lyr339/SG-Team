@@ -158,3 +158,17 @@ describe('storage recovery is history synchronization, not event replay', () => 
     expect(service.status().health).toBe('ready'); await service.close()
   })
 })
+
+describe('quiet summary recovery from a lost live-worker acknowledgement',()=>{
+  it('checkpoint recovery refreshes the global unread/pending summary without replaying a source presentation or business call',async()=>{
+    const port=repository(),service=new NotificationService(port),events=vi.fn();service.subscribe(events)
+    vi.mocked(port.commitSource).mockRejectedValueOnce(Error('ack lost after commit'))
+    await expect(service.commitSource('source:test',0,{},[])).rejects.toThrow('ack lost')
+    vi.mocked(port.page).mockResolvedValue({records:[],reset:false,summary:{revision:9,total:4,unread:3,pending:1,clearable:0}})
+    await service.sourceState('source:test');await service.flush()
+    expect(port.page).toHaveBeenCalledOnce()
+    expect(events.mock.calls.find(([event])=>event.historyReload)?.[0]).toMatchObject({historyIncomplete:true,change:{changed:false,summary:{total:4,unread:3,pending:1}}})
+    expect(events.mock.calls.every(([event])=>!event.announcement)).toBe(true);expect(port.commitSource).toHaveBeenCalledOnce()
+    await service.sourceState('source:test');await service.flush();expect(port.page).toHaveBeenCalledOnce();await service.close()
+  })
+})

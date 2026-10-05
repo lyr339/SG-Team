@@ -4,6 +4,8 @@ import type { NotificationTarget } from '../../../domain/notification'
 
 export function notificationTargetAvailable(target: NotificationTarget, sessions: readonly AgentSession[], team: TeamControlSnapshot): boolean {
   if (target.kind === 'settings') return true
+  if(target.kind==='memory')return team.activeWorkspaceId===target.workspaceId&&team.activeRun?.id===target.runId
+    &&(!target.groupId||team.groups.some(view=>view.group.id===target.groupId&&view.group.runId===target.runId))
   if (target.kind === 'run' || target.kind === 'collaboration') return (!target.runId || team.activeRun?.id === target.runId)
     && (!target.groupId || team.groups.some(view => view.group.id === target.groupId && view.group.runId === team.activeRun?.id))
   const scope = target.scope
