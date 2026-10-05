@@ -1,3 +1,4 @@
+import { McpWriteNotifications } from './mcp-write-notifications'
 import type { DesktopSnapshot } from '../../shared/desktop-api'
 import type { TeamControlSnapshot } from '../../domain/team-control'
 import type { NotificationService } from '../notification-service'
@@ -26,13 +27,14 @@ export function connectSessionNotifications(input: {
   const questions = new QuestionNotifications(input.notifications)
   const replies = new ReplyNotifications(input.notifications)
   const context = new ContextThresholdNotifications(input.notifications)
+  const mcp = new McpWriteNotifications(input.notifications)
   const queue = input.queue ? new QueueNotifications(input.notifications, input.queue, Date.now, input.watchQueue) : undefined
   let team = input.team.getSnapshot()
   let desktop = input.desktop.getSnapshot()
-  const stopTeam = input.team.subscribe(next => { team = next; lifecycle.observe(desktop, team); questions.observe(desktop, team); replies.observe(desktop, team); queue?.observe(desktop, team); context.observe(desktop, team) })
-  const stopDesktop = input.desktop.subscribe(next => { desktop = next; lifecycle.observe(desktop, team); questions.observe(desktop, team); replies.observe(desktop, team); queue?.observe(desktop, team); context.observe(desktop, team) })
-  const suspend = () => { lifecycle.suspend(); questions.suspend(); replies.suspend(); queue?.suspend(); context.suspend() }
-  const resume = () => { lifecycle.resume(); questions.resume(); replies.resume(); queue?.resume(); context.resume() } // Wait for the existing next source event, not a new network/telemetry probe.
+  const stopTeam = input.team.subscribe(next => { team = next; lifecycle.observe(desktop, team); questions.observe(desktop, team); replies.observe(desktop, team); queue?.observe(desktop, team); context.observe(desktop, team); mcp.observe(desktop, team) })
+  const stopDesktop = input.desktop.subscribe(next => { desktop = next; lifecycle.observe(desktop, team); questions.observe(desktop, team); replies.observe(desktop, team); queue?.observe(desktop, team); context.observe(desktop, team); mcp.observe(desktop, team) })
+  const suspend = () => { lifecycle.suspend(); questions.suspend(); replies.suspend(); queue?.suspend(); context.suspend(); mcp.suspend() }
+  const resume = () => { lifecycle.resume(); questions.resume(); replies.resume(); queue?.resume(); context.resume(); mcp.resume() } // Wait for the existing next source event, not a new network/telemetry probe.
   input.power.on('suspend', suspend); input.power.on('resume', resume)
   let detached = false
   const detach = (): void => {
@@ -44,6 +46,7 @@ export function connectSessionNotifications(input: {
     questions,
     replies,
     context,
+    mcp,
     queue,
     currentTeam: (): TeamControlSnapshot => team,
     questionTarget: (channelId: string, toolCallId: string) => {
@@ -57,7 +60,7 @@ export function connectSessionNotifications(input: {
       const block = desktop.liveProcess?.[channelId]?.blocks.find(block => block.kind === 'tool' && block.question?.toolCallId === toolCallId)
       return { scope: fact.scope, target: { kind: 'session' as const, scope: fact.scope, toolCallId, ...(block ? { blockId: block.id } : {}) } }
     },
-    close: async (): Promise<void> => { detach(); await Promise.all([lifecycle.close(), questions.close(), replies.close(), queue?.close(), context.close()]) },
-    dispose: (): void => { detach(); lifecycle.stop(); questions.stop(); replies.stop(); queue?.stop(); context.stop() }
+    close: async (): Promise<void> => { detach(); await Promise.all([lifecycle.close(), questions.close(), replies.close(), queue?.close(), context.close(), mcp.close()]) },
+    dispose: (): void => { detach(); lifecycle.stop(); questions.stop(); replies.stop(); queue?.stop(); context.stop(); mcp.stop() }
   }
 }

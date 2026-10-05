@@ -83,4 +83,25 @@ describe('single calm notification toast', () => {
       expect(document.querySelector('.notification-toast')).toBeNull()
     } finally { result.remove() }
   })
+  it('expanded exact native outputs suppress a grouped reminder only when every underlying result is visible; a collapsed header is not reading', async () => {
+    const scope = { sessionId: 'session', channelId: '1', generation: '0', composerId: 'composer', bindingGeneration: 'binding' }
+    const container = document.createElement('div')
+    Object.assign(container.dataset, { notificationMcpScope: '', notificationSession: 'session', notificationChannel: '1', notificationGeneration: '0', notificationComposer: 'composer', notificationBinding: 'binding' })
+    const outputs = [1, 2].map(i => { const e = document.createElement('pre'); Object.assign(e.dataset, { notificationMcpBlock: `block-${i}`, notificationMcpStatus: 'unconfirmed', notificationMcpChannel: '1' }); container.append(e); return e })
+    document.body.append(container)
+    let hidden = false
+    outputs.forEach((e, i) => vi.spyOn(e, 'getBoundingClientRect').mockImplementation(() => ({ width: 300, height: 70, top: hidden && i === 0 ? 2000 : 100, bottom: hidden && i === 0 ? 2070 : 170, left: 10, right: 310, x: 10, y: 100, toJSON: () => ({}) })))
+    const originals = [1, 2].map(i => ({ ...record(`mcp-${i}`), eventType: 'mcp.write-result', subjectState: 'unconfirmed', scope,
+      origin: { module: 'sessions' as const, sessionId: scope.sessionId }, target: { kind: 'session' as const, scope, blockId: `block-${i}` } }))
+    const grouped = async (id: string, revision: number) => {
+      await act(async () => originals.forEach(r => store.accept({ health: 'ready', historyIncomplete: false, change: { changed: true, record: r, summary: { revision, total: 2, unread: 2, pending: 0, clearable: 0 } } })))
+      await act(async () => store.accept({ health: 'ready', historyIncomplete: false, change: { changed: true, record: originals[1], summary: { revision, total: 2, unread: 2, pending: 0, clearable: 0 } },
+        announcement: { id, expiresAt: Date.now() + 60000, group: { title: '2 项结果待核对', source: '协作工具', detail: '摘要', recordIds: originals.map(r => r.id), target: { kind: 'session', scope } } } }))
+    }
+    try {
+      await grouped('group-1', 1); expect(document.querySelector('.notification-toast')).toBeNull()
+      hidden = true; await grouped('group-2', 2); expect(document.querySelector('.notification-toast')!.textContent).toContain('2 项结果待核对')
+      expect(api.readNotification).not.toHaveBeenCalled() // Suppression itself is not a receipt.
+    } finally { container.remove() }
+  })
 })

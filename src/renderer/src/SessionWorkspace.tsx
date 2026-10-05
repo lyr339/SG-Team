@@ -21,6 +21,7 @@ import { partitionTimelineEntries, projectTurnTimeline, type TurnTimelineItem } 
 import { useBottomFollow } from './use-bottom-follow'
 import { revealAfterPaint, subscribeReveal } from './inspector/reveal-bus'
 import { useReplyNotificationRead } from './notifications/use-reply-notification-read'
+import { useMcpWriteNotificationRead } from './notifications/use-mcp-write-notification-read'
 
 interface SessionWorkspaceProps {
   session: AgentSession
@@ -275,6 +276,9 @@ export function SessionWorkspace({
   )
   useReplyNotificationRead(follow.viewportRef, { sessionId: session.id, channelId: session.channelId, generation: String(session.generation),
     composerId: session.composerId, bindingGeneration: questionActions?.notificationScope?.bindingGeneration }, timelineEntries)
+  useMcpWriteNotificationRead(follow.viewportRef, { ...questionActions?.notificationScope, sessionId: session.id, channelId: session.channelId,
+    generation: String(session.generation), composerId: session.composerId })
+  const mcpReadScopeReady = Boolean(session.composerId && questionActions?.notificationScope?.bindingGeneration)
   const canSend = (session.online || queuedTransport) && !submitting
   // 独立席位：solo 角色模板的 roleTemplateKey 流经 AgentSession（团队席为
   // lead/frontend 等真实模板键）。措辞分支用它，避免把 solo 会话表述成团队协作一环。
@@ -804,6 +808,16 @@ export function SessionWorkspace({
         <div
           className="workspace-timeline"
           ref={follow.viewportRef}
+          data-notification-mcp-scope={mcpReadScopeReady ? '' : undefined}
+          data-notification-session={mcpReadScopeReady ? session.id : undefined}
+          data-notification-channel={mcpReadScopeReady ? session.channelId : undefined}
+          data-notification-generation={mcpReadScopeReady ? session.generation : undefined}
+          data-notification-composer={mcpReadScopeReady ? session.composerId : undefined}
+          data-notification-binding={mcpReadScopeReady ? questionActions?.notificationScope?.bindingGeneration : undefined}
+          data-notification-workspace={mcpReadScopeReady ? questionActions?.notificationScope?.workspaceId : undefined}
+          data-notification-run={mcpReadScopeReady ? questionActions?.notificationScope?.runId : undefined}
+          data-notification-slot={mcpReadScopeReady ? questionActions?.notificationScope?.slotId : undefined}
+          data-notification-group={mcpReadScopeReady ? questionActions?.notificationScope?.groupId : undefined}
           onScroll={follow.onScroll}
           onWheel={follow.onWheel}
           onPointerDown={follow.onPointerDown}

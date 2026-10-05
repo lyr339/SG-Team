@@ -1,5 +1,6 @@
 import type { ProcessBlock, ProcessBlockTool, ProcessDiff, ProcessImage, ProcessQuestion, ProcessToolKind } from '../../domain/conversation-entry'
 import { normalizeEscapedNewlines, normalizeProcessBlockText } from '../../domain/conversation-entry'
+import { observedMcpWrite, type McpWriteObservation } from '../../domain/mcp-write-observation'
 
 export type ProcessStepKind = 'thinking' | 'message' | ProcessToolKind
 
@@ -44,6 +45,8 @@ export interface ProcessTurnStep {
   diff?: ProcessDiff
   /** 图片生成步骤（kind=image）的产出：卡片正文直接内联缩略图，点击看大图。 */
   image?: ProcessImage
+  /** Read/duplicate-presentation evidence for the expanded native output only. */
+  mcpWrite?: Pick<McpWriteObservation, 'status' | 'channelId'>
 }
 
 export interface ProcessShellStep {
@@ -289,6 +292,9 @@ function blockStep(raw: ProcessBlock, id: string): ProcessTurnStep {
   const title = rawTitle && isShell ? normalizeShellDescription(rawTitle) : rawTitle
   const target = clean(block.summary) ?? (image ? fileNameOf(image.path) : undefined)
   const mcp = kind === 'mcp' ? describeMcpToolName(block.toolName) : undefined
+  // Display newline normalisation is not a machine receipt. Parse the original
+  // native JSON, before a message containing escaped newlines is prettified.
+  const write = kind === 'mcp' && raw.kind === 'tool' && raw.status !== 'running' ? observedMcpWrite(raw.toolName, raw.input, raw.output) : undefined
   // 动词：MCP 用真实工具名（team_task / browser_navigate），计划更新单列，其余先按原生 case
   // 细分（ls / glob / fetch / await …），再回退类别 + 状态取词。
   const verbs = (block.toolCase ? CASE_VERBS[block.toolCase] : undefined) ?? TOOL_VERBS[kind]
@@ -342,6 +348,7 @@ function blockStep(raw: ProcessBlock, id: string): ProcessTurnStep {
     details,
     todos: block.todos,
     question: block.question,
+    ...(write && write.status !== 'returned' ? { mcpWrite: { status: write.status, channelId: write.channelId } } : {}),
     ...(shell ? { shell } : {}),
     ...(diff ? { diff } : {}),
     ...(image ? { image } : {})

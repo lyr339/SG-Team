@@ -297,6 +297,22 @@ ui/group-effects-compact-light.jpg、ui/group-effects-details-light.jpg、ui/gro
 
 **完整目标仍未完成**：这里只证明桌面原组仓储返回后的观察，不把所有 MCP 写入失败宣称接入。事务返回前的未知结果、结构化 MCP 写诊断、模型／用量／统计源健康、旧 scope 消失／同 revision 异内容、其他 feeds 恢复、长期容量／全序列、正式应用／打包与 Windows/macOS 真通知权限／声音／勿扰仍需后续完成。未 production main、实际账号处理、Cursor 重启、OS 送达、安装、推送或发布。本批是本地提交，不缩小或结束完整目标。
 
+### 第十七批：原 MCP 写入回执与低打扰阅读
+
+本批接入五类原生 `team_task`／`team_review`／`team_message`／`team_memory`／`team_run` 写动作的已有返回结果。仅在原 `toolFailure` 捕获到可靠机器错误码时追加 `sgWriteFailure` 小型提示；普通参数／领域／角色拒绝不升级，未分类内部错误安静记录。原 `code`、`message`、`isError`、`nextAction`、健康返回、工具定义、工具数、调用顺序和重试语义保留。主操作已有返回而协调／恢复／审计没有确认，记录为后续待核对，不冒充主操作失败，不引导重做。
+
+归属同时检查当前工作区／run／席位／绑定代次、已安装 Composer、原参数通道及原结果 Agent 身份；旧安装时间之前的结果不算新绑定。原 MCP 回执不证明调用时的组关系，因此诊断只归精确安装会话，不把当前入组／移组关系写成过去的调用归属。只取原生终态工具和完整结构化 JSON，不从 shell、模型正文、恢复文本、截断结果或普通错误字符串推断写入。live→sealed→续作按原工具调用身份去重；另一调用后来成功不能把先前未知尝试伪改为成功。每次尝试保留不可变诊断，但同一原生回合的相同工具／动作／原因只首项需知晓，其余放入折叠的日常动态；后续真正新回合重新获得提醒机会，不对整段长会话永久静音。缺少稳定原生回合身份时采用安静保守的同源归类，不凭正文猜测新操作。启动、水合、休眠恢复不补播旧提醒。
+
+复用原桌面／团队订阅和原私有 CAS 通道，不加业务查询、探测、timer 或网络请求。历史与实时提取缓存分离：新直播文字不重新扫描／序列化封口历史；未确认私有 ACK 仍在下一真实来源帧重读原私有检查点，不把提取缓存当落盘证明。每批至多 100 项，seen／提醒身份均有容量边界，超界明确报告历史缺口，不无声截断。
+
+界面不换皮、不加彩色左轨或新标签。摘要只保留真正原因，撤掉逐条冗长解释。原工具展开输出实际可见时才确认人类阅读；折叠标题、输入、被裁剪区域、另一模态后的正文、旧 Composer／绑定都不算阅读。用原 JSON 形成阅读证据，再由既有 formatter 排版，避免错误正文的转义换行破坏机器识别。一个视口订阅、首次可见后一次私有未读查询＋推送，展开观察只响应相关标记，不跟随每个文本 token 查询。多项摘要仅在全部原结果可见时安静化，不能凭最后一项标题或空集合吞掉其他重要结果。
+
+当前证据位于实现树 `preview-screenshots/notification-implementation/`：`full-regression-mcp-write-final.log`、`typecheck-mcp-write-final.log`、`build-mcp-write-final.log`、`dead-code-mcp-write-final.log`、原 `mcp-smoke-mcp-write-final.log`／`channel-smoke-mcp-write-final.log`。全回归 295 files，2816 passed，1 skipped。原服务＋真实 InMemory MCP client、真实 SQLite 写锁、原 hook VM 的 modern／legacy 结构、原角色闸门与原写入次数有集成证据；新 `node-mcp-writes-mcp-write-final.log`／`electron-mcp-writes-mcp-write-final.log` 使用实际编译 worker 验证全部链条。原 worker／shutdown／recovery／history／context／native-rebase／team-observations／group-effects 九类（含本批 mcp-writes）隔离脚本在 Node 和 macOS Electron 同时回归。没有启动 production main 或调用真实账号／模型／Cursor；每个自有 fixture 目录在 finally 精确清理。
+
+`ui/mcp-write-center-light.jpg`、`ui/mcp-write-source-light.jpg`、`ui/mcp-write-details-dark-short.jpg`、`ui/mcp-write-ui-audit.json` 是真实产品组件的隔离 browser 样板。只展开过程标题仍 2 个未读，看到原输出才变为 1，中心阅读后原未知诊断仍保留；原来源导航只展开正确 CH／原工具，不执行业务。短窗 CSS 400×323，通知浮层 clientWidth=scrollWidth=374，边界和滚动 footer 留在视口；Escape 回铃铛。此处不把软件最小窗口之外的顶栏命中、完整应用布局或真实 OS 送达列为已验收。HMR／窗口缩放后的过期控件先重读当前 DOM，最终重载日志无 warn/error；`ui/mcp-write-ui-cleanup.json` 以 DOM 确认视口和 system 外观恢复，自建标签／5207 样板服务清理。保护核对 `protected-mcp-write-audit.json` 保持原两个开发树及四个既有外部预热漂移。
+
+**完整目标仍未完成**：本批不覆盖 MCP runtime 创建／参数校验前无结构化归属的异常，也不把被截断或被旧格式净化破坏的历史输出猜成真实回执。源页阅读当前使用私有未读窗口，更早大历史的精确阅读覆盖仍需容量复核；通知中心记录不因此丢弃。模型／用量／统计来源健康、旧 scope 整体消失／同 revision 异内容、其他 feeds 恢复、长期完整序列、正式应用／包及 Windows/macOS 真权限／声音／勿扰仍继续实施。仅本地提交，不推送、发版、安装、重启当前软件或 Cursor，不缩小或结束完整通知目标。
+
 下面保留完整要求，不因前三批已有成果缩小。已实现部分仍需匹配该项范围验收；未实现部分继续开工。
 
 1. 通知中心、轻量顶栏入口、单张提醒和独立 renderer store。支持待处理／未读／全部、查询范围、分页、详情、关闭、阅读、归档、确认清理和适当偏好；减少动画、长内容、键盘与窄窗需验收。

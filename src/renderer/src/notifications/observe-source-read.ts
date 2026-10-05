@@ -4,12 +4,14 @@ import { notificationElementVisible } from './notification-visible'
 
 /** Exact-result read receipts; visibility changes reuse cached facts rather than polling IPC while scrolling. */
 export function observeSourceNotificationRead(element: HTMLElement, api: Pick<SgDesktopApi, 'getNotificationPage' | 'readNotification' | 'onNotificationChanged'>,
-  query: NotificationQuery, matches: (record: NotificationRecord) => boolean, identityVisible: () => boolean = () => true): () => void {
+  query: NotificationQuery, matches: (record: NotificationRecord) => boolean, identityVisible: () => boolean = () => true,
+  resultElement?: { selector: string; attributes: string[]; locate(record: NotificationRecord): HTMLElement | undefined }): () => void {
   let active = true, queried = false, fetching = false, frame: number | undefined
   const candidates = new Map<string, NotificationRecord>(), pending = new Set<string>(), acknowledged = new Map<string, number>()
   const visible = () => active && identityVisible() && notificationElementVisible(element)
   const read = async (record: NotificationRecord): Promise<void> => {
     if (!matches(record) || !visible() || !notificationIsUnread(record) || pending.has(record.id) || (acknowledged.get(record.id) ?? -1) >= record.attentionRevision) return
+    if (resultElement) { const result = resultElement.locate(record); if (!result || !notificationElementVisible(result)) return }
     pending.add(record.id)
     try {
       const result = await api.readNotification({ id: record.id, revision: record.revision })
@@ -40,6 +42,13 @@ export function observeSourceNotificationRead(element: HTMLElement, api: Pick<Sg
   const focus = (): void => { queried = false; inspect() }
   const stop = api.onNotificationChanged(event => { if (event.change?.record) accept(event.change.record) })
   const observer = typeof IntersectionObserver === 'function' ? new IntersectionObserver(schedule, { threshold: [0, .01, .1, .5, 1] }) : undefined
+  // Opt-in for native results mounted by expansion. No per-step subscription,
+  // business polling, or read merely because a collapsed header is visible.
+  const mutations = resultElement && typeof MutationObserver === 'function' ? new MutationObserver(changes => {
+    if (changes.some(change => change.type === 'attributes' || [...change.addedNodes, ...change.removedNodes].some(node =>
+      node instanceof Element && (node.matches(resultElement.selector) || node.querySelector(resultElement.selector))))) schedule()
+  }) : undefined
+  if (resultElement) mutations?.observe(element, { childList: true, subtree: true, attributes: true, attributeFilter: resultElement.attributes })
   observer?.observe(element); window.addEventListener('focus', focus); document.addEventListener('scroll', schedule, true); inspect()
-  return () => { active = false; stop(); observer?.disconnect(); if (frame !== undefined) cancelAnimationFrame(frame); window.removeEventListener('focus', focus); document.removeEventListener('scroll', schedule, true) }
+  return () => { active = false; stop(); observer?.disconnect(); mutations?.disconnect(); if (frame !== undefined) cancelAnimationFrame(frame); window.removeEventListener('focus', focus); document.removeEventListener('scroll', schedule, true) }
 }

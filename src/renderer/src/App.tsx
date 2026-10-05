@@ -980,12 +980,14 @@ export function App(): React.JSX.Element {
   }, [workspaceChannelId])
   const workspaceQuestionActions = useMemo((): QuestionActions => ({
     notificationScope: { channelId: workspaceChannelId, sessionId: selectedSession?.id, generation: String(selectedSession?.generation ?? 0),
-      composerId: selectedSession?.composerId, bindingGeneration: selectedMember?.binding?.generation },
+      composerId: selectedSession?.composerId, bindingGeneration: selectedMember?.binding?.generation,
+      workspaceId: teamControl.activeWorkspaceId, runId: teamControl.activeRun?.id, slotId: selectedMember?.slot.id, groupId: selectedMember?.slot.groupId },
     answer: (toolCallId, draft) => window.sgDesktop.answerCursorQuestion({
       channelId: workspaceChannelId, toolCallId, ...draft, ...pageOperationDisplay('question-answer').request
     }),
     skip: (toolCallId) => window.sgDesktop.skipCursorQuestion({ channelId: workspaceChannelId, toolCallId, ...pageOperationDisplay('question-skip').request })
-  }), [workspaceChannelId, selectedSession?.id, selectedSession?.generation, selectedSession?.composerId, selectedMember?.binding?.generation])
+  }), [workspaceChannelId, selectedSession?.id, selectedSession?.generation, selectedSession?.composerId, selectedMember?.binding?.generation,
+    teamControl.activeWorkspaceId, teamControl.activeRun?.id, selectedMember?.slot.id, selectedMember?.slot.groupId])
   const handleWorkspaceSend = useCallback(async (text: string, attachments?: MessageAttachment[]): Promise<void> => {
     if (!workspaceChannelId) return
     await window.sgDesktop.sendMessage({ channelId: workspaceChannelId, text, attachments })

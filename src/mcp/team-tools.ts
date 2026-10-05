@@ -1,3 +1,4 @@
+import { mcpWriteFailureHint } from '../domain/mcp-write-observation'
 import type { McpServer, RegisteredTool, StandardSchemaWithJSON, ToolAnnotations, ToolCallback } from '@modelcontextprotocol/server'
 import * as z from 'zod/v4'
 import type { TaskAgentService } from '../application/task-agent-service'
@@ -90,10 +91,12 @@ function toolSuccess(agentSessionId: string, data: Record<string, unknown>) {
 
 function toolFailure(agentSessionId: string, error: unknown, channelId?: string) {
   const code = error instanceof TaskPoolError ? error.code : 'internal_error'
+  const hint = mcpWriteFailureHint(error)
   const payload = {
     ok: false,
     agentSessionId,
     code,
+    ...(hint ? { sgWriteFailure: hint } : {}),
     message: error instanceof Error ? error.message : String(error),
     // 未入组（会话池独立席位）不是可重试错误：统一指回通信待命，等成员关系通知（任务书 §6.4）。
     ...(code === 'not_in_group' && channelId ? { nextAction: waitingAction(channelId) } : {})

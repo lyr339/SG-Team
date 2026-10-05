@@ -339,7 +339,11 @@ function StepDetails({ step, questionActions, preview = false }: { step: Process
             </div>
           ) : null}
           {step.details.map((detail, index) => (
-            <dl key={`${step.id}:detail:${index}`}><dt>{detail.label}</dt><dd>{detail.kind === 'code' ? <pre>{detail.value}</pre> : <code>{detail.value}</code>}</dd></dl>
+            <dl key={`${step.id}:detail:${index}`}><dt>{detail.label}</dt><dd>{detail.kind === 'code' ? <pre
+              data-notification-mcp-block={detail.label === '输出' && step.mcpWrite ? step.blockId : undefined}
+              data-notification-mcp-status={detail.label === '输出' ? step.mcpWrite?.status : undefined}
+              data-notification-mcp-channel={detail.label === '输出' ? step.mcpWrite?.channelId : undefined}
+            >{detail.value}</pre> : <code>{detail.value}</code>}</dd></dl>
           ))}
         </>
       ) : null}

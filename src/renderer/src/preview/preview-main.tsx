@@ -1,4 +1,6 @@
 import { reduceGroupEffects } from '../../../domain/group-effects-notification'
+import { observedMcpWrite } from '../../../domain/mcp-write-observation'
+import { reduceMcpWriteNotifications } from '../../../domain/mcp-write-notification'
 import type { GroupEffectsFrame } from '../../../domain/group-effects'
 import { reduceMemoryIssueNotifications, type MemoryIssueState } from '../../../domain/memory-issue-notification'
 import type { MemoryOperatorReviewProof } from '../../../domain/memory-operator-review'
@@ -1172,6 +1174,28 @@ function updatePreviewGroup(groupId: string, update: (view: typeof state.team.gr
 }
 
 const notificationPreview = createNotificationPreview()
+if (previewParameters.get('notifications') === 'mcp-write' && state.team.activeRun) {
+  const member = state.team.members.find(member => member.binding && state.desktop.sessions.some(session => session.channelId === member.binding!.channelId && session.composerId)), binding = member?.binding
+  const session = state.desktop.sessions.find(session => session.channelId === binding?.channelId)
+  if (member && binding && session) {
+    binding.composerId = session.composerId // Explicit mock installation, not a production binding or probe.
+    const at = Date.now() - 30000, entryId = 'preview-mcp-write-entry'
+    const scope = { workspaceId: binding.workspaceId, runId: binding.runId, slotId: member.slot.id, groupId: member.slot.groupId,
+      bindingGeneration: binding.generation, sessionId: session.id, channelId: session.channelId, generation: String(session.generation), composerId: session.composerId }
+    const examples = [
+      { tool: 'team_memory', args: { channel_id: session.channelId, action: 'propose' }, payload: { ok: false, agentSessionId: binding.agentSessionId, code: 'internal_error', sgWriteFailure: { version: 1, reason: 'storage' }, message: '隔离预览：原写入没有返回确认。' } },
+      { tool: 'team_task', args: { channel_id: session.channelId, action: 'start', taskId: 'preview-task' }, payload: { ok: true, agentSessionId: binding.agentSessionId, action: 'start', task: { task: { id: 'preview-task' } }, coordinationWarning: '隔离预览：原任务已开始，协作记录未确认。' } }
+    ]
+    const blocks: ProcessBlock[] = examples.map((example, i) => ({ kind: 'tool', toolKind: 'mcp', id: `preview-mcp-write-${i}`, toolName: `mcp-SG Team-${example.tool}`,
+      input: example.args, output: JSON.stringify(example.payload, null, 2), status: 'done', startedAt: at + i }))
+    state.desktop.conversations[session.channelId] = [{ id: 'preview-mcp-write-user', channelId: session.channelId, role: 'user', source: 'desktop', status: 'complete', timestamp: at - 1000, text: '检查本轮协作写入的真实结果。' },
+      { id: entryId, channelId: session.channelId, role: 'assistant', source: 'cursor', status: 'complete', timestamp: at + 1000,
+        text: '原任务已经开始；后续协作记录尚未确认。记忆写入没有返回确认，不能据此认定未执行，也不要重复已成功的操作。', processBlocks: blocks }]
+    const facts = examples.map((example, i) => ({ ...observedMcpWrite(`mcp-SG Team-${example.tool}`, example.args, JSON.stringify(example.payload))!,
+      identity: String(i + 1).repeat(64), attentionKey: String(i + 1).repeat(64), blockId: blocks[i]!.id, entryId, at: at + i, name: `${session.roleName} · CH-${session.channelId}`, scope }))
+    reduceMcpWriteNotifications(undefined, { key: 'preview-mcp-write', facts, signature: 'isolated', now: at, monitorStartedAt: at }, true, 1).drafts.forEach(notificationPreview.offer)
+  }
+}
 let previewMemoryIssueState: MemoryIssueState | undefined
 let previewOperatorProof: MemoryOperatorReviewProof | undefined
 const operatorMemoryScene = previewParameters.get('notifications') === 'operator-memory'

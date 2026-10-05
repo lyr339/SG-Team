@@ -7,6 +7,7 @@ import { notificationIsUnread, type NotificationPush, type NotificationRecord } 
 import { notificationElementVisible } from './notification-visible'
 import { notificationSessionScopeMatches } from './notification-session-scope'
 import { notificationIsQuiet, notificationSessionMode } from '../../../domain/notification-delivery-policy'
+import { mcpWriteResultElement } from './mcp-write-result-element'
 
 function nextReminder(store: NotificationStore): ToastCandidate[] {
   const preferences = store.snapshot().preferences
@@ -19,6 +20,10 @@ function nextReminder(store: NotificationStore): ToastCandidate[] {
 interface Props { store: NotificationStore; blocked: boolean; onOpen: (record: NotificationRecord, grouped?: boolean) => void; onSnoozeUpdate?: (record: NotificationRecord) => Promise<void> }
 function sourceResultVisible(record: NotificationRecord): boolean {
   if (!document.hasFocus() || !record.origin) return false
+  if (record.eventType === 'mcp.write-result') {
+    const result = mcpWriteResultElement(document, record)
+    return Boolean(result && notificationElementVisible(result))
+  }
   if (record.eventType === 'question.state' && record.target?.kind === 'session') {
     const toolCallId = record.target.toolCallId
     return [...document.querySelectorAll<HTMLElement>('[data-tool-call-id][data-notification-session]')].some(element =>
@@ -92,7 +97,8 @@ export function NotificationToast({ store, blocked, onOpen, onSnoozeUpdate }: Pr
       const element = document.activeElement
       if (element instanceof HTMLElement && element.matches('textarea,input:not([type="checkbox"]):not([type="radio"]),[contenteditable="true"]')) return
       for (const item of nextReminder(store)) {
-        if (item.expiresAt <= Date.now() || sourceResultVisible(item.record)) { store.dismissToast(item.key); continue }
+        const visible = item.grouped ? Boolean(item.sourceRecords?.length && item.sourceRecords.every(sourceResultVisible)) : sourceResultVisible(item.record)
+        if (item.expiresAt <= Date.now() || visible) { store.dismissToast(item.key); continue }
         remaining.current = { key: item.key, ms: item.record.category === 'updates' ? 15_000 : item.record.target ? 10_000 : 5_000 }
         current.current = item; setActive(item); break
       }

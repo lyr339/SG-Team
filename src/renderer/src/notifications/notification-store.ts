@@ -4,7 +4,7 @@ import { notificationIsQuiet, notificationSessionMode } from '../../../domain/no
 import type { NotificationHistoryIntegrity } from '../../../domain/notification-history'
 
 export type NotificationApi = Pick<SgDesktopApi, 'getNotificationPage' | 'readNotification' | 'readAllNotifications' | 'archiveNotification' | 'clearReadNotifications' | 'getNotificationPreferences' | 'saveNotificationPreferences' | 'onNotificationChanged' | 'acknowledgeNotificationHistory'>
-export interface ToastCandidate { key: string; record: NotificationRecord; expiresAt: number; grouped?: boolean }
+export interface ToastCandidate { key: string; record: NotificationRecord; expiresAt: number; grouped?: boolean; sourceRecords?: NotificationRecord[] }
 interface StoreSnapshot {
   summary: NotificationSummary
   preferences: NotificationPreferences
@@ -24,6 +24,7 @@ interface StoreSnapshot {
 
 /** Only the bell, center and toast subscribe; incoming notifications cannot invalidate the conversation tree. */
 export class NotificationStore {
+  private readonly recentRecords = new Map<string, NotificationRecord>()
   private state: StoreSnapshot = {
     summary: { revision: -1, total: 0, unread: 0, pending: 0, clearable: 0 }, preferences: structuredClone(DEFAULT_NOTIFICATION_PREFERENCES),
     available: false, loaded: false, preferencesReady: false, health: 'ready', historyIncomplete: false, toasts: []
@@ -93,6 +94,10 @@ export class NotificationStore {
     const change = event.change
     if (change && event.announcement && !this.state.preferencesReady) void this.pullPreferences(this.epoch)
     const fresh = !change || change.summary.revision >= this.state.summary.revision
+    if (fresh && change?.record) {
+      this.recentRecords.set(change.record.id, change.record)
+      while (this.recentRecords.size > 256) this.recentRecords.delete(this.recentRecords.keys().next().value!)
+    }
     if (change && change.summary.revision >= this.state.summary.revision) { update.summary = change.summary; update.available = true; update.loaded = true; update.error = undefined }
     if (change?.record && change.summary.revision >= this.state.summary.revision && (!notificationIsUnread(change.record) || change.record.state === 'expired')) {
       update.toasts = this.state.toasts.filter(item => item.record.id !== change.record!.id)
@@ -109,7 +114,9 @@ export class NotificationStore {
     const candidates = this.state.toasts.filter(item => item.expiresAt > this.now() && item.record.id !== record.id)
     const group = announcement.group
     const displayed = group ? { ...record, source: group.source, title: group.title, detail: group.detail, target: group.target, tone: group.tone ?? record.tone } : record
-    this.patch({ toasts: [...candidates, { key: announcement.id, record: displayed, expiresAt: announcement.expiresAt, ...(group ? { grouped: true } : {}) }].slice(-8) })
+    const sourceRecords = group?.recordIds.map(id => this.recentRecords.get(id))
+    this.patch({ toasts: [...candidates, { key: announcement.id, record: displayed, expiresAt: announcement.expiresAt,
+      ...(group ? { grouped: true } : {}), ...(sourceRecords?.length && sourceRecords.every(value => value !== undefined) ? { sourceRecords: sourceRecords as NotificationRecord[] } : {}) }].slice(-8) })
   }
   dismissToast(key: string): void { this.patch({ toasts: this.state.toasts.filter(item => item.key !== key) }) }
   async refresh(): Promise<void> {
