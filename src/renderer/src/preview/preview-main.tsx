@@ -1167,7 +1167,7 @@ function updatePreviewGroup(groupId: string, update: (view: typeof state.team.gr
 }
 
 const notificationPreview = createNotificationPreview()
-if (previewParameters.get('notifications') === 'memory' && state.team.activeRun) {
+if (['memory','restore'].includes(previewParameters.get('notifications')??'') && state.team.activeRun) {
   const run = state.team.activeRun, groupId = state.team.groups[0]?.group.id, exemplar = Object.values(state.memory.items)[0]!
   const proposed = { ...exemplar, id: 'preview-memory-conflict', workspaceId: run.workspaceId, runId: run.id, groupId, version: 2, status: 'proposed' as const,
     title: '接口重构后的身份校验边界', content: '请求到达原处理入口后，按当前工作区和运行身份核对。\n\n未确认的旧请求不重放；记录阅读不会改变成员侧回执。', supersedesId: 'preview-memory-prior' }
@@ -1175,8 +1175,14 @@ if (previewParameters.get('notifications') === 'memory' && state.team.activeRun)
     title: '旧的身份校验约定', content: '此前只按通道标识对应当前对象。这条前置约定已被另一项修订取代。' }
   state.memory.items = { [proposed.id]: proposed, [prior.id]: prior }; state.memory.itemOrder = [proposed.id, prior.id]
   state.memory.workspaceId = run.workspaceId; state.memory.runId = run.id; state.memory.revision = 4
-  const result = reduceMemoryIssueNotifications(undefined,{key:'preview-memory',revision:4,now:Date.now(),facts:[{identity:'3'.repeat(64),id:proposed.id,version:proposed.version,
-    title:proposed.title,state:'conflict',scope:{workspaceId:run.workspaceId,runId:run.id,...(groupId?{groupId}:{})},ceased:false}]},true,1)
+  const facts = [{ identity: '3'.repeat(64), id: proposed.id, version: proposed.version, title: proposed.title, state: 'conflict' as const,
+    scope: { workspaceId: run.workspaceId, runId: run.id, ...(groupId ? { groupId } : {}) }, ceased: false }]
+  const normal = { key: 'preview-memory', scope: {workspaceId: run.workspaceId, runId: run.id}, revision: 4, now: Date.now(), facts }
+  const priorProjection = reduceMemoryIssueNotifications(undefined, { ...normal, revision: 20 }, true, 1)
+  const rejected = reduceMemoryIssueNotifications(priorProjection.state, { ...normal, revision: 21, facts: facts.map(fact => ({ ...fact, state: 'rejected' as const })) }, false, 2)
+  const result = previewParameters.get('notifications') === 'restore'
+    ? reduceMemoryIssueNotifications(rejected.state, { ...normal, currentRead: true, readOwner: 'preview-current-read', readEpoch: 0 }, true, 3)
+    : priorProjection
   result.drafts.forEach(notificationPreview.offer)
 }
 if (previewParameters.get('notifications') === 'compatibility') {

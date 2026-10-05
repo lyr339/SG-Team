@@ -13,6 +13,7 @@ import {
   isSessionPoolRun,
   projectGroups,
   type TeamControlSnapshot,
+  type TeamControlReadObservation,
   type TeamControlState,
   type TeamMemberConfiguration,
   type TeamMemberReadiness,
@@ -102,6 +103,9 @@ function readinessOf(input: {
  * 协作在池内以组的形式随时建拆（TeamGroupService）。
  */
 export class TeamControlService {
+  private readonly readObservers = new Set<(value: TeamControlReadObservation) => void>()
+  private readonly readOwner = randomUUID()
+  private readSequence = 0
   private listeners = new Set<TeamControlListener>()
   private lastRevision: number
   private cachedState?: TeamControlState
@@ -158,7 +162,17 @@ export class TeamControlService {
       const telemetry = this.telemetrySource.readWorkspace(workspace.path, bindings)
       runtime = verifyAgentRuntime(runtime, state, telemetry)
     }
-    return this.project(state, runtime)
+    const snapshot = this.project(state, runtime)
+    if (this.readObservers.size) {
+      const value = { snapshot, stamp: { owner: this.readOwner, sequence: ++this.readSequence } }
+      for (const listener of this.readObservers) { try { listener(value) } catch { /* Observers cannot change the original result. */ } }
+    }
+    return snapshot
+  }
+  getReadOwnerId(): string { return this.readOwner }
+  subscribeReadObservation(listener: (value: TeamControlReadObservation) => void): () => void {
+    this.readObservers.add(listener)
+    return () => { this.readObservers.delete(listener) }
   }
 
   getActiveRunId(): string | undefined {
@@ -342,6 +356,7 @@ export class TeamControlService {
   }
 
   dispose(): void {
+    this.readObservers.clear()
     this.stopWatcher()
     this.unsubscribeBridge()
     this.listeners.clear()

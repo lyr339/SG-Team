@@ -1,4 +1,5 @@
 import type { TeamControlSnapshot } from '../domain/team-control'
+import { randomUUID } from 'node:crypto'
 import type { TeamMemoryItem, TeamMemorySnapshot, TeamMemoryReadObservation } from '../domain/team-memory'
 import { emptyTeamMemorySnapshot } from '../domain/team-memory'
 import type { TeamMemoryRepository } from './team-memory-repository'
@@ -13,6 +14,8 @@ type Listener = (snapshot: TeamMemorySnapshot) => void
 export class TeamMemoryService {
   private readonly listeners = new Set<Listener>()
   private readonly readObservers = new Set<(value: TeamMemoryReadObservation) => void>()
+  private readonly readOwner = randomUUID()
+  private readSequence = 0
   private readonly unsubscribeTeam: () => void
   private watchTimer?: ReturnType<typeof setInterval>
   private lastRevision: number
@@ -31,7 +34,7 @@ export class TeamMemoryService {
     const workspaceId = team.activeWorkspaceId
     try {
       const snapshot = run && workspaceId ? this.repository.load(workspaceId, run.id) : emptyTeamMemorySnapshot(workspaceId, run?.id)
-      this.observeRead({ kind: 'snapshot', snapshot,context:team })
+      this.observeRead({ kind: 'snapshot', snapshot, context: team, stamp: { owner: this.readOwner, sequence: ++this.readSequence } })
       return snapshot
     } catch (error) {
       this.observeRead({ kind: 'unavailable', workspaceId, runId: run?.id,context:team })
@@ -42,6 +45,7 @@ export class TeamMemoryService {
     this.readObservers.add(listener)
     return () => { this.readObservers.delete(listener) }
   }
+  getReadOwnerId(): string { return this.readOwner }
   private observeRead(value: TeamMemoryReadObservation): void {
     for (const listener of this.readObservers) { try { listener(value) } catch { /* Original read consumers remain authoritative. */ } }
   }

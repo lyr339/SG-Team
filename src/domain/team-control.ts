@@ -1,4 +1,5 @@
 import type { AgentRuntimeEvidence, AgentSessionStatus } from './agent-session'
+import type { NativeReadStamp } from './native-read-observation'
 import {
   cursorComposerBindingMarker,
   type ComposerBindingMethod
@@ -310,6 +311,8 @@ export interface TeamControlSnapshot extends Omit<TeamControlState, 'groups'> {
   /** 活动 run 的协作组：active 全部 + 最近 24h 内解散的（只读卡片）。 */
   groups: TeamGroupView[]
 }
+/** Main-only completed read; renderer/MCP snapshots remain unchanged. */
+export interface TeamControlReadObservation { snapshot:TeamControlSnapshot;stamp:NativeReadStamp }
 
 /** 已解散的组在快照里保留的时长（阶段 3 的历史折叠区之前，只读卡片）。 */
 export const DISSOLVED_GROUP_VISIBLE_MS = 24 * 60 * 60_000

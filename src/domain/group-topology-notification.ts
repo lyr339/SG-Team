@@ -1,5 +1,6 @@
 import type { NotificationDraft } from './notification'
 import { NOTIFICATION_SOURCE_BATCH_LIMIT, validateNotificationDraft } from './notification'
+import { nativeRevisionRegressed, validateNativeRebaseState, type NativeVersionEvidence, type NativeRebaseState } from './native-rebase'
 export interface GroupTopologyFact {
   id: string
   identity: string
@@ -9,7 +10,7 @@ export interface GroupTopologyFact {
   planning: 'lead' | 'members' | 'operator'
   members: Array<{ slotId: string; label: string }>
 }
-export interface GroupTopologyInput {
+export interface GroupTopologyInput extends NativeVersionEvidence {
   key: string
   workspaceId: string
   runId: string
@@ -17,7 +18,8 @@ export interface GroupTopologyInput {
   now: number
   facts: GroupTopologyFact[]
 }
-export interface GroupTopologyState {
+export interface GroupTopologyState extends NativeRebaseState {
+  priorData?: string[]
   version: 1
   key: string
   revision: number
@@ -33,11 +35,18 @@ export function readGroupTopologyState(value: unknown, key: string): GroupTopolo
     !Number.isSafeInteger(state.revision) ||
     state.revision < 0 ||
     !state.groups ||
-    typeof state.groups!=='object' ||
+    typeof state.groups !== 'object' ||
     Array.isArray(state.groups) ||
     Object.keys(state.groups).length > 1024
   )
     throw Error('组通知检查点无效')
+  validateNativeRebaseState(state, 1024)
+  if (
+    state.priorData !== undefined &&
+    (!Array.isArray(state.priorData) || state.priorData.length > 1024 || state.priorData.some((id) => typeof id !== 'string' || !state.groups[id]))
+  )
+    throw Error('组先前数据标记无效')
+  if (state.pendingRebase?.missing.some((id) => !state.groups[id])) throw Error('组恢复进度指向不存在的身份')
   for (const [id, fact] of Object.entries(state.groups))
     if (
       !fact ||
@@ -70,19 +79,66 @@ export function reduceGroupTopologyNotifications(
 ) {
   const groups = { ...previous?.groups },
     drafts: NotificationDraft[] = []
-  if (previous && input.revision < previous.revision) return { state: previous, drafts }
+  if (previous && input.revision < previous.revision && !input.currentRead) return { state: previous, drafts }
+  const regression = nativeRevisionRegressed(previous, input)
+  const rebases = (previous?.rebases ?? 0) + (regression ? 1 : 0)
+  const pending = regression
+    ? {
+        from: Math.max(previous!.revision, input.rebaseFrom ?? 0),
+        to: input.rebaseTo ?? input.revision,
+        missing: Object.keys(groups).filter((id) => !input.facts.some((fact) => fact.id === id))
+      }
+    : previous?.pendingRebase
+      ? { ...previous.pendingRebase, missing: [...previous.pendingRebase.missing] }
+      : undefined
+  const priorData = new Set(previous?.priorData)
+  if (pending) {
+    while (pending.missing.length && drafts.length < NOTIFICATION_SOURCE_BATCH_LIMIT - 1) {
+      const id = pending.missing.shift()!,
+        old = groups[id]!
+      if (priorData.has(id)) continue
+      priorData.add(id)
+      drafts.push({
+        key: `group-topology:${old.identity}`,
+        eventType: 'group.topology',
+        eventId: `group-topology:${old.identity}:prior-data:${rebases}`,
+        subjectState: 'prior-data',
+        category: 'team',
+        source: `协作组 · ${old.name}`,
+        title: '此组关系摘要属于先前数据版本',
+        detail: `此前修订 ${pending.from} 记录了该组。本次较早修订 ${pending.to} 的当前投影未包含它；不推断已解散、删除或收尾完成。`,
+        scope: { workspaceId: input.workspaceId, runId: input.runId, groupId: id },
+        tone: 'info',
+        attention: 'activity',
+        state: 'expired',
+        occurredAt: input.now,
+        timeBasis: 'observed',
+        sourceRevision: revision,
+        announce: false,
+        respectCleared: true
+      })
+    }
+  }
   let complete = true
   for (const fact of input.facts) {
     const old = groups[fact.id]
-    if (JSON.stringify(old) === JSON.stringify(fact)) continue
-    if (drafts.length >= NOTIFICATION_SOURCE_BATCH_LIMIT) {
+    if (JSON.stringify(old) === JSON.stringify(fact) && !priorData.has(fact.id)) continue
+    if (drafts.length >= NOTIFICATION_SOURCE_BATCH_LIMIT - (pending ? 1 : 0)) {
       complete = false
       break
     }
     groups[fact.id] = fact
+    priorData.delete(fact.id)
     if (baseline && !old) continue // Hydration is not a fresh create/dissolve operation.
     const changes: string[] = []
-    const title = fact.status === 'dissolved' ? '原记录确认协作组已解散' : !old ? '协作组已创建' : '协作组关系已变化'
+    const title = pending
+      ? '协作组关系已按当前读取重新核对'
+      : fact.status === 'dissolved'
+        ? '原记录确认协作组已解散'
+        : !old
+          ? '协作组已创建'
+          : '协作组关系已变化'
+    if (pending) changes.push(`源数据修订 ${pending.from} → ${pending.to}。之前的关系属于先前数据版本；这不是一次重新建组或恢复成功回执。`)
     if (old && old.status !== fact.status) changes.push('组状态已按原记录更新。')
     if (old && old.leadSlotId !== fact.leadSlotId) changes.push(fact.leadSlotId ? '有效主控已变化。' : '当前没有有效主控。')
     if (old && old.planning !== fact.planning)
@@ -114,6 +170,43 @@ export function reduceGroupTopologyNotifications(
     })
   }
   if (Object.keys(groups).length > 1024) throw Error('本轮组关系通知身份容量不足')
+  if (pending) {
+    complete &&= pending.missing.length === 0
+    drafts.push({
+      key: `group-rebase:${input.key.slice(-64)}:${rebases}`,
+      eventType: 'group.rebase',
+      subjectState: complete ? 'observed' : 'pending',
+      category: 'team',
+      source: '协作数据核对',
+      title: '检测到较早的组关系数据版本',
+      detail: `源修订 ${pending.from} → ${pending.to}。${complete ? '已按本次原读取重新投影通知。' : '旧摘要仍在分批核对。'}原业务没有被通知回放或改变，先前记录不作为当前关系证明。`,
+      scope: { workspaceId: input.workspaceId, runId: input.runId },
+      target: { kind: 'run', runId: input.runId },
+      origin: { module: 'run' },
+      tone: 'warning',
+      attention: 'notice',
+      state: complete ? 'resolved' : 'active',
+      occurredAt: input.now,
+      timeBasis: 'observed',
+      sourceRevision: revision,
+      announce: false,
+      renewAttention: regression
+    })
+  }
   drafts.forEach(validateNotificationDraft)
-  return { state: { version: 1 as const, key: input.key, revision: input.revision, groups }, drafts, complete }
+  return {
+    state: {
+      version: 1 as const,
+      key: input.key,
+      revision: input.revision,
+      groups,
+      rebases,
+      readOwner: input.readOwner ?? previous?.readOwner,
+      readEpoch: input.readEpoch ?? previous?.readEpoch ?? 0,
+      priorData: [...priorData],
+      ...(!complete && pending ? { pendingRebase: pending } : {})
+    },
+    drafts,
+    complete
+  }
 }

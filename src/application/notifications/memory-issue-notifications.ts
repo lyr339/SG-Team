@@ -11,11 +11,13 @@ import {
   type MemoryIssueState
 } from '../../domain/memory-issue-notification'
 import { NotificationProjectionSource } from './projection-source'
+import { NativeReadOrder } from './native-read-order'
 export function connectMemoryIssueNotifications(
-  memory: { subscribeReadObservation(listener: (value: TeamMemoryReadObservation) => void): () => void },
+  memory: { subscribeReadObservation(listener: (value: TeamMemoryReadObservation) => void): () => void; getReadOwnerId?(): string },
   getTeam: () => TeamControlSnapshot,
   owner: NotificationService
 ) {
+  const order = new NativeReadOrder(memory.getReadOwnerId?.())
   const signatures = new WeakMap<MemoryIssueInput['facts'], string>()
   const source = new NotificationProjectionSource<MemoryIssueInput, MemoryIssueState>(
     owner,
@@ -24,16 +26,16 @@ export function connectMemoryIssueNotifications(
     (input) => {
       let signature = signatures.get(input.facts)
       if (signature === undefined) {
-        signature = JSON.stringify([input.key, input.facts])
+        signature = JSON.stringify(input.facts)
         signatures.set(input.facts, signature)
       }
-      return signature
+      return JSON.stringify([input.key, input.currentRead ? input.readOwner : null, input.currentRead ? input.readEpoch : null]) + signature
     }
   )
   const last = new Map<string, { input: MemoryIssueInput; teamStamp: string }>()
   const detach = memory.subscribeReadObservation((observation) => {
     try {
-      const team = observation.context??getTeam(),
+      const team = observation.context ?? getTeam(),
         run = team.activeRun
       if (observation.kind === 'unavailable') {
         if (!run || run.id !== observation.runId || run.workspaceId !== observation.workspaceId) return
@@ -46,18 +48,23 @@ export function connectMemoryIssueNotifications(
         if (old)
           source.observe(key, {
             ...old.input,
+            currentRead: false,
             now: Date.now(),
             facts: old.input.facts.map((fact) => (fact.state === 'conflict' ? { ...fact, state: 'unconfirmed' } : fact))
           })
         return
       }
       const snapshot = observation.snapshot
+      const origin = order.accept(observation.stamp)
+      if (origin === 'stale') return
+      const currentRead = origin === 'current'
       if (!run || snapshot.runId !== run.id || snapshot.workspaceId !== run.workspaceId || team.activeWorkspaceId !== run.workspaceId) return
       const key =
         'memory-issues:' +
         createHash('sha256')
           .update(JSON.stringify([run.workspaceId, run.id]))
           .digest('hex')
+      const nativeVersion = order.version(key, snapshot.revision, currentRead)
       const teamStamp = JSON.stringify([
           run.status,
           team.groups
@@ -70,10 +77,24 @@ export function connectMemoryIssueNotifications(
       // explicit termination scope are authoritative; don't rehash all history
       // on unchanged reads. Still offer it so unknown private writes can recover.
       if (cached?.input.revision === snapshot.revision && cached.teamStamp === teamStamp) {
-        source.observe(key, { ...cached.input, now: Date.now() })
+        source.observe(key, {
+          ...cached.input,
+          currentRead,
+          readOwner: nativeVersion.owner,
+          readEpoch: nativeVersion.epoch,
+          rebaseFrom: nativeVersion.rebaseFrom,
+          rebaseTo: nativeVersion.rebaseTo,
+          now: Date.now()
+        })
         return
       }
       const input: MemoryIssueInput = {
+        scope: { workspaceId: run.workspaceId, runId: run.id },
+        currentRead,
+        readOwner: nativeVersion.owner,
+        readEpoch: nativeVersion.epoch,
+        rebaseFrom: nativeVersion.rebaseFrom,
+        rebaseTo: nativeVersion.rebaseTo,
         key,
         revision: snapshot.revision,
         now: Date.now(),

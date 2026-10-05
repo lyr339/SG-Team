@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { transactTaskPool, type TaskPoolRepository } from './task-pool-transaction'
-import { sameTaskGroup, type PlanTaskInput, type TaskPoolAggregate, type TaskPoolSnapshot, type TaskPoolState, type TeamTask } from '../domain/task-pool'
+import { sameTaskGroup, type PlanTaskInput, type TaskPoolAggregate, type TaskPoolSnapshot, type TaskPoolState, type TeamTask,type TaskPoolReadObservation } from '../domain/task-pool'
 import type { TeamRunStatus } from '../domain/team-control'
 
 export interface ActiveTaskScope {
@@ -30,6 +30,9 @@ export interface CreateTaskInput {
 type TaskPoolListener = (snapshot: TaskPoolSnapshot) => void
 
 export class TaskPoolService {
+  private readonly readOwner = randomUUID()
+  private readSequence = 0
+  private readonly readObservers = new Set<(value: TaskPoolReadObservation) => void>()
   private listeners = new Set<TaskPoolListener>()
   private sweepTimer?: ReturnType<typeof setInterval>
   private watchTimer?: ReturnType<typeof setInterval>
@@ -53,7 +56,17 @@ export class TaskPoolService {
   }
 
   getSnapshot(): TaskPoolSnapshot {
-    return this.snapshotForActiveRun(this.repository.load(), this.activeScope())
+    const snapshot = this.snapshotForActiveRun(this.repository.load(), this.activeScope())
+    if (this.readObservers.size) {
+      const value = { snapshot, stamp: { owner: this.readOwner, sequence: ++this.readSequence } }
+      for (const listener of this.readObservers) { try { listener(value) } catch { /* Original reads/execution never depend on display. */ } }
+    }
+    return snapshot
+  }
+  getReadOwnerId(): string { return this.readOwner }
+  subscribeReadObservation(listener: (value: TaskPoolReadObservation) => void): () => void {
+    this.readObservers.add(listener)
+    return () => { this.readObservers.delete(listener) }
   }
 
   subscribe(listener: TaskPoolListener): () => void {

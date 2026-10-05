@@ -246,6 +246,25 @@
 
 **完整目标仍未完成**：普通记忆提案的真实人工升级、跨 MCP 的写/审核失败结构化事实、组事务外副作用/权限变更失败与精确操作关联仍须接入；不能因有 topology 摘要或只读查看器就称这些完整完成。模型目录/用量/统计源持续缺失、原 native 修订号回退/数据库回滚的安全重基线、更多已接入来源的开始/跨重启未知与长序列压力、完整 UI/布局和正式打包/macOS/Windows 真通知权限/声音/勿扰仍未验收。尤其 native revision 下退目前按 stale 保守拒绝，不能把这个 gate 当“真实数据库回滚序列已验证”；后续必须用真实恢复序列复核。整套按原矩阵继续，不以本批绿测试缩小目标或发版。
 
+### 第十四批：原生修订号回退与通知重核对
+
+- 根因：业务库可以恢复到较早备份，而私有通知库仍保留较新历史。group/memory 的低 revision 拒绝会永久挡住真实当前数据；较新 task cancelled/done 也不能继续作为恢复后的当前阶段。没有让业务跟着通知回滚。
+- 原 Control/Memory/Task 服务在已有读取、缓存验证及投影完成后提供 main-only owner/读序号，不加 renderer/MCP 字段、额外业务查询或 watcher。通知只接受当前选定原服务的增加序号；迟到旧 owner/序列和未验证旧快照不能授权重核对。观察者失败不重跑读取或吞原异常。
+- 原读取序号与 native revision 分开。较新的已完成读取可以确认较低数据版本。内存有界跟踪 native 高水位/回退 episode，语义签名只纳入回退变化，不为正常进度、签到和心跳逐拍持久化。固定 from/to 保留到后续增长或未知 ACK 核对，不能把 101→40 改成 101→200。
+- 各领域决定事实，小型纯 helper 只验证/比较 metadata。source checkpoint 与通知仍在私有 CAS 同事务；未知 ACK 从下一原读核对检查点，不重放提交。旧版无 read provenance 的来源仍不能只凭较小数字重置。
+- 当前准确 workspace/run 中的组关系按本次原投影重核对，不称再次建组。较新历史里存在、当前较早数据没包含的组标 prior-data，不编造解散/删除/收尾；普通裁剪缺失不走此例外。
+- 恢复后的 actionable 记忆冲突不被先前驳回、已读/清理掩盖，详情保留先前确认属于先前数据版本的说明。缺失旧事项只收束当前适用性，不称已采纳/驳回/删除。没有审核、重提、发送消息或 Agent 回执写入。
+- Task 通知也按当前读取对齐：旧 cancelled→备份中的 queued 不是重新创建/执行；缺失较新任务标 prior-data，不自动取消。团队验收仍不是人工审批。各来源只有中心说明，不补播旧 toast/OS、不声明业务恢复成功。
+- 旧对象分批核对，每批最多 99 项加同 episode 说明，pendingRebase 精确保留剩余身份；240 个组/记忆旧事项分三批且不修改传入 checkpoint。再次重启不生成另一份说明，容量/错误不截掉重要身份。
+
+证据：`full-regression-native-rebase-final.log`、`build-native-rebase-final.log`、`dead-code-native-rebase-final.log`、`node-native-rebase-final.log`、`electron-native-rebase-final.log`、`electron-worker-native-rebase-final.log`、`electron-recovery-native-rebase-final.log`、`electron-team-native-rebase-final.log`、`electron-history-native-rebase-final.log`、`electron-quit-native-rebase-final.log`、`channel-smoke-native-rebase-final.log`、`mcp-smoke-native-rebase-final.log`。`scripts/verify-notification-native-rebase.ts` 使用真实隔离业务 repositories、原 VACUUM INTO 备份、旧服务/库关闭、业务文件恢复且保留通知库，再重建原服务和最新真实编译 worker；Node/macOS Electron 各核验旧 reject/clear→当前 conflict、cancelled→queued、新组/任务 missing→prior-data、再次重启去重、无 send/lease/review 回放。没有运行真正 updater 脚本或覆盖用户库。
+
+`notification-native-rebase.test.ts` 覆盖旧 stamp 拒绝、原作用域、metadata 增长不增加提交、未落盘的内存高水位回退、240 对象批次/不可变 checkpoint、无效恢复指针、未知 ACK 后从实际 CAS 收敛且不重复说明。原 Control/Task/Memory/协议回归保留一次原读取只 load 一次、业务/Agent 结果不被通知改写的边界。
+
+UI 只沿用原中心/只读查看器，隔离 `notifications=restore` mock 和 `ui/native-rebase-center-light.jpg` 明确 21→4、先前“已驳回”和当前待核对不同，仍可看原记忆；无恢复成功绿条、业务重试按钮或彩色左轨。Preview 不证明真实工作区/系统通知。`protected-native-rebase-audit.json` 保持两份原开发树和四个已知外部预热漂移。未 production main/Cursor/账号/模型/OS 动作、安装、push 或发布；fixture 与临时 UI 资源清理。
+
+**完整目标仍未完成**：本批证明当前仍准确可定位的 workspace/run 的实际较低 native revision。整个旧作用域消失、相等 revision 不同内容（尤其活句柄/cache）、跨来源聚合与历史裁剪复杂序列仍需完成；session/question/reply/queue/operator 等其他来源在业务备份恢复后的关联还需逐项测试。普通记忆人工升级、结构化写/组副作用失败、模型/用量/统计源异常，以及完整矩阵/正式打包/Windows/macOS 真通知权限/声音/勿扰/全 UI 验收仍在范围内。无 blocker，不缩小或完成目标。
+
 下面保留完整要求，不因前三批已有成果缩小。已实现部分仍需匹配该项范围验收；未实现部分继续开工。
 
 1. 通知中心、轻量顶栏入口、单张提醒和独立 renderer store。支持待处理／未读／全部、查询范围、分页、详情、关闭、阅读、归档、确认清理和适当偏好；减少动画、长内容、键盘与窄窗需验收。

@@ -8,6 +8,8 @@ export type TaskStatus =
   | 'cancelled'
 
 export type AttemptStatus = 'leased' | 'running' | 'review' | 'done' | 'failed' | 'cancelled'
+/** Main-only ordering evidence from an original TaskPoolService read. */
+export interface TaskPoolReadObservation {snapshot:TaskPoolSnapshot;stamp:import('./native-read-observation').NativeReadStamp}
 export type TaskReviewStatus = 'queued' | 'leased' | 'approved' | 'rejected' | 'cancelled'
 export type TaskReviewDecision = 'accept' | 'reject'
 
