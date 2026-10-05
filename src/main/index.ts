@@ -115,6 +115,7 @@ import { connectBatchLaunchNotifications } from '../application/notifications/ba
 import { connectAutomationNotifications } from '../application/notifications/automation-notifications'
 import { connectTaskNotifications } from '../application/notifications/task-notifications'
 import { connectOperatorMessageNotifications } from '../application/notifications/team-message-notifications'
+import { PageOperationNotifications } from '../application/notifications/page-operation-notifications'
 import { membershipTransferNotification } from '../domain/membership-transfer-notification'
 // electron-updater 是 CJS，`autoUpdater` 是 exports 上的惰性 getter：主进程是 ESM，命名导入会在链接期
 // 找不到该导出（cjs-module-lexer 认不出 getter），只能默认导入整个 module.exports 再取属性。
@@ -166,6 +167,7 @@ let localSessionBridge: LocalSessionBridge | undefined
 let teamFailoverService: TeamFailoverService | undefined
 let notificationService: NotificationService | undefined
 let notificationDeliveryService: NotificationDeliveryService | undefined
+let pageOperationNotifications: PageOperationNotifications | undefined
 let notificationRuntimeJournal: NotificationRuntimeJournal | undefined
 let disposeNotificationIpc: (() => void) | undefined
 let disposeAppUpdateNotifications: (() => void) | undefined
@@ -376,6 +378,7 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
       }
     })
     disposeNotificationIpc = registerNotificationIpc(notificationService, () => mainWindow, notificationDeliveryService)
+    pageOperationNotifications = new PageOperationNotifications(notificationService)
   } catch {
     // Renderer can expose unavailable notification history; launching and account services must still initialize.
     console.warn('[notifications] 通知存储暂不可用，原有功能继续运行')
@@ -750,6 +753,7 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
       restartObservation: { begin: () => notificationRuntime?.lifecycle.beginRestart('切换并重启 Cursor', 'accounts'),
         finish: (id, success) => notificationRuntime?.lifecycle.finishRestart(id, success) },
       notifications: notificationService,
+      operations: pageOperationNotifications,
       // 第一步「获取 Token」的指纹导入：开窗读 profile 登录态（内存级），读毕关窗省资源
       //（cookie 留 profile；后续自动化链会重新拉起）。拿到 token 顺手识别官网资料
       //（email/注册时间）——label 显示邮箱而不是 user_xxx；识别失败静默降级。
@@ -838,7 +842,8 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
         suggestAutoHeal: result.ok && !cursorCdpSettingsStore.load().autoHealEnabled
       }
     },
-    () => mainWindow
+    () => mainWindow,
+    pageOperationNotifications
   )
   // 会话预热探针：与 launcher 完全解耦（不取开场提示词、不绑通道、不触发自动化），
   // 只复用同一 CDP 创建/观测能力；候选模型由遥测目录按牌价偏好链解析。
@@ -881,7 +886,7 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     desktopSessionService,
     revealPolicy,
     () => mainWindow,
-    { downloadsPath: () => app.getPath('downloads'), observeFailure: (channelId, error) => notificationRuntime?.queue?.reportHandoffFailure(channelId, error) }
+    { downloadsPath: () => app.getPath('downloads'), observeFailure: (channelId, error) => notificationRuntime?.queue?.reportHandoffFailure(channelId, error), operations: pageOperationNotifications }
   )
   // 拾光内回答 Cursor 原生 ask_question：与会话创建/过程观察共用同一 Cursor 窗口解析。
   disposeCursorQuestionIpc = registerCursorQuestionIpc(
@@ -892,7 +897,8 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
         resolveWorkbenchSocket: (workspacePath) => cursorCdpCreator.resolveWorkbenchSocket(workspacePath)
       })
     }),
-    () => mainWindow
+    () => mainWindow,
+    { operations: pageOperationNotifications, sourceTarget: (channelId, toolCallId) => notificationRuntime?.questionTarget(channelId, toolCallId) ?? { scope: {} } }
   )
   disposeCursorUpdateIpc = registerCursorUpdateIpc(cursorUpdatePreferencesStore, () => mainWindow)
   // 拾光自更新（手动组件）：只静默检查，发现新版由渲染层出小提醒；下载 / 安装都由用户点。
@@ -1039,6 +1045,7 @@ function disposeDesktopOnce(): void {
   if (desktopDisposed) return
   desktopDisposed = true
   notificationDeliveryService?.dispose()
+  pageOperationNotifications?.dispose()
   disposeBatchLaunchNotifications?.()
   disposeAutomationNotifications?.()
   tray?.destroy()

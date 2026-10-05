@@ -21,6 +21,7 @@ import type { SessionWarmupRun } from '../domain/session-warmup'
 import type { CdpAutoHealEvent, CursorCdpSettings } from '../domain/cursor-cdp'
 import type { AccountAutomationRun, AccountAutomationSettings } from '../domain/account-automation'
 import type { CursorSwitchPumpOutcome, CursorSwitchPumpStatus } from '../domain/cursor-switch-pump'
+import type { NotificationOperationRequest } from '../domain/notification-reference'
 import type { CursorUpdatePreferences, CursorUpdateWriteResult } from '../domain/cursor-update'
 import type { CursorUsageSnapshot } from '../domain/cursor-usage'
 import type {
@@ -174,6 +175,7 @@ export interface SendMessageAccepted {
 export interface CursorQuestionAnswerInput {
   channelId: string
   toolCallId: string
+  notificationId?: string
   selections: Record<string, string[]>
   freeformTexts?: Record<string, string>
   /** 用户附言；为空时主进程按选择生成摘要（Cursor 的回退路径要求跟进消息非空）。 */
@@ -183,6 +185,7 @@ export interface CursorQuestionAnswerInput {
 export interface CursorQuestionSkipInput {
   channelId: string
   toolCallId: string
+  notificationId?: string
 }
 
 export type CursorQuestionFailureCode =
@@ -196,8 +199,8 @@ export type CursorQuestionFailureCode =
   | 'unconfirmed'
 
 export type CursorQuestionActionResult =
-  | { ok: true; status: 'submitted' | 'cancelled' }
-  | { ok: false; code: CursorQuestionFailureCode; message: string }
+  ({ ok: true; status: 'submitted' | 'cancelled' }
+  | { ok: false; code: CursorQuestionFailureCode; message: string }) & { notification?: import('../domain/notification-reference').NotificationReference }
 
 export interface CreateIndependentSessionsInput {
   workspacePath: string
@@ -276,6 +279,7 @@ export interface SaveCursorAccountCardResult {
   tokenRefreshed?: boolean
   /** 卡内 Token 已过期且自动登录未成功（账号与凭据已保存，可稍后重试）。 */
   loginError?: string
+  notification?: import('../domain/notification-reference').NotificationReference
 }
 
 export interface SgDesktopApi {
@@ -288,34 +292,35 @@ export interface SgDesktopApi {
   saveNotificationPreferences(preferences: NotificationPreferences): Promise<NotificationPreferences>
   onNotificationChanged(listener: (event: NotificationPush) => void): () => void
   listCursorAccounts(): Promise<CursorAccountMetadata[]>
-  saveCursorAccount(input: { label: string; token: string; makeActive?: boolean }): Promise<CursorAccountMetadata[]>
+  saveCursorAccount(input: { label: string; token: string; makeActive?: boolean; notificationId?: string }): Promise<CursorAccountMetadata[]>
   /** 卡号粘贴导入（邮箱----邮箱密码----Cursor密码----辅邮----辅邮密码----Token）：主进程权威解析，凭据整体加密随账号保存。 */
-  saveCursorAccountCard(input: { card: string; makeActive?: boolean }): Promise<SaveCursorAccountCardResult>
+  saveCursorAccountCard(input: { card: string; makeActive?: boolean; notificationId?: string }): Promise<SaveCursorAccountCardResult>
   /** 用账号保存的凭据在指纹浏览器窗口自动登录并刷新 Token（仅卡号导入的账号）。 */
-  loginCursorAccount(accountId: string): Promise<{ accounts: CursorAccountMetadata[]; outcome: 'already_logged_in' | 'logged_in' }>
+  loginCursorAccount(accountId: string, reference?: NotificationOperationRequest): Promise<{ accounts: CursorAccountMetadata[]; outcome: 'already_logged_in' | 'logged_in'; notification?: import('../domain/notification-reference').NotificationReference }>
   /**
    * 升级 Pro 扫码付款：在账号绑定的指纹窗口直达 Stripe 月付结账（USD · 支付宝），
    * 自动填写「自动化」设置里的账单资料并提交；窗口保留，用户扫码完成付款。
    * 登录态归属 ≠ 目标账号时 fail-closed 中止（绝不给错误账号付款）。
    */
-  startCursorProUpgrade(accountId: string): Promise<CursorProUpgradeResult>
+  startCursorProUpgrade(accountId: string, reference?: NotificationOperationRequest): Promise<CursorProUpgradeResult>
   selectCursorAccount(accountId: string): Promise<CursorAccountMetadata[]>
   removeCursorAccount(accountId: string): Promise<CursorAccountMetadata[]>
   /** 绑定/改绑/解绑账号的指纹浏览器窗口（undefined 解绑，回退默认窗口）。 */
   setCursorAccountFingerprintProfile(accountId: string, profileId?: string): Promise<CursorAccountMetadata[]>
-  importCursorAccountFromLocalCursor(): Promise<CursorAccountMetadata[]>
-  importCursorAccountFromBrowser(): Promise<CursorAccountMetadata[]>
+  importCursorAccountFromLocalCursor(reference?: NotificationOperationRequest): Promise<CursorAccountMetadata[]>
+  importCursorAccountFromBrowser(reference?: NotificationOperationRequest): Promise<CursorAccountMetadata[]>
   /** 第一步「获取 Token」的指纹导入：读当前选中指纹浏览器 profile 的登录态（读毕关窗，cookie 留 profile）；保存时自动绑定该窗口。 */
-  importCursorAccountFromFingerprint(): Promise<CursorAccountMetadata[]>
+  importCursorAccountFromFingerprint(reference?: NotificationOperationRequest): Promise<CursorAccountMetadata[]>
   /** 打开选定的指纹浏览器窗口并导航到 cursor.com：用户可提前登录（cookie 落 profile，窗口不自动关）。 */
-  openFingerprintLoginPage(): Promise<void>
-  cleanupFingerprintEnvironment(): Promise<void>
+  openFingerprintLoginPage(reference?: NotificationOperationRequest): Promise<void>
+  cleanupFingerprintEnvironment(reference?: NotificationOperationRequest): Promise<void>
   /** 查询并幂等确认当前指纹浏览器账号所需的受限模型数据政策。 */
-  acknowledgeCursorModelDataPolicies(): Promise<{
+  acknowledgeCursorModelDataPolicies(reference?: NotificationOperationRequest): Promise<{
     changed: boolean
     tokenUpdated: boolean
     modelIds: string[]
     message: string
+    notification?: import('../domain/notification-reference').NotificationReference
   }>
   /**
    * 一键切换账号（FlyCursor「一键换号」同款时序）：确定性终止 Cursor → 独占写入
@@ -350,9 +355,9 @@ export interface SgDesktopApi {
   /** 切号补丁只读状态（维护页状态卡）。 */
   getCursorSwitchPumpStatus(): Promise<CursorSwitchPumpStatus>
   /** 一键安装/修复切号补丁（写 Cursor workbench bundle + 重签名；重启 Cursor 生效）。 */
-  ensureCursorSwitchPump(): Promise<CursorSwitchPumpOutcome>
+  ensureCursorSwitchPump(reference?: NotificationOperationRequest): Promise<CursorSwitchPumpOutcome>
   /** 卸载切号补丁（重启 Cursor 生效）。 */
-  removeCursorSwitchPump(): Promise<CursorSwitchPumpOutcome>
+  removeCursorSwitchPump(reference?: NotificationOperationRequest): Promise<CursorSwitchPumpOutcome>
   /**
    * 在线获取 Cursor 运行时账号的会员档位（api2.cursor.sh/auth/full_stripe_profile，
    * Bearer 运行时 token；token 明文只在主进程内）。批量会话发起闸门与手动刷新共用；
@@ -376,7 +381,7 @@ export interface SgDesktopApi {
   runSessionWarmup(): Promise<SessionWarmupRun>
   getSessionWarmupRun(): Promise<SessionWarmupRun | undefined>
   onSessionWarmupProgress(listener: (run: SessionWarmupRun) => void): () => void
-  enableCursorCdp(): Promise<{ ok: boolean; message: string; suggestAutoHeal?: boolean }>
+  enableCursorCdp(reference?: NotificationOperationRequest): Promise<{ ok: boolean; message: string; suggestAutoHeal?: boolean; notification?: import('../domain/notification-reference').NotificationReference }>
   getCursorCdpSettings(): Promise<CursorCdpSettings>
   saveCursorCdpSettings(settings: CursorCdpSettings): Promise<CursorCdpSettings>
   getCursorUpdatePreferences(): Promise<CursorUpdatePreferences>

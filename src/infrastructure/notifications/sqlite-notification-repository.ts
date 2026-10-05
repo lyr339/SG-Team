@@ -67,6 +67,8 @@ export class SqliteNotificationRepository {
   private where(query: NotificationQuery, filter = query.filter): { sql: string; params: Array<string | number> } {
     const clauses = ['archived_at IS NULL']; const params: Array<string | number> = []
     if (query.key) { clauses.push('semantic_key=?'); params.push(query.key) }
+    if (query.eventType) { clauses.push("json_extract(payload,'$.eventType')=?"); params.push(query.eventType) }
+    if (query.operationFamilyId) { clauses.push("json_extract(payload,'$.scope.operationFamilyId')=?"); params.push(query.operationFamilyId) }
     if (query.sessionId) { clauses.push("json_extract(payload,'$.scope.sessionId')=?"); params.push(query.sessionId) }
     if (query.toolCallId) { clauses.push("json_extract(payload,'$.target.toolCallId')=?"); params.push(query.toolCallId) }
     if (query.entryId) { clauses.push("json_extract(payload,'$.target.entryId')=?"); params.push(query.entryId) }

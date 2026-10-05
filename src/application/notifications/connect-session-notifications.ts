@@ -6,6 +6,8 @@ import { QuestionNotifications } from './question-notifications'
 import { ReplyNotifications } from './reply-notifications'
 import { QueueNotifications } from './queue-notifications'
 import type { ChannelQueueFact } from '../../domain/channel-queue-fact'
+import { conversationEntryProcessBlocks } from '../../domain/conversation-entry'
+import { sessionNotificationObservation } from './session-lifecycle-notifications'
 
 interface PowerEvents {
   on(name: 'suspend' | 'resume', listener: () => void): unknown
@@ -41,6 +43,17 @@ export function connectSessionNotifications(input: {
     replies,
     queue,
     currentTeam: (): TeamControlSnapshot => team,
+    questionTarget: (channelId: string, toolCallId: string) => {
+      if (desktop.runtimeScope && (desktop.runtimeScope.workspaceId !== team.activeWorkspaceId || desktop.runtimeScope.runId !== team.activeRun?.id || desktop.runtimeScope.teamRevision !== team.revision)) return { scope: {} }
+      const fact = sessionNotificationObservation(desktop, team, Date.now(), 0).facts.find(value => value.scope.channelId === channelId)
+      if (!fact) return { scope: {} }
+      for (const entry of desktop.conversations[channelId] ?? []) {
+        const block = conversationEntryProcessBlocks(entry).find(block => block.kind === 'tool' && block.question?.toolCallId === toolCallId)
+        if (block) return { scope: fact.scope, target: { kind: 'session' as const, scope: fact.scope, toolCallId, entryId: entry.id, blockId: block.id } }
+      }
+      const block = desktop.liveProcess?.[channelId]?.blocks.find(block => block.kind === 'tool' && block.question?.toolCallId === toolCallId)
+      return { scope: fact.scope, target: { kind: 'session' as const, scope: fact.scope, toolCallId, ...(block ? { blockId: block.id } : {}) } }
+    },
     close: async (): Promise<void> => { detach(); await Promise.all([lifecycle.close(), questions.close(), replies.close(), queue?.close()]) },
     dispose: (): void => { detach(); lifecycle.stop(); questions.stop(); replies.stop(); queue?.stop() }
   }

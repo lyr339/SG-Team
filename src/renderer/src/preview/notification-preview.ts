@@ -10,6 +10,8 @@ export function createNotificationPreview() {
   let revision = 0; let preferences = structuredClone(DEFAULT_NOTIFICATION_PREFERENCES)
   const filtered = (query: NotificationQuery = {}) => [...records.values()].filter(record => record.archivedAt === undefined
     && (!query.key || query.key === record.key)
+    && (!query.eventType || query.eventType === record.eventType)
+    && (!query.operationFamilyId || query.operationFamilyId === record.scope.operationFamilyId)
     && (!query.workspaceId || !record.scope.workspaceId || record.scope.workspaceId === query.workspaceId)
     && (!query.sessionId || record.scope.sessionId === query.sessionId)
     && (!query.entryId || record.target?.kind === 'session' && record.target.entryId === query.entryId)

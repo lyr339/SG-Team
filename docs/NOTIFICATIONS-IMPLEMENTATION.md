@@ -155,6 +155,26 @@
 
 **完整目标仍未完成**：其余页面重要源/跨重启未知操作、问卷动作失败等完整事实序列、历史保留与历史缺口确认/worker 真终止恢复、整体响应式及正式打包/完整应用/Windows验收、真实 OS 权限与实际通知/声音/系统勿扰行为。该批完成送达结构与设置，不把能力查询、fake adapter、静态开关或绿色测试代替真正系统效果证明。
 
+### 第九批：账号/维护/问卷/文件原入口结果与未知恢复
+
+- 新的 `PageOperationNotifications` 只收有限 kind、display id、冻结来源和显式 outcome，不接执行函数，不获得卡号、密码、Token、账单资料或用户问卷答案。原入口受理记录是安静 activity，不证明操作已开始。最终回执更新同 attempt；普通短保存/成功问卷/图片保存仍安静，重要长结果或未确认/部分状态进 notice，而不是每个页面刷新都弹窗。
+- 账号已覆盖：手动 Token、账号卡及过期卡附带自动登录、本机/系统浏览器/指纹导入、已保存凭据重新登录、打开登录窗口、结账入口、浏览器环境清理、模型数据政策。调用次数/参数/保存 Token 和 fingerprintProfileId/原错误传播/并行识别和原 gate 不变，未为通知查询余额/档位、创建窗口或发送请求。同步快速导入成功也按明确边界陈述，不能说导入即当前 Cursor 已换号。
+- 维护已覆盖切号补丁安装/卸载与手工启用 CDP 的明确结果。原锁/补丁管理调用各一次，警告和 changed 与 ok 分开；“无需改动”不冒充卸载外部补丁。文件变化不保证已运行生效，不额外重启。CDP 与生命周期重启观察关联，成功就地反馈仍安静，不产生另一张成功全局提示；未将端口 ready 说成模型请求或已创建批量会话。
+- 复核真实 checkout 底层后确认 `verified` 仅为 allowSubmit=false 测试闸门的表单复核。新通知/本页显示分别说“资料复核未提交”和“等待付款”，均未称已付款/Pro。原起结账接口和确认顺序不变，本批未运行真实结账/付款或账号处理。
+- 问卷提交/跳过各只有原 responder 调用；新增的尝试失败/未确认记录不改原 question.status、待办和 Agent 回执，没观察到工具也不自动作答/取消。成功是 quiet activity；失败保留 typed code 与原 message 返回，但密码/答案/附言不复制进另一个持久库。来源目标从既有最终 paired snapshot 只读定位 exact block/entry/代次，不增加 CDP 探测。
+- 图片另存保留原 dialog/write：用户取消不是写入失败，实际写完才完成，源路径/目标路径/图片 bytes 未进入通知；不自动重开选择器或重新写文件。仍保留其他复制、刷新、短配置反馈的就地策略。
+- API 兼容：旧不带 display nonce 调用仍可用、原数组/布尔/typed 结果未替换；可选 notification reference 支持原结果精确阅读。renderer nonce 只作显示相关，重复 nonce 不合并两次业务尝试。账号页、导入表单、维护、问卷错误、运行页 CDP feedback 使用原布局与可见结果引用。等待付款和补丁 warning 不再使用全成功绿色暗示。
+- 未结束页面记录跨重启只恢复本地已有受理证据为未知，先复核具体对象/版本防迟到 final 被旧查询覆盖，不自动重做账号登录或补丁。后续明确原对象成功可收束旧失败/未知记录为 superseded，而不是倒改历史成功；按 account/session/generation/Composer/binding/tool 等 scope 匹配，缺乏准确全局补丁/浏览器对象时不猜另一版本/窗口就是同一事项。只查询对应私有 family，非业务轮询。关闭/已读/支付待确认不是“业务解决”。
+- 隐私复核改掉了“先接收 transient secrets 再脱敏原 error”方案：observer 连输入 secrets 都不收，只收通用已知错误码摘要，未标记的原诊断也不写入通知；原表单错误仍原样返回给原入口。类型/消息 eventType 与 family 过滤经过参数白名单，renderer 仍无 publish/执行端点。
+
+证据：`page-operation-notifications.test.ts`（真实 ledger、迟到恢复/对象隔离）、`page-operation-account-ipc.test.ts`（真实 vault/原 IPC 和假外部依赖）、`page-operation-action-ipc.test.ts`（真实原 question/image/CDP handler 与隔离 SQL），以及全部原账号/维护/设置/问卷/协议回归。覆盖已保存但登录失败 partial、outcome verified 真含义、保持 mutex、observer 失败不重跑、不复制 credential 原诊断、旧受理恢复未知、同 CH 换代不消旧未知、用户取消附件不误报失败、原 error/results/input/call count 不变。`full-regression-page-final.log`、`build-page-final.log`、`dead-code-page-final.log`、`electron-worker-page-final.log`、`electron-lifecycle-page-final.log`、`channel-smoke-page-final.log`、`mcp-smoke-page-final.log` 是本批最后核验；verified 为此前新增呈现/身份复核前的阶段证据。
+
+浏览器仅以 mock `pageOutcome=partial/waiting` 跑真实组件，未运行 Cursor/浏览器/支付：`ui/page-patch-partial-light.jpg` 明确文件变更与签名未确认；`ui/page-checkout-waiting-light.jpg` 是原账号下方中性待确认说明，不是付款成功。原页可见结果阅读后中心仍保留记录，不重复全局提示，console clean。隐形 checkbox 的 pointer-events 与旧布局保持，键盘 Space 正常走语义回调；坐标点击未触发不是业务验收成功，因此改用可达的键盘操作后复核。常规窗口视觉仅覆盖本批两场景，完整深/浅/窄/错误/历史序列仍需最终全软件验收。
+
+保护核对 `protected-page-audit.json` 与此前一致，原目录/旧 UI 树未被写入，四个已知预热文件漂移保留；未 push/release/安装/重启当前 Cursor。观察器不要求原业务等待落盘：受理尚未存下时强退仍可能只得到完整性缺口说明，不能宣称所有页面动作都有无限耐久日志。
+
+**仍需继续**：其他显著源（工作区/兼容变化、用量/上下文阈值、组/共享记忆/重要诊断等）及逐场景接入审计，历史保留/缺口说明确认、worker 真终止恢复、真实 OS/Windows/正式安装包和全布局验收。原短操作就地反馈不能被遗漏，但也不应为了“全部覆盖”堆全局消息。该批不是整套完成，不以枚举页面 kind 就勾掉完整事件矩阵。
+
 下面保留完整要求，不因前三批已有成果缩小。已实现部分仍需匹配该项范围验收；未实现部分继续开工。
 
 1. 通知中心、轻量顶栏入口、单张提醒和独立 renderer store。支持待处理／未读／全部、查询范围、分页、详情、关闭、阅读、归档、确认清理和适当偏好；减少动画、长内容、键盘与窄窗需验收。

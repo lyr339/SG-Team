@@ -139,6 +139,8 @@ export function accountStatusLineFor(
 interface StatusFeedback {
   ok: boolean
   message: string
+  notification?: import('../../../domain/notification-reference').NotificationReference
+  pending?: boolean
 }
 
 interface ProcessingFeedback extends StatusFeedback {
@@ -159,6 +161,7 @@ export interface SettingsPageProps {
     label: string
     tokenRefreshed?: boolean
     loginError?: string
+    notification?: import('../../../domain/notification-reference').NotificationReference
   }>
   /** 用账号保存的凭据在指纹浏览器自动登录并刷新 Token（仅卡号导入的账号展示入口）。 */
   onReloginAccount?: (accountId: string) => Promise<void>
@@ -217,7 +220,7 @@ export interface SettingsPageProps {
   cursorUpdateBusy?: boolean
   cursorUpdateError?: string
   onSetCursorAutoUpdateDisabled?: (disabled: boolean) => Promise<void>
-  onSetModelDataPolicyAutoAcknowledge?: (enabled: boolean) => Promise<{ message: string }>
+  onSetModelDataPolicyAutoAcknowledge?: (enabled: boolean) => Promise<{ message: string; notification?: import('../../../domain/notification-reference').NotificationReference }>
   /** Awaitable for toggles; false means the authoritative save failed. Legacy sync callbacks remain valid. */
   onSaveAutomationSettings?: (settings: AccountAutomationSettings) => void | Promise<void | boolean>
   onCancelAutomation?: () => void
@@ -226,7 +229,7 @@ export interface SettingsPageProps {
   /** 切号补丁状态卡（维护页）：只读检测 + 一键安装/卸载。 */
   switchPumpStatus?: CursorSwitchPumpStatus
   switchPumpBusy?: boolean
-  switchPumpFeedback?: { ok: boolean; message: string }
+  switchPumpFeedback?: StatusFeedback
   onRefreshSwitchPumpStatus?: () => Promise<void>
   onEnsureSwitchPump?: () => Promise<void>
   onRemoveSwitchPump?: () => Promise<void>

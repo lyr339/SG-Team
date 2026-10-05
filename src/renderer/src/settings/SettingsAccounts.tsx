@@ -96,6 +96,8 @@ export function SettingsAccounts({
   proUpgradeFeedback
 }: SettingsAccountsProps): React.JSX.Element {
   const processingResultRef = useRef<HTMLParagraphElement>(null)
+  const checkoutResultRef = useRef<HTMLParagraphElement>(null)
+  useNotificationResultRead(checkoutResultRef, proUpgradeFeedback?.notification?.key, proUpgradeFeedback?.notification?.eventId)
   const ownProcessingResult = !processingBusy && processingFeedback?.providerId === (automationSettings?.processingProvider ?? 'aozai') && processingFeedback?.originSection !== 'aozai'
   useNotificationResultRead(processingResultRef, ownProcessingResult ? processingFeedback?.notification?.key : undefined, ownProcessingResult ? processingFeedback?.notification?.eventId : undefined)
   // 二次确认（删除 / 切换并重启）是一个转瞬的提问：同一时刻只问一件事，再点别处、Esc、
@@ -235,7 +237,7 @@ export function SettingsAccounts({
                 : undefined
 
               return (
-                <li className={`account-row${account.active ? ' is-active' : ''}`} key={account.id}>
+                <li className={`account-row${account.active ? ' is-active' : ''}`} key={account.id} data-account-id={account.id}>
                   <i className="account-row__avatar" aria-hidden="true">{account.label.slice(0, 1).toUpperCase()}</i>
                   <button
                     className="account-row__identity"
@@ -361,7 +363,8 @@ export function SettingsAccounts({
         {processingError?.providerId === providerId ? <p className="account-aozai__fail" role="alert">{processingError.message}</p> : null}
         {!processingBusy && processingFeedback?.providerId === providerId && processingFeedback.originSection !== 'aozai' ? <p ref={processingResultRef} className={processingFeedback.ok ? 'account-aozai__ok' : 'account-aozai__fail'} role="status" data-notification-result
           data-notification-key={processingFeedback.notification?.key} data-notification-event={processingFeedback.notification?.eventId}>{processingFeedback.message}</p> : null}
-        {proUpgradeFeedback ? <p className={proUpgradeFeedback.ok ? 'account-aozai__ok' : 'account-aozai__fail'} role="status">{proUpgradeFeedback.message}</p> : null}
+        {proUpgradeFeedback ? <p ref={checkoutResultRef} className={proUpgradeFeedback.pending ? 'account-aozai__pending' : proUpgradeFeedback.ok ? 'account-aozai__ok' : 'account-aozai__fail'} role="status" data-notification-result
+          data-notification-key={proUpgradeFeedback.notification?.key} data-notification-event={proUpgradeFeedback.notification?.eventId}>{proUpgradeFeedback.message}</p> : null}
       </SettingsSection>
     </>
   )

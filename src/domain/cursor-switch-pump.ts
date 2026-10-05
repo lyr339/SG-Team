@@ -27,4 +27,5 @@ export interface CursorSwitchPumpOutcome {
   message: string
   /** 重签名/校验和同步等 best-effort 步骤的警告（不阻断安装结果）。 */
   warning?: string
+  notification?: import('./notification-reference').NotificationReference
 }

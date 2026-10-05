@@ -60,8 +60,10 @@ export function normalizeCursorCheckoutProfile(value: unknown): CursorCheckoutPr
  * - verified          仅填写并复核通过、未提交（allowSubmit=false 的测试/校准闸门）
  */
 export interface CursorProUpgradeResult {
+  /** verified = test gate verified form fields BEFORE payment submission, not paid/Pro membership. */
   outcome: 'awaiting_payment' | 'verified'
   detail: string
+  notification?: import('./notification-reference').NotificationReference
 }
 
 /** 执行前校验：返回第一个不完整字段的中文名；完整返回 undefined。 */

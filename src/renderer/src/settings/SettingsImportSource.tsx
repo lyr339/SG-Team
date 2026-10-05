@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AccountAutomationPhase } from '../../../domain/account-automation'
 import { detectPastedSecret, parseCursorAccountCard, type ParsedCursorAccountCard } from '../../../domain/cursor-account-card'
 import { AccountBrowserPanel } from '../lobby/AccountBrowserPanel'
@@ -6,6 +6,8 @@ import { formatFullClock } from '../format'
 import type { SettingsPageProps } from './settings-view'
 import { isActiveAutomationPhase } from './settings-view'
 import { SettingsSection } from './SettingsSection'
+import { useNotificationResultRead } from '../notifications/use-notification-result-read'
+import type { NotificationReference } from '../../../domain/notification-reference'
 
 type ImportSourceProps = Pick<SettingsPageProps,
   | 'accounts' | 'busy' | 'onSave' | 'onSaveCard'
@@ -177,7 +179,9 @@ function SettingsManualAddForm({
     ? Boolean(onSaveCard) && !busy
     : detection.kind === 'token' && Boolean(label.trim()) && secret.trim().length >= 8 && !busy
 
-  const [feedback, setFeedback] = useState<{ tone: 'ok' | 'warn'; message: string }>()
+  const [feedback, setFeedback] = useState<{ tone: 'ok' | 'warn'; message: string; notification?: NotificationReference }>()
+  const resultRef = useRef<HTMLParagraphElement>(null)
+  useNotificationResultRead(resultRef, feedback?.notification?.key, feedback?.notification?.eventId)
 
   const submit = async (): Promise<void> => {
     setFeedback(undefined)
@@ -188,11 +192,11 @@ function SettingsManualAddForm({
           ? `已更新账号「${result.label}」的 Token 与登录凭据`
           : `已导入账号「${result.label}」；登录凭据已加密保存，可用于自动登录`
         if (result.tokenRefreshed) {
-          setFeedback({ tone: 'ok', message: `${base}；卡内 Token 已过期，已用凭据自动登录刷新` })
+          setFeedback({ tone: 'ok', message: `${base}；卡内 Token 已过期，已用凭据自动登录刷新`, notification: result.notification })
         } else if (result.loginError) {
-          setFeedback({ tone: 'warn', message: `${base}。卡内 Token 已过期，自动登录未成功（可在账号卡片点「重新登录」重试）：${result.loginError}` })
+          setFeedback({ tone: 'warn', message: `${base}。卡内 Token 已过期，自动登录未成功（可在账号卡片点「重新登录」重试）：${result.loginError}`, notification: result.notification })
         } else {
-          setFeedback({ tone: 'ok', message: base })
+          setFeedback({ tone: 'ok', message: base, notification: result.notification })
         }
       } else if (detection.kind === 'token') {
         await onSave({ label, token: secret })
@@ -246,7 +250,8 @@ function SettingsManualAddForm({
       </label>
       <small>明文不会写入 SQLite、日志或再次显示。</small>
       {feedback ? (
-        <p className={feedback.tone === 'warn' ? 'settings-add-form__warn' : 'settings-add-form__ok'} role="status">{feedback.message}</p>
+        <p ref={resultRef} className={feedback.tone === 'warn' ? 'settings-add-form__warn' : 'settings-add-form__ok'} role="status" data-notification-result
+          data-notification-key={feedback.notification?.key} data-notification-event={feedback.notification?.eventId}>{feedback.message}</p>
       ) : null}
       <button className="lobby-account__save" disabled={!canSubmit} onClick={() => void submit()}>
         {busy ? '保存中…' : isCard ? '导入卡号' : '保存账号'}

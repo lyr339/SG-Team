@@ -20,6 +20,7 @@ export interface NotificationScope {
   composerId?: string
   accountId?: string
   providerId?: string
+  operationFamilyId?: string
 }
 
 /** Navigation references only. Installing, restarting, answering or processing remain original workflow actions. */
@@ -80,6 +81,8 @@ export interface NotificationSummary {
 
 export interface NotificationQuery {
   key?: string
+  eventType?: string
+  operationFamilyId?: string
   filter?: 'all' | 'unread' | 'pending'
   workspaceId?: string
   category?: NotificationCategory
@@ -239,7 +242,7 @@ export function validateNotificationDraft(input: NotificationDraft): void {
 
 function validateScope(scope: NotificationScope): void {
   if (!scope || typeof scope !== 'object' || Array.isArray(scope)) throw new Error('通知作用域无效')
-  const keys = ['workspaceId', 'runId', 'groupId', 'slotId', 'sessionId', 'generation', 'bindingGeneration', 'channelId', 'composerId', 'accountId', 'providerId']
+  const keys = ['workspaceId', 'runId', 'groupId', 'slotId', 'sessionId', 'generation', 'bindingGeneration', 'channelId', 'composerId', 'accountId', 'providerId', 'operationFamilyId']
   for (const [key, value] of Object.entries(scope)) {
     if (!keys.includes(key) || value !== undefined && (typeof value !== 'string' || value.length > 300)) throw new Error('通知作用域无效')
   }

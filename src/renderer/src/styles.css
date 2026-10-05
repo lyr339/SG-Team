@@ -1822,6 +1822,7 @@ button.workspace-group-chip:focus-visible { outline: 2px solid var(--accent-bord
 .account-aozai__progress { margin: 0; color: var(--text-aozai); font-size: var(--fs-10); }
 .account-aozai__progress::before { content: ''; display: inline-block; width: 7px; height: 7px; margin-right: 6px; background: var(--text-aozai); border-radius: 50%; animation: aozai-pulse 1s ease-in-out infinite; }
 @keyframes aozai-pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
+.account-aozai__pending, .cursor-maintenance__pending { margin: 0; color: var(--text-soft); font-size: var(--fs-12); line-height: 1.65; }
 .account-aozai__ok { margin: 0; color: var(--accent); font-size: var(--fs-10); font-weight: 600; }
 .account-aozai__fail { margin: 0; color: var(--red); font-size: var(--fs-10); }
 .account-aozai__manual { display: grid; gap: 6px; padding-top: 9px; border-top: 1px solid var(--line-faint); }

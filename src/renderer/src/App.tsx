@@ -7,7 +7,7 @@ import type {
 import { emptyTaskPoolSnapshot, newestTaskPoolSnapshot } from '../../domain/task-pool'
 import type { NotificationScope, NotificationTarget } from '../../domain/notification'
 import { notificationTargetAvailable } from './notifications/notification-navigation'
-import { requestReveal } from './inspector/reveal-bus'
+import { cssEscape, requestReveal } from './inspector/reveal-bus'
 import { groupContextView } from './team/group-context-view'
 import { submitGroupTask } from './team/group-task-submit'
 import { GroupCollaborationDialog } from './team/GroupCollaborationDialog'
@@ -35,6 +35,8 @@ import type { CursorAccountMetadata, CursorRuntimeAccountMatch } from '../../dom
 import type { CursorMembershipStatus } from '../../domain/cursor-membership'
 import type { CursorUpdatePreferences } from '../../domain/cursor-update'
 import type { CursorSwitchPumpStatus } from '../../domain/cursor-switch-pump'
+import type { NotificationReference } from '../../domain/notification-reference'
+import { pageOperationDisplay } from './notifications/page-operation-display'
 import type { CursorStorageCleanupResult, CursorStorageScan } from '../../domain/cursor-storage-cleanup'
 import type {
   ProcessingCredentialStatus,
@@ -157,14 +159,14 @@ export function App(): React.JSX.Element {
     setCursorAccountNotice({ tone: 'error', title, detail: userFacingErrorMessage(reason), section, ...(notification ? { notification } : {}) })
   }, [])
   // 升级 Pro 结账结果反馈（待扫码/复核通过/失败原因）；按账号粒度置忙在组件内。
-  const [proUpgradeFeedback, setProUpgradeFeedback] = useState<{ ok: boolean; message: string } | null>(null)
+  const [proUpgradeFeedback, setProUpgradeFeedback] = useState<{ ok: boolean; message: string; pending?: boolean; notification?: NotificationReference } | null>(null)
   const [cursorUpdatePreferences, setCursorUpdatePreferences] = useState<CursorUpdatePreferences>()
   const [cursorUpdateBusy, setCursorUpdateBusy] = useState(false)
   const [cursorUpdateError, setCursorUpdateError] = useState('')
   // 切号补丁（无感换号依赖）：状态卡只读检测 + 一键安装/卸载
   const [switchPumpStatus, setSwitchPumpStatus] = useState<CursorSwitchPumpStatus>()
   const [switchPumpBusy, setSwitchPumpBusy] = useState(false)
-  const [switchPumpFeedback, setSwitchPumpFeedback] = useState<{ ok: boolean; message: string }>()
+  const [switchPumpFeedback, setSwitchPumpFeedback] = useState<{ ok: boolean; message: string; pending?: boolean; notification?: NotificationReference }>()
   const switchPumpReadSequence = useRef(0)
   const refreshSwitchPumpStatus = useCallback(async (): Promise<void> => {
     const sequence = ++switchPumpReadSequence.current
@@ -977,9 +979,9 @@ export function App(): React.JSX.Element {
     notificationScope: { channelId: workspaceChannelId, sessionId: selectedSession?.id, generation: String(selectedSession?.generation ?? 0),
       composerId: selectedSession?.composerId, bindingGeneration: selectedMember?.binding?.generation },
     answer: (toolCallId, draft) => window.sgDesktop.answerCursorQuestion({
-      channelId: workspaceChannelId, toolCallId, ...draft
+      channelId: workspaceChannelId, toolCallId, ...draft, ...pageOperationDisplay('question-answer').request
     }),
-    skip: (toolCallId) => window.sgDesktop.skipCursorQuestion({ channelId: workspaceChannelId, toolCallId })
+    skip: (toolCallId) => window.sgDesktop.skipCursorQuestion({ channelId: workspaceChannelId, toolCallId, ...pageOperationDisplay('question-skip').request })
   }), [workspaceChannelId, selectedSession?.id, selectedSession?.generation, selectedSession?.composerId, selectedMember?.binding?.generation])
   const handleWorkspaceSend = useCallback(async (text: string, attachments?: MessageAttachment[]): Promise<void> => {
     if (!workspaceChannelId) return
@@ -1066,7 +1068,15 @@ export function App(): React.JSX.Element {
     if (target.kind === 'settings') {
       if (scope?.accountId && target.section === 'accounts' && !context.accounts.some(account => account.id === scope.accountId)) return false
       if (scope?.providerId && (target.section === 'aozai' || target.section === 'accounts') && scope.providerId !== context.providerId) return false
-      window.location.hash = `#account:${target.section}`; changeModule('account'); return true
+      window.location.hash = `#account:${target.section}`; changeModule('account')
+      if (target.section === 'accounts' && scope?.accountId) {
+        await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+        if (!notificationContext.current.accounts.some(account => account.id === scope.accountId)) return false
+        const row = document.querySelector<HTMLElement>(`.settings-page [data-account-id="${cssEscape(scope.accountId)}"]`)
+        if (!row) return false
+        row.scrollIntoView({ block: 'nearest', behavior: 'auto' })
+      }
+      return true
     }
     if (target.kind === 'run') { setFocusGroupId(target.groupId); changeModule('run'); return true }
     if (target.kind === 'collaboration') {
@@ -1144,51 +1154,58 @@ export function App(): React.JSX.Element {
     onDismissNotice: () => setCursorAccountNotice(undefined),
     onSave: async (input) => {
       setCursorAccountBusy(true); setCursorAccountNotice(undefined)
+      const display = pageOperationDisplay('import-token')
       try {
-        setCursorAccounts(await window.sgDesktop.saveCursorAccount(input))
+        setCursorAccounts(await window.sgDesktop.saveCursorAccount({ ...input, ...display.request }))
+        setCursorAccountNotice({ tone: 'success', title: '账号已保存', detail: '当前 Cursor 运行账号未被本次保存切换。', section: 'import', notification: display.reference })
         // 新账号默认设为活跃（makeActive），一致性锚点变化 → 立即重算指示
         void refreshRuntimeMatch()
         // 新活跃账号档位未知，档位行同步重查
         void refreshMembership()
         void refreshAccountMemberships()
       }
-      catch (reason) { reportCursorAccountError('账号保存失败', reason, 'import'); throw reason }
+      catch (reason) { reportCursorAccountError('账号保存失败', reason, 'import', display.reference); throw reason }
       finally { setCursorAccountBusy(false) }
     },
     onSaveCard: async (input) => {
       setCursorAccountBusy(true); setCursorAccountNotice(undefined)
+      const display = pageOperationDisplay('import-card')
       try {
-        const result = await window.sgDesktop.saveCursorAccountCard(input)
+        const result = await window.sgDesktop.saveCursorAccountCard({ ...input, ...display.request })
         setCursorAccounts(result.accounts)
         // 与 onSave 同理：卡号导入默认活跃，一致性锚点与档位同步重查
         void refreshRuntimeMatch()
         void refreshMembership()
         void refreshAccountMemberships()
-        return { outcome: result.outcome, label: result.label, tokenRefreshed: result.tokenRefreshed, loginError: result.loginError }
+        return { outcome: result.outcome, label: result.label, tokenRefreshed: result.tokenRefreshed, loginError: result.loginError, notification: result.notification ?? display.reference }
       }
-      catch (reason) { reportCursorAccountError('账号导入失败', reason, 'import'); throw reason }
+      catch (reason) { reportCursorAccountError('账号导入失败', reason, 'import', display.reference); throw reason }
       finally { setCursorAccountBusy(false) }
     },
     onReloginAccount: async (accountId) => {
       // 自动登录可能等人机验证（最长约 2 分钟）：不锁全局 busy，按账号粒度置忙；
       // 失败走账号区错误条，成功后列表刷新（maskedToken 变化即可见确认）。
+      const display = pageOperationDisplay('account-login')
       try {
-        const result = await window.sgDesktop.loginCursorAccount(accountId)
+        const result = await window.sgDesktop.loginCursorAccount(accountId, display.request)
         setCursorAccounts(result.accounts)
+        setCursorAccountNotice({ tone: 'success', title: result.outcome === 'already_logged_in' ? '原窗口已登录，凭据已更新' : '网页登录已完成，凭据已更新',
+          detail: '当前 Cursor 运行账号未被本次操作切换。', notification: result.notification ?? display.reference })
         void refreshRuntimeMatch()
       }
-      catch (reason) { reportCursorAccountError('账号重新登录失败', reason); throw reason }
+      catch (reason) { reportCursorAccountError('账号重新登录失败', reason, 'accounts', display.reference); throw reason }
     },
     onStartProUpgrade: async (accountId) => {
       // 结账链可能等页面加载/人机验证（最长约 2 分钟）：不锁全局 busy（组件内按账号置忙）。
       // 结果不分成败都走反馈条——awaiting_payment（请扫码）与 verified（复核通过）都是正常出口。
       setProUpgradeFeedback(null)
+      const display = pageOperationDisplay('checkout')
       try {
-        const result = await window.sgDesktop.startCursorProUpgrade(accountId)
-        setProUpgradeFeedback({ ok: true, message: result.detail })
+        const result = await window.sgDesktop.startCursorProUpgrade(accountId, display.request)
+        setProUpgradeFeedback({ ok: true, pending: true, message: result.detail, notification: result.notification ?? display.reference })
       }
       catch (reason) {
-        setProUpgradeFeedback({ ok: false, message: reason instanceof Error ? reason.message : String(reason) })
+        setProUpgradeFeedback({ ok: false, message: reason instanceof Error ? reason.message : String(reason), notification: display.reference })
         throw reason
       }
     },
@@ -1223,47 +1240,57 @@ export function App(): React.JSX.Element {
     },
     onImportFromLocal: async () => {
       setCursorAccountBusy(true); setCursorAccountNotice(undefined)
+      const display = pageOperationDisplay('import-local')
       try {
-        setCursorAccounts(await window.sgDesktop.importCursorAccountFromLocalCursor())
+        setCursorAccounts(await window.sgDesktop.importCursorAccountFromLocalCursor(display.request))
+        setCursorAccountNotice({ tone: 'success', title: '本机账号已导入', section: 'import', notification: display.reference })
         void refreshRuntimeMatch()
         void refreshMembership()
         void refreshAccountMemberships()
       }
-      catch (reason) { reportCursorAccountError('本机账号导入失败', reason, 'import') }
+      catch (reason) { reportCursorAccountError('本机账号导入失败', reason, 'import', display.reference) }
       finally { setCursorAccountBusy(false) }
     },
     onImportFromBrowser: async () => {
       setCursorAccountBusy(true); setCursorAccountNotice(undefined)
+      const display = pageOperationDisplay('import-browser')
       try {
-        setCursorAccounts(await window.sgDesktop.importCursorAccountFromBrowser())
+        setCursorAccounts(await window.sgDesktop.importCursorAccountFromBrowser(display.request))
+        setCursorAccountNotice({ tone: 'success', title: '浏览器账号已导入', detail: '当前 Cursor 运行账号未被本次导入切换。', section: 'import', notification: display.reference })
         void refreshRuntimeMatch()
         void refreshMembership()
         void refreshAccountMemberships()
       }
-      catch (reason) { reportCursorAccountError('浏览器账号导入失败', reason, 'import') }
+      catch (reason) { reportCursorAccountError('浏览器账号导入失败', reason, 'import', display.reference) }
       finally { setCursorAccountBusy(false) }
     },
     onImportFromFingerprint: async () => {
       setCursorAccountBusy(true); setCursorAccountNotice(undefined)
+      const display = pageOperationDisplay('import-fingerprint')
       try {
-        setCursorAccounts(await window.sgDesktop.importCursorAccountFromFingerprint())
+        setCursorAccounts(await window.sgDesktop.importCursorAccountFromFingerprint(display.request))
+        setCursorAccountNotice({ tone: 'success', title: '指纹浏览器账号已导入', detail: '绑定以保存账号卡片中的实际窗口为准。当前 Cursor 运行账号未被切换。', section: 'import', notification: display.reference })
         void refreshRuntimeMatch()
         void refreshMembership()
         void refreshAccountMemberships()
       }
-      catch (reason) { reportCursorAccountError('指纹浏览器账号导入失败', reason, 'import') }
+      catch (reason) { reportCursorAccountError('指纹浏览器账号导入失败', reason, 'import', display.reference) }
       finally { setCursorAccountBusy(false) }
     },
     // 提前登录：开窗导航 cursor.com（不关窗；失败提示走账号区错误条）
     onOpenFingerprintLogin: async () => {
       setCursorAccountBusy(true); setCursorAccountNotice(undefined)
-      try { await window.sgDesktop.openFingerprintLoginPage() }
-      catch (reason) { reportCursorAccountError('登录窗口未能打开', reason, 'import') }
+      const display = pageOperationDisplay('login-window')
+      try { await window.sgDesktop.openFingerprintLoginPage(display.request)
+        setCursorAccountNotice({ tone: 'warning', title: '登录窗口已打开，尚待登录', detail: '请在原窗口完成登录；打开窗口本身不代表已经登录。', section: 'import', notification: display.reference }) }
+      catch (reason) { reportCursorAccountError('登录窗口未能打开', reason, 'import', display.reference) }
       finally { setCursorAccountBusy(false) }
     },
     onCleanupFingerprintEnvironment: async () => {
       // 清理只影响指纹浏览器 profile，不锁账号操作（面板内自有 busy/反馈态）。
-      await window.sgDesktop.cleanupFingerprintEnvironment()
+      const display = pageOperationDisplay('fingerprint-cleanup')
+      await window.sgDesktop.cleanupFingerprintEnvironment(display.request)
+      setCursorAccountNotice({ tone: 'success', title: '浏览器环境清理已返回', detail: '处理范围以原确认入口为准。', section: 'import', notification: display.reference })
     },
     onRestartWithAccount: async (accountId) => {
       setCursorAccountBusy(true); setCursorAccountNotice(undefined)
@@ -1398,14 +1425,17 @@ export function App(): React.JSX.Element {
     onEnsureSwitchPump: async () => {
       ++switchPumpReadSequence.current
       setSwitchPumpBusy(true); setSwitchPumpFeedback(undefined)
+      const display = pageOperationDisplay('patch-install')
       try {
-        const outcome = await window.sgDesktop.ensureCursorSwitchPump()
+        const outcome = await window.sgDesktop.ensureCursorSwitchPump(display.request)
         setSwitchPumpFeedback({
           ok: outcome.ok,
-          message: outcome.warning ? `${outcome.message}（${outcome.warning}）` : outcome.message
+          pending: Boolean(outcome.warning),
+          message: outcome.warning ? `${outcome.message}（${outcome.warning}）` : outcome.message,
+          notification: outcome.notification ?? display.reference
         })
       } catch (reason) {
-        setSwitchPumpFeedback({ ok: false, message: userFacingErrorMessage(reason) })
+        setSwitchPumpFeedback({ ok: false, message: userFacingErrorMessage(reason), notification: display.reference })
       } finally {
         // 安装/改写后状态可能变化（installed/config），无条件重读一次
         await refreshSwitchPumpStatus().catch(() => {})
@@ -1415,14 +1445,17 @@ export function App(): React.JSX.Element {
     onRemoveSwitchPump: async () => {
       ++switchPumpReadSequence.current
       setSwitchPumpBusy(true); setSwitchPumpFeedback(undefined)
+      const display = pageOperationDisplay('patch-remove')
       try {
-        const outcome = await window.sgDesktop.removeCursorSwitchPump()
+        const outcome = await window.sgDesktop.removeCursorSwitchPump(display.request)
         setSwitchPumpFeedback({
           ok: outcome.ok,
-          message: outcome.warning ? `${outcome.message}（${outcome.warning}）` : outcome.message
+          pending: Boolean(outcome.warning),
+          message: outcome.warning ? `${outcome.message}（${outcome.warning}）` : outcome.message,
+          notification: outcome.notification ?? display.reference
         })
       } catch (reason) {
-        setSwitchPumpFeedback({ ok: false, message: userFacingErrorMessage(reason) })
+        setSwitchPumpFeedback({ ok: false, message: userFacingErrorMessage(reason), notification: display.reference })
       } finally {
         await refreshSwitchPumpStatus().catch(() => {})
         setSwitchPumpBusy(false)
@@ -1463,8 +1496,11 @@ export function App(): React.JSX.Element {
     statsGroups,
     onSetModelDataPolicyAutoAcknowledge: async (enabled) => {
       let message = '已关闭自动确认；官网已有确认保持不变'
+      let notification: NotificationReference | undefined
       if (enabled) {
-        const result = await window.sgDesktop.acknowledgeCursorModelDataPolicies()
+        const display = pageOperationDisplay('model-policy')
+        const result = await window.sgDesktop.acknowledgeCursorModelDataPolicies(display.request)
+        notification = result.notification ?? display.reference
         // 政策导航若换发了 token，主进程已对同一活跃账号原地入库。
         if (result.tokenUpdated) setCursorAccounts(await window.sgDesktop.listCursorAccounts())
         message = `${result.message}；后续新账号将自动检查`
@@ -1474,7 +1510,7 @@ export function App(): React.JSX.Element {
         autoAcknowledgeModelDataPolicies: enabled
       })
       setAccountAutomationSettings(saved)
-      return { message }
+      return { message, notification }
     },
     onSaveAutomationSettings: (settings) => {
       return window.sgDesktop.saveAccountAutomationSettings(settings)
@@ -1606,7 +1642,7 @@ export function App(): React.JSX.Element {
           onOpenGroupComposer={openGroupComposer}
           onTransferMembership={(slotId) => void openMembershipTransfer(slotId)}
           focusGroupId={focusGroupId}
-          onEnableCursorCdp={() => window.sgDesktop.enableCursorCdp()}
+          onEnableCursorCdp={() => window.sgDesktop.enableCursorCdp(pageOperationDisplay('debug-enable').request)}
           cdpAutoHealEnabled={cdpAutoHealEnabled}
           cdpAutoHealEvent={cdpAutoHealEvent}
           onToggleCdpAutoHeal={async (enabled) => {

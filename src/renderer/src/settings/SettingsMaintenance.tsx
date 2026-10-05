@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ToggleSwitch } from '../lobby/ToggleSwitch'
 import type { SettingsPageProps } from './settings-view'
 import { isActiveAutomationPhase } from './settings-view'
 import { SettingsSection } from './SettingsSection'
+import { useNotificationResultRead } from '../notifications/use-notification-result-read'
+import type { NotificationReference } from '../../../domain/notification-reference'
 
 type MaintenanceProps = Pick<SettingsPageProps,
   | 'cursorUpdatePreferences' | 'cursorUpdateBusy' | 'cursorUpdateError'
@@ -39,7 +41,10 @@ export function SettingsMaintenance({
   onRefreshSwitchPumpStatus
 }: MaintenanceProps): React.JSX.Element | null {
   const [policyBusy, setPolicyBusy] = useState(false)
-  const [policyFeedback, setPolicyFeedback] = useState<{ ok: boolean; message: string }>()
+  const [policyFeedback, setPolicyFeedback] = useState<{ ok: boolean; message: string; notification?: NotificationReference }>()
+  const policyResultRef = useRef<HTMLParagraphElement>(null), patchResultRef = useRef<HTMLParagraphElement>(null)
+  useNotificationResultRead(policyResultRef, policyFeedback?.notification?.key, policyFeedback?.notification?.eventId)
+  useNotificationResultRead(patchResultRef, switchPumpFeedback?.notification?.key, switchPumpFeedback?.notification?.eventId)
   const [detectBusy, setDetectBusy] = useState(false)
   const [detectError, setDetectError] = useState('')
   const detectVersion = useCallback(async (): Promise<void> => {
@@ -137,7 +142,7 @@ export function SettingsMaintenance({
                 setPolicyBusy(true)
                 setPolicyFeedback(undefined)
                 void onSetModelDataPolicyAutoAcknowledge(enabled)
-                  .then((result) => setPolicyFeedback({ ok: true, message: result.message }))
+                  .then((result) => setPolicyFeedback({ ok: true, message: result.message, notification: result.notification }))
                   .catch((reason: unknown) => setPolicyFeedback({
                     ok: false,
                     message: reason instanceof Error ? reason.message : String(reason)
@@ -148,7 +153,8 @@ export function SettingsMaintenance({
           </div>
         ) : null}
         {policyFeedback ? (
-          <p className={policyFeedback.ok ? 'cursor-maintenance__ok' : 'cursor-maintenance__error'} role={policyFeedback.ok ? 'status' : 'alert'}>
+          <p ref={policyResultRef} className={policyFeedback.ok ? 'cursor-maintenance__ok' : 'cursor-maintenance__error'} role={policyFeedback.ok ? 'status' : 'alert'} data-notification-result
+            data-notification-key={policyFeedback.notification?.key} data-notification-event={policyFeedback.notification?.eventId}>
             {policyFeedback.message}
           </p>
         ) : null}
@@ -180,7 +186,8 @@ export function SettingsMaintenance({
           <p className="cursor-maintenance__hint">{switchPumpStatus.message}</p>
         ) : null}
         {switchPumpFeedback ? (
-          <p className={switchPumpFeedback.ok ? 'cursor-maintenance__ok' : 'cursor-maintenance__error'} role={switchPumpFeedback.ok ? 'status' : 'alert'}>
+          <p ref={patchResultRef} className={switchPumpFeedback.pending ? 'cursor-maintenance__pending' : switchPumpFeedback.ok ? 'cursor-maintenance__ok' : 'cursor-maintenance__error'} role={switchPumpFeedback.ok ? 'status' : 'alert'} data-notification-result
+            data-notification-key={switchPumpFeedback.notification?.key} data-notification-event={switchPumpFeedback.notification?.eventId}>
             {switchPumpFeedback.message}
           </p>
         ) : null}

@@ -6,6 +6,7 @@ import { StrictMode } from 'react'
 import { createNotificationPreview } from './notification-preview'
 import { reduceOperatorMessages } from '../../../domain/team-message-notification'
 import { reduceQueueNotifications } from '../../../domain/queue-notification'
+import { pageOperationNotification, pageOperationReference, type PageNotificationOperation, type PageOperationOutcome } from '../../../domain/page-operation-notification'
 import { createRoot } from 'react-dom/client'
 import type { AccountAutomationRun } from '../../../domain/account-automation'
 import { ACCOUNT_AUTOMATION_STEPS } from '../../../domain/account-automation'
@@ -1163,6 +1164,11 @@ function updatePreviewGroup(groupId: string, update: (view: typeof state.team.gr
 }
 
 const notificationPreview = createNotificationPreview()
+function previewPageResult(kind: PageNotificationOperation, id: string | undefined, outcome: PageOperationOutcome) {
+  const actualId = id ?? crypto.randomUUID()
+  notificationPreview.offer(pageOperationNotification({ kind, id: actualId }, outcome, Date.now()))
+  return pageOperationReference(kind, actualId)
+}
 if (previewParameters.get('notifications') === 'human' && state.team.activeRun && state.team.groups[0]) {
   const run = state.team.activeRun, group = state.team.groups[0], sender = group.members[0]!
   const message: TeamMessage = { id: 'preview:operator-message', runId: run.id, groupId: group.group.id, threadId: 'preview:operator-thread', clientMessageId: 'preview:operator-message',
@@ -1198,7 +1204,7 @@ const api: SgDesktopApi = {
     })
     return structuredClone(previewCursorAccounts)
   },
-  saveCursorAccountCard: async ({ card }) => {
+  saveCursorAccountCard: async ({ card, notificationId }) => {
     // 与主进程同一领域解析：预览所见即真实入库结果
     const parsed = parseCursorAccountCard(card)
     const at = Date.now()
@@ -1213,7 +1219,8 @@ const api: SgDesktopApi = {
           ? { maskedToken: `••••${parsed.token.slice(-4)}`, updatedAt: at, hasCredentials: true }
           : {})
       }))
-      return { accounts: structuredClone(previewCursorAccounts), outcome: 'updated' as const, accountId: existing.id, label: existing.label }
+      const notification = previewPageResult('import-card', notificationId, { state: 'success', scope: { accountId: existing.id }, facts: ['隔离预览账号已更新。没有实际登录或切换。'] })
+      return { accounts: structuredClone(previewCursorAccounts), outcome: 'updated' as const, accountId: existing.id, label: existing.label, notification }
     }
     previewCursorAccounts = previewCursorAccounts.map((account) => ({ ...account, active: false }))
     const created = {
@@ -1227,20 +1234,27 @@ const api: SgDesktopApi = {
       hasCredentials: true
     }
     previewCursorAccounts.push(created)
-    return { accounts: structuredClone(previewCursorAccounts), outcome: 'created' as const, accountId: created.id, label: created.label }
+    const partial = previewParameters.get('pageOutcome') === 'partial'
+    const notification = previewPageResult('import-card', notificationId, { state: partial ? 'partial' : 'success', scope: { accountId: created.id }, facts: partial
+      ? ['隔离预览：账号已保存，但登录未确认。此场景不执行任何真实登录。'] : ['隔离预览账号已保存，当前 Cursor 未被切换。'] })
+    return { accounts: structuredClone(previewCursorAccounts), outcome: 'created' as const, accountId: created.id, label: created.label, notification,
+      ...(partial ? { loginError: '隔离预览：原窗口登录结果待核对' } : {}) }
   },
-  loginCursorAccount: async (accountId) => {
+  loginCursorAccount: async (accountId, reference) => {
     const at = Date.now()
     previewCursorAccounts = previewCursorAccounts.map((account) => (
       account.id === accountId ? { ...account, maskedToken: '••••rfrsh', updatedAt: at } : account
     ))
-    return { accounts: structuredClone(previewCursorAccounts), outcome: 'logged_in' as const }
+    const notification = previewPageResult('account-login', reference?.notificationId, { state: 'success', scope: { accountId }, facts: ['隔离预览网页登录完成；不涉及实际浏览器或账号。'] })
+    return { accounts: structuredClone(previewCursorAccounts), outcome: 'logged_in' as const, notification }
   },
   // 预览停在提交前闸门（verified）：预览环境绝不模拟「已提交待付款」。
-  startCursorProUpgrade: async () => ({
-    outcome: 'verified' as const,
-    detail: '账单资料已填写并复核通过；按测试闸门停在提交前（未生成付款二维码）'
-  }),
+  startCursorProUpgrade: async (accountId, reference) => {
+    const waiting = previewParameters.get('pageOutcome') === 'waiting'
+    const notification = previewPageResult('checkout', reference?.notificationId, { state: waiting ? 'waiting' : 'success', verifiedOnly: !waiting, scope: { accountId }, facts: [waiting
+      ? '隔离假数据结账入口已准备，未确认支付。没有实际账单或付款。' : '隔离预览仅复核表单，不提交付款。'] })
+    return { outcome: waiting ? 'awaiting_payment' : 'verified', detail: waiting ? '隔离预览：请回原窗口核对，尚未确认付款（无真实支付）' : '账单资料已填写并复核通过；按测试闸门停在提交前（未生成付款二维码）', notification }
+  },
   selectCursorAccount: async (accountId) => {
     previewCursorAccounts = previewCursorAccounts.map((account) => ({ ...account, active: account.id === accountId }))
     return structuredClone(previewCursorAccounts)
@@ -1298,8 +1312,12 @@ const api: SgDesktopApi = {
         })
     return { ...status, compatibility, profileRefreshReady: pumpScene !== 'profile-missing' }
   },
-  ensureCursorSwitchPump: async () => ({ ok: true, changed: false, message: '切号补丁已是当前配置' }),
-  removeCursorSwitchPump: async () => ({ ok: true, changed: true, message: '切号补丁已卸载，重启 Cursor 生效。' }),
+  ensureCursorSwitchPump: async reference => {
+    const partial = previewParameters.get('pageOutcome') === 'partial', notification = previewPageResult('patch-install', reference?.notificationId,
+      { state: partial ? 'partial' : 'success', unchanged: !partial, facts: [partial ? '隔离预览补丁文件已变化，但签名状态未确认。' : '隔离预览补丁无需改动。'] })
+    return { ok: true, changed: partial, message: partial ? '隔离预览：补丁文件已变化' : '切号补丁已是当前配置', ...(partial ? { warning: '签名状态未确认' } : {}), notification }
+  },
+  removeCursorSwitchPump: async reference => ({ ok: true, changed: true, message: '切号补丁已卸载，重启 Cursor 生效。', notification: previewPageResult('patch-remove', reference?.notificationId, { state: 'success', facts: ['隔离预览仅模拟原结果，未改变 Cursor 文件。'] }) }),
   refreshCursorMembership: async () => ({ state: 'ok' as const, profile: { tier: 'pro' as const, raw: 'pro', trialEligible: false, isTeamMember: false, lastPaymentFailed: false, fetchedAt: Date.now() } }),
   refreshCursorAccountMemberships: async (accountIds) => Object.fromEntries(
     previewCursorAccounts

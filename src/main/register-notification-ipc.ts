@@ -20,12 +20,15 @@ function id(value: unknown): string {
 function query(value: unknown): NotificationQuery {
   if (value === undefined) return {}
   const input = object(value)
+  if (input.eventType !== undefined && (typeof input.eventType !== 'string' || !/^[a-z][a-z0-9_.-]{0,60}$/.test(input.eventType))) throw new NotificationActionError('通知类型筛选无效')
   if (input.filter !== undefined && !['all', 'unread', 'pending'].includes(String(input.filter))) throw new NotificationActionError('通知筛选无效')
   if (input.category !== undefined && !NOTIFICATION_CATEGORIES.includes(input.category as NotificationCategory)) throw new NotificationActionError('通知分类无效')
   if (input.limit !== undefined && (typeof input.limit !== 'number' || !Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 100)) throw new NotificationActionError('通知分页大小无效')
   const cursor = input.cursor === undefined ? undefined : object(input.cursor)
   return {
     ...(input.key !== undefined ? { key: id(input.key) } : {}),
+    ...(input.eventType !== undefined ? { eventType: input.eventType as string } : {}),
+    ...(input.operationFamilyId !== undefined ? { operationFamilyId: id(input.operationFamilyId) } : {}),
     ...(input.sessionId !== undefined ? { sessionId: id(input.sessionId) } : {}),
     ...(input.toolCallId !== undefined ? { toolCallId: id(input.toolCallId) } : {}),
     ...(input.entryId !== undefined ? { entryId: id(input.entryId) } : {}),

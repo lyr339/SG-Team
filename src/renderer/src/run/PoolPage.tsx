@@ -66,7 +66,7 @@ export interface PoolPageProps {
   onOpenSessions: () => void
   onOpenSession?: (channelId: string) => void
   onPersistModelSelection?: (channelId: string, selection: CursorModelSelection) => Promise<TeamControlSnapshot>
-  onEnableCursorCdp?: () => Promise<{ ok: boolean; message: string; suggestAutoHeal?: boolean }>
+  onEnableCursorCdp?: () => Promise<{ ok: boolean; message: string; suggestAutoHeal?: boolean; notification?: import('../../../domain/notification-reference').NotificationReference }>
   onToggleCdpAutoHeal?: (enabled: boolean) => Promise<void>
   onCancelCdpAutoHealCountdown?: () => Promise<void>
   /** 会话池 · 协作组操作；不提供时运行页不显示协作组区（预览 / 旧调用方）。 */
@@ -446,11 +446,14 @@ export function PoolPage({
   const enableCdp = onEnableCursorCdp ? () => void run('enable-cdp', async () => {
     const result = await onEnableCursorCdp()
     if (result.ok) {
-      setNotice(result.suggestAutoHeal
+      const text = result.suggestAutoHeal
         ? `${result.message}。建议打开「自动保持」开关，此后 Cursor 重启不再丢失该设置。`
-        : `${result.message}，Cursor 完全启动后再点创建。`)
+        : `${result.message}，Cursor 完全启动后再点创建。`
+      setNotice(text)
+      if (result.notification) setPlanFeedback({ ...result.notification, text })
     } else {
       setError(result.message)
+      if (result.notification) setPlanFeedback({ ...result.notification, text: result.message })
     }
   }) : undefined
   const toggleAutoHeal = onToggleCdpAutoHeal ? (enabled: boolean) => void run('cdp-autoheal', async () => {

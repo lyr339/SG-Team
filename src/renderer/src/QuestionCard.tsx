@@ -9,6 +9,8 @@ import {
 import type { CursorQuestionActionResult } from '../../shared/desktop-api'
 import type { NotificationScope } from '../../domain/notification'
 import { useQuestionNotificationRead } from './notifications/use-question-notification-read'
+import { useNotificationResultRead } from './notifications/use-notification-result-read'
+import type { NotificationReference } from '../../domain/notification-reference'
 
 /** 会话页对 ask_question 的两个动作；由 App 绑定到当前通道的 desktop API。 */
 export interface QuestionActions {
@@ -53,6 +55,9 @@ export function QuestionCard({ question, actions, readOnly = false }: QuestionCa
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState<'answer' | 'skip' | null>(null)
   const [error, setError] = useState('')
+  const [actionReference, setActionReference] = useState<NotificationReference>()
+  const actionResultRef = useRef<HTMLParagraphElement>(null)
+  useNotificationResultRead(actionResultRef, actionReference?.key, actionReference?.eventId)
   const draft = useMemo<CursorQuestionDraft>(() => ({ selections, freeformTexts }), [selections, freeformTexts])
   const problem = useMemo(() => validateCursorQuestionDraft(question, draft), [question, draft])
   const interactive = question.status === 'pending' && !readOnly && Boolean(actions)
@@ -61,11 +66,12 @@ export function QuestionCard({ question, actions, readOnly = false }: QuestionCa
     if (!actions || busy) return
     setBusy(kind)
     setError('')
+    setActionReference(undefined)
     try {
       const result = kind === 'answer'
         ? await actions.answer(question.toolCallId, { ...draft, note: note.trim() || undefined })
         : await actions.skip(question.toolCallId)
-      if (!result.ok) setError(FAILURE_HINT[result.code] ?? result.message)
+      if (!result.ok) { setError(FAILURE_HINT[result.code] ?? result.message); setActionReference(result.notification) }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
@@ -189,7 +195,7 @@ export function QuestionCard({ question, actions, readOnly = false }: QuestionCa
               {busy === 'answer' ? '提交中…' : '提交回答'}
             </button>
           </div>
-          {error ? <p className="cursor-question__error" role="alert">{error}</p> : null}
+          {error ? <p ref={actionResultRef} className="cursor-question__error" role="alert" data-notification-result data-notification-key={actionReference?.key} data-notification-event={actionReference?.eventId}>{error}</p> : null}
         </div>
       ) : (
         <p className="cursor-question__resolution">{readOnly || !actions ? '请在 Cursor 中回答这组提问' : ''}</p>

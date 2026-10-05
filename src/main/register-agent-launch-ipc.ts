@@ -3,6 +3,8 @@ import type { AgentSessionLauncher } from '../application/agent-session-launcher
 import type { AgentLaunchPlan, AgentLaunchRequest } from '../domain/agent-launch'
 import { IPC } from '../shared/desktop-api'
 import { assertTrustedSender } from './ipc-security'
+import { beginPageOperation, failPageOperation, finishPageOperation, notificationOperationId, type PageOperationObserver } from '../application/notifications/page-operation-notifications'
+import type { NotificationReference } from '../domain/notification-reference'
 
 const MAX_LAUNCH_CHANNELS = 16
 
@@ -11,6 +13,7 @@ export interface CursorCdpEnableResult {
   message: string
   /** 手动启用成功且 auto-heal 未开启时为 true：前端据此引导用户打开自动保持。 */
   suggestAutoHeal?: boolean
+  notification?: NotificationReference
 }
 
 function launchRequestsOf(value: unknown): AgentLaunchRequest[] {
@@ -58,7 +61,8 @@ function launchRequestsOf(value: unknown): AgentLaunchRequest[] {
 export function registerAgentLaunchIpc(
   launcher: AgentSessionLauncher,
   enableCursorCdp: () => Promise<CursorCdpEnableResult>,
-  getWindow: () => BrowserWindow | undefined
+  getWindow: () => BrowserWindow | undefined,
+  operations?: PageOperationObserver
 ): () => void {
   const emitProgress = (plan: AgentLaunchPlan): void => {
     const window = getWindow()
@@ -73,9 +77,14 @@ export function registerAgentLaunchIpc(
     assertTrustedSender(event, getWindow)
     return launcher.getPlan()
   })
-  ipcMain.handle(IPC.agentLaunchEnableCdp, (event) => {
+  ipcMain.handle(IPC.agentLaunchEnableCdp, async (event, input: unknown) => {
     assertTrustedSender(event, getWindow)
-    return enableCursorCdp()
+    const operation = beginPageOperation(operations, { kind: 'debug-enable', id: notificationOperationId(input), localOnly: true, origin: { module: 'run' } })
+    try {
+      const result = await enableCursorCdp()
+      const notification = finishPageOperation(operation, { state: result.ok ? 'success' : 'failed', facts: [result.message, '端口就绪不代表模型已请求、批量会话已创建或账号已处理。'] })
+      return notification ? { ...result, notification } : result
+    } catch (error) { failPageOperation(operation, error); throw error }
   })
   return () => {
     ipcMain.removeHandler(IPC.agentLaunchStart)

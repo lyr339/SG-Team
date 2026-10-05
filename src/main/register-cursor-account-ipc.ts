@@ -23,6 +23,7 @@ import { randomUUID } from 'node:crypto'
 import type { NotificationService } from '../application/notification-service'
 import type { NotificationReference } from '../domain/notification-reference'
 import { accountSwitchNotification } from '../domain/account-switch-notification'
+import { beginPageOperation, failPageOperation, finishPageOperation, notificationOperationId, type PageOperationObserver } from '../application/notifications/page-operation-notifications'
 
 function accountIdOf(value: unknown): string {
   if (typeof value !== 'string' || !value.trim() || value.length > 200) throw new Error('Cursor 账号 ID 无效')
@@ -45,6 +46,7 @@ export interface CursorAccountIpcOptions {
   /** Optional presentation-only observer; it does not control restart, recovery or the switch lock. */
   restartObservation?: { begin: () => string | undefined; finish: (id: string | undefined, success: boolean) => void }
   notifications?: Pick<NotificationService, 'offerCurrent'>
+  operations?: PageOperationObserver
   /**
    * 从指纹浏览器 profile 读取当前登录态 Token（第一步「获取 Token」的指纹导入来源）。
    * 返回 token（user_xxx::jwt）与可选 userId + 官网资料（email 等，识别失败缺省）；
@@ -125,11 +127,11 @@ export function registerCursorAccountIpc(
     if (!value || typeof value !== 'object') throw new Error('Cursor 账号参数无效')
     const input = value as Record<string, unknown>
     if (typeof input.label !== 'string' || typeof input.token !== 'string') throw new Error('Cursor 账号参数无效')
-    return vault.save({
-      label: input.label,
-      token: input.token,
-      makeActive: typeof input.makeActive === 'boolean' ? input.makeActive : undefined
-    })
+    const operation = beginPageOperation(options.operations, { kind: 'import-token', id: notificationOperationId(input) })
+    try {
+      const result = vault.save({ label: input.label, token: input.token, makeActive: typeof input.makeActive === 'boolean' ? input.makeActive : undefined })
+      finishPageOperation(operation, { state: 'success', facts: ['账号已保存，当前 Cursor 运行登录态未据此改变。'] }); return result
+    } catch (error) { failPageOperation(operation, error); throw error }
   })
   ipcMain.handle(IPC.cursorAccountsSaveCard, async (event, value: unknown) => {
     assertTrustedSender(event, getWindow)
@@ -138,43 +140,63 @@ export function registerCursorAccountIpc(
     if (typeof input.card !== 'string' || !input.card.trim() || input.card.length > 16_384) throw new Error('卡号参数无效')
     // 主进程权威解析（渲染层的粘贴预览只是预览）；字段错误原样上抛给表单亮出。
     const card = parseCursorAccountCard(input.card)
-    let result = vault.saveCard({
-      card,
-      sub: card.sub,
-      makeActive: typeof input.makeActive === 'boolean' ? input.makeActive : undefined
-    })
-    // Token 已过期且装配了自动登录：用卡内凭据当场刷新（失败不阻断保存——
-    // 凭据已入库，结果带 loginError，账号卡片可稍后重试）。
-    if (card.expiresAt !== undefined && card.expiresAt <= Date.now() && options.loginWithCredentials) {
-      try {
-        const login = await options.loginWithCredentials({ email: card.email, password: card.cursorPassword }, undefined)
-        result = { ...result, accounts: vault.replaceToken(result.accountId, login.token), tokenRefreshed: true }
-      } catch (reason) {
-        const detail = reason instanceof Error ? reason.message : String(reason)
-        result = { ...result, loginError: detail.replace(/\s+/g, ' ').trim().slice(0, 200) }
+    const operation = beginPageOperation(options.operations, { kind: 'import-card', id: notificationOperationId(input) })
+    try {
+      let result = vault.saveCard({
+        card,
+        sub: card.sub,
+        makeActive: typeof input.makeActive === 'boolean' ? input.makeActive : undefined
+      })
+      // Token 已过期且装配了自动登录：用卡内凭据当场刷新（失败不阻断保存——
+      // 凭据已入库，结果带 loginError，账号卡片可稍后重试）。
+      if (card.expiresAt !== undefined && card.expiresAt <= Date.now() && options.loginWithCredentials) {
+        try {
+          const login = await options.loginWithCredentials({ email: card.email, password: card.cursorPassword }, undefined)
+          result = { ...result, accounts: vault.replaceToken(result.accountId, login.token), tokenRefreshed: true }
+        } catch (reason) {
+          const detail = reason instanceof Error ? reason.message : String(reason)
+          result = { ...result, loginError: detail.replace(/\s+/g, ' ').trim().slice(0, 200) }
+        }
       }
-    }
-    return result
+      const notification = finishPageOperation(operation, { state: result.loginError ? 'partial' : 'success', scope: { accountId: result.accountId }, facts: result.loginError
+        ? ['账号和凭据已保存，但原入口未确认自动登录完成。可在账号卡片核对，通知不会再次登录。']
+        : [result.tokenRefreshed ? '账号已保存，原自动登录已返回并更新保存的 Token。' : '账号已保存。导入不等于当前 Cursor 已切换或会员档位已确认。'] })
+      return notification ? { ...result, notification } : result
+    } catch (error) { failPageOperation(operation, error); throw error }
   })
   ipcMain.handle(IPC.cursorAccountsLogin, async (event, value: unknown) => {
     assertTrustedSender(event, getWindow)
     if (!options.loginWithCredentials) throw new Error('指纹浏览器自动登录未装配')
-    const id = accountIdOf(value)
+    const payload = value && typeof value === 'object' ? value as Record<string, unknown> : undefined
+    const id = accountIdOf(payload ? payload.accountId : value)
     const credentials = vault.credentials(id)
     if (!credentials) throw new Error('该账号没有保存的登录凭据（仅卡号导入的账号支持自动登录）')
     // 窗口锚定账号绑定（导入时记录）；未绑定回退默认窗口（通道内解析）。
     const account = vault.list().find((candidate) => candidate.id === id)
-    const login = await options.loginWithCredentials(
-      { email: credentials.email, password: credentials.cursorPassword },
-      account?.fingerprintProfileId
-    )
-    return { accounts: vault.replaceToken(id, login.token), outcome: login.outcome }
+    const operation = beginPageOperation(options.operations, { kind: 'account-login', id: notificationOperationId(payload), scope: { accountId: id } })
+    try {
+      const login = await options.loginWithCredentials(
+        { email: credentials.email, password: credentials.cursorPassword },
+        account?.fingerprintProfileId
+      )
+      const result = { accounts: vault.replaceToken(id, login.token), outcome: login.outcome }
+      const notification = finishPageOperation(operation, { state: 'success', facts: [login.outcome === 'already_logged_in' ? '原绑定窗口已登录，保存的账号 Token 已更新。' : '原网页登录已完成，保存的账号 Token 已更新。', '未据此改变 Cursor 当前运行登录态。'] })
+      return notification ? { ...result, notification } : result
+    } catch (error) { failPageOperation(operation, error); throw error }
   })
   ipcMain.handle(IPC.cursorAccountsStartProUpgrade, async (event, value: unknown) => {
     assertTrustedSender(event, getWindow)
     if (!options.startProUpgrade) throw new Error('升级 Pro 结账通道未装配')
     // 编排（归属守门/凭据/账单资料/窗口解析）在装配闭包内；这里只做入参校验。
-    return options.startProUpgrade(accountIdOf(value))
+    const payload = value && typeof value === 'object' ? value as Record<string, unknown> : undefined
+    const id = accountIdOf(payload ? payload.accountId : value)
+    const operation = beginPageOperation(options.operations, { kind: 'checkout', id: notificationOperationId(payload), scope: { accountId: id } })
+    try {
+      const result = await options.startProUpgrade(id)
+      const notification = finishPageOperation(operation, { state: result.outcome === 'verified' ? 'success' : 'waiting', verifiedOnly: result.outcome === 'verified', facts: result.outcome === 'verified'
+        ? ['账单资料由原入口复核，按原测试闸门停在提交前。没有生成付款二维码，也没有据此确认支付成功或账号档位。'] : ['原结账入口已准备，仍需由你在原窗口完成付款。未确认支付成功，通知不会代付款或再次提交。'] })
+      return notification ? { ...result, notification } : result
+    } catch (error) { failPageOperation(operation, error); throw error }
   })
   ipcMain.handle(IPC.cursorAccountsSelect, (event, accountId: unknown) => {
     assertTrustedSender(event, getWindow)
@@ -184,40 +206,53 @@ export function registerCursorAccountIpc(
     assertTrustedSender(event, getWindow)
     return vault.remove(accountIdOf(accountId))
   })
-  ipcMain.handle(IPC.cursorAccountsImportFromLocal, (event) => {
+  ipcMain.handle(IPC.cursorAccountsImportFromLocal, (event, input: unknown) => {
     assertTrustedSender(event, getWindow)
-    const imported = importer.import()
-    const label = imported.email
-      ? `${imported.email}（本机 Cursor）`
-      : imported.sub
-        ? `${imported.sub}（本机 Cursor）`
-        : '本机 Cursor'
-    return vault.save({ label, token: imported.token, makeActive: true })
+    const operation = beginPageOperation(options.operations, { kind: 'import-local', id: notificationOperationId(input) })
+    try {
+      const imported = importer.import()
+      const label = imported.email
+        ? `${imported.email}（本机 Cursor）`
+        : imported.sub
+          ? `${imported.sub}（本机 Cursor）`
+          : '本机 Cursor'
+      const result = vault.save({ label, token: imported.token, makeActive: true })
+      finishPageOperation(operation, { state: 'success', scope: { accountId: result.find(account => account.active)?.id }, facts: ['本机 Cursor 的可读取登录态已保存；未据此确认远端档位。'] }); return result
+    } catch (error) { failPageOperation(operation, error); throw error }
   })
-  ipcMain.handle(IPC.cursorAccountsImportFromBrowser, async (event) => {
+  ipcMain.handle(IPC.cursorAccountsImportFromBrowser, async (event, input: unknown) => {
     assertTrustedSender(event, getWindow)
-    const result = browserReader.read()
-    // 同一识别链路：官网 /api/auth/me 把 user_xxx 换成可读邮箱（失败回落 userId）
-    const profile = await profileFetcher.fetch(result.token)
-    return vault.save({
-      label: profileLabel(profile, result.userId, result.browser),
-      token: result.token,
-      makeActive: true
-    })
+    const operation = beginPageOperation(options.operations, { kind: 'import-browser', id: notificationOperationId(input) })
+    try {
+      const result = browserReader.read()
+      // 同一识别链路：官网 /api/auth/me 把 user_xxx 换成可读邮箱（失败回落 userId）
+      const profile = await profileFetcher.fetch(result.token)
+      const saved = vault.save({
+        label: profileLabel(profile, result.userId, result.browser),
+        token: result.token,
+        makeActive: true
+      })
+      finishPageOperation(operation, { state: 'success', scope: { accountId: saved.find(account => account.active)?.id }, facts: ['原浏览器读取和资料识别流程已返回，账号已保存。未据此切换 Cursor 的运行账号。'] }); return saved
+    } catch (error) { failPageOperation(operation, error); throw error }
   })
-  ipcMain.handle(IPC.cursorAccountsImportFromFingerprint, async (event) => {
+  ipcMain.handle(IPC.cursorAccountsImportFromFingerprint, async (event, input: unknown) => {
     assertTrustedSender(event, getWindow)
     if (!options.importFromFingerprint) throw new Error('指纹浏览器通道未装配')
-    const result = await options.importFromFingerprint()
-    const userId = result.userId || result.token.split('::')[0] || 'cursor'
-    // 资料识别成功时 label 显示邮箱（官网 /api/auth/me）；失败回落 user_xxx。
-    // 导入即绑定：从哪个窗口读出 Token，就把该账号绑定到哪个窗口。
-    return vault.save({
-      label: profileLabel(result.profile, userId, result.browserName ?? '指纹浏览器'),
-      token: result.token,
-      makeActive: true,
-      fingerprintProfileId: result.profileId
-    })
+    const operation = beginPageOperation(options.operations, { kind: 'import-fingerprint', id: notificationOperationId(input) })
+    try {
+      const result = await options.importFromFingerprint()
+      const userId = result.userId || result.token.split('::')[0] || 'cursor'
+      // 资料识别成功时 label 显示邮箱（官网 /api/auth/me）；失败回落 user_xxx。
+      // 导入即绑定：从哪个窗口读出 Token，就把该账号绑定到哪个窗口。
+      const saved = vault.save({
+        label: profileLabel(result.profile, userId, result.browserName ?? '指纹浏览器'),
+        token: result.token,
+        makeActive: true,
+        fingerprintProfileId: result.profileId
+      })
+      const account = saved.find(account => account.active)
+      finishPageOperation(operation, { state: 'success', scope: { accountId: account?.id }, facts: [account?.fingerprintProfileId ? '所选窗口的登录态已保存并绑定到该账号。' : '登录态已保存；导入结果未提供具体窗口绑定。', '当前 Cursor 运行账号未被本次导入切换。'] }); return saved
+    } catch (error) { failPageOperation(operation, error); throw error }
   })
   ipcMain.handle(IPC.cursorAccountsSetFingerprintProfile, (event, value: unknown) => {
     assertTrustedSender(event, getWindow)
@@ -225,41 +260,52 @@ export function registerCursorAccountIpc(
     const profileId = typeof input.profileId === 'string' && input.profileId.trim() ? input.profileId.trim() : undefined
     return vault.setFingerprintProfile(accountIdOf(input.accountId), profileId)
   })
-  ipcMain.handle(IPC.cursorAccountsOpenFingerprintLogin, async (event) => {
+  ipcMain.handle(IPC.cursorAccountsOpenFingerprintLogin, async (event, input: unknown) => {
     assertTrustedSender(event, getWindow)
     if (!options.openFingerprintLogin) throw new Error('指纹浏览器通道未装配')
-    await options.openFingerprintLogin()
+    const operation = beginPageOperation(options.operations, { kind: 'login-window', id: notificationOperationId(input) })
+    try { await options.openFingerprintLogin(); finishPageOperation(operation, { state: 'waiting', facts: ['所选登录窗口已按原入口打开；仍需在原窗口完成登录。未把打开窗口当成已登录。'] }) }
+    catch (error) { failPageOperation(operation, error); throw error }
   })
-  ipcMain.handle(IPC.cursorAccountsCleanupFingerprintEnvironment, async (event) => {
+  ipcMain.handle(IPC.cursorAccountsCleanupFingerprintEnvironment, async (event, input: unknown) => {
     assertTrustedSender(event, getWindow)
     if (!options.cleanupFingerprintEnvironment) throw new Error('指纹浏览器通道未装配')
-    await options.cleanupFingerprintEnvironment()
+    const operation = beginPageOperation(options.operations, { kind: 'fingerprint-cleanup', id: notificationOperationId(input) })
+    try { await options.cleanupFingerprintEnvironment(); finishPageOperation(operation, { state: 'success', facts: ['原浏览器环境清理方法已返回。实际清理范围以原确认入口为准，不会自动再清理一次。'] }) }
+    catch (error) { failPageOperation(operation, error); throw error }
   })
-  ipcMain.handle(IPC.cursorAccountsAcknowledgeModelDataPolicies, async (event) => {
+  ipcMain.handle(IPC.cursorAccountsAcknowledgeModelDataPolicies, async (event, input: unknown) => {
     assertTrustedSender(event, getWindow)
     if (!options.acknowledgeModelDataPolicies) throw new Error('指纹浏览器政策确认通道未装配')
-    const result = await options.acknowledgeModelDataPolicies()
-    const tokenAccountId = result.token.split('::', 1)[0]?.trim()
-    let tokenUpdated = false
-    const active = vault.list().find((account) => account.active)
-    if (active && tokenAccountId) {
-      const previous = vault.credential(active.id)
-      const previousAccountId = previous.split('::', 1)[0]?.trim()
-      // 仅同账号原地更新：profile 选错账号时绝不覆盖拾光活跃凭据。
-      if (previousAccountId === tokenAccountId && previous !== result.token) {
-        vault.replaceToken(active.id, result.token)
-        tokenUpdated = true
+    const operation = beginPageOperation(options.operations, { kind: 'model-policy', id: notificationOperationId(input) })
+    try {
+      const result = await options.acknowledgeModelDataPolicies()
+      const tokenAccountId = result.token.split('::', 1)[0]?.trim()
+      let tokenUpdated = false
+      const active = vault.list().find((account) => account.active)
+      if (active && tokenAccountId) {
+        const previous = vault.credential(active.id)
+        const previousAccountId = previous.split('::', 1)[0]?.trim()
+        // 仅同账号原地更新：profile 选错账号时绝不覆盖拾光活跃凭据。
+        if (previousAccountId === tokenAccountId && previous !== result.token) {
+          vault.replaceToken(active.id, result.token)
+          tokenUpdated = true
+        }
       }
-    }
-    const modelIds = result.policies.map((policy) => policy.modelId)
-    return {
-      changed: result.changed,
-      tokenUpdated,
-      modelIds,
-      message: result.changed
-        ? `已确认 ${modelIds.join('、')} 的数据政策`
-        : `${modelIds.join('、')} 的数据政策已确认，无需重复提交`
-    }
+      const modelIds = result.policies.map((policy) => policy.modelId)
+      const response = {
+        changed: result.changed,
+        tokenUpdated,
+        modelIds,
+        message: result.changed
+          ? `已确认 ${modelIds.join('、')} 的数据政策`
+          : `${modelIds.join('、')} 的数据政策已确认，无需重复提交`
+      }
+      const notification = finishPageOperation(operation, { state: modelIds.length ? 'success' : 'unconfirmed', facts: modelIds.length
+        ? [result.changed ? `原入口已返回 ${modelIds.length} 个模型的数据政策确认结果。` : `原入口返回的 ${modelIds.length} 个模型政策已确认，本次未重复提交。`, tokenUpdated ? '仅在同账号匹配时更新了保存的 Token。' : '保存账号的 Token 未被本次结果覆盖。']
+        : ['原入口未返回具体模型政策清单，不推测所有模型已完成授权。'] })
+      return notification ? { ...response, notification } : response
+    } catch (error) { failPageOperation(operation, error); throw error }
   })
   ipcMain.handle(IPC.cursorAccountsRestartWith, async (event, accountId: unknown) => {
     assertTrustedSender(event, getWindow)
@@ -317,7 +363,7 @@ export function registerCursorAccountIpc(
     if (!options.switchPumpInstaller) throw new Error('切号补丁管理未装配')
     return options.switchPumpInstaller.status()
   })
-  ipcMain.handle(IPC.cursorSwitchPumpEnsure, async (event) => {
+  ipcMain.handle(IPC.cursorSwitchPumpEnsure, async (event, input: unknown) => {
     assertTrustedSender(event, getWindow)
     if (!options.switchPumpInstaller) throw new Error('切号补丁管理未装配')
     // 端口/密钥无所谓固定：热切按盘上配置绑定，冷切换每次重写；用既有常量即可。
@@ -325,13 +371,25 @@ export function registerCursorAccountIpc(
       port: CURSOR_RUNTIME_SWITCH_PORT,
       key: CURSOR_RUNTIME_SWITCH_KEY
     })
-    return options.switchMutex ? options.switchMutex.withLock('安装切号补丁', install) : install()
+    const operation = beginPageOperation(options.operations, { kind: 'patch-install', id: notificationOperationId(input) })
+    try {
+      const result = await (options.switchMutex ? options.switchMutex.withLock('安装切号补丁', install) : install())
+      const notification = finishPageOperation(operation, { state: !result.ok ? 'failed' : result.warning ? 'partial' : 'success', unchanged: !result.changed, facts: [result.message,
+        ...(result.warning ? [result.warning] : []), result.changed ? '原管理器确认文件已变化；运行时是否生效请按原维护页面核对，通知不额外重启。' : '原管理器未确认文件变化；不会为了通知再次执行安装。'] })
+      return notification ? { ...result, notification } : result
+    } catch (error) { failPageOperation(operation, error); throw error }
   })
-  ipcMain.handle(IPC.cursorSwitchPumpRemove, async (event) => {
+  ipcMain.handle(IPC.cursorSwitchPumpRemove, async (event, input: unknown) => {
     assertTrustedSender(event, getWindow)
     if (!options.switchPumpInstaller) throw new Error('切号补丁管理未装配')
     const remove = () => options.switchPumpInstaller!.remove()
-    return options.switchMutex ? options.switchMutex.withLock('卸载切号补丁', remove) : remove()
+    const operation = beginPageOperation(options.operations, { kind: 'patch-remove', id: notificationOperationId(input) })
+    try {
+      const result = await (options.switchMutex ? options.switchMutex.withLock('卸载切号补丁', remove) : remove())
+      const notification = finishPageOperation(operation, { state: !result.ok ? 'failed' : result.warning ? 'partial' : 'success', unchanged: !result.changed, facts: [result.message, ...(result.warning ? [result.warning] : []),
+        result.changed ? '原管理器确认文件已变化；没有由通知触发额外重启。' : '原管理器未确认文件变化；不推测外部工具补丁已被移除。'] })
+      return notification ? { ...result, notification } : result
+    } catch (error) { failPageOperation(operation, error); throw error }
   })
   ipcMain.handle(IPC.cursorAccountsVerifyRuntime, (event) => {
     assertTrustedSender(event, getWindow)

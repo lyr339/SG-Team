@@ -7,6 +7,7 @@ import { SESSION_HANDOFF_NOTE_MAX_CHARS, type SessionHandoffRequest } from '../d
 import { IPC, type QueuedMessageRef } from '../shared/desktop-api'
 import { parseImageInput, suggestedImageFileName } from './image-attachment-io'
 import { assertTrustedSender } from './ipc-security'
+import { beginPageOperation, failPageOperation, finishPageOperation, notificationOperationId, type PageOperationObserver } from '../application/notifications/page-operation-notifications'
 
 function queuedRefOf(value: unknown): QueuedMessageRef {
   if (!value || typeof value !== 'object') throw new Error('队列消息参数无效')
@@ -60,7 +61,7 @@ export function registerSessionHandoffIpc(
   },
   reveal: RevealPathPolicy,
   getWindow: () => BrowserWindow | undefined,
-  options: { downloadsPath?: () => string; observeFailure?: (channelId: string, error: unknown) => void } = {}
+  options: { downloadsPath?: () => string; observeFailure?: (channelId: string, error: unknown) => void; operations?: PageOperationObserver } = {}
 ): () => void {
   ipcMain.handle(IPC.withdrawQueuedMessage, (event, input: unknown) => {
     assertTrustedSender(event, getWindow)
@@ -109,12 +110,16 @@ export function registerSessionHandoffIpc(
       defaultPath: options.downloadsPath ? join(options.downloadsPath(), name) : name,
       filters: [{ name: '图片', extensions: [extname(name).slice(1) || 'png'] }]
     }
-    const result = window && !window.isDestroyed()
-      ? await dialog.showSaveDialog(window, dialogOptions)
-      : await dialog.showSaveDialog(dialogOptions)
-    if (result.canceled || !result.filePath) return false
-    writeFileSync(result.filePath, bytes)
-    return true
+    const operation = beginPageOperation(options.operations, { kind: 'image-save', id: notificationOperationId(input) })
+    try {
+      const result = window && !window.isDestroyed()
+        ? await dialog.showSaveDialog(window, dialogOptions)
+        : await dialog.showSaveDialog(dialogOptions)
+      if (result.canceled || !result.filePath) { finishPageOperation(operation, { state: 'cancelled', facts: ['用户取消了文件选择，没有写入所选附件。'] }); return false }
+      writeFileSync(result.filePath, bytes)
+      finishPageOperation(operation, { state: 'success', facts: ['图片数据已写入用户选定的本机位置。路径和图片内容没有复制进通知。'] })
+      return true
+    } catch (error) { failPageOperation(operation, error); throw error }
   })
   return () => {
     ipcMain.removeHandler(IPC.withdrawQueuedMessage)
