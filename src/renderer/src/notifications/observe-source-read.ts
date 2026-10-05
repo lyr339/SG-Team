@@ -49,6 +49,6 @@ export function observeSourceNotificationRead(element: HTMLElement, api: Pick<Sg
       node instanceof Element && (node.matches(resultElement.selector) || node.querySelector(resultElement.selector))))) schedule()
   }) : undefined
   if (resultElement) mutations?.observe(element, { childList: true, subtree: true, attributes: true, attributeFilter: resultElement.attributes })
-  observer?.observe(element); window.addEventListener('focus', focus); document.addEventListener('scroll', schedule, true); inspect()
-  return () => { active = false; stop(); observer?.disconnect(); mutations?.disconnect(); if (frame !== undefined) cancelAnimationFrame(frame); window.removeEventListener('focus', focus); document.removeEventListener('scroll', schedule, true) }
+  observer?.observe(element); window.addEventListener('focus', focus); document.addEventListener('scroll', schedule, true); document.addEventListener('toggle', schedule, true); inspect()
+  return () => { active = false; stop(); observer?.disconnect(); mutations?.disconnect(); if (frame !== undefined) cancelAnimationFrame(frame); window.removeEventListener('focus', focus); document.removeEventListener('scroll', schedule, true); document.removeEventListener('toggle', schedule, true) }
 }

@@ -4,16 +4,12 @@ import { useNotificationResultRead } from './use-notification-result-read'
 import './group-effects-notice.css'
 /** A historical original-call diagnostic, not a retry button or current group-state authority. */
 export function GroupEffectsNotice({ record }: { record?: NotificationRecord }): React.JSX.Element | null {
-  const ref = useRef<HTMLDivElement>(null)
+  const ref = useRef<HTMLParagraphElement>(null)
   useNotificationResultRead(ref, record?.key, record?.eventId)
   if (!record) return null
   return (
     <div
-      ref={ref}
       className="group-effects-notice"
-      data-notification-result
-      data-notification-key={record.key}
-      data-notification-event={record.eventId}
     >
       <details>
         <summary>
@@ -26,7 +22,7 @@ export function GroupEffectsNotice({ record }: { record?: NotificationRecord }):
             详情
           </span>
         </summary>
-        <p>{record.detail}</p>
+        <p ref={ref} data-notification-result data-notification-key={record.key} data-notification-event={record.eventId}>{record.detail}</p>
         <small>阅读通知不会改变任务或成员状态。</small>
       </details>
     </div>

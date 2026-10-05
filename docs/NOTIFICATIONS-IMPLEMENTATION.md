@@ -313,6 +313,22 @@ ui/group-effects-compact-light.jpg、ui/group-effects-details-light.jpg、ui/gro
 
 **完整目标仍未完成**：本批不覆盖 MCP runtime 创建／参数校验前无结构化归属的异常，也不把被截断或被旧格式净化破坏的历史输出猜成真实回执。源页阅读当前使用私有未读窗口，更早大历史的精确阅读覆盖仍需容量复核；通知中心记录不因此丢弃。模型／用量／统计来源健康、旧 scope 整体消失／同 revision 异内容、其他 feeds 恢复、长期完整序列、正式应用／包及 Windows/macOS 真权限／声音／勿扰仍继续实施。仅本地提交，不推送、发版、安装、重启当前软件或 Cursor，不缩小或结束完整通知目标。
 
+### 第十八批：本机用量记录的真实保存／读取诊断
+
+沿原 `CursorUsageStore.load/save` 接入只读结果观察。首次缺文件是正常空状态，不当故障；原文件读取／解析或结构异常、原加载跳过无法验证的行分别留下真实未确认说明。保留原 load 返回、兼容版本、有效行、留档行为／次数、MAX_SESSIONS 和价格／计数逻辑；不新增读盘、写盘、备份、重试或恢复操作。错误观察在原 save 返回／抛出之后，不改变原异常对象；通知 observer／缺口处理抛错也不会让健康文件被误留档。后续保存成功只证明新保存已有返回，不恢复或清除先前历史读取缺口，空统计不冒充历史为零。
+
+同一写入故障收为一条持久 episode，不随着 800ms 用量写入或 Token 增长刷未读；真实新原因／恢复后的新失败可更新或另开对应 episode。每次有意义的正文用独立事件身份，旧正文可见／旧阅读确认不消费新原因。正常保存不增加成功历史，恢复不额外全局弹成功。原 tracker 继续使用原通知节流、计数、封口、最后 persist，内存数值可用不冒充已保存。真实退出时把该 source 的 seal 延到原同步 dispose persist 之后，收下原最后一次失败结果，再排空私有队列；退出不弹通知，不多写一次业务文件。
+
+统计页只增加舒适的两类局部折叠说明，原图表／查询／模型和用量计算不换皮、不增加业务请求；活跃页各一次私有查询＋推送，隐藏页不订阅计数更新。没有问题时不占版面；有读取异常的空页也能看说明。中性空文案改为“暂无可展示的用量”，不妄断从未使用；“实付”改为“估算”，避免把参考成本当官方账单。保留当前主题／字号，使用中性边界与充分留白，没有左彩边、渐变胶囊、修复／重试按钮或高频进度。
+
+真实 CUA 验收发现 Chromium 可能对闭合 `<details>` 中未绘制的正文仍返回非零几何，不能用单测的零高度替代浏览器。共用可见性判断现在核对闭合 details、直接 summary、自身与祖先隐藏状态；原读取助手捕获真实 toggle 而非新 poll。原组后续说明的阅读标记也从整块卡片移到正文，折叠标题不提前读完。旧不正确单测的“闭合即阅读”断言改为展开真实正文才读，并以非零闭合几何保留回归。
+
+证据在当前实现树 `preview-screenshots/notification-implementation/`：`full-regression-usage-storage-final.log`（298 files，2828 passed，1 skipped）、`typecheck-usage-storage-final.log`、`build-usage-storage-final.log`、`dead-code-usage-storage-final.log`，原 `mcp-smoke-usage-storage-final.log`／`channel-smoke-usage-storage-final.log`。`node-usage-storage-usage-storage-final.log`／`electron-usage-storage-usage-storage-final.log` 用真实编译 worker＋原 store／tracker 验证真文件写失败、内存值不变、真实留档、跨重启、历史缺口不伪恢复、最后 persist 一次和退出无弹出；原 worker／shutdown／recovery／history／context／native-rebase／team-observations／group-effects／mcp-writes 隔离脚本亦在 Node 与 macOS Electron 回归。
+
+`ui/usage-storage-collapsed-light.jpg`／`usage-storage-expanded-light.jpg`／`usage-storage-dark-narrow.jpg`／`usage-storage-recovered-dark.jpg` 和 `usage-storage-ui-audit.json` 是 mock preload 的真实产品组件：默认两个说明折叠仍 2 个未读，展开一项正文后仅变 1；新保存恢复时写入提醒安静收束，历史说明仍保留。深色 CSS 615×497，局部 clientWidth=scrollWidth=580；不以软件最小窗口之外的整体顶栏／设置布局冒充正式验收。`usage-storage-ui-cleanup.json` 确认 system 外观与正常视口恢复；自建标签／5207 服务及所有自有 fixture 均精确清理。`protected-usage-storage-audit.json` 保持两份原开发树及四个既有外部预热漂移。
+
+**完整目标仍未完成**：本批证明本机用量文件的已有读写结果，不把估算、正常长会话尚无精确回合结算当作源故障，不宣称模型目录／原生用量入口／统计所有健康接入已做完。未确认历史不由通知自动修复。模型目录／原生统计数据来源、旧 scope 消失／同 revision 异内容、其他 feeds 的恢复关联、长期容量／全序列、正式应用／包和真实 Windows/macOS 权限／声音／勿扰仍须继续。未 production main、真实账号或模型、Cursor 重启、OS 送达、安装、推送或发布，完整目标保持 active。
+
 下面保留完整要求，不因前三批已有成果缩小。已实现部分仍需匹配该项范围验收；未实现部分继续开工。
 
 1. 通知中心、轻量顶栏入口、单张提醒和独立 renderer store。支持待处理／未读／全部、查询范围、分页、详情、关闭、阅读、归档、确认清理和适当偏好；减少动画、长内容、键盘与窄窗需验收。

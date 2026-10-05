@@ -104,6 +104,7 @@ import { createElectronUpdaterPort } from '../infrastructure/app-update/electron
 import { createMacUpdaterPort } from '../infrastructure/app-update/mac-updater-port'
 import { registerAppUpdateIpc } from './register-app-update-ipc'
 import { NotificationService } from '../application/notification-service'
+import { UsageStorageNotifications } from '../application/notifications/usage-storage-notifications'
 import { NotificationDeliveryService } from '../application/notification-delivery-service'
 import { createNativeNotificationPort } from './native-notification-port'
 import { NotificationWorkerPort } from './notification-worker-port'
@@ -172,6 +173,7 @@ let channelMessageRelay: ChannelMessageRelay | undefined
 let localSessionBridge: LocalSessionBridge | undefined
 let teamFailoverService: TeamFailoverService | undefined
 let notificationService: NotificationService | undefined
+let usageStorageNotifications: UsageStorageNotifications | undefined
 let notificationDeliveryService: NotificationDeliveryService | undefined
 let pageOperationNotifications: PageOperationNotifications | undefined
 let workspaceNotifications: WorkspaceNotifications | undefined
@@ -478,7 +480,11 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   const workspaceReviewReader = new WorkspaceReviewReader(activeTeamWorkspacePath, {
     trashItem: (absolutePath) => shell.trashItem(absolutePath)
   })
-  const cursorUsageStore = new CursorUsageStore(join(app.getPath('userData'), 'cursor-usage.json'))
+  if (notificationService) {
+    try { usageStorageNotifications = new UsageStorageNotifications(notificationService) }
+    catch { notificationService.reportHistoryGap() }
+  }
+  const cursorUsageStore = new CursorUsageStore(join(app.getPath('userData'), 'cursor-usage.json'), usageStorageNotifications)
   const initialUsageTeam = teamControlService.getSnapshot()
   /**
    * 活动 run 已绑定的 composer 及其席位（席位 ↔ Composer，阶段 2 · 2E）：账本的开关、入账资格与
@@ -1146,7 +1152,10 @@ const notificationQuitBarrier = new NotificationQuitBarrier({
     () => compatibilityNotifications?.close() ?? Promise.resolve(),
     () => groupTopologyNotificationSource?.close() ?? Promise.resolve(),
     () => memoryIssueNotificationSource?.close() ?? Promise.resolve(),
-    () => groupEffectsNotifications?.close() ?? Promise.resolve()
+    () => groupEffectsNotifications?.close() ?? Promise.resolve(),
+    // The original tracker writes once more during disposeDesktopOnce. Seal
+    // this observer AFTER that synchronous final persist, not before it.
+    () => Promise.resolve().then(() => usageStorageNotifications?.close())
   ], disposeDesktopOnce),
   settled: result => {
     try { notificationRuntimeJournal?.finish(result.confirmed, notificationService?.status().historyIncomplete ?? true, notificationService?.status().historyGapId) }

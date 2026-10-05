@@ -64,11 +64,12 @@ it('a compact local diagnostic can be expanded and only reads the exact displaye
     retryGroup: retry
   }
   await act(async () => root.render(<GroupEffectsNotice record={record} />))
-  expect(read).toHaveBeenCalledExactlyOnceWith({ id: 'rec', revision: 1 })
+  expect(read).not.toHaveBeenCalled()
   expect(document.querySelector('details')?.open).toBe(false)
   expect(document.querySelectorAll('.group-effects-notice button')).toHaveLength(0)
-  await act(async () => document.querySelector('summary')!.click())
+  await act(async () => { document.querySelector('summary')!.click(); await new Promise(requestAnimationFrame) })
   expect(document.querySelector('details')?.open).toBe(true)
+  expect(read).toHaveBeenCalledExactlyOnceWith({ id: 'rec', revision: 1 })
   expect(document.body.textContent).toContain('不会自动重做')
   expect(retry).not.toHaveBeenCalled()
 })

@@ -206,7 +206,7 @@ describe('统计页组件', () => {
 
   it('没有任何用量时呈现空态说明', async () => {
     await render({ usageSnapshot: {}, statsSeats: [], active: true })
-    expect(container.querySelector('.stats-empty')?.textContent).toContain('还没有会话产生用量')
+    expect(container.querySelector('.stats-empty')?.textContent).toContain('暂无可展示的用量')
     expect(container.querySelector('.stats-ledger')).toBeNull()
   })
 

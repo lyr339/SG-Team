@@ -1,5 +1,6 @@
 import { projectUsage, type CursorUsageLedger, type UsageTurn, type CursorSessionUsage, type CursorUsageSnapshot } from '../../domain/cursor-usage'
 import { quarantineStoreFileSync, readStoreJsonSync, writeStoreFileSync } from '../fs/store-file'
+import { usageStorageFailureReason, type UsageStorageObservation } from '../../domain/usage-storage-observation'
 
 /**
  * V4：一个 Composer 一行，文件跨会话池保留全部账本（出绑 / 结束的账已由 tracker 封口，裁旧也归它）。
@@ -77,7 +78,14 @@ function sessionUsage(value: unknown, composerId: string): CursorSessionUsage | 
 
 /** Cursor 用量的本地持久化；只保存计数与费用估算，不含正文或凭据。一个 Composer 一行，跨会话池保留。 */
 export class CursorUsageStore {
-  constructor(readonly path: string) {}
+  constructor(readonly path: string, private readonly observation?: {
+    observe(fact: UsageStorageObservation): void
+    unavailable(): void
+  }) {}
+  private observe(fact: UsageStorageObservation): void {
+    try { this.observation?.observe(Object.freeze(fact)) }
+    catch { try { this.observation?.unavailable() } catch { /* Notification failure cannot enter original file IO. */ } }
+  }
 
   /**
    * 读出全部账（时间裁旧由 tracker 负责）。
@@ -86,27 +94,35 @@ export class CursorUsageStore {
    */
   load(): CursorUsageSnapshot {
     const file = readStoreJsonSync(this.path)
-    if (file.kind !== 'json') return {}
+    if (file.kind !== 'json') {
+      this.observe(file.kind === 'missing' ? { kind: 'load', result: 'empty' } : { kind: 'load', result: 'history-unconfirmed', reason: 'read', backupAvailable: Boolean(file.keptPath) })
+      return {}
+    }
     try {
       const parsed = file.value as {
         version?: unknown
         sessions?: unknown
       }
       if (typeof parsed.version !== 'number' || !READABLE_VERSIONS.has(parsed.version) || !parsed.sessions || typeof parsed.sessions !== 'object') {
-        quarantineStoreFileSync(this.path, '用量账本版本或结构不符')
+        const kept = quarantineStoreFileSync(this.path, '用量账本版本或结构不符')
+        this.observe({ kind: 'load', result: 'history-unconfirmed', reason: 'structure', backupAvailable: Boolean(kept) })
         return {}
       }
+      let rejected = false
       const rows = Object.entries(parsed.sessions as Record<string, unknown>)
         .flatMap(([composerId, value]) => {
           const normalizedId = composerId.trim().slice(0, 200)
           const usage = normalizedId ? sessionUsage(value, normalizedId) : undefined
+          if (!usage) rejected = true
           return usage ? [[normalizedId, usage] as const] : []
         })
         .sort((left, right) => right[1].lastTurnAt - left[1].lastTurnAt)
         .slice(0, MAX_SESSIONS)
+      this.observe(rejected || Array.isArray(parsed.sessions) ? { kind: 'load', result: 'history-unconfirmed', reason: 'records' } : { kind: 'load', result: 'ready' })
       return Object.fromEntries(rows)
     } catch {
-      quarantineStoreFileSync(this.path, '用量账本内容异常')
+      const kept = quarantineStoreFileSync(this.path, '用量账本内容异常')
+      this.observe({ kind: 'load', result: 'history-unconfirmed', reason: 'structure', backupAvailable: Boolean(kept) })
       return {}
     }
   }
@@ -115,6 +131,12 @@ export class CursorUsageStore {
     const sessions = Object.fromEntries(Object.entries(snapshot)
       .sort((left, right) => right[1].lastTurnAt - left[1].lastTurnAt)
       .slice(0, MAX_SESSIONS))
-    writeStoreFileSync(this.path, JSON.stringify({ version: STORE_VERSION, sessions }), { mode: 0o600 })
+    try {
+      writeStoreFileSync(this.path, JSON.stringify({ version: STORE_VERSION, sessions }), { mode: 0o600 })
+    } catch (error) {
+      this.observe({ kind: 'save', result: 'unconfirmed', reason: usageStorageFailureReason(error) })
+      throw error
+    }
+    this.observe({ kind: 'save', result: 'confirmed' })
   }
 }

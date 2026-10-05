@@ -3,6 +3,7 @@ import { formatCostUsd, formatTokenCount } from '../../../domain/cursor-usage'
 import { AgentAvatar } from '../AgentAvatar'
 import { formatClock, formatRelativeClock, formatFullClock } from '../format'
 import { ChevronDownIcon } from '../UiIcons'
+import { UsageStorageNotice } from '../notifications/UsageStorageNotice'
 import type { SettingsPageProps } from './settings-view'
 import {
   STATS_HISTORY_SEAT,
@@ -161,8 +162,9 @@ export function SettingsStats({ usageSnapshot, statsSeats, statsGroups, active }
   if (!view.hasAnyUsage) {
     return (
       <div className="settings-stats">
+        <UsageStorageNotice active={active !== false} />
         <div className="stats-empty">
-          <strong>还没有会话产生用量</strong>
+          <strong>暂无可展示的用量</strong>
           <p>发起一次会话后，这里会给出成本节奏、Token 构成、模型分布与每个会话的明细账。费用为等价 API 成本参考值。</p>
         </div>
       </div>
@@ -173,6 +175,7 @@ export function SettingsStats({ usageSnapshot, statsSeats, statsGroups, active }
 
   return (
     <div className="settings-stats">
+      <UsageStorageNotice active={active !== false} />
       <div className="stats-controls">
         <div className="stats-range" role="group" aria-label="统计时间范围">
           {STATS_RANGE_OPTIONS.map((option) => (
@@ -435,7 +438,7 @@ export function SettingsStats({ usageSnapshot, statsSeats, statsGroups, active }
               ) : null}
               {savingsVisible ? (
                 <p className="stats-card__note">
-                  若无缓存约 {formatCostUsd(view.totals.costUsd + view.totals.savingsUsd)} · 实付 {formatCostUsd(view.totals.costUsd)} · 省 {Math.round((view.totals.savingsRatio ?? 0) * 100)}%
+                  若无缓存约 {formatCostUsd(view.totals.costUsd + view.totals.savingsUsd)} · 估算 {formatCostUsd(view.totals.costUsd)} · 省 {Math.round((view.totals.savingsRatio ?? 0) * 100)}%
                 </p>
               ) : null}
             </>

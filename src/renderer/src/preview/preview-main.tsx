@@ -1,6 +1,7 @@
 import { reduceGroupEffects } from '../../../domain/group-effects-notification'
 import { observedMcpWrite } from '../../../domain/mcp-write-observation'
 import { reduceMcpWriteNotifications } from '../../../domain/mcp-write-notification'
+import { reduceUsageStorageNotifications } from '../../../domain/usage-storage-notification'
 import type { GroupEffectsFrame } from '../../../domain/group-effects'
 import { reduceMemoryIssueNotifications, type MemoryIssueState } from '../../../domain/memory-issue-notification'
 import type { MemoryOperatorReviewProof } from '../../../domain/memory-operator-review'
@@ -1174,6 +1175,17 @@ function updatePreviewGroup(groupId: string, update: (view: typeof state.team.gr
 }
 
 const notificationPreview = createNotificationPreview()
+if (previewParameters.get('notifications') === 'usage-store') {
+  const key = 'usage-storage-health', at = Date.now()-60000
+  const history = reduceUsageStorageNotifications(undefined, { key, id: 'a'.repeat(64), at,
+    fact: { kind: 'load', result: 'history-unconfirmed', reason: 'read', backupAvailable: true } }, true, 1)
+  history.drafts.forEach(notificationPreview.offer)
+  const write = reduceUsageStorageNotifications(history.state, { key, id: 'b'.repeat(64), at: at+1000,
+    fact: { kind: 'save', result: 'unconfirmed', reason: 'permission' } }, true, 2)
+  write.drafts.forEach(notificationPreview.offer)
+  if (previewParameters.get('usageStore') === 'recovered') reduceUsageStorageNotifications(write.state, { key, id: 'c'.repeat(64), at: at+2000,
+    fact: { kind: 'save', result: 'confirmed' } }, true, 3).drafts.forEach(notificationPreview.offer)
+}
 if (previewParameters.get('notifications') === 'mcp-write' && state.team.activeRun) {
   const member = state.team.members.find(member => member.binding && state.desktop.sessions.some(session => session.channelId === member.binding!.channelId && session.composerId)), binding = member?.binding
   const session = state.desktop.sessions.find(session => session.channelId === binding?.channelId)
