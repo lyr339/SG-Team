@@ -4,8 +4,9 @@ import type { TeamControlSnapshot } from '../../domain/team-control'
 import type { ProcessBlock } from '../../domain/conversation-entry'
 import { conversationEntryProcessBlocks } from '../../domain/conversation-entry'
 import { nativeAssistantEntry } from '../../domain/native-assistant-entry'
+import { QUESTION_TERMINAL_BATCH_LIMIT } from '../../domain/question-terminal-receipt'
 import { sessionNotificationObservation } from './session-lifecycle-notifications'
-import { readQuestionNotificationState, reduceQuestionNotifications, type NotificationQuestionFact, type QuestionNotificationInput, type QuestionNotificationState } from '../../domain/question-notification'
+import { readQuestionNotificationState, reduceQuestionNotifications, questionTerminalSlice, type NotificationQuestionFact, type QuestionNotificationInput, type QuestionNotificationState } from '../../domain/question-notification'
 import type { NotificationService } from '../notification-service'
 import { NotificationProjectionSource } from './projection-source'
 
@@ -16,8 +17,21 @@ export class QuestionNotifications {
   private activeScope?: { key: string; runId?: string }
   private stopped = false
   constructor(private readonly owner: NotificationService, private readonly now: () => number = Date.now) {
-    this.source = new NotificationProjectionSource(owner, readQuestionNotificationState, (old, input, baseline, revision) => reduceQuestionNotifications(old, input, baseline, revision),
-      input => JSON.stringify([input.scopeKey, input.runCompleted, input.facts, input.sessions]))
+    this.source = new NotificationProjectionSource(owner, readQuestionNotificationState, async (old, input, baseline, revision) => {
+      if (old && !old.indexed) return reduceQuestionNotifications(old, input, baseline, revision)
+      const pending = input.facts.filter(fact => fact.status === 'pending').map(fact => fact.identity)
+      const pendingReceipts = [] as Awaited<ReturnType<NotificationService['questionTerminals']>>
+      for (let start = 0; start < pending.length; start += QUESTION_TERMINAL_BATCH_LIMIT) pendingReceipts.push(...await owner.questionTerminals(input.scopeKey, pending.slice(start, start + QUESTION_TERMINAL_BATCH_LIMIT)))
+      let working = old
+      for (let batch = 0; batch < 1024; batch++) {
+        const slice = questionTerminalSlice(working, input)
+        const receipts = slice.facts.length ? await owner.questionTerminals(input.scopeKey, slice.facts.map(fact => fact.identity)) : []
+        const projection = reduceQuestionNotifications(working, input, baseline, revision, [...pendingReceipts, ...receipts])
+        if (projection.drafts.length || projection.questionTerminals || projection.complete !== false) return projection
+        working = projection.state // Known receipt pages need no temporary-offset SQLite writes.
+      }
+      throw Error('问卷终态核对超过本次有界容量，历史保留')
+    }, input => input.signature, undefined, 1024)
   }
   observe(snapshot: DesktopSnapshot, team: TeamControlSnapshot): void {
     if (this.stopped || snapshot.runtimeScope && (snapshot.runtimeScope.workspaceId !== team.activeWorkspaceId || snapshot.runtimeScope.runId !== team.activeRun?.id || snapshot.runtimeScope.teamRevision !== team.revision)) return
@@ -56,10 +70,11 @@ export class QuestionNotifications {
         collect(snapshot.liveProcess?.[session.channelId]?.blocks ?? [], questions)
       }
       if (this.history.size > 256) this.history.delete(this.history.keys().next().value!)
-      const input: QuestionNotificationInput = { scopeKey: `questions:${hash([observed.workspaceId, observed.runId])}`, runCompleted: observed.runCompleted, now: this.now(), facts: [...questions.values()], sessions }
+      const input: QuestionNotificationInput = { signature: '', scopeKey: `questions:${hash([observed.workspaceId, observed.runId])}`, runCompleted: observed.runCompleted, now: this.now(), facts: [...questions.values()], sessions }
+      input.signature = hash([input.scopeKey, input.runCompleted, input.facts, input.sessions])
       if (this.activeScope && this.activeScope.key !== input.scopeKey && this.activeScope.runId
         && team.runs.some(run => run.id === this.activeScope!.runId && run.status === 'completed')) {
-        this.source.observe(this.activeScope.key, { scopeKey: this.activeScope.key, runCompleted: true, now: input.now, facts: [], sessions: [] })
+        this.source.observe(this.activeScope.key, { scopeKey: this.activeScope.key, runCompleted: true, now: input.now, facts: [], sessions: [], signature: hash([this.activeScope.key, 'completed']) })
       }
       this.activeScope = { key: input.scopeKey, runId: observed.runId }
       this.source.observe(input.scopeKey, input)

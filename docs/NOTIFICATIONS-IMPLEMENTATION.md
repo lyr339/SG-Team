@@ -668,3 +668,22 @@ source checkpoint v2 每个既有身份仅增加一个 `~` 前缀表示“已检
 - `protected-reply-index-audit.json`：两个保护树逐文件、HEAD、porcelain status 和 binary diff 保持；原四个删除继续为删除。fixtures 的临时目录在 finally 精确清理，未创建 preview tab/server。
 
 本批只本地提交，未 push、发布、安装或重启用户软件/Cursor，没有真实账号操作、模型请求或 OS 通知。**完整目标仍未完成**：旧版丢失身份与恢复时的混合历史归属、问卷旧终态/真实恢复、队列跨 scope/备份恢复、未发 usage/MCP 校验前不可归属诊断、全布局/长期容量/正式包及 Windows/macOS 真权限/声音/勿扰/送达仍须逐项核验，不能用这次回复修复替代完整验收。
+
+## 第三十六批 · 问卷终态不随工作缓存遗忘
+
+权威失败回归：先观察原 pending，再收到明确 submitted/cancelled，用户明确读过并清理；随后同一真实时间线增加 600 个独立终态问卷，原行从 512 条 passive 工作缓存淘汰。observer 重建后，一条旧 pending 块与一条真正的新 pending 同时出现，原实现产生两个待处理，并复活已清理的旧问卷。`question-terminal-reproduction.log` 保存该失败，不把“没有发生淘汰”的初次试验当复现。
+
+- 私有 schema 6 增加 `desktop_notification_question_terminals`，仅 source namespace、问卷身份 hash、submitted/cancelled 三列。不保存题目、答案、选项或原参数；不是作答通道或新 MCP 工具。凭据按 workspace/run source 与完整会话身份派生的问卷 identity 隔离，工作 cache 仍是 512 条，未扩大原 2MiB checkpoint 限制。
+- 只把原生明确终态写入凭据；suspected、裁切、未再等待、停止/结束运行仍不推测为已回答/已跳过。已保存的明确终态能在 late pending 到达时稳定收口，同源重复身份不覆盖为相反终态，不按正文或时间水位猜。真实新 pending 仍能恢复，主动决策不会为了 passive 历史被淘汰。
+- 凭据、通知变化和 source 游标一起走既有 private worker 的短 CAS 事务；任一 SQL 失败全部回滚。metadata 和投影回执各自检查 storageEpoch；未知 ACK 只在下一原 source frame 重载，CAS 冲突按真实 checkpoint 重核，不重试原作答或业务。
+- question checkpoint v2 先把 v1 **实际保留下来的** terminal rows 分批迁入，每批最多 100，再缩减工作 cache。当前观察也按明确扫描位置逐批推进；未落盘的 passive terminal 不提前进入可裁切的 cache。初始 stock、没有 draft 的阶段同样有真实进度。已保存的 terminal 前缀只读，不为每个临时 offset 重写 SQLite；1,600 个已知终态后追加一个新终态只增加一次 source 写入。
+- 元数据补齐只为仍活动的问题更新原定位，并保留原 ID/read/attention revision；已结束的问卷不因后来的封口 entry 或停止状态被改成 activity 来偷偷消掉未读。本批二次审查明确找到并加了这一负向回归。已清理的终态也不会因 metadata 补齐复活。问卷语义与真实作答门禁、选项、原响应处理保持分离，通知不能代答或禁止原入口。
+- legacy backfill 校验 metadata 字段、范围、身份形状和实际 offset，不把答案/题目混入检查点；损坏当前 schema 不建空表假装恢复。未来格式拒绝降级；全局 user_version、无关表和其他 private 回复索引保持。旧版早已丢失的身份、曾经不可靠的旧来源以及真实 Cursor 原库回退/复原的重新归属，仍须后续核验，不能把复制旧 checkpoint 等同于恢复过去的原证据。
+
+最终证据：`question-terminal-typecheck-final.log`、`question-terminal-build-final.log`、`question-terminal-dead-code-final.log`；`question-terminal-review-final.log` 包含本批末轮语义审查，`question-terminal-full-regression-final.log` 为 320 files、3056 passed、1 skipped。fixture 中一度缺少必需的 live `turn`，类型检查发现后已补齐并完整重跑，不携带编译错误提交。
+
+`question-terminal-verification-matrix-final.log`：25 类 fixtures 在 Node 与 macOS Electron as-node 使用本次编译 worker 复跑，另有隔离 Electron quit 与原 MCP/channel smoke。新增真实 worker verifier 验证 1,602 个 terminal 超出 cache 后跨重启稳定、已读/清理不复活、真正新待处理恢复、SQL trigger 失败时三部分一起回滚、passive refinement 不消费未读、原无关 SQLite 数据/user_version 保留、三列无正文。单位回归另覆盖旧 v1 分批迁移、临时失败续批、CAS/未知 ACK、迟到旧代次 metadata、严格 namespace/上限/非法字段及缺表/结构损坏。不冒充 Windows 真系统送达或实际 Cursor 请求验收。
+
+保护报告为 `protected-question-terminal-audit.json`；两个原开发树的文件、HEAD、porcelain status、binary diff 和四个既有删除保持。fixtures 精确清理自己的临时目录；没有 production main、用户软件/Cursor 重启、真实模型/账号/退款/删除/付款或 OS 通知，没有 preview tab/server。本批只本地提交，未 push、发布或安装。
+
+**完整目标仍未完成**：真实原库恢复时的问卷重新核对、旧版已失去的身份与混合历史、队列跨 scope/备份回退、未发 usage/MCP 校验前不可归属诊断、全布局/长期容量/正式包及 Windows/macOS 真权限/声音/勿扰/送达仍继续。终态 cache 修复不替代上述完整范围。

@@ -4,6 +4,7 @@ import type { NotificationSourceListPage, NotificationSourceListQuery } from '..
 import type { OperatorMessageRecordMetadata } from '../domain/team-message-notification'
 import type { McpWriteRecordMetadata } from '../domain/mcp-write-notification'
 import type { ReplyIdentityBatch, ReplyIdentityMatch } from '../domain/reply-identity-index'
+import type { QuestionTerminalBatch, QuestionTerminalReceipt } from '../domain/question-terminal-receipt'
 
 /** Storage lifecycle, not a business event or proof that an interrupted write rolled back. */
 export interface NotificationRepositoryLifecycle { state: 'unavailable' | 'recovered'; generation: number }
@@ -20,7 +21,8 @@ export interface NotificationRepository {
   operatorMessageRecords?(keys: string[]): Promise<OperatorMessageRecordMetadata[]>
   mcpWriteRecords?(keys: string[]): Promise<McpWriteRecordMetadata[]>
   replyIdentities?(sourceKey: string, aliases: string[]): Promise<ReplyIdentityMatch[]>
-  commitSource(key: string, expectedRevision: number, data: unknown, drafts: NotificationDraft[], now: number, replyIdentities?: ReplyIdentityBatch): Promise<NotificationSourceResult>
+  questionTerminals?(sourceKey: string, identities: string[]): Promise<QuestionTerminalReceipt[]>
+  commitSource(key: string, expectedRevision: number, data: unknown, drafts: NotificationDraft[], now: number, replyIdentities?: ReplyIdentityBatch, questionTerminals?: QuestionTerminalBatch): Promise<NotificationSourceResult>
   put(draft: NotificationDraft, now: number): Promise<NotificationChange>
   page(query?: NotificationQuery): Promise<NotificationPage>
   read(id: string, observedRevision: number, now: number): Promise<NotificationChange>

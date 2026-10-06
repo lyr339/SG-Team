@@ -15,7 +15,8 @@ export function notificationSourceHarness(path = ':memory:', subscribeLifecycle?
     operatorMessageRecords: vi.fn(async keys => ledger.operatorMessageRecords(keys)),
     mcpWriteRecords: vi.fn(async keys => ledger.mcpWriteRecords(keys)),
     replyIdentities: vi.fn(async (key, aliases) => ledger.replyIdentities(key, aliases)),
-    commitSource: vi.fn(async (key, expected, data, drafts, now, identities) => ledger.commitSource(key, expected, data, drafts, now, identities)),
+    questionTerminals: vi.fn(async (key, identities) => ledger.questionTerminals(key, identities)),
+    commitSource: vi.fn(async (key, expected, data, drafts, now, identities, questions) => ledger.commitSource(key, expected, data, drafts, now, identities, questions)),
     put: async (draft, now) => ledger.put(draft, now), page: async query => ledger.page(query), read: async (id, revision, now) => ledger.read(id, revision, now),
     readAll: async (query, revision, now) => ledger.readAll(query, revision, now), archive: async (id, now) => ledger.archive(id, now), clearRead: async (query, now) => ledger.clearRead(query, now),
     preferences: async () => ledger.preferences(), savePreferences: async value => ledger.savePreferences(value), close: async () => ledger.close()

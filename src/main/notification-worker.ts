@@ -3,6 +3,7 @@ import { SqliteNotificationRepository, notificationSqliteIsBusy, notificationTra
 import type { NotificationDraft, NotificationPreferences, NotificationQuery } from '../domain/notification'
 import type { NotificationSourceListQuery } from '../domain/native-scope-availability'
 import type { ReplyIdentityBatch } from '../domain/reply-identity-index'
+import type { QuestionTerminalBatch } from '../domain/question-terminal-receipt'
 
 export type NotificationWorkerCommand =
   | { kind: 'historyGap'; id?: string }
@@ -14,7 +15,8 @@ export type NotificationWorkerCommand =
   | { kind: 'operatorMessageRecords'; keys: string[] }
   | { kind: 'mcpWriteRecords'; keys: string[] }
   | { kind: 'replyIdentities'; sourceKey: string; aliases: string[] }
-  | { kind: 'commitSource'; key: string; expectedRevision: number; data: unknown; drafts: NotificationDraft[]; now: number; replyIdentities?: ReplyIdentityBatch }
+  | { kind: 'questionTerminals'; sourceKey: string; identities: string[] }
+  | { kind: 'commitSource'; key: string; expectedRevision: number; data: unknown; drafts: NotificationDraft[]; now: number; replyIdentities?: ReplyIdentityBatch; questionTerminals?: QuestionTerminalBatch }
   | { kind: 'marker'; key: string }
   | { kind: 'put'; draft: NotificationDraft; now: number }
   | { kind: 'page'; query?: NotificationQuery }
@@ -46,7 +48,8 @@ if (parentPort) {
           case 'operatorMessageRecords': result = repository.operatorMessageRecords(command.keys); break
           case 'mcpWriteRecords': result = repository.mcpWriteRecords(command.keys); break
           case 'replyIdentities': result = repository.replyIdentities(command.sourceKey, command.aliases); break
-          case 'commitSource': result = repository.commitSource(command.key, command.expectedRevision, command.data, command.drafts, command.now, command.replyIdentities); break
+          case 'questionTerminals': result = repository.questionTerminals(command.sourceKey, command.identities); break
+          case 'commitSource': result = repository.commitSource(command.key, command.expectedRevision, command.data, command.drafts, command.now, command.replyIdentities, command.questionTerminals); break
           case 'marker': result = repository.marker(command.key); break
           case 'put': result = repository.put(command.draft, command.now); break
           case 'page': result = repository.page(command.query); break
@@ -64,7 +67,7 @@ if (parentPort) {
         const message = error instanceof Error ? error.message : '通知存储不可用'
         // Negative transaction evidence, not an error-message guess. Read-only
         // queries may safely retry real SQLite BUSY/LOCKED without mutation evidence.
-        const readOnly = ['sourceState', 'listNativeSources', 'operatorMessageRecords', 'mcpWriteRecords', 'replyIdentities', 'marker', 'page', 'preferences', 'historyGap'].includes(command.kind)
+        const readOnly = ['sourceState', 'listNativeSources', 'operatorMessageRecords', 'mcpWriteRecords', 'replyIdentities', 'questionTerminals', 'marker', 'page', 'preferences', 'historyGap'].includes(command.kind)
         parentPort!.postMessage({ id, ok: false, error: message, retryable: notificationTransactionMayRetry(error) || readOnly && notificationSqliteIsBusy(error),
           ...(error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? { code: error.code } : {}) } satisfies NotificationWorkerReply)
       }

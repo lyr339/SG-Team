@@ -1,10 +1,11 @@
 import type { NotificationDraft, NotificationGroupPresentation } from '../../domain/notification'
 import type { NotificationService } from '../notification-service'
 import type { ReplyIdentityBatch } from '../../domain/reply-identity-index'
+import type { QuestionTerminalBatch } from '../../domain/question-terminal-receipt'
 
 interface SourceObservation<T> { key: string; input: T; baseline: boolean; storageEpoch?: number; quietEpoch: number; invalidated?: boolean; reloads?: number }
 class CheckpointInvalidated extends Error {}
-export interface NotificationProjection<S> { state: S; drafts: NotificationDraft[]; group?: NotificationGroupPresentation; complete?: boolean; replyIdentities?: ReplyIdentityBatch }
+export interface NotificationProjection<S> { state: S; drafts: NotificationDraft[]; group?: NotificationGroupPresentation; complete?: boolean; replyIdentities?: ReplyIdentityBatch; questionTerminals?: QuestionTerminalBatch }
 
 /** Shared durability transport, not a workflow engine: domain reducers alone decide facts and presentation. */
 export class NotificationProjectionSource<T, S> {
@@ -97,12 +98,12 @@ export class NotificationProjectionSource<T, S> {
           if (reductionStorage !== this.storageEpoch) throw Error('私有通知核对跨越了存储代次')
           if (observation.invalidated) throw new CheckpointInvalidated()
           if (reductionEpoch !== this.epoch) continue // Recompute quiet presentation; an async private read cannot bypass a newer wake baseline.
-          if (!projection.drafts.length && !projection.replyIdentities && JSON.stringify(cached.state) === JSON.stringify(projection.state)) {
+          if (!projection.drafts.length && !projection.replyIdentities && !projection.questionTerminals && JSON.stringify(cached.state) === JSON.stringify(projection.state)) {
             if (projection.complete === false) throw Error('通知来源分批未推进检查点')
             this.completedObservation(observation, projection.state); break
           }
           const storageEpoch = this.storageEpoch
-          const result = await this.owner.commitSource(observation.key, cached.revision, projection.state, projection.drafts, projection.group, projection.replyIdentities)
+          const result = await this.owner.commitSource(observation.key, cached.revision, projection.state, projection.drafts, projection.group, projection.replyIdentities, projection.questionTerminals)
           this.checkStorage()
           if (storageEpoch !== this.storageEpoch) throw Error('原私有投影确认跨越了存储代次')
           if (observation.invalidated) throw new CheckpointInvalidated()

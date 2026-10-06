@@ -182,7 +182,7 @@ describe('old reply checkpoints migrate without invented history', () => {
       expect(writes.slice(0, 2).map(call => call[5]?.rows.length)).toEqual([100, 20])
       expect(h.ledger.replyIdentities(key, [saved.seen[0]])[0]?.row.entryId).toBe(canonical().id)
       const inspect = new DatabaseSync(path)
-      try { expect(inspect.prepare('SELECT schema_version FROM desktop_notification_meta').get()!.schema_version).toBe(5); expect(inspect.prepare('PRAGMA user_version').get()!.user_version).toBe(77); expect(inspect.prepare('SELECT value FROM preserve').get()!.value).toBe('original') }
+      try { expect(inspect.prepare('SELECT schema_version FROM desktop_notification_meta').get()!.schema_version).toBe(6); expect(inspect.prepare('PRAGMA user_version').get()!.user_version).toBe(77); expect(inspect.prepare('SELECT value FROM preserve').get()!.value).toBe('original') }
       finally { inspect.close() }
     } finally { await source.close(); await h.owner.close(); rmSync(directory, { recursive: true, force: true }) }
   })

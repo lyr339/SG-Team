@@ -11,6 +11,7 @@ import type { OperatorMessageRecordMetadata } from '../../domain/team-message-no
 import type { McpWriteRecordMetadata } from '../../domain/mcp-write-notification'
 import { validateReplyIdentityBatch, type ReplyIdentityBatch, type ReplyIdentityMatch } from '../../domain/reply-identity-index'
 import { SqliteReplyIdentityIndex } from './sqlite-reply-identity-index'
+import { validateQuestionTerminalLookup, validateQuestionTerminalBatch, type QuestionTerminalBatch, type QuestionTerminalReceipt } from '../../domain/question-terminal-receipt'
 
 type StoredRow = { payload: string }
 const knownNegativeTransactions = new WeakSet<object>()
@@ -65,7 +66,7 @@ export class SqliteNotificationRepository {
           if (!columns.some(column => column.name === 'content_signature')) this.db.exec('ALTER TABLE desktop_notification_tombstones ADD COLUMN content_signature TEXT')
           this.db.exec('UPDATE desktop_notification_meta SET schema_version=2 WHERE id=1')
         })
-      } else if (![2, 3, 4, 5].includes(version)) throw new Error('通知历史格式暂不支持，原有数据未修改')
+      } else if (![2, 3, 4, 5, 6].includes(version)) throw new Error('通知历史格式暂不支持，原有数据未修改')
       if (version >= 4) {
         for (const table of ['desktop_notification_sources', 'desktop_notification_integrity', 'desktop_notification_gap_keys'])
           if (!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) throw Error('通知历史结构异常，原数据保留')
@@ -97,10 +98,37 @@ export class SqliteNotificationRepository {
         this.db.exec('UPDATE desktop_notification_meta SET schema_version=5 WHERE id=1')
       })
       else this.replyIndex.validateStructure()
+      if (version < 6) this.transaction(() => {
+        this.db.exec(`CREATE TABLE IF NOT EXISTS desktop_notification_question_terminals (
+          source_key TEXT NOT NULL, identity TEXT NOT NULL, status TEXT NOT NULL, PRIMARY KEY(source_key,identity));`)
+        this.validateQuestionTerminalsStructure()
+        this.db.exec('UPDATE desktop_notification_meta SET schema_version=6 WHERE id=1')
+      })
+      else this.validateQuestionTerminalsStructure()
       this.historyGap() // Invalid v4 integrity never silently becomes a fresh, clean ledger.
     } catch (error) { this.db.close(); throw error }
   }
 
+  private validateQuestionTerminalsStructure(): void {
+    const columns = this.db.prepare('PRAGMA table_info(desktop_notification_question_terminals)').all() as Array<{ name: string; type: string; pk: number; notnull: number }>
+    const expected = [['source_key', 1], ['identity', 2], ['status', 0]] as const
+    if (columns.length !== 3 || expected.some(([name, pk], index) => columns[index]?.name !== name || columns[index]?.type !== 'TEXT' || columns[index]?.pk !== pk || columns[index]?.notnull !== 1)) throw Error('私有问卷终态结构异常，原数据保留')
+  }
+  questionTerminals(sourceKey: string, identities: string[]): QuestionTerminalReceipt[] {
+    validateQuestionTerminalLookup(sourceKey, identities)
+    if (!identities.length) return []
+    const rows = this.db.prepare(`SELECT identity,status FROM desktop_notification_question_terminals WHERE source_key=? AND identity IN (${identities.map(() => '?').join(',')})`).all(sourceKey, ...identities) as unknown as QuestionTerminalReceipt[]
+    validateQuestionTerminalBatch({ sourceKey, rows }); return rows
+  }
+  private writeQuestionTerminals(batch: QuestionTerminalBatch): void {
+    const get = this.db.prepare('SELECT status FROM desktop_notification_question_terminals WHERE source_key=? AND identity=?')
+    const put = this.db.prepare('INSERT OR IGNORE INTO desktop_notification_question_terminals VALUES(?,?,?)')
+    for (const row of batch.rows) {
+      const previous = get.get(batch.sourceKey, row.identity) as { status: string } | undefined
+      if (previous && previous.status !== row.status) throw Error('原问卷终态凭据冲突，不猜测覆盖')
+      put.run(batch.sourceKey, row.identity, row.status)
+    }
+  }
   private revision(): number {
     const value = Number((this.db.prepare('SELECT revision FROM desktop_notification_meta WHERE id=1').get() as { revision: number }).revision)
     if (!Number.isSafeInteger(value) || value < 0) throw new Error('通知历史版本异常，原数据保留。')
@@ -232,7 +260,7 @@ export class SqliteNotificationRepository {
     return { rows: entries, ...(rows.length > limit ? { nextKey: entries.at(-1)!.key } : {}) }
   }
   replyIdentities(sourceKey: string, aliases: string[]): ReplyIdentityMatch[] { return this.replyIndex.lookup(sourceKey, aliases) }
-  commitSource(key: string, expectedRevision: number, data: unknown, drafts: NotificationDraft[], now: number, replyIdentities?: ReplyIdentityBatch): NotificationSourceResult {
+  commitSource(key: string, expectedRevision: number, data: unknown, drafts: NotificationDraft[], now: number, replyIdentities?: ReplyIdentityBatch, questionTerminals?: QuestionTerminalBatch): NotificationSourceResult {
     if (!key || key.length > 300 || !Number.isSafeInteger(expectedRevision) || expectedRevision < 0 || drafts.length > NOTIFICATION_SOURCE_BATCH_LIMIT) throw new Error('通知来源提交无效')
     const payload = JSON.stringify(data)
     if (!payload || Buffer.byteLength(payload, 'utf8') > NOTIFICATION_SOURCE_PAYLOAD_LIMIT) throw new Error('通知来源状态过大或无效')
@@ -241,11 +269,16 @@ export class SqliteNotificationRepository {
       validateReplyIdentityBatch(replyIdentities)
       if (replyIdentities.sourceKey !== key) throw Error('私有回复身份不能跨来源提交')
     }
+    if (questionTerminals) {
+      validateQuestionTerminalBatch(questionTerminals)
+      if (questionTerminals.sourceKey !== key) throw Error('私有问卷终态不能跨来源提交')
+    }
     return this.transaction(() => {
       const source = this.sourceState(key)
       if (source.revision !== expectedRevision) return { applied: false, source, changes: [] }
       const changes = drafts.map(draft => this.putInTransaction(draft, now))
       if (replyIdentities) this.replyIndex.write(replyIdentities)
+      if (questionTerminals) this.writeQuestionTerminals(questionTerminals)
       const revision = expectedRevision + 1
       this.db.prepare(`INSERT INTO desktop_notification_sources VALUES(?,?,?,?) ON CONFLICT(source_key)
         DO UPDATE SET revision=excluded.revision,payload=excluded.payload,updated_at=excluded.updated_at`).run(key, revision, payload, now)

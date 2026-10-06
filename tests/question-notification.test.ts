@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { reduceQuestionNotifications, type NotificationQuestionFact, type QuestionNotificationInput } from '../src/domain/question-notification'
 const fact = (patch: Partial<NotificationQuestionFact> = {}): NotificationQuestionFact => ({ identity: 'question-identity', toolCallId: 'real-tool', blockId: 'block-1', name: '架构实现 · CH-2',
   scope: { sessionId: 'real-session', channelId: '2', composerId: 'real-composer', generation: '1', bindingGeneration: 'bind-1' }, status: 'pending', count: 2, actionable: true, terminated: false, ...patch })
-const input = (facts = [fact()], patch: Partial<QuestionNotificationInput> = {}): QuestionNotificationInput => ({ scopeKey: 'questions:a', runCompleted: false, now: 100, facts, ...patch })
+const input = (facts = [fact()], patch: Partial<QuestionNotificationInput> = {}): QuestionNotificationInput => ({ signature: '1'.repeat(64), scopeKey: 'questions:a', runCompleted: false, now: 100, facts, ...patch })
 describe('question notifications reflect real user-decision evidence', () => {
   it('restores an existing pending question without replaying an old toast, then responds to new questions', () => {
     const first = reduceQuestionNotifications(undefined, input(), true, 1)

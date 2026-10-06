@@ -7,6 +7,7 @@ import type { NotificationHistoryIntegrity, NotificationHistoryStatus } from '..
 import type { OperatorMessageRecordMetadata } from '../domain/team-message-notification'
 import type { McpWriteRecordMetadata } from '../domain/mcp-write-notification'
 import type { ReplyIdentityBatch, ReplyIdentityMatch } from '../domain/reply-identity-index'
+import type { QuestionTerminalBatch, QuestionTerminalReceipt } from '../domain/question-terminal-receipt'
 
 type WorkerFactory = (options: { workerData: { databasePath: string } }) => Worker
 type Waiter = { resolve: (value: unknown) => void; reject: (reason: Error) => void; timer: ReturnType<typeof setTimeout> }
@@ -170,8 +171,9 @@ export class NotificationWorkerPort implements NotificationRepository {
   operatorMessageRecords(keys: string[]): Promise<OperatorMessageRecordMetadata[]> { return this.call({ kind: 'operatorMessageRecords', keys }) }
   mcpWriteRecords(keys: string[]): Promise<McpWriteRecordMetadata[]> { return this.call({ kind: 'mcpWriteRecords', keys }) }
   replyIdentities(sourceKey: string, aliases: string[]): Promise<ReplyIdentityMatch[]> { return this.call({ kind: 'replyIdentities', sourceKey, aliases }) }
-  commitSource(key: string, expectedRevision: number, data: unknown, drafts: NotificationDraft[], now: number, replyIdentities?: ReplyIdentityBatch): Promise<NotificationSourceResult> {
-    return this.call({ kind: 'commitSource', key, expectedRevision, data, drafts, now, replyIdentities })
+  questionTerminals(sourceKey: string, identities: string[]): Promise<QuestionTerminalReceipt[]> { return this.call({ kind: 'questionTerminals', sourceKey, identities }) }
+  commitSource(key: string, expectedRevision: number, data: unknown, drafts: NotificationDraft[], now: number, replyIdentities?: ReplyIdentityBatch, questionTerminals?: QuestionTerminalBatch): Promise<NotificationSourceResult> {
+    return this.call({ kind: 'commitSource', key, expectedRevision, data, drafts, now, replyIdentities, questionTerminals })
   }
   page(query?: NotificationQuery): Promise<NotificationPage> { return this.call({ kind: 'page', query }) }
   read(id: string, revision: number, now: number): Promise<NotificationChange> { return this.call({ kind: 'read', id, revision, now }) }

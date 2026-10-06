@@ -1,4 +1,5 @@
-import { NOTIFICATION_SOURCE_BATCH_LIMIT, type NotificationDraft, type NotificationScope } from './notification'
+import { NOTIFICATION_SOURCE_BATCH_LIMIT, validateNotificationDraft, type NotificationDraft, type NotificationScope } from './notification'
+import { QUESTION_TERMINAL_BATCH_LIMIT, type QuestionTerminalReceipt } from './question-terminal-receipt'
 
 export interface NotificationQuestionFact {
   identity: string
@@ -13,18 +14,45 @@ export interface NotificationQuestionFact {
   terminated: boolean
 }
 export interface QuestionSessionEvidence { scope: NotificationScope; online: boolean; awaitingUser?: boolean; awaitingUserEvidence?: 'runtime' | 'process' | 'unknown'; terminated: boolean }
-export interface QuestionNotificationInput { scopeKey: string; runCompleted: boolean; now: number; facts: NotificationQuestionFact[]; sessions?: QuestionSessionEvidence[] }
-export interface QuestionNotificationState { version: 1; scopeKey: string; rows: Record<string, NotificationQuestionFact> }
+export interface QuestionNotificationInput { scopeKey: string; runCompleted: boolean; now: number; facts: NotificationQuestionFact[]; sessions?: QuestionSessionEvidence[]; signature: string }
+export interface QuestionNotificationState {
+  version: 2; scopeKey: string; rows: Record<string, NotificationQuestionFact>; indexed: boolean; indexOffset?: number
+  terminalScan?: { signature: string; offset: number }
+}
 export function readQuestionNotificationState(value: unknown, key: string): QuestionNotificationState | undefined {
   if (value === undefined) return undefined
   const state = value as QuestionNotificationState
-  if (!state || state.version !== 1 || state.scopeKey !== key || !state.rows || Array.isArray(state.rows) || Object.keys(state.rows).length > 512) throw Error('问卷通知检查点格式异常')
-  for (const [id, row] of Object.entries(state.rows)) if (!row || row.identity !== id || !['pending', 'submitted', 'cancelled'].includes(row.status)
-    || typeof row.toolCallId !== 'string' || typeof row.blockId !== 'string' || !row.scope || typeof row.actionable !== 'boolean') throw Error('问卷通知检查点格式异常')
+  const version = (value as { version?: number })?.version
+  if (!state || ![1, 2].includes(version!) || state.scopeKey !== key || !state.rows || Array.isArray(state.rows) || Object.keys(state.rows).length > 512) throw Error('问卷通知检查点格式异常')
+  for (const [id, row] of Object.entries(state.rows)) {
+    if (!row || Object.keys(row).some(key => !['identity', 'toolCallId', 'blockId', 'entryId', 'name', 'scope', 'status', 'count', 'actionable', 'terminated'].includes(key))
+      || row.identity !== id || !/^[a-f0-9]{64}$/.test(id) || !['pending', 'submitted', 'cancelled'].includes(row.status)
+      || typeof row.toolCallId !== 'string' || !row.toolCallId || row.toolCallId.length > 200 || typeof row.blockId !== 'string' || !row.blockId || row.blockId.length > 300
+      || row.entryId !== undefined && (typeof row.entryId !== 'string' || !row.entryId || row.entryId.length > 300) || typeof row.name !== 'string' || row.name.length > 150
+      || !Number.isSafeInteger(row.count) || row.count < 0 || typeof row.actionable !== 'boolean' || typeof row.terminated !== 'boolean') throw Error('问卷通知检查点格式异常')
+    validateNotificationDraft({ key: `question:${id}`, category: 'sessions', source: '问卷检查点', title: '范围校验', tone: 'info', attention: 'activity', state: 'resolved', scope: row.scope, occurredAt: 0, sourceRevision: 0 })
+  }
+  if (version === 1) return { version: 2, scopeKey: key, rows: state.rows, indexed: false }
+  if (Object.keys(state).some(key => !['version', 'scopeKey', 'rows', 'indexed', 'indexOffset', 'terminalScan'].includes(key)) || typeof state.indexed !== 'boolean' || state.indexOffset !== undefined && (!Number.isSafeInteger(state.indexOffset) || state.indexOffset < 0 || state.indexOffset > Object.values(state.rows).filter(fact => fact.status !== 'pending').length || state.indexed)
+    || state.terminalScan !== undefined && (!state.terminalScan || Object.keys(state.terminalScan).some(key => !['signature', 'offset'].includes(key)) || !/^[a-f0-9]{64}$/.test(state.terminalScan.signature) || !Number.isSafeInteger(state.terminalScan.offset) || state.terminalScan.offset < 0)) throw Error('问卷终态分批检查点异常')
   return state
 }
-export function reduceQuestionNotifications(old: QuestionNotificationState | undefined, input: QuestionNotificationInput, baseline: boolean, revision: number) {
-  const state: QuestionNotificationState = { version: 1, scopeKey: input.scopeKey, rows: {} }; const drafts: NotificationDraft[] = []
+export function questionTerminalSlice(old: QuestionNotificationState | undefined, input: QuestionNotificationInput) {
+  const facts = input.facts.filter(fact => fact.status !== 'pending')
+  const start = old?.terminalScan?.signature === input.signature ? old.terminalScan.offset : 0
+  if (start > facts.length) throw Error('问卷终态分批位置超出原观察')
+  return { facts: facts.slice(start, start + QUESTION_TERMINAL_BATCH_LIMIT), start, total: facts.length }
+}
+export function reduceQuestionNotifications(old: QuestionNotificationState | undefined, input: QuestionNotificationInput, baseline: boolean, revision: number, receipts: readonly QuestionTerminalReceipt[] = []) {
+  if (old && !old.indexed) {
+    const facts = Object.values(old.rows).filter(fact => fact.status !== 'pending'), start = old.indexOffset ?? 0
+    const rows = facts.slice(start, start + QUESTION_TERMINAL_BATCH_LIMIT).map(fact => ({ identity: fact.identity, status: fact.status as QuestionTerminalReceipt['status'] }))
+    const end = start + rows.length
+    return { state: { ...old, indexed: end === facts.length, indexOffset: end < facts.length ? end : undefined }, drafts: [] as NotificationDraft[], complete: false,
+      ...(rows.length ? { questionTerminals: { sourceKey: old.scopeKey, rows } } : {}) }
+  }
+  const state: QuestionNotificationState = { version: 2, scopeKey: input.scopeKey, rows: {}, indexed: true }; const drafts: NotificationDraft[] = []
+  const slice = questionTerminalSlice(old, input), allowed = new Set(slice.facts.map(fact => fact.identity)), known = new Map(receipts.map(row => [row.identity, row.status])), accepted = new Set<string>()
   let complete = true
   const event = (fact: NotificationQuestionFact, previous?: NotificationQuestionFact): boolean => {
     const active = fact.status === 'pending' && fact.actionable && !fact.terminated && !input.runCompleted
@@ -39,20 +67,26 @@ export function reduceQuestionNotifications(old: QuestionNotificationState | und
       state: active ? 'active' : resolved ? 'resolved' : 'expired', scope: fact.scope,
       target: { kind: 'session', scope: fact.scope, ...(fact.entryId ? { entryId: fact.entryId } : {}), toolCallId: fact.toolCallId, blockId: fact.blockId },
       origin: { module: 'sessions', sessionId: fact.scope.sessionId }, occurredAt: input.now, timeBasis: 'observed', sourceRevision: revision,
-      renewAttention: active && !previous?.actionable, announce: !baseline && active && (!previous || !previous.actionable || previous.status !== 'pending') })
+      renewAttention: active && !previous?.actionable, respectCleared: !active, announce: !baseline && active && (!previous || !previous.actionable || previous.status !== 'pending') })
     return true
   }
   for (const captured of input.facts) {
-    const previous = old?.rows[captured.identity]
+    const previous = old?.rows[captured.identity], terminal = known.get(captured.identity)
+    if (captured.status !== 'pending' && (terminal && terminal !== captured.status || previous && previous.status !== 'pending' && previous.status !== captured.status)) throw Error('原问卷终态冲突，不猜测覆盖')
+    // Uncommitted passive facts cannot enter a prunable cache ahead of their receipt.
+    if (captured.status !== 'pending' && !allowed.has(captured.identity) && !terminal && previous?.status !== captured.status) continue
     const evidence = input.sessions?.find(value => value.scope.channelId === captured.scope.channelId && value.scope.sessionId === captured.scope.sessionId && value.scope.generation === captured.scope.generation
       && value.scope.composerId === captured.scope.composerId && value.scope.bindingGeneration === captured.scope.bindingGeneration)
     const uncertainWait = Boolean(previous?.actionable && evidence && !evidence.terminated && !(evidence.awaitingUserEvidence === 'runtime' && evidence.awaitingUser === false)
       && captured.status === 'pending' && !captured.terminated && !input.runCompleted)
-    const fact = previous?.status !== undefined && previous.status !== 'pending' && captured.status === 'pending'
+    const fact = terminal ? { ...captured, status: terminal, actionable: false } : previous?.status !== undefined && previous.status !== 'pending' && captured.status === 'pending'
       ? previous : { ...captured, actionable: captured.status === 'pending' && (captured.actionable || uncertainWait) && !captured.terminated && !input.runCompleted }
-    const changed = !previous || previous.status !== fact.status || previous.actionable !== fact.actionable || previous.terminated !== fact.terminated
+    // Passive sealing/refinement is neither a new attention class nor a human read.
+    const changed = !previous || previous.status !== fact.status || fact.status === 'pending' && (previous.actionable !== fact.actionable || previous.terminated !== fact.terminated
+      || fact.actionable && (previous.entryId !== fact.entryId || previous.blockId !== fact.blockId || previous.count !== fact.count || previous.name !== fact.name))
     if (changed && !event(fact, previous)) { if (previous) state.rows[fact.identity] = previous; continue }
     state.rows[fact.identity] = fact
+    if (captured.status !== 'pending') accepted.add(captured.identity)
   }
   for (const fact of Object.values(old?.rows ?? {})) {
     if (state.rows[fact.identity]) continue
@@ -73,5 +107,9 @@ export function reduceQuestionNotifications(old: QuestionNotificationState | und
   // Never evict an unresolved human action to make room for passive history.
   const passive = Object.values(state.rows).filter(fact => fact.status !== 'pending' || !fact.actionable).slice(-(512 - active.length))
   state.rows = Object.fromEntries([...active, ...(active.length < 512 ? passive : [])].map(fact => [fact.identity, fact]))
-  return { state, drafts, complete }
+  let end = slice.start
+  for (const fact of slice.facts) { if (!accepted.has(fact.identity)) break; ++end }
+  if (end < slice.total) state.terminalScan = { signature: input.signature, offset: end }
+  const terminalRows = slice.facts.filter(fact => accepted.has(fact.identity) && !known.has(fact.identity)).map(fact => ({ identity: fact.identity, status: fact.status as QuestionTerminalReceipt['status'] }))
+  return { state, drafts, complete: complete && end === slice.total, ...(terminalRows.length ? { questionTerminals: { sourceKey: input.scopeKey, rows: terminalRows } } : {}) }
 }
