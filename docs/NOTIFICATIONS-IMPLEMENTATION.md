@@ -351,6 +351,26 @@ ui/group-effects-compact-light.jpg、ui/group-effects-details-light.jpg、ui/gro
 
 **完整目标仍未完成**：本批只完成本机模型目录这一来源，不将正常长会话无 exact 结算当作异常，也不宣称所有原生用量／统计入口的健康观察已完成。MCP runtime／校验前无归属异常、旧 scope 整体消失／同 revision 异内容、其他 feeds 恢复关联、更早大历史精确阅读及长期容量／完整序列、正式应用／打包与真实 Windows/macOS 权限／声音／勿扰／系统送达仍须继续。继续遵循跨页面的四层反馈：覆盖事实但不把每页、每次刷新都变成弹条；当前位置就地呈现，离开后再按重要性升级，普通活动默认静默。本批只本地提交，不推送、发布、安装或结束完整目标。
 
+### 第二十批：原生运行时用量补位入口的只读诊断
+
+沿原 `inspectComposerRuntime` 的原 fetch／窗口选择／evaluate／内存读取路径接入小型 sideband 和可选 observer。没有新 CDP 调用、模型请求、读盘、业务快照查询、轮询、重试或等待；未改 Cursor 文件或写后 hook。原返回的 liveness、process、usage、数值归一、采样／结算／价格和 tracker 顺序保持不变，sideband 不进入原 runtime evidence 或其 fingerprint。原读取异常仍按原规则返回或抛出原异常；通知的 begin、complete、诊断解析、缺口处理异常都与原结果隔离。诊断关闭／无法归属时不额外解析 sideband。
+
+没有调试目标、服务未就绪、未加载／旧 sideband、空行、只有零值、没有 generation 或正常长会话没有精确回合结算都安静等待，不制造故障。只捕获原读取本身的异常和明确无法验证的返回结构。恢复必须覆盖原请求的全部已确认绑定 Composer，实际原归一结果带可归属的正计数，且原计数满足安全整数／非负／缓存子集约束；空对象或“ready”标签不是恢复证据。这个判断只控制通知，不回写、拒收或重算原业务计数。可用估算采样也能确认补位入口读到计数，但不能冒充 exact 结算或官方账单。
+
+用既有初始 team 快照与既有 run-context 订阅回调缓存归属，不再 getSnapshot。监测指纹包含工作区身份／路径、run、原最多 16 个请求 Composer，以及实际绑定身份／代次；纯角色名称和同一范围的普通 revision 更新不取消在途读取。只接收原请求的完整准确集合；未知、重复、部分、外部路径请求不会强挂到当前范围。范围变化、休眠、诊断缺口、畸形 team 帧、较新回执已完成、退出后都隔离旧回执。复制／恢复后相同工作区 ID 但不同路径，也不能拿新路径健康读数关闭原异常。
+
+仍由连续原失败帧（至少两次且至少 5 秒）形成一条 episode，无新 timer。同钟 echo、时钟回退／无效时钟、超过 60 秒的缺口不外推持续失败；常规反复失败不刷未读。新原因更新同条正文，同一真实范围可归属读数才安静收口。scope 消失／run 停监测只说明原监测未确认，原问题不算恢复或会话死亡；首次空快照也不留假“当前仍在监测”。回到同一未确认范围不会在尚无读取证据时杜撰新事故。私有 ACK 未知结果在下一真实读取恢复关联，不重跑业务或补播旧提醒。
+
+统计页新增一处 `LocalSourceNotice`，有问题才占位，默认折叠，正常图表、质量说明、筛选和统计计算不改。文案用“用量补位读数尚未确认”表达有限事实，而不是把当前等待读数一直叫作“持续报错”；技术来源留在中心与展开正文。说明复用中性四边边界，没有彩色左边、装饰点或动态进度。当前页就地呈现、离页按原策略进中心；隐藏统计页不订阅，不以折叠标题清未读。共用说明正文改用已有 `--text-soft` 提高通透背景上的可读性，字号及整体视觉系统不另造一套。
+
+证据在 `preview-screenshots/notification-implementation/`：`full-regression-runtime-usage-final.log`（301 files，2857 passed，1 skipped）、`typecheck-runtime-usage-final.log`、`build-runtime-usage-final.log`、`dead-code-runtime-usage-final.log`，原 `mcp-smoke-runtime-usage-final.log`／`channel-smoke-runtime-usage-final.log`。原有 creator／usage pipeline 与新归属、Clock、迟到、空／正常估算、异常隔离、准确正文阅读测试一起回归；原业务返回和调用次数与无 observer 的原路径逐项比较，不用“绿测试”代替源行为检查。
+
+`scripts/verify-notification-runtime-usage.ts` 在 Node 与 macOS Electron（`ELECTRON_RUN_AS_NODE=1`）使用真实编译通知 worker，原 runtime 表达式在 VM 中执行、原 reader／tracker／usage store 实际串联。真实原 getter 异常保留原 active liveness 和已有数值，后续原精确结算仍正常覆盖估算、保存；每个原读取仍只有原 fetch＋原窗口探针＋原 evaluate，私有通知排空没有增加一次原调用。跨 worker 重启、同 episode、读通知不算源恢复、新原因在真实退出排空、无 quit announcement 和无原始错误／模型／计数身份／路径均验证。原 worker／shutdown／recovery／history／context／native-rebase／team-observations／group-effects／mcp-writes／usage-storage／model-catalog 十一类也在两个 runtime 回归。自有 fixture 全部 finally 精确清理，未接触真实账号、模型、Cursor 或 production main。
+
+`ui/runtime-usage-stats-final-light.jpg`／`runtime-usage-stats-final-expanded-light.jpg`、`runtime-usage-stats-dark-collapsed.jpg`、`runtime-usage-recovered-dark.jpg`、`runtime-usage-scope-change-center-dark.jpg`／`runtime-usage-center-final-dark.jpg` 和 `runtime-usage-ui-audit.json` 使用真实产品组件＋mock preload＋真实领域 reducer。折叠保留未读、展开正文才阅读；真正读取确认与变更范围均安静收束局部说明，但中心明确保留不同事实。来源动作从会话页准确到统计，不操作模型或账号。CSS 1440×769 复核原最小宽度，CSS 615×500 只作局部折行压力测试，不把最小窗口之外的整体导航布局冒充通过。局部 clientWidth=scrollWidth、字号 14px、两侧同色边界已核对；`runtime-usage-ui-cleanup.json` 确认跟随系统、正常视口与无 warn/error，自建标签与 5207 服务关闭。`protected-runtime-usage-audit.json` 证明两份保护树 HEAD／status／binary diff／文件全部一致，原四个 warmup 删除状态保留。
+
+**完整目标仍未完成**：本批是原生运行时补位读取这一入口，不将它代替长期会话主要的 SQLite context 采样，也未声称写后 usage binding 的全部结构诊断、原统计所有数据源或真实额度／账单核对已完成。下批继续审原 SQLite 上下文读取和 binding 的原有缺口，区分正常缺字段、旧版兼容和真实读取失败，仍不增加业务探测。MCP runtime／校验前无归属异常、其他 feed 的旧 scope 消失／同 revision 异内容／恢复关联、大历史准确阅读、长期容量及完整序列、正式包和真实 Windows/macOS 权限／声音／勿扰／系统送达仍按完整矩阵推进。仅本地提交，不推送、发布、安装或结束完整目标。
+
 下面保留完整要求，不因分批已有成果缩小。已实现部分仍需匹配该项范围验收；未实现部分继续开工。
 
 1. 通知中心、轻量顶栏入口、单张提醒和独立 renderer store。支持待处理／未读／全部、查询范围、分页、详情、关闭、阅读、归档、确认清理和适当偏好；减少动画、长内容、键盘与窄窗需验收。

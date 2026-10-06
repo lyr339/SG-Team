@@ -8,6 +8,7 @@ import type { CursorModelSelection } from '../../domain/cursor-model'
 import type { CursorWorkspaceDetection } from '../../domain/cursor-workspace'
 import { workspaceIdentityOf } from './workspace-identity'
 import { nativeUsagePayload } from './cursor-native-usage'
+import type { RuntimeUsageReadObserver, RuntimeUsageReadResult } from '../../domain/runtime-usage-observation'
 import { cursorStatusLineOf, parseCursorStatusLine, type CursorStatusLine } from '../../domain/cursor-status-line'
 import {
   SG_COMPOSER_BRIDGE_PRELUDE,
@@ -194,6 +195,7 @@ export interface CursorCdpSessionCreatorOptions {
   fetchTargets?: (port: number, timeoutMs: number) => Promise<CursorCdpTarget[]>
   evaluate?: (webSocketDebuggerUrl: string, expression: string, timeoutMs: number) => Promise<unknown>
   operationTimeoutMs?: number
+  usageReadObserver?: RuntimeUsageReadObserver
   /**
    * 建会话前的服务定位兜底（幂等；已定位时单次 evaluate 短路）。
    * 观察器在 attach/重载时负责常规定位；这里只覆盖「创建早于观察器完成 attach」
@@ -713,13 +715,17 @@ export function buildRuntimeInspectionExpression(composerIds: string[]): string 
         }
         // 读原生 composer 数据派生用量，与写后 hook 共用载荷口径。
         let usage = null;
+        let usageRead = { state: 'waiting' };
         try {
           const data = bridge.getComposerData(composerId);
           const raw = (${nativeUsagePayload.toString()})(data, composerId);
+          // A successful local read can legitimately have no exact turn usage.
+          // This sideband is not returned as billing or liveness evidence.
+          usageRead = { state: raw ? 'ready' : 'waiting' };
           if (raw) usage = { generationId: raw.g, modelId: raw.m,
             inputTokens: raw.i || 0, outputTokens: raw.o || 0, cacheReadTokens: raw.r || 0, cacheWriteTokens: raw.w || 0,
             contextTokensUsed: raw.used, stopped: raw.stopped };
-        } catch (e) {}
+        } catch (e) { usageRead = { state: 'failed', reason: 'read' }; }
         // 阻塞在用户决策（ask_question 等）：Cursor 把 composer 标为非生成态，但 Agent
         // 仍在等待——作为独立生命证据带回，presence 据此续命。读取失败按 false 处理。
         let awaitingUser = false;
@@ -741,9 +747,9 @@ export function buildRuntimeInspectionExpression(composerIds: string[]): string 
         } catch (e) {}
         // 过程块由 sgTeamProcess 写后事件直接推送；这里仅保留状态/正文兜底，
         // 避免 150ms inspect 与原生事件双写、重排或覆盖工具结果。
-        rows.push({ composerId, state, detail, observedAt: Date.now(), isGenerating, awaitingUser, responseId, responseText, usage, statusLine, composerStatus, bubbleCount });
+        rows.push({ composerId, state, detail, observedAt: Date.now(), isGenerating, awaitingUser, responseId, responseText, usage, usageRead, statusLine, composerStatus, bubbleCount });
       } catch (e) {
-        rows.push({ composerId, state: 'unknown', detail: 'Cursor 实时状态读取失败', observedAt: Date.now() });
+        rows.push({ composerId, state: 'unknown', detail: 'Cursor 实时状态读取失败', observedAt: Date.now(), usageRead: { state: 'failed', reason: 'read' } });
       }
     }
     return { ok: true, rows };
@@ -1023,6 +1029,7 @@ export function parseProcessStream(value: unknown): CursorProcessStream | undefi
 }
 
 export class CursorCdpSessionCreator {
+  private readonly usageReadObserver?: RuntimeUsageReadObserver
   private readonly port: number
   private readonly fetchTargets: NonNullable<CursorCdpSessionCreatorOptions['fetchTargets']>
   private readonly evaluate: NonNullable<CursorCdpSessionCreatorOptions['evaluate']>
@@ -1030,6 +1037,7 @@ export class CursorCdpSessionCreator {
   private readonly ensureComposerService: NonNullable<CursorCdpSessionCreatorOptions['ensureComposerService']>
 
   constructor(options: CursorCdpSessionCreatorOptions = {}) {
+    this.usageReadObserver = options.usageReadObserver
     const envPort = Number(process.env[CURSOR_CDP_PORT_ENV])
     this.port = options.port ?? (Number.isInteger(envPort) && envPort > 0 && envPort < 65_536 ? envPort : CURSOR_CDP_DEFAULT_PORT)
     this.fetchTargets = options.fetchTargets ?? defaultFetchTargets
@@ -1107,69 +1115,121 @@ export class CursorCdpSessionCreator {
   ): Promise<Record<string, CursorComposerRuntimeEvidence>> {
     const unique = [...new Set(composerIds.map((id) => id.trim()).filter(Boolean))].slice(0, 16)
     if (!unique.length) return {}
-    const { target } = await this.resolveTarget(workspacePath)
-    if (!target) return {}
-    let value: unknown
+    let receipt: ReturnType<RuntimeUsageReadObserver['begin']>
+    try { receipt = this.usageReadObserver?.begin(Object.freeze({ workspacePath, composerIds: Object.freeze([...unique]) })) }
+    catch { try { this.usageReadObserver?.unavailable() } catch { /* Original read is independent. */ } }
+    let reported = false
+    const report = (fact: RuntimeUsageReadResult): void => {
+      if (!receipt || reported) return
+      reported = true
+      try { receipt.complete(Object.freeze(fact)) }
+      catch { try { receipt.unavailable() } catch { /* Original read/exception is independent. */ } }
+    }
+    let stage: 'read' | 'record' = 'read'
     try {
-      value = await this.evaluate(
-        target.webSocketDebuggerUrl,
-        buildRuntimeInspectionExpression(unique),
-        PROBE_TIMEOUT_MS + 2_500
-      )
-    } catch {
-      return {}
-    }
-    if (!isRecord(value) || value.ok !== true || !Array.isArray(value.rows)) return {}
-    const result: Record<string, CursorComposerRuntimeEvidence> = {}
-    for (const row of value.rows) {
-      if (!isRecord(row)) continue
-      const composerId = typeof row.composerId === 'string' ? row.composerId : ''
-      const state = row.state === 'active' || row.state === 'stopped' || row.state === 'unknown'
-        ? row.state
-        : 'unknown'
-      if (!composerId || !unique.includes(composerId)) continue
-      const usageRaw = isRecord(row.usage) ? row.usage : undefined
-      const usageToken = (value: unknown): number => {
-        const num = Number(value)
-        return Number.isFinite(num) && num > 0 ? Math.floor(num) : 0
+      const { target } = await this.resolveTarget(workspacePath)
+      if (!target) { report({ state: 'waiting' }); return {} }
+      let value: unknown
+      try {
+        value = await this.evaluate(
+          target.webSocketDebuggerUrl,
+          buildRuntimeInspectionExpression(unique),
+          PROBE_TIMEOUT_MS + 2_500
+        )
+      } catch {
+        report({ state: 'failed', reason: 'read' })
+        return {}
       }
-      const usage = usageRaw && (usageToken(usageRaw.inputTokens) || usageToken(usageRaw.outputTokens)
-        || usageToken(usageRaw.cacheReadTokens) || usageToken(usageRaw.cacheWriteTokens) || usageToken(usageRaw.contextTokensUsed))
-        ? {
-            ...(typeof usageRaw.generationId === 'string' ? { generationId: usageRaw.generationId } : {}),
-            ...(typeof usageRaw.modelId === 'string' ? { modelId: usageRaw.modelId } : {}),
-            ...(usageRaw.stopped === true ? { stopped: true } : {}),
-            inputTokens: usageToken(usageRaw.inputTokens),
-            outputTokens: usageToken(usageRaw.outputTokens),
-            cacheReadTokens: usageToken(usageRaw.cacheReadTokens),
-            cacheWriteTokens: usageToken(usageRaw.cacheWriteTokens),
-            contextTokensUsed: usageToken(usageRaw.contextTokensUsed) || undefined,
-            contextTokenLimit: usageToken(usageRaw.contextTokenLimit) || undefined
+      if (!isRecord(value) || value.ok !== true || !Array.isArray(value.rows)) {
+        report(isRecord(value) && value.ok === true ? { state: 'failed', reason: 'record' } : { state: 'waiting' })
+        return {}
+      }
+      stage = 'record'
+      const result: Record<string, CursorComposerRuntimeEvidence> = {}
+      for (const row of value.rows) {
+        if (!isRecord(row)) continue
+        const composerId = typeof row.composerId === 'string' ? row.composerId : ''
+        const state = row.state === 'active' || row.state === 'stopped' || row.state === 'unknown'
+          ? row.state
+          : 'unknown'
+        if (!composerId || !unique.includes(composerId)) continue
+        const usageRaw = isRecord(row.usage) ? row.usage : undefined
+        const usageToken = (value: unknown): number => {
+          const num = Number(value)
+          return Number.isFinite(num) && num > 0 ? Math.floor(num) : 0
+        }
+        const usage = usageRaw && (usageToken(usageRaw.inputTokens) || usageToken(usageRaw.outputTokens)
+          || usageToken(usageRaw.cacheReadTokens) || usageToken(usageRaw.cacheWriteTokens) || usageToken(usageRaw.contextTokensUsed))
+          ? {
+              ...(typeof usageRaw.generationId === 'string' ? { generationId: usageRaw.generationId } : {}),
+              ...(typeof usageRaw.modelId === 'string' ? { modelId: usageRaw.modelId } : {}),
+              ...(usageRaw.stopped === true ? { stopped: true } : {}),
+              inputTokens: usageToken(usageRaw.inputTokens),
+              outputTokens: usageToken(usageRaw.outputTokens),
+              cacheReadTokens: usageToken(usageRaw.cacheReadTokens),
+              cacheWriteTokens: usageToken(usageRaw.cacheWriteTokens),
+              contextTokensUsed: usageToken(usageRaw.contextTokensUsed) || undefined,
+              contextTokenLimit: usageToken(usageRaw.contextTokenLimit) || undefined
+            }
+          : undefined
+        const statusLine = parseCursorStatusLine(row.statusLine)
+        const bubbleCount = typeof row.bubbleCount === 'number' && Number.isFinite(row.bubbleCount) && row.bubbleCount >= 0
+          ? Math.floor(row.bubbleCount)
+          : undefined
+        result[composerId] = {
+          composerId,
+          state,
+          detail: typeof row.detail === 'string' ? row.detail.slice(0, 300) : '',
+          observedAt: typeof row.observedAt === 'number' ? row.observedAt : Date.now(),
+          isGenerating: row.isGenerating === true,
+          ...(row.awaitingUser === true ? { awaitingUser: true } : {}),
+          ...(typeof row.composerStatus === 'string' && row.composerStatus ? { composerStatus: row.composerStatus.slice(0, 40) } : {}),
+          ...(statusLine ? { statusLine } : {}),
+          ...(bubbleCount === undefined ? {} : { bubbleCount }),
+          responseId: typeof row.responseId === 'string' && row.responseId ? row.responseId.slice(0, 200) : undefined,
+          responseText: typeof row.responseText === 'string' && row.responseText
+            ? row.responseText.slice(0, 100_000)
+            : undefined,
+          process: parseProcessStream(row.process),
+          usage
+        }
+      }
+      // Only the original batch's own sideband can confirm the original read.
+      // Missing rows/old sidebands, unloaded data and zero settlement are quiet.
+      if (receipt) {
+        try {
+          const health = new Map<string, RuntimeUsageReadResult>()
+          let malformed = false
+          for (const row of value.rows) {
+            if (!isRecord(row) || typeof row.composerId !== 'string' || !unique.includes(row.composerId) || health.has(row.composerId)) { malformed = true; continue }
+            const read = row.usageRead
+            if (isRecord(read) && read.state === 'ready') {
+              const usage = result[row.composerId]?.usage
+              // The original normalized payload must actually carry attributable
+              // counts. A sideband/object alone cannot prove a usable reading.
+              const valid = usage?.generationId?.trim() && usage.generationId.length <= 200 && [usage.inputTokens, usage.outputTokens, usage.cacheReadTokens, usage.cacheWriteTokens]
+                .every(count => Number.isSafeInteger(count) && count >= 0) && usage.cacheReadTokens + usage.cacheWriteTokens <= usage.inputTokens
+                && (usage.inputTokens > 0 || usage.outputTokens > 0
+                  || usage.cacheReadTokens > 0 || usage.cacheWriteTokens > 0 || Number.isSafeInteger(usage.contextTokensUsed) && usage.contextTokensUsed! > 0)
+              health.set(row.composerId, { state: valid ? 'ready' : 'waiting' })
+            }
+            else if (isRecord(read) && read.state === 'waiting') health.set(row.composerId, { state: 'waiting' })
+            else if (isRecord(read) && read.state === 'failed' && read.reason === 'read') health.set(row.composerId, { state: 'failed', reason: 'read' })
+            else if (read !== undefined) malformed = true
           }
-        : undefined
-      const statusLine = parseCursorStatusLine(row.statusLine)
-      const bubbleCount = typeof row.bubbleCount === 'number' && Number.isFinite(row.bubbleCount) && row.bubbleCount >= 0
-        ? Math.floor(row.bubbleCount)
-        : undefined
-      result[composerId] = {
-        composerId,
-        state,
-        detail: typeof row.detail === 'string' ? row.detail.slice(0, 300) : '',
-        observedAt: typeof row.observedAt === 'number' ? row.observedAt : Date.now(),
-        isGenerating: row.isGenerating === true,
-        ...(row.awaitingUser === true ? { awaitingUser: true } : {}),
-        ...(typeof row.composerStatus === 'string' && row.composerStatus ? { composerStatus: row.composerStatus.slice(0, 40) } : {}),
-        ...(statusLine ? { statusLine } : {}),
-        ...(bubbleCount === undefined ? {} : { bubbleCount }),
-        responseId: typeof row.responseId === 'string' && row.responseId ? row.responseId.slice(0, 200) : undefined,
-        responseText: typeof row.responseText === 'string' && row.responseText
-          ? row.responseText.slice(0, 100_000)
-          : undefined,
-        process: parseProcessStream(row.process),
-        usage
+          report(malformed ? { state: 'failed', reason: 'record' } : [...health.values()].some(read => read.state === 'failed') ? { state: 'failed', reason: 'read' }
+            : unique.every(id => health.get(id)?.state === 'ready') ? { state: 'ready' } : { state: 'waiting' })
+        } catch {
+          // A diagnostic parser failure is not an original usage/liveness
+          // failure. Preserve the completed original result even here.
+          try { receipt.unavailable() } catch { /* No change to original result. */ }
+        }
       }
+      return result
+    } catch (error) {
+      report({ state: 'failed', reason: stage })
+      throw error
     }
-    return result
   }
 
   private async resolveTarget(workspacePath: string | undefined): Promise<{ target?: CursorCdpTarget; error?: string }> {

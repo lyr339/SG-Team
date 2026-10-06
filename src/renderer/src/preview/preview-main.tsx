@@ -3,6 +3,7 @@ import { observedMcpWrite } from '../../../domain/mcp-write-observation'
 import { reduceMcpWriteNotifications } from '../../../domain/mcp-write-notification'
 import { reduceUsageStorageNotifications } from '../../../domain/usage-storage-notification'
 import { reduceModelCatalogNotifications } from '../../../domain/model-catalog-notification'
+import { reduceRuntimeUsageNotifications } from '../../../domain/runtime-usage-notification'
 import type { GroupEffectsFrame } from '../../../domain/group-effects'
 import { reduceMemoryIssueNotifications, type MemoryIssueState } from '../../../domain/memory-issue-notification'
 import type { MemoryOperatorReviewProof } from '../../../domain/memory-operator-review'
@@ -1176,6 +1177,16 @@ function updatePreviewGroup(groupId: string, update: (view: typeof state.team.gr
 }
 
 const notificationPreview = createNotificationPreview()
+if (previewParameters.get('notifications') === 'usage-runtime') {
+  const key = 'runtime-usage-health', scope = '1'.repeat(64), at = Date.now() - 60000
+  const failed = reduceRuntimeUsageNotifications(undefined, { key, scope, id: 'a'.repeat(64), at, result: { state: 'failed', reason: 'read' } }, true, 1)
+  failed.drafts.forEach(notificationPreview.offer)
+  const next = previewParameters.get('runtimeUsage')
+  if (next === 'recovered' || next === 'changed') {
+    reduceRuntimeUsageNotifications(failed.state, { key, scope: next === 'changed' ? '2'.repeat(64) : scope,
+      id: 'b'.repeat(64), at: at + 1000, result: next === 'changed' ? { state: 'scope' } : { state: 'ready' } }, true, 2).drafts.forEach(notificationPreview.offer)
+  }
+}
 if (previewParameters.get('notifications') === 'model-catalog') {
   const key = 'cursor-model-catalog-health', at = Date.now() - 60000
   const failed = reduceModelCatalogNotifications(undefined, { key, id: 'a'.repeat(64),

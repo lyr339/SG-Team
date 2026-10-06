@@ -15,6 +15,9 @@ const model: NotificationRecord = {
 const usage: NotificationRecord = { ...model, id: 'usage-incident', key: 'usage-storage:write:' + '2'.repeat(64),
   eventId: 'usage-failed', eventType: 'usage.storage-write', category: 'storage', source: '统计 · 本机用量记录',
   title: '用量记录保存未确认', detail: '新的保存未确认，不代表模型目录有问题。', target: { kind: 'settings', section: 'stats' }, revision: 11 }
+const runtime: NotificationRecord = { ...usage, id: 'runtime-incident', key: 'usage-runtime:' + '3'.repeat(64),
+  eventId: 'runtime-read-failed', eventType: 'usage.runtime-source', category: 'maintenance', source: '统计 · 原生运行时入口',
+  title: '用量补位读数尚未确认', detail: '正常没有精确回合结算不算异常。这里仅记录原读取持续异常。' }
 function page(...records: NotificationRecord[]): NotificationPage {
   return { records, summary: { revision: Math.max(0, ...records.map(record => record.revision)), total: records.length, unread: records.length, pending: 0, clearable: 0 }, reset: false }
 }
@@ -28,7 +31,8 @@ beforeEach(() => {
   ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
   host = document.createElement('div'); document.body.append(host); root = createRoot(host); listeners = new Set()
   api = { getNotificationPage: vi.fn(async (query: any) => query.eventType === model.eventType || query.key === model.key ? page(model)
-      : query.eventType === usage.eventType || query.key === usage.key ? page(usage) : page()),
+      : query.eventType === usage.eventType || query.key === usage.key ? page(usage)
+      : query.eventType === runtime.eventType || query.key === runtime.key ? page(runtime) : page()),
     onNotificationChanged: vi.fn((listener: any) => { listeners.add(listener); return () => listeners.delete(listener) }),
     readNotification: vi.fn(async () => ({ changed: true, record: { ...model, readRevision: 10 }, summary: page(model).summary })) }
   Object.assign(window, { sgDesktop: api })
@@ -144,4 +148,13 @@ it('a private query rejection stays quiet and never falls back to a model reques
   await act(async () => root.render(<LocalSourceNotice source="model-catalog" />))
   expect(host.textContent).toBe(''); expect(host.querySelector('button')).toBeNull()
   expect(api.getNotificationPage).toHaveBeenCalledOnce(); expect(api.readNotification).not.toHaveBeenCalled()
+})
+
+it('places native runtime diagnostics only on statistics, keeps the closed body unread and does not confuse monitoring loss with recovery', async () => {
+  await act(async () => root.render(<LocalSourceNotice source="usage-runtime" />))
+  expect(api.getNotificationPage).toHaveBeenCalledExactlyOnceWith({ eventType: 'usage.runtime-source', limit: 1 })
+  expect(host.querySelector('[data-notification-page]')?.getAttribute('data-notification-page')).toBe('account:stats')
+  expect(host.textContent).toContain(runtime.title); expect(api.readNotification).not.toHaveBeenCalled()
+  await act(async () => push({ ...runtime, revision: 12, state: 'expired', subjectState: 'monitor-unconfirmed', title: '原监测范围已变化' }))
+  expect(host.querySelector('details')).toBeNull(); expect(api.readNotification).not.toHaveBeenCalled()
 })
