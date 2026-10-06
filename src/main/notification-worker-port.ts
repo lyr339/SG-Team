@@ -145,7 +145,9 @@ export class NotificationWorkerPort implements NotificationRepository {
     })
   }
   private async call<T>(command: NotificationWorkerCommand): Promise<T> {
+    const session = this.session
     for (let attempt = 0; ; attempt++) {
+      if (attempt > 0 && this.session !== session) throw Error('通知线程已更换，已回滚的旧请求仍不重放到新历史')
       try { return await this.request<T>(command) }
       catch (error) {
         // Only a worker's explicit rolled-back BUSY/LOCKED result is retryable.

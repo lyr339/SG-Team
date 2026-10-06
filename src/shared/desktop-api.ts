@@ -287,11 +287,11 @@ export interface SaveCursorAccountCardResult {
 
 export interface SgDesktopApi {
   getNotificationPage(query?: NotificationQuery): Promise<NotificationPage>
-  acknowledgeNotificationHistory?(revision: number): Promise<NotificationHistoryIntegrity>
-  readNotification(input: { id: string; revision: number }): Promise<NotificationChange>
-  readAllNotifications(input: { query?: NotificationQuery; revision: number }): Promise<NotificationChange>
-  archiveNotification(id: string): Promise<NotificationChange>
-  clearReadNotifications(input: { query?: NotificationQuery; confirmed: boolean }): Promise<NotificationChange>
+  acknowledgeNotificationHistory?(revision: number, storageEpoch?: number): Promise<NotificationHistoryIntegrity>
+  readNotification(input: { id: string; revision: number; storageEpoch?: number }): Promise<NotificationChange>
+  readAllNotifications(input: { query?: NotificationQuery; revision: number; storageEpoch?: number }): Promise<NotificationChange>
+  archiveNotification(id: string, storageEpoch?: number): Promise<NotificationChange>
+  clearReadNotifications(input: { query?: NotificationQuery; confirmed: boolean; storageEpoch?: number }): Promise<NotificationChange>
   getNotificationPreferences(): Promise<NotificationPreferences>
   saveNotificationPreferences(preferences: NotificationPreferences): Promise<NotificationPreferences>
   onNotificationChanged(listener: (event: NotificationPush) => void): () => void

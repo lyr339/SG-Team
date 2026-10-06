@@ -11,6 +11,56 @@ const draft = (patch: Partial<NotificationDraft> = {}): NotificationDraft => ({
 const change = { changed: true, summary: { revision: 1, total: 1, unread: 1, pending: 0, clearable: 0 } }
 
 describe('private source storage generation fencing', () => {
+  it('an old renderer generation cannot touch reads, bulk reads, archival, clearing or history acknowledgement in replacement storage', async () => {
+    const port = repository()
+    let lifecycle!: (event: NotificationRepositoryLifecycle) => void
+    port.subscribeLifecycle = listener => { lifecycle = listener; return () => {} }
+    const owner = new NotificationService(port)
+    try {
+      lifecycle({ state: 'recovered', generation: 1 }); await owner.flush()
+      expect((await owner.page()).storageEpoch).toBe(0)
+      lifecycle({ state: 'unavailable', generation: 1 }); lifecycle({ state: 'recovered', generation: 2 }); await owner.flush()
+      await expect(owner.read('same-old-id', 100, 0)).rejects.toThrow('换代')
+      await expect(owner.readAll({}, 100, 0)).rejects.toThrow('换代')
+      await expect(owner.archive('same-old-id', 0)).rejects.toThrow('换代')
+      await expect(owner.clearRead({}, 0)).rejects.toThrow('换代')
+      await expect(owner.acknowledgeHistoryGap(100, 0)).rejects.toThrow('换代')
+      expect(port.read).not.toHaveBeenCalled(); expect(port.readAll).not.toHaveBeenCalled(); expect(port.archive).not.toHaveBeenCalled(); expect(port.clearRead).not.toHaveBeenCalled()
+      expect((await owner.page()).storageEpoch).toBe(1)
+      expect((await owner.read('current-id', 1, 1)).storageEpoch).toBe(1)
+    } finally { await owner.close() }
+  })
+  it('late ordinary page/mutation receipts are not relabelled as the replacement generation or broadcast into its current UI', async () => {
+    const port = repository()
+    let lifecycle!: (event: NotificationRepositoryLifecycle) => void, releasePage!: (value: any) => void, releaseRead!: (value: any) => void
+    port.subscribeLifecycle = listener => { lifecycle = listener; return () => {} }
+    const owner = new NotificationService(port), events = vi.fn(); owner.subscribe(events)
+    try {
+      vi.mocked(port.page).mockImplementationOnce(() => new Promise(resolve => { releasePage = resolve }))
+      vi.mocked(port.read).mockImplementationOnce(() => new Promise(resolve => { releaseRead = resolve }))
+      const page = owner.page(), read = owner.read('stale-id', 10, 0)
+      const pageRejected = expect(page).rejects.toThrow('代次'), readRejected = expect(read).rejects.toThrow('代次')
+      lifecycle({ state: 'unavailable', generation: 1 }); lifecycle({ state: 'recovered', generation: 2 })
+      releasePage({ records: [], summary: change.summary, reset: false })
+      releaseRead({ ...change, record: { ...draft(), id: 'stale-id', revision: 10, attentionRevision: 10, readRevision: 10, createdAt: 1, updatedAt: 1 } })
+      await pageRejected; await readRejected; await owner.flush()
+      expect(events.mock.calls.some(([event]) => event.change?.record?.id === 'stale-id')).toBe(false)
+    } finally { await owner.close() }
+  })
+  it('the ordinary intake pump cannot seed a late old marker/result or announce it as current after storage replacement', async () => {
+    const port = repository()
+    let lifecycle!: (event: NotificationRepositoryLifecycle) => void, finish!: (value: any) => void
+    port.subscribeLifecycle = listener => { lifecycle = listener; return () => {} }
+    vi.mocked(port.put).mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const owner = new NotificationService(port), events = vi.fn(); owner.subscribe(events)
+    try {
+      owner.offer(draft({ announce: true }))
+      lifecycle({ state: 'unavailable', generation: 1 }); lifecycle({ state: 'recovered', generation: 2 })
+      finish({ ...change, record: { ...draft(), id: 'stale-pump', revision: 8, attentionRevision: 8, readRevision: 0, createdAt: 1, updatedAt: 1 } })
+      await owner.flush()
+      expect(events.mock.calls.some(([event]) => event.change?.record?.id === 'stale-pump' || event.announcement)).toBe(false)
+    } finally { await owner.close() }
+  })
   it('initial readiness is not a false loss of the first original source request', async () => {
     const port = repository()
     let lifecycle!: (event: NotificationRepositoryLifecycle) => void, release!: () => void

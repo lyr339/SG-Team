@@ -73,6 +73,8 @@ export interface NotificationDraft {
 }
 
 export interface NotificationRecord extends Omit<NotificationDraft, 'renewAttention' | 'announce' | 'respectCleared' | 'liveSignal'> {
+  /** Main-owned ephemeral private storage generation. Never a business/native revision or persisted workflow identity. */
+  storageEpoch?: number
   /** Worker-owned and monotone: prior diagnostic/action importance cannot be lost on recovery. */
   retentionProtected?: boolean
   id: string
@@ -116,6 +118,7 @@ export interface NotificationQuery {
 }
 
 export interface NotificationPage {
+  storageEpoch?: number
   historyIntegrity?: NotificationHistoryIntegrity
   historyGapUnconfirmed?: boolean
   records: NotificationRecord[]
@@ -131,6 +134,7 @@ export interface NotificationPage {
 }
 
 export interface NotificationChange {
+  storageEpoch?: number
   summary: NotificationSummary
   record?: NotificationRecord
   changed: boolean
@@ -145,6 +149,7 @@ export interface NotificationSourceResult {
 }
 
 export interface NotificationPush {
+  storageEpoch?: number
   historyIntegrity?: NotificationHistoryIntegrity
   historyGapUnconfirmed?: boolean
   /** Storage was rebuilt; refresh history without replaying presentations or replacing an opened detail. */

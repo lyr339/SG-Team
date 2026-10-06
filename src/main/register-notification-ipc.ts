@@ -17,6 +17,8 @@ function id(value: unknown): string {
   if (typeof value !== 'string' || !value.trim() || value.length > 300) throw new NotificationActionError('通知身份无效')
   return value
 }
+/** Old renderer forms belong only to initial storage, never whichever replacement happens to be current. */
+const storageEpoch = (value: Record<string, unknown>): number => value.storageEpoch === undefined ? 0 : revision(value.storageEpoch)
 function query(value: unknown): NotificationQuery {
   if (value === undefined) return {}
   const input = object(value)
@@ -57,14 +59,17 @@ export function registerNotificationIpc(service: NotificationService, getWindow:
       const page = service.page(query(input))
       return delivery ? page.then(value => ({ ...value, delivery: delivery.status(), ...(delivery.openRequested() ? { openRequested: delivery.openRequested() } : {}) })) : page
     }],
-    [IPC.notificationAcknowledgeHistory, input => service.acknowledgeHistoryGap(revision(input))],
-    [IPC.notificationRead, input => { const value = object(input); return service.read(id(value.id), revision(value.revision)) }],
-    [IPC.notificationReadAll, input => { const value = object(input); return service.readAll(query(value.query), revision(value.revision)) }],
-    [IPC.notificationArchive, input => service.archive(id(input))],
+    [IPC.notificationAcknowledgeHistory, input => {
+      const value = typeof input === 'number' ? { revision: input } : object(input)
+      return service.acknowledgeHistoryGap(revision(value.revision), storageEpoch(value))
+    }],
+    [IPC.notificationRead, input => { const value = object(input); return service.read(id(value.id), revision(value.revision), storageEpoch(value)) }],
+    [IPC.notificationReadAll, input => { const value = object(input); return service.readAll(query(value.query), revision(value.revision), storageEpoch(value)) }],
+    [IPC.notificationArchive, input => { const value = typeof input === 'string' ? { id: input } : object(input); return service.archive(id(value.id), storageEpoch(value)) }],
     [IPC.notificationClearRead, input => {
       const value = object(input)
       if (value.confirmed !== true) throw new NotificationActionError('清理通知历史需要确认')
-      return service.clearRead(query(value.query))
+      return service.clearRead(query(value.query), storageEpoch(value))
     }],
     [IPC.notificationPreferences, () => service.preferences()],
     [IPC.notificationSavePreferences, input => service.savePreferences(object(input))]

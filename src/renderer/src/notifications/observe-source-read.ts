@@ -15,7 +15,7 @@ const mergeReceipt = (old: NotificationRecord | undefined, incoming: Notificatio
 /** One exact visible-source observer. Stable private keyset pages, bounded read RPCs/caches; never a business probe or polling timer. */
 export function observeSourceNotificationRead(element: HTMLElement, api: Pick<SgDesktopApi, 'getNotificationPage' | 'readNotification' | 'onNotificationChanged'>,
   query: NotificationQuery, matches: (record: NotificationRecord) => boolean, identityVisible: () => boolean = () => true, resultElement?: ResultElement): () => void {
-  let active = true, epoch = 0, frame: number | undefined, fetching = false, complete = false, failed = false
+  let active = true, epoch = 0, storageEpoch: number | undefined, frame: number | undefined, fetching = false, complete = false, failed = false
   let cursor: NotificationQuery['readCursor'] = 'start', visibleSignature: string | undefined, waitForSpace: (() => void) | undefined, needsSweep = false
   const candidates = new Map<string, NotificationRecord>(), queued = new Set<string>(), pending = new Map<string, number>()
   const acknowledged = new Map<string, number>(), attempted = new Map<string, number>()
@@ -55,7 +55,7 @@ export function observeSourceNotificationRead(element: HTMLElement, api: Pick<Sg
       if (!record || !notificationIsUnread(record) || !readable(record) || (acknowledged.get(id) ?? -1) >= record.attentionRevision) continue
       const version = epoch
       pending.set(id, version); attempted.set(id, record.revision)
-      void api.readNotification({ id, revision: record.revision }).then(result => {
+      void api.readNotification({ id, revision: record.revision, ...(record.storageEpoch !== undefined ? { storageEpoch: record.storageEpoch } : {}) }).then(result => {
         if (!active || version !== epoch) return
         if (result.changed || result.record && result.record.readRevision >= record.attentionRevision) acknowledged.set(id, record.attentionRevision)
         if (!result.record && !result.changed) candidates.delete(id)
@@ -78,6 +78,15 @@ export function observeSourceNotificationRead(element: HTMLElement, api: Pick<Sg
     if (storage) { candidates.clear(); queued.clear(); acknowledged.clear(); attempted.clear() }
     const release = waitForSpace; waitForSpace = undefined; release?.()
   }
+  const storage = (value: number | undefined): boolean => {
+    if (value === undefined) return true
+    if (!Number.isSafeInteger(value) || value < 0 || storageEpoch !== undefined && value < storageEpoch) return false
+    if (value !== storageEpoch) {
+      const changed = storageEpoch !== undefined || value > 0; storageEpoch = value
+      if (changed) reset(true)
+    }
+    return true
+  }
   const nextCursor = (value: NotificationReadCursor, previous: NotificationQuery['readCursor']) => {
     if (!Number.isSafeInteger(value.revision) || value.revision < 0 || !Number.isSafeInteger(value.ceiling) || value.ceiling < value.revision || typeof value.id !== 'string' || !value.id || value.id.length > 300) return false
     return previous === 'start' || previous === undefined || value.ceiling === previous.ceiling &&
@@ -92,6 +101,7 @@ export function observeSourceNotificationRead(element: HTMLElement, api: Pick<Sg
         const current = cursor
         const page = await api.getNotificationPage({ ...query, filter: query.filter ?? 'unread', readCursor: current })
         if (!active || version !== epoch) return
+        if (!storage(page.storageEpoch) || version !== epoch) return
         if (page.reset) { reset(true); return } // Private counter rewind/history reload is not a continuation of old receipts.
         page.records.forEach(accept)
         if (!page.nextReadCursor) { complete = true; break }
@@ -115,6 +125,7 @@ export function observeSourceNotificationRead(element: HTMLElement, api: Pick<Sg
   const schedule = () => { if (frame === undefined) frame = requestAnimationFrame(() => { frame = undefined; inspect() }) }
   const focus = () => { reset(); inspect() }
   const stop = api.onNotificationChanged(event => {
+    if (!storage(event.storageEpoch ?? event.change?.storageEpoch)) return
     if (event.historyReload) { reset(true); scan(); return }
     if (event.change?.record) { attempted.delete(event.change.record.id); accept(event.change.record) }
   })

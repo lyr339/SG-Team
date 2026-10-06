@@ -24,10 +24,10 @@ if (document.documentElement) {
 
 const api: SgDesktopApi = {
   getNotificationPage: input => ipcRenderer.invoke(IPC.notificationPage, input),
-  acknowledgeNotificationHistory: revision => ipcRenderer.invoke(IPC.notificationAcknowledgeHistory, revision),
+  acknowledgeNotificationHistory: (revision, storageEpoch) => ipcRenderer.invoke(IPC.notificationAcknowledgeHistory, storageEpoch === undefined ? revision : { revision, storageEpoch }),
   readNotification: input => ipcRenderer.invoke(IPC.notificationRead, input),
   readAllNotifications: input => ipcRenderer.invoke(IPC.notificationReadAll, input),
-  archiveNotification: id => ipcRenderer.invoke(IPC.notificationArchive, id),
+  archiveNotification: (id, storageEpoch) => ipcRenderer.invoke(IPC.notificationArchive, storageEpoch === undefined ? id : { id, storageEpoch }),
   clearReadNotifications: input => ipcRenderer.invoke(IPC.notificationClearRead, input),
   getNotificationPreferences: () => ipcRenderer.invoke(IPC.notificationPreferences),
   saveNotificationPreferences: input => ipcRenderer.invoke(IPC.notificationSavePreferences, input),

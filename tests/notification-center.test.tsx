@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SqliteNotificationRepository } from '../src/infrastructure/notifications/sqlite-notification-repository'
 import { NotificationStore, type NotificationApi } from '../src/renderer/src/notifications/notification-store'
 import { NotificationCenter } from '../src/renderer/src/notifications/NotificationCenter'
-import type { NotificationDraft, NotificationPush, NotificationRecord } from '../src/domain/notification'
+import type { NotificationDraft, NotificationPush, NotificationRecord, NotificationPage } from '../src/domain/notification'
 
 const draft = (patch: Partial<NotificationDraft> = {}): NotificationDraft => ({ key: 'test:1', category: 'run', source: '运行', title: '批量发起结束', detail: '成员结果已保存。',
   tone: 'success', attention: 'notice', state: 'resolved', scope: { workspaceId: 'a' }, sourceRevision: 1, occurredAt: Date.now(), ...patch })
@@ -85,5 +85,50 @@ describe('notification center real-ledger interactions', () => {
     await act(async () => checkbox.click())
     expect(repository.preferences().quiet).toBe(true)
     expect(vi.mocked(api.getNotificationPage).mock.calls.length).toBe(count)
+  })
+  it('a delayed second page cannot erase the confirmed read count/style of a row already on the first page', async () => {
+    for (let index = 0; index < 40; index++) repository.put(draft({ key: `large:${index}`, title: `原结果 ${index}` }), Date.now())
+    await click('未读')
+    let resolve!: (value: NotificationPage) => void, held!: NotificationPage
+    vi.mocked(api.getNotificationPage).mockImplementationOnce(query => { held = repository.page(query); return new Promise(done => { resolve = done }) })
+    await click('查看更多'); await click('原结果 39')
+    expect(host.querySelector('.notification-panel__header')?.textContent).toContain('41 条未读')
+    await act(async () => resolve(held))
+    expect(host.querySelector('.notification-panel__header')?.textContent).toContain('41 条未读')
+    expect(host.querySelector('.notification-panel__refresh')).toBeNull()
+    expect(repository.page().summary.unread).toBe(41)
+  })
+  it('a failed changed-scope lookup cannot leave the old list/count actionable under the new scope label', async () => {
+    vi.mocked(api.getNotificationPage).mockRejectedValueOnce(Error('private read failed'))
+    const scope = host.querySelector<HTMLSelectElement>('select[aria-label="通知工作区范围"]')!
+    await act(async () => { scope.value = 'current'; scope.dispatchEvent(new Event('change', { bubbles: true })) })
+    expect(host.querySelectorAll('.notification-row')).toHaveLength(0)
+    expect(button('全部已读').disabled).toBe(true); expect(button('清理已读…').disabled).toBe(true)
+    expect(host.textContent).toContain('重新读取')
+  })
+  it('a proven replacement with the same record id/revision preserves the old displayed detail, but latest-result selection is still available by generation', async () => {
+    const old = repository.page({ key: 'test:1' }).records[0]!
+    await click(old.title)
+    const next = { ...old, storageEpoch: 1, detail: '同正文版本号的新私有历史', readRevision: 0 }
+    vi.mocked(api.getNotificationPage).mockResolvedValue({ records: [next], storageEpoch: 1, summary: { ...repository.page().summary, revision: 1, unread: 1, total: 1 }, reset: true })
+    await act(async () => { for (const listener of listeners) listener({ storageEpoch: 1, historyReload: true, health: 'ready', historyIncomplete: true,
+      change: { changed: false, storageEpoch: 1, summary: { revision: 1, unread: 1, total: 1, pending: 0, clearable: 0 } } }) })
+    expect(host.querySelector('.notification-row__detail')?.textContent).toContain(old.detail)
+    expect(button('全部已读').disabled).toBe(true)
+    const reads = vi.mocked(api.readNotification).mock.calls.length
+    await act(async () => host.querySelector<HTMLButtonElement>('.notification-panel__refresh')!.click())
+    expect(host.querySelector('.notification-row__detail')?.textContent).not.toContain(next.detail)
+    expect(api.readNotification).toHaveBeenCalledTimes(reads)
+    await click('查看最新结果')
+    expect(host.querySelector('.notification-row__detail')?.textContent).toContain(next.detail)
+    expect(api.readNotification).toHaveBeenLastCalledWith({ id: next.id, revision: next.revision, storageEpoch: 1 })
+  })
+  it('bulk reading uses the actual currently loaded private generation, not an old global or a changed-scope summary', async () => {
+    const result = repository.page()
+    vi.mocked(api.getNotificationPage).mockResolvedValue({ ...result, storageEpoch: 2, records: result.records.map(record => ({ ...record, storageEpoch: 2 })) })
+    await act(async () => { for (const listener of listeners) listener({ storageEpoch: 2, historyReload: true, health: 'ready', historyIncomplete: true,
+      change: { changed: false, storageEpoch: 2, summary: result.summary } }) })
+    await click('全部已读')
+    expect(api.readAllNotifications).toHaveBeenCalledWith({ query: { filter: 'all', limit: 30 }, revision: result.summary.revision, storageEpoch: 2 })
   })
 })

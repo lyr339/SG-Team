@@ -5,10 +5,15 @@ import type { NotificationRepository } from '../notification-repository'
 
 type HistoryPort = Required<Pick<NotificationRepository, 'historyGap' | 'recordHistoryGap' | 'acknowledgeHistoryGap' | 'pruneRoutine'>>
 interface HistoryState { integrity?: NotificationHistoryIntegrity; unconfirmed: boolean }
-export function notificationHistoryPort(repository: NotificationRepository): HistoryPort | undefined {
+export function notificationHistoryPort(repository: NotificationRepository, storageEpoch?: () => number): HistoryPort | undefined {
   if (!repository.historyGap || !repository.recordHistoryGap || !repository.acknowledgeHistoryGap || !repository.pruneRoutine) return undefined
-  return { historyGap: repository.historyGap.bind(repository), recordHistoryGap: repository.recordHistoryGap.bind(repository),
-    acknowledgeHistoryGap: repository.acknowledgeHistoryGap.bind(repository), pruneRoutine: repository.pruneRoutine.bind(repository) }
+  const guarded = async <T>(run: () => Promise<T>): Promise<T> => {
+    const epoch = storageEpoch?.(), result = await run()
+    if (epoch !== storageEpoch?.()) throw Error('私有通知历史确认跨越存储代次')
+    return result
+  }
+  return { historyGap: id => guarded(() => repository.historyGap!(id)), recordHistoryGap: (id, now) => guarded(() => repository.recordHistoryGap!(id, now)),
+    acknowledgeHistoryGap: (revision, now) => guarded(() => repository.acknowledgeHistoryGap!(revision, now)), pruneRoutine: now => guarded(() => repository.pruneRoutine!(now)) }
 }
 
 /** Private ledger upkeep only. No business probes, source replays or OS delivery. */
@@ -32,6 +37,14 @@ export class NotificationHistoryController {
   }
   state(): HistoryState { return { integrity: this.integrity, unconfirmed: this.pending.size > 0 } }
   journalGapId(): string | undefined { return [...this.pending.keys()].at(-1) ?? this.integrity?.latestGapId }
+  invalidateStorage(): void {
+    // Preserve the known latest gap fact, not the old revision/ack counter.
+    // A restored ledger must re-confirm its own exact dedupe key before reuse.
+    const latest = this.integrity
+    if (latest?.latestGapId && !this.pending.has(latest.latestGapId) && this.pending.size < 64)
+      this.pending.set(latest.latestGapId, latest.observedAt ?? this.now())
+    this.integrity = undefined; this.known.clear(); this.episode = undefined; this.nextAttemptAt = 0; this.published = ''; this.publish()
+  }
   private publish(): void {
     const state = this.state(), signature = JSON.stringify(state)
     if (this.published === signature) return

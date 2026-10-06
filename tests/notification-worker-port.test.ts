@@ -70,6 +70,20 @@ const acknowledgeClose = async (port: NotificationWorkerPort, worker: FakeWorker
 }
 
 describe('confirmed exit recovery without unknown RPC replay', () => {
+  it('an explicitly rolled-back BUSY retry stays on its original worker, never a recovered earlier ledger during retry backoff', async () => {
+    vi.useFakeTimers()
+    try {
+      const old = new FakeWorker(), next = new FakeWorker(), factory = vi.fn().mockReturnValueOnce(old).mockReturnValue(next)
+      const port = new NotificationWorkerPort(factory, 'file.sqlite', 500, { delaysMs: [10] })
+      old.emit('message', { id: 0, ok: true })
+      const writing = port.read('saved-id', 100, 1), rejected = expect(writing).rejects.toThrow('不重放')
+      await settle(); const message = old.postMessage.mock.calls[0]![0] as { id: number }
+      old.emit('message', { id: message.id, ok: false, error: 'BUSY rolled back', retryable: true }); await settle()
+      old.emit('exit', 1); await vi.advanceTimersByTimeAsync(10); next.emit('message', { id: 0, ok: true })
+      await vi.advanceTimersByTimeAsync(100); await rejected
+      expect(next.postMessage).not.toHaveBeenCalled(); await acknowledgeClose(port, next)
+    } finally { vi.useRealTimers() }
+  })
   it('an error alone is not permission to replace a live worker; a confirmed exit recovers fresh queries only', async () => {
     vi.useFakeTimers()
     try {

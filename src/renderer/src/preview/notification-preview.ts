@@ -11,6 +11,7 @@ export function createNotificationPreview() {
   const scenario = new URLSearchParams(window.location.search).get('notifications')
   let history: NotificationHistoryIntegrity = scenario?.startsWith('history') ? { revision: 1, acknowledgedRevision: 0, latestGapId: '11111111-1111-4111-8111-111111111111', observedAt: Date.now() - 120_000 } : { revision: 0, acknowledgedRevision: 0 }
   let revision = 0; let preferences = structuredClone(DEFAULT_NOTIFICATION_PREFERENCES)
+  let delayedPage: (() => void) | undefined, heldSecondPage = false
   const filtered = (query: NotificationQuery = {}) => [...records.values()].filter(record => record.archivedAt === undefined
     && (!query.key || query.key === record.key)
     && (!query.eventType || query.eventType === record.eventType)
@@ -58,9 +59,14 @@ export function createNotificationPreview() {
     }
     const reset = query.cursor !== undefined && query.cursor.revision !== revision
     const offset = reset ? 0 : query.cursor?.offset ?? 0; const limit = query.limit ?? 30
-    return { records: structuredClone(rows.slice(offset, offset + limit)), summary: summary(query), reset, health: 'ready', historyIncomplete: history.revision > 0, historyIntegrity: structuredClone(history), historyGapUnconfirmed: false,
+    const result: NotificationPage = { records: structuredClone(rows.slice(offset, offset + limit)), summary: summary(query), reset, health: 'ready', historyIncomplete: history.revision > 0, historyIntegrity: structuredClone(history), historyGapUnconfirmed: false,
       delivery: { nativeSupported: true, state: 'ready' }, // Pure preview capability; never calls Electron or system settings.
       ...(rows.length > offset + limit ? { nextCursor: { revision, offset: offset + limit } } : {}) }
+    if (scenario === 'center-race' && query.cursor && !heldSecondPage) {
+      heldSecondPage = true
+      return new Promise(resolve => { delayedPage = () => resolve(result) }) // Exact user read releases this one fixture-only late page, no production delay.
+    }
+    return result
   }
   const api: Pick<SgDesktopApi, 'getNotificationPage' | 'readNotification' | 'readAllNotifications' | 'archiveNotification' | 'clearReadNotifications' | 'getNotificationPreferences' | 'saveNotificationPreferences' | 'onNotificationChanged' | 'acknowledgeNotificationHistory'> = {
     getNotificationPage: page,
@@ -74,7 +80,8 @@ export function createNotificationPreview() {
     readNotification: async ({ id, revision: observed }) => {
       const record = records.get(id)
       if (record && record.attention !== 'activity' && observed >= record.attentionRevision && notificationIsUnread(record)) {
-        record.readRevision = record.attentionRevision; record.readAt = Date.now(); ++revision; return emit(record)
+        record.readRevision = record.attentionRevision; record.readAt = Date.now(); ++revision
+        const result = emit(record), release = delayedPage; delayedPage = undefined; queueMicrotask(() => release?.()); return result
       }
       return { changed: false, summary: summary() }
     },
@@ -110,7 +117,7 @@ export function createNotificationPreview() {
       { key: 'preview:cleanup', category: 'storage' as const, source: '存储清理', title: '清理完成，运行中的会话数据已保留', detail: '已完成所选项目，跳过仍被本轮会话绑定的历史数据。', tone: 'success' as const, attention: 'notice' as const, state: 'resolved' as const, target: { kind: 'settings' as const, section: 'cleanup' as const } },
       { key: 'preview:online', category: 'sessions' as const, source: '会话 · 前端体验', title: 'CH-3 已上线', detail: '通信已接入，正常生命周期只安静记录。', tone: 'info' as const, attention: 'activity' as const, state: 'resolved' as const }
     ]
-    for (let index = (scenario === 'many' ? 72 : templates.length) - 1; index >= 0; index--) {
+    for (let index = (['many','center-race'].includes(scenario) ? 72 : templates.length) - 1; index >= 0; index--) {
       const item = templates[index % templates.length]!
       offer({ ...item, key: `${item.key}:${index}`, scope: {}, occurredAt: Date.now() - (index + 1) * 240_000,
         ...(scenario === 'long' ? { title: item.title + ' · 跨工作区与成员身份校验', detail: `${item.detail}\n\n${'src/long_unbroken_workspace_path/'.repeat(18)}` } : {}) })

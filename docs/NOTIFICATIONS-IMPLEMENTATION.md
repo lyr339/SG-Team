@@ -525,6 +525,28 @@ scope catalogue 已加入 `operator-messages:`。完整原 workspace/run 消失�
 
 `protected-source-read-audit.json` 核对两保护树 HEAD/status/binary diff／逐文件与四个既有删除状态保持。没有开 production main／当前软件／Cursor、跑真实账号／模型／OS 通知；worker fixtures finally 仅清理自己的目录。**完整目标仍未完成**：中心多页 summary/read receipt 竞态和更长保留／性能、legacy 原 proof 与其余会话／问卷／队列／回复历史恢复、未发 usage 载荷及 MCP 校验前未知归属、完整响应式与正式包／Windows/macOS 真权限／声音／勿扰／送达继续逐项实施验收，不把这个 reader 修复替换完整目标。仅本地提交，不 push、发布、安装或结束目标。
 
+### 第三十批：中心迟到后页、过滤边界和当前私有历史代次
+
+按真实现有代码先复现三处错误，见 `center-race-reproduction.log`：已加载前页的一条通知确认已读后，迟到的第二页仍以旧总计覆盖摘要，41 条未读被倒回 42；切换范围后查询失败，旧列表与旧计数仍留在新的标签下可点“全部已读／清理”；renderer store 只比较全局 counter，真实 private worker 恢复较早历史时新的低 summary 被旧高 summary 永久吞掉。当前用小型、bounded `NotificationCenterProjection` 集中原有 receipt/revision 合并，不新增业务状态机。合并覆盖全部已加载页，按确切私有 revision step 应用一次阅读 delta，重复 push／read response 不二减；可证明的其他工作区变更不猜进当前范围，未知／超出 256 条窗口的 revision 缺口给显式刷新，不假造准确 summary。行位置与正在读的 exact detail 仍不被后台新结果替换。
+
+不同筛选／范围的 page 带 UI scope 边界，失败不能留旧 rows/count 供新范围操作；scope 切换／卸载／history reload 可围住迟到请求。后页合并用原 page offset/reset，不重写中心排序或把 source-reader keyset 套成列表的新契约。真实存储换代时 opened 旧详情可保留为历史文字，但旧页 bulk／归档／清理禁用，明确等刷新；相同 record ID／正文 revision 在另一存储代次也能显示“查看最新结果”，不用两份同 revision 正文冒充同一次阅读。精确 native-open／局部已存诊断的自动阅读 predicate 同时要求实际 displayed revision／代次，不把相同 eventId 的新低版本默默读掉。
+
+main service 从自己的 private sourceEpoch 给 page／record／change／push 加 ephemeral `storageEpoch`，不写业务 schema、私有持久 native counter 或 Agent 数据。新的 store generation 才允许较低全局 summary，并清旧 announcement／record／history receipt cache；旧 generation 事件／回包、同 generation 迟到低 summary/historyReload 不能倒改当前计数或已确认说明。旧提醒偏好不能在换库期间被当作当前已确认偏好，等原恢复 metadata。源阅读与 LocalSourceNotice／GroupEffectsNotice 局部已存说明携带显示版本和这一代次，读取当前 private page后才放行人类确认，仍不代 Agent 写读／响应回执。
+
+只在 renderer merge 丢旧 ACK 不够：旧的高 revision 请求甚至能读掉恢复库中同 ID 低 revision 的新未读。当前 IPC 的 read/readAll/archive/clearRead／history acknowledge 全部验证传入 observed storageEpoch，service 在任何 repository mutation 前比较，错代次为操作反馈而非新业务／DB 故障。legacy omission 固定属于初始 0，不能自动授予替换库权限；直接 trusted 内部 fixtures 保留可省略参数契约。已受理而后失去 ACK 的 page／mutation／普通 intake marker/put 同样围住 await，不把旧結果重新贴为新 epoch 或 broadcast／seed marker／弹窗。原 worker 的 BUSY/LOCKED 明确回滚 retry 仍只有两次，但 backoff 后必须是同一 worker session，不能把已回滚的旧人类请求发到更早的新历史。此处不认为 unknown timeout 已回滚，不增加业务 retry 或 worker 重放。
+
+独立 history controller 的异步 proof／ack／prune 也用相同代次围栏；invalidate 时保留已知最近 gap 的真实身份待私有原 key 重新确认，不保留旧高 revision／ack counter 或“历史已完整”幻觉。普通存储／说明／偏好查询及确认迟到回执不能复活旧 state。全部改动仍是私有通知 transport／UI，原账号、自动化、Cursor、MCP 和其他业务调用次数、顺序、事务、闸门、等待均未改变；没有补发余额／原 telemetry／model probe。
+
+证据：`full-regression-center-race-final.log`（311 files，2954 passed，1 skipped）、`typecheck-center-race-final.log`、`build-center-race-final.log`、`dead-code-center-race-final.log`。真实 ledger＋React 中心 tests 覆盖迟到第二页与前页 read、范围失败、同 ID/revision 的新代次 detail 稳定和 explicit latest、bulk observed epoch；projection tests 覆盖重复 delta、未知／有界窗口、其他工作区；store tests 覆盖低 summary 只由新代次接入、旧 push／同代次晚 historyReload 与 gap ACK；main service tests 覆盖旧 generation 五种动作零 repository 请求、迟到 page/read/pump 的隔离；worker fake session test 验证确切回滚 BUSY 的 backoff 也不跨 worker。其余原正常中心、source reader、局部说明、native-open、设置等全回归保持，不靠跳过失败或删断言通过。
+
+`scripts/verify-notification-center-epoch.ts` 在 Node 与 macOS Electron (`ELECTRON_RUN_AS_NODE=1`) 走当前编译 private worker＋main service＋真实 NotificationStore：保存隔离 earlier private backup，worker **真实 exit** 后恢复，same ID 低 revision 新记录仍未读，新的低 summary 被 store 接受；旧 read／bulk／archive／clear／historyAck 都在 main 入口拒绝，真实 command audit 确认没有发到 replacement；当前 epoch 的 exact read 才能清，零历史 announcement。此脚本不伪造 DOM 可见性，也不启动 production main 或改真实用户数据。
+
+二十二类 worker／shutdown／recovery／history／context／native-rebase／team-observations／group-effects／mcp-writes／usage-storage／model-catalog／runtime-usage／context-source／usage-binding／source-epoch／native-content／task-context／team-cache／native-scope／operator-reads／source-reading／center-epoch 在两 runtime 复跑，`center-race-verification-final-matrix.log`，原冒烟 `mcp-smoke-center-race-final.log`／`channel-smoke-center-race-final.log`。`protected-center-race-audit.json` 核对两个保护树及四个既有删除状态不变；fixtures finally 只清理自己的目录。仅本地提交，不 push／发布／安装。
+
+真实 CUA 纯 browser `notifications=center-race` scene 先显示 54 未读、受理第二页但保留旧回包，再点击前页一条，read 后释放 fixture 的迟到 page。actual viewport 984×554，已加载 54 行、53 个 is-unread，中心和 bell 均为 53，没有“有更新”误报，原 pending/detail 保留；未用“全部已读”或清理替代精确阅读。`ui/center-race-after-read.jpg`／`ui/center-race-audit.json` 保存实物证据、logs=[]、panel width440/scrollWidth438，Escape 后真实回 bell focus。未改 UI/CSS 视觉语言、未加左彩边，不把此大小的局部验证当所有响应式已通过。自建 tab 已关闭，无 viewport override／主题修改，preview server 已停止；没有开用户软件／Cursor或实际 OS 送达。
+
+**完整目标仍未完成**：本批收口的是中心多页与 private storage 代次，不是完整长期容量／所有 feed 恢复或正式包。接续审查发现 collaboration 原页仍用旧固定 eventId 做自动阅读，而新的 native message diagnostics 已有内容指纹／rebase suffix；这条原页 proof 接线还需专门补，不能因为 center 的单元测试绿色就忽略。legacy MCP 旧 proof、会话／问卷／回复／队列历史恢复、未发 usage 载荷和 MCP 校验前未知归属、全布局和正式打包／Windows/macOS 真权限／声音／勿扰／送达继续按完整矩阵实施验收，不结束目标。
+
 下面保留完整要求，不因分批已有成果缩小。已实现部分仍需匹配该项范围验收；未实现部分继续开工。
 
 1. 通知中心、轻量顶栏入口、单张提醒和独立 renderer store。支持待处理／未读／全部、查询范围、分页、详情、关闭、阅读、归档、确认清理和适当偏好；减少动画、长内容、键盘与窄窗需验收。

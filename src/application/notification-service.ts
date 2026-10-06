@@ -32,7 +32,7 @@ export class NotificationService {
   private readonly history?: NotificationHistoryController
 
   constructor(private readonly repository: NotificationRepository, private readonly now: () => number = Date.now) {
-    const historyPort = notificationHistoryPort(repository)
+    const historyPort = notificationHistoryPort(repository, () => this.sourceEpoch)
     if (historyPort) this.history = new NotificationHistoryController(historyPort, {
       state: value => { this.historyIncomplete ||= (value.integrity?.revision ?? 0) > 0 || value.unconfirmed; this.emit() },
       changed: change => { this.markers.clear(); this.emit({ change }) },
@@ -45,6 +45,7 @@ export class NotificationService {
     // Pending requests sent after unavailable may legitimately wait for the
     // next worker's first ready. Invalidate at loss, not twice at that ready.
     // The first-ever ready is initialization, not a lost storage generation.
+    const previousEpoch = this.sourceEpoch
     if (event.state === 'unavailable') {
       if (!this.storageUnavailable || this.storageGeneration !== event.generation) ++this.sourceEpoch
       this.storageUnavailable = true
@@ -53,6 +54,7 @@ export class NotificationService {
       this.storageUnavailable = false
     }
     this.storageGeneration = event.generation
+    if (previousEpoch !== this.sourceEpoch) this.history?.invalidateStorage()
     const epoch = ++this.storageEpoch
     // An interrupted put may already have committed. Never retain pre-exit
     // content markers or infer rollback from the missing acknowledgement.
@@ -81,9 +83,12 @@ export class NotificationService {
     // Quit draining is persistence work, not an opportunity to pop a late toast or OS alert.
     const delivered = this.shuttingDown ? { ...event, announcement: undefined } : event
     for (const listener of this.listeners) {
-      try { listener({ ...delivered, health: this.health, historyIncomplete: this.historyIncomplete,
+      try { listener({ ...delivered, ...(delivered.change ? { change: this.presentChange(delivered.change) } : {}), storageEpoch: this.sourceEpoch, health: this.health, historyIncomplete: this.historyIncomplete,
         historyIntegrity: this.history?.state().integrity, historyGapUnconfirmed: this.history?.state().unconfirmed }) } catch { /* A broken presentation must not fail a completed business operation. */ }
     }
+  }
+  private presentChange(change: NotificationChange, storageEpoch = this.sourceEpoch): NotificationChange {
+    return { ...change, storageEpoch, ...(change.record ? { record: { ...change.record, storageEpoch } } : {}) }
   }
   private degraded(historyLost = false, gapId?: string): void {
     const changed = this.health !== 'degraded' || historyLost && !this.historyIncomplete
@@ -251,9 +256,11 @@ export class NotificationService {
     while (this.queued.size && !this.closed) {
       let [key, draft] = this.queued.entries().next().value!
       this.queued.delete(key)
+      const storageEpoch = this.sourceEpoch
       try {
         if (this.orderedKeys.delete(key)) {
           const marker = this.markers.get(key) ?? await this.repository.marker(key)
+          if (storageEpoch !== this.sourceEpoch) throw Error('通知标记读取跨越存储代次')
           // A newer state may arrive while the first marker is loading; do not write the stale captured state.
           const latest = this.queued.get(key)
           if (latest && this.orderedKeys.delete(key)) { draft = latest; this.queued.delete(key) }
@@ -262,6 +269,7 @@ export class NotificationService {
           draft.sourceRevision = marker.sourceRevision + 1
         }
         const change = await this.repository.put(draft, this.now())
+        if (storageEpoch !== this.sourceEpoch) throw Error('通知结果确认跨越存储代次')
         if (change.record) this.markers.set(key, { sourceRevision: change.record.sourceRevision, signature: notificationFingerprint(change.record) })
         if (this.markers.size > 512) this.markers.delete(this.markers.keys().next().value!)
         this.recovered()
@@ -275,31 +283,52 @@ export class NotificationService {
   }
   async flush(): Promise<void> { while (this.pumping || this.recovering) await Promise.allSettled([this.pumping, this.recovering]); await this.history?.flush() }
   async page(query?: NotificationQuery): Promise<NotificationPage> {
+    const storageEpoch = this.sourceEpoch
     try {
       const page = await this.repository.page(query)
+      if (storageEpoch !== this.sourceEpoch) throw Error('通知页面读取跨越存储代次，请重新读取')
       if (page.historyIntegrity) this.history?.absorb(page.historyIntegrity)
       this.recovered()
-      return { ...page, health: this.health, historyIncomplete: this.historyIncomplete, historyGapUnconfirmed: this.history?.state().unconfirmed }
+      return { ...page, records: page.records.map(record => ({ ...record, storageEpoch })), storageEpoch,
+        health: this.health, historyIncomplete: this.historyIncomplete, historyGapUnconfirmed: this.history?.state().unconfirmed }
     }
     catch (error) { if (!(error instanceof NotificationActionError || error && typeof error === 'object' && 'code' in error && error.code === 'notification_action_invalid')) this.degraded(); throw error }
   }
-  private async mutation(run: () => Promise<NotificationChange>): Promise<NotificationChange> {
-    try { const change = await run(); this.recovered(); if (change.changed) this.emit({ change }); return change }
+  private async mutation(run: () => Promise<NotificationChange>, expectedEpoch?: number): Promise<NotificationChange> {
+    const storageEpoch = this.sourceEpoch
+    try {
+      if (expectedEpoch !== undefined && (!Number.isSafeInteger(expectedEpoch) || expectedEpoch !== storageEpoch)) throw new NotificationActionError('通知存储已换代，请刷新后再操作。')
+      const change = await run()
+      if (storageEpoch !== this.sourceEpoch) throw Error('通知操作回执跨越存储代次，结果未确认，请重新读取')
+      this.recovered(); if (change.changed) this.emit({ change }); return this.presentChange(change, storageEpoch)
+    }
     catch (error) { if (!(error instanceof NotificationActionError || error && typeof error === 'object' && 'code' in error && error.code === 'notification_action_invalid')) this.degraded(); throw error }
   }
-  read(id: string, revision: number): Promise<NotificationChange> { return this.mutation(() => this.repository.read(id, revision, this.now())) }
-  readAll(query: NotificationQuery, revision: number): Promise<NotificationChange> { return this.mutation(() => this.repository.readAll(query, revision, this.now())) }
-  archive(id: string): Promise<NotificationChange> { return this.mutation(() => this.repository.archive(id, this.now())) }
-  clearRead(query: NotificationQuery): Promise<NotificationChange> { return this.mutation(() => this.repository.clearRead(query, this.now())) }
-  preferences(): Promise<NotificationPreferences> { return this.repository.preferences() }
-  async acknowledgeHistoryGap(revision: number): Promise<NotificationHistoryIntegrity> {
+  read(id: string, revision: number, storageEpoch?: number): Promise<NotificationChange> { return this.mutation(() => this.repository.read(id, revision, this.now()), storageEpoch) }
+  readAll(query: NotificationQuery, revision: number, storageEpoch?: number): Promise<NotificationChange> { return this.mutation(() => this.repository.readAll(query, revision, this.now()), storageEpoch) }
+  archive(id: string, storageEpoch?: number): Promise<NotificationChange> { return this.mutation(() => this.repository.archive(id, this.now()), storageEpoch) }
+  clearRead(query: NotificationQuery, storageEpoch?: number): Promise<NotificationChange> { return this.mutation(() => this.repository.clearRead(query, this.now()), storageEpoch) }
+  async preferences(): Promise<NotificationPreferences> {
+    const epoch = this.sourceEpoch, preferences = await this.repository.preferences()
+    if (epoch !== this.sourceEpoch) throw Error('提醒设置读取跨越存储代次')
+    return preferences
+  }
+  async acknowledgeHistoryGap(revision: number, expectedEpoch?: number): Promise<NotificationHistoryIntegrity> {
+    const epoch = this.sourceEpoch
+    if (expectedEpoch !== undefined && (!Number.isSafeInteger(expectedEpoch) || expectedEpoch !== epoch)) throw new NotificationActionError('通知存储已换代，请刷新后再确认历史说明。')
     if (!this.history) throw new NotificationActionError('历史说明暂不可确认，请稍后重试')
-    try { return await this.history.acknowledge(revision) }
+    try {
+      const value = await this.history.acknowledge(revision)
+      if (epoch !== this.sourceEpoch) throw Error('历史说明确认跨越存储代次，请重新读取')
+      return value
+    }
     catch (error) { if (!(error instanceof NotificationActionError || error && typeof error === 'object' && 'code' in error && error.code === 'notification_action_invalid')) this.degraded(); throw error }
   }
   async savePreferences(value: unknown): Promise<NotificationPreferences> {
+    const epoch = this.sourceEpoch
     ++this.preferencesEpoch
     const preferences = await this.repository.savePreferences(normalizeNotificationPreferences(value))
+    if (epoch !== this.sourceEpoch) throw Error('提醒设置保存确认跨越存储代次')
     this.emit({ preferences }); return preferences
   }
   close(): Promise<void> {

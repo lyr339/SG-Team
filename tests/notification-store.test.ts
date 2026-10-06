@@ -14,6 +14,25 @@ function harness() {
 }
 const flush = async () => { await Promise.resolve(); await Promise.resolve() }
 describe('notification renderer store', () => {
+  it('a proven new private generation accepts a lower summary, but neither an old generation nor a late same-generation reload can rewind it', async () => {
+    const h = harness(), release = h.store.acquire(); await flush()
+    h.push({ storageEpoch: 0, change: { changed: true, record, summary: summary(100) }, health: 'ready', historyIncomplete: false })
+    h.push({ storageEpoch: 1, historyReload: true, change: { changed: false, summary: summary(2) }, health: 'ready', historyIncomplete: true })
+    expect(h.store.snapshot().summary.revision).toBe(2)
+    h.push({ storageEpoch: 1, change: { changed: true, record: { ...record, storageEpoch: 1, revision: 3 }, summary: summary(3) }, health: 'ready', historyIncomplete: true })
+    h.push({ storageEpoch: 1, historyReload: true, change: { changed: false, summary: summary(2) }, health: 'ready', historyIncomplete: true })
+    h.push({ storageEpoch: 0, change: { changed: true, record, summary: summary(200) }, health: 'ready', historyIncomplete: false })
+    expect(h.store.snapshot().summary.revision).toBe(3); release()
+  })
+  it('a late same-generation recovery page cannot overwrite a newer history-gap acknowledgement or request a redundant history reload', async () => {
+    const h = harness(), release = h.store.acquire(); await flush(); const subscriber = vi.fn(); h.store.subscribe(subscriber)
+    const integrity = { revision: 2, acknowledgedRevision: 2, latestGapId: '11111111-1111-4111-8111-111111111111', observedAt: 1, acknowledgedAt: 2 }
+    h.push({ storageEpoch: 1, change: { changed: true, summary: summary(5) }, health: 'ready', historyIncomplete: true, historyIntegrity: integrity, historyGapUnconfirmed: false })
+    h.push({ storageEpoch: 1, historyReload: true, change: { changed: false, summary: summary(2) }, health: 'ready', historyIncomplete: true,
+      historyIntegrity: { ...integrity, revision: 1, acknowledgedRevision: 0 }, historyGapUnconfirmed: true })
+    expect(h.store.snapshot().historyGapUnconfirmed).toBe(false); expect(h.store.snapshot().historyIntegrity).toEqual(integrity)
+    expect(subscriber).toHaveBeenLastCalledWith(expect.objectContaining({ historyReload: undefined, change: undefined })); release()
+  })
   it('a stale initial pull cannot overwrite live delivery health or a newer native open request', async () => {
     const h = harness(); let resolve!: (value: NotificationPage) => void
     vi.mocked(h.api.getNotificationPage).mockImplementationOnce(() => new Promise(done => { resolve = done }))

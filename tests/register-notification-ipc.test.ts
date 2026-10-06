@@ -37,7 +37,7 @@ describe('notification IPC permissions and data boundaries', () => {
   it('history acknowledgement is a trusted exact-revision operation, not clearing/reading or a publish endpoint', () => {
     const h = harness()
     try {
-      h.invoke(IPC.notificationAcknowledgeHistory, 7); expect(h.service.acknowledgeHistoryGap).toHaveBeenCalledWith(7)
+      h.invoke(IPC.notificationAcknowledgeHistory, 7); expect(h.service.acknowledgeHistoryGap).toHaveBeenCalledWith(7, 0)
       for (const invalid of ['7', -1, {}, Number.POSITIVE_INFINITY]) expect(() => h.invoke(IPC.notificationAcknowledgeHistory, invalid)).toThrow()
       trusted.mockImplementation(() => { throw Error('untrusted') })
       expect(() => h.invoke(IPC.notificationAcknowledgeHistory, 8)).toThrow('untrusted')
@@ -64,12 +64,24 @@ describe('notification IPC permissions and data boundaries', () => {
       expect(() => invoke(IPC.notificationPage, { readCursor: 'start', cursor: { revision: 1, offset: 0 } })).toThrow()
     } finally { dispose() }
   })
+  it('requires a validated observed storage generation for all modern renderer mutation forms, while legacy omission is fenced to zero', () => {
+    const h = harness()
+    try {
+      h.invoke(IPC.notificationRead, { id: 'r', revision: 5, storageEpoch: 2 }); expect(h.service.read).toHaveBeenLastCalledWith('r', 5, 2)
+      h.invoke(IPC.notificationReadAll, { revision: 5, query: { filter: 'unread' }, storageEpoch: 2 }); expect(h.service.readAll).toHaveBeenLastCalledWith({ filter: 'unread' }, 5, 2)
+      h.invoke(IPC.notificationArchive, { id: 'r', storageEpoch: 2 }); expect(h.service.archive).toHaveBeenLastCalledWith('r', 2)
+      h.invoke(IPC.notificationArchive, 'r'); expect(h.service.archive).toHaveBeenLastCalledWith('r', 0)
+      h.invoke(IPC.notificationClearRead, { confirmed: true, storageEpoch: 2 }); expect(h.service.clearRead).toHaveBeenLastCalledWith({}, 2)
+      h.invoke(IPC.notificationAcknowledgeHistory, { revision: 5, storageEpoch: 2 }); expect(h.service.acknowledgeHistoryGap).toHaveBeenLastCalledWith(5, 2)
+      for (const storageEpoch of [-1, NaN, '2', {}, null]) expect(() => h.invoke(IPC.notificationRead, { id: 'r', revision: 5, storageEpoch })).toThrow()
+    } finally { h.dispose() }
+  })
   it('authenticates every read and mutation and never exposes a renderer publish endpoint', () => {
     const { service, invoke, dispose } = harness()
     invoke(IPC.notificationPage, { filter: 'pending', workspaceId: 'workspace-a', limit: 40, ignored: 'raw transcript' })
     expect(service.page).toHaveBeenCalledWith({ filter: 'pending', workspaceId: 'workspace-a', limit: 40 })
     invoke(IPC.notificationRead, { id: 'record-1', revision: 7 })
-    expect(service.read).toHaveBeenCalledWith('record-1', 7)
+    expect(service.read).toHaveBeenCalledWith('record-1', 7, 0)
     expect(trusted).toHaveBeenCalledTimes(2)
     expect([...handlers.keys()].some(key => /publish|put|offer/.test(key))).toBe(false)
     dispose()
@@ -87,7 +99,7 @@ describe('notification IPC permissions and data boundaries', () => {
     const { service, invoke, dispose } = harness()
     expect(() => invoke(IPC.notificationClearRead, { query: {} })).toThrow('需要确认')
     invoke(IPC.notificationClearRead, { confirmed: true, query: { workspaceId: 'a' } })
-    expect(service.clearRead).toHaveBeenCalledWith({ workspaceId: 'a' })
+    expect(service.clearRead).toHaveBeenCalledWith({ workspaceId: 'a' }, 0)
     dispose()
   })
   it('pushes independently of DesktopSnapshot and unregisters handlers and subscriptions', () => {

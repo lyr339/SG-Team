@@ -5,7 +5,7 @@ import './group-effects-notice.css'
 /** A historical original-call diagnostic, not a retry button or current group-state authority. */
 export function GroupEffectsNotice({ record }: { record?: NotificationRecord }): React.JSX.Element | null {
   const ref = useRef<HTMLParagraphElement>(null)
-  useNotificationResultRead(ref, record?.key, record?.eventId)
+  useNotificationResultRead(ref, record?.key, record?.eventId, record)
   if (!record) return null
   return (
     <div

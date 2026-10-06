@@ -14,7 +14,7 @@ type LocalSource = keyof typeof LOCAL_SOURCES
 
 function Issue({ record }: { record: NotificationRecord }) {
   const ref = useRef<HTMLParagraphElement>(null)
-  useNotificationResultRead(ref, record.key, record.eventId)
+  useNotificationResultRead(ref, record.key, record.eventId, record)
   return <details className="usage-storage-notice">
     <summary><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7"/><path d="M10 6v5m0 3v.1"/></svg><span>{record.title}</span><span className="usage-storage-notice__more">详情</span></summary>
     <p ref={ref} data-notification-result data-notification-key={record.key} data-notification-event={record.eventId}>{record.detail}</p>
@@ -28,7 +28,7 @@ export function LocalSourceNotice({ active = true, source }: { active?: boolean;
     const api = window.sgDesktop
     if (!active) { setSnapshot({ source, epoch: 0, records: [] }); return }
     if (!api?.getNotificationPage || !api.onNotificationChanged) return
-    let alive = true, version = 0, epoch = 0, sequence = 0
+    let alive = true, version = 0, epoch = 0, sequence = 0, storageEpoch = 0
     type Row = { record: NotificationRecord; sequence: number; historyRevision: number }
     let rows = new Map<string, Row>()
     const valid = (r: NotificationRecord) => (events as readonly string[]).includes(r.eventType ?? '') && key.test(r.key)
@@ -51,6 +51,10 @@ export function LocalSourceNotice({ active = true, source }: { active?: boolean;
       try {
         const pages = await Promise.all(events.map(eventType => api.getNotificationPage({ eventType, limit: 1 })))
         if (!alive || request !== version) return
+        if (pages.some(page => page.storageEpoch !== undefined && page.storageEpoch < storageEpoch)) return
+        const generation = Math.max(storageEpoch, ...pages.map(page => page.storageEpoch ?? storageEpoch))
+        if (generation > storageEpoch) { storageEpoch = generation; ++epoch; rows.clear() }
+        if (pages.some(page => page.storageEpoch !== undefined && page.storageEpoch !== storageEpoch)) return
         const next = new Map<string, Row>()
         pages.forEach(page => page.records.forEach(r => accept(next, r, 0, page.summary.revision)))
         for (const [eventType, row] of rows) {
@@ -63,7 +67,11 @@ export function LocalSourceNotice({ active = true, source }: { active?: boolean;
     }
     const stop = api.onNotificationChanged(event => {
       if (!alive) return
-      if (event.historyReload) {
+      const storage = event.storageEpoch ?? event.change?.storageEpoch
+      if (storage !== undefined && storage < storageEpoch) return
+      const changedStorage = storage !== undefined && storage > storageEpoch
+      if (changedStorage) storageEpoch = storage!
+      if (event.historyReload || changedStorage) {
         ++epoch; rows.clear(); publish(); void pull(); return
       }
       const r = event.change?.record

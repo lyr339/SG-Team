@@ -13,7 +13,7 @@ export function useGroupEffectNotes(workspaceId?: string, runId?: string): Map<s
     let active = true,
       reading = false,
       again = false,
-      epoch = 0
+      epoch = 0, storageEpoch = 0
     const rows = new Map<string, NotificationRecord>()
     const valid = (record: NotificationRecord) =>
       record.eventType === 'group.effects' &&
@@ -56,7 +56,8 @@ export function useGroupEffectNotes(workspaceId?: string, runId?: string): Map<s
             limit: 100,
             ...(cursor ? { cursor } : {})
           })
-          if (!active) return
+          if (!active || page.storageEpoch !== undefined && page.storageEpoch < storageEpoch) return
+          if (page.storageEpoch !== undefined && page.storageEpoch > storageEpoch) { storageEpoch = page.storageEpoch; rows.clear(); fetched.clear() }
           if (page.reset) {
             fetched.clear()
             if (++resets > 2) break
@@ -82,6 +83,11 @@ export function useGroupEffectNotes(workspaceId?: string, runId?: string): Map<s
     }
     const stop = api.onNotificationChanged((event: NotificationPush) => {
       if (!active) return
+      const storage = event.storageEpoch ?? event.change?.storageEpoch
+      if (storage !== undefined && storage < storageEpoch) return
+      const changedStorage = storage !== undefined && storage > storageEpoch
+      if (changedStorage) storageEpoch = storage!
+      if (event.historyReload || changedStorage) { ++epoch; rows.clear(); publish(); void pull(); return }
       if (event.change?.record && valid(event.change.record)) {
         ++epoch
         accept(event.change.record)
