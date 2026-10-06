@@ -18,6 +18,8 @@ const usage: NotificationRecord = { ...model, id: 'usage-incident', key: 'usage-
 const runtime: NotificationRecord = { ...usage, id: 'runtime-incident', key: 'usage-runtime:' + '3'.repeat(64),
   eventId: 'runtime-read-failed', eventType: 'usage.runtime-source', category: 'maintenance', source: '统计 · 原生运行时入口',
   title: '用量补位读数尚未确认', detail: '正常没有精确回合结算不算异常。这里仅记录原读取持续异常。' }
+const context: NotificationRecord = { ...model, id: 'context-incident', key: 'composer-context:' + '4'.repeat(64), eventType: 'cursor.context-source',
+  eventId: 'context-read-failed', title: '本机上下文详情尚未确认', detail: '仅说明原详情读取，头部旧指标不表示该入口恢复，不反推统计。' }
 function page(...records: NotificationRecord[]): NotificationPage {
   return { records, summary: { revision: Math.max(0, ...records.map(record => record.revision)), total: records.length, unread: records.length, pending: 0, clearable: 0 }, reset: false }
 }
@@ -32,7 +34,8 @@ beforeEach(() => {
   host = document.createElement('div'); document.body.append(host); root = createRoot(host); listeners = new Set()
   api = { getNotificationPage: vi.fn(async (query: any) => query.eventType === model.eventType || query.key === model.key ? page(model)
       : query.eventType === usage.eventType || query.key === usage.key ? page(usage)
-      : query.eventType === runtime.eventType || query.key === runtime.key ? page(runtime) : page()),
+      : query.eventType === runtime.eventType || query.key === runtime.key ? page(runtime)
+      : query.eventType === context.eventType || query.key === context.key ? page(context) : page()),
     onNotificationChanged: vi.fn((listener: any) => { listeners.add(listener); return () => listeners.delete(listener) }),
     readNotification: vi.fn(async () => ({ changed: true, record: { ...model, readRevision: 10 }, summary: page(model).summary })) }
   Object.assign(window, { sgDesktop: api })
@@ -157,4 +160,14 @@ it('places native runtime diagnostics only on statistics, keeps the closed body 
   expect(host.textContent).toContain(runtime.title); expect(api.readNotification).not.toHaveBeenCalled()
   await act(async () => push({ ...runtime, revision: 12, state: 'expired', subjectState: 'monitor-unconfirmed', title: '原监测范围已变化' }))
   expect(host.querySelector('details')).toBeNull(); expect(api.readNotification).not.toHaveBeenCalled()
+})
+
+it('keeps context details separate from model/runtime usage sources and acknowledges only the exact rendered maintenance body', async () => {
+  await act(async () => root.render(<LocalSourceNotice source="composer-context" />))
+  expect(api.getNotificationPage).toHaveBeenCalledExactlyOnceWith({ eventType: 'cursor.context-source', limit: 1 })
+  expect(host.textContent).toContain(context.title); expect(host.textContent).not.toContain(model.title)
+  expect(api.readNotification).not.toHaveBeenCalled()
+  const details = host.querySelector('details')!
+  await act(async () => { details.open = true; details.dispatchEvent(new Event('toggle')); await new Promise(requestAnimationFrame) })
+  expect(api.readNotification).toHaveBeenCalledWith({ id: context.id, revision: context.revision })
 })

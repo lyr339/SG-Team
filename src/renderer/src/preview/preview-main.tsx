@@ -1177,6 +1177,15 @@ function updatePreviewGroup(groupId: string, update: (view: typeof state.team.gr
 }
 
 const notificationPreview = createNotificationPreview()
+if (previewParameters.get('notifications') === 'context-source') {
+  const key = 'composer-context-health', scope = '1'.repeat(64), at = Date.now() - 60000
+  const failed = reduceRuntimeUsageNotifications(undefined, { key, scope, id: 'a'.repeat(64), at, result: { state: 'failed', reason: 'record' } }, true, 1, 'context')
+  failed.drafts.forEach(notificationPreview.offer)
+  const next = previewParameters.get('contextRead')
+  if (next === 'recovered' || next === 'changed') reduceRuntimeUsageNotifications(failed.state, { key,
+    scope: next === 'changed' ? '2'.repeat(64) : scope, id: 'b'.repeat(64), at: at + 1000,
+    result: next === 'changed' ? { state: 'scope' } : { state: 'ready' } }, true, 2, 'context').drafts.forEach(notificationPreview.offer)
+}
 if (previewParameters.get('notifications') === 'usage-runtime') {
   const key = 'runtime-usage-health', scope = '1'.repeat(64), at = Date.now() - 60000
   const failed = reduceRuntimeUsageNotifications(undefined, { key, scope, id: 'a'.repeat(64), at, result: { state: 'failed', reason: 'read' } }, true, 1)

@@ -42,6 +42,7 @@ import type { ProcessBlock } from '../../domain/conversation-entry'
 import type { SessionTranscriptLocation } from '../../domain/session-handoff'
 import { isCursorInternalToolName } from './cursor-cdp-session-creator'
 import type { ModelCatalogObservation, ModelCatalogObserver } from '../../domain/model-catalog-observation'
+import type { RuntimeUsageReadObserver, RuntimeUsageReadResult } from '../../domain/runtime-usage-observation'
 
 const APPLICATION_USER_KEY = 'src.vs.platform.reactivestorage.browser.reactiveStorageServiceImpl.persistentStorage.applicationUser'
 const MAX_HEADERS_BYTES = 32 * 1024 * 1024
@@ -110,6 +111,7 @@ export interface CursorComposerTelemetryReaderOptions extends Partial<CursorComp
   channelActivityPollMs?: number
   transcriptIndexTtlMs?: number
   modelObserver?: ModelCatalogObserver
+  contextObserver?: RuntimeUsageReadObserver
 }
 
 export interface CursorComposerTelemetrySource {
@@ -518,17 +520,28 @@ function readComposerModelState(database: DatabaseSync): ComposerModelState {
  * 正是该载体）。json_extract 只抽该字段，避免解析整条会话 blob；
  * 与全局配置同一套解析，产出逐会话 profile。表缺失/结构变化时静默回退全局配置。
  */
+interface ComposerPersistentDetails {
+  profiles: Map<string, AgentExecutionProfile>
+  contextUsage: Map<string, ContextUsage>
+  verifiedContextIds: Set<string>
+  health: { state: 'complete' | 'waiting' } | Extract<RuntimeUsageReadResult, { state: 'failed' }>
+}
+/** Error codes only; inspecting a diagnostic must not introduce a new exception. */
+function sqliteReadCode(error: unknown): number | undefined {
+  try { const value = (error as { errcode?: unknown } | null)?.errcode; return typeof value === 'number' ? value & 0xff : undefined }
+  catch { return undefined }
+}
 function readComposerPersistentDetails(
   database: DatabaseSync,
   root: UnknownRecord | undefined,
   composerIds: string[]
-): {
-  profiles: Map<string, AgentExecutionProfile>
-  contextUsage: Map<string, ContextUsage>
-} {
+): ComposerPersistentDetails {
   const profiles = new Map<string, AgentExecutionProfile>()
   const contextUsage = new Map<string, ContextUsage>()
-  if (!composerIds.length) return { profiles, contextUsage }
+  const verifiedContextIds = new Set<string>()
+  if (!composerIds.length) return { profiles, contextUsage, verifiedContextIds, health: { state: 'waiting' } }
+  let stage: 'prepare' | 'read' | 'record' = 'prepare'
+  let health: ComposerPersistentDetails['health'] = { state: 'complete' }
   try {
     const statement = database.prepare(
       `SELECT
@@ -540,6 +553,7 @@ function readComposerPersistentDetails(
       FROM cursorDiskKV WHERE key = ?`
     )
     for (const composerId of composerIds) {
+      stage = 'read'
       const row = statement.get(`composerData:${composerId}`) as {
         model_config?: unknown
         context_percent?: unknown
@@ -547,25 +561,50 @@ function readComposerPersistentDetails(
         context_limit?: unknown
         token_breakdown?: unknown
       } | undefined
+      stage = 'record'
       const modelJson = sqliteText(row?.model_config)
       if (root && modelJson) {
         const profile = profileFromModelConfig(root, recordOf(JSON.parse(modelJson)))
         if (profile) profiles.set(composerId, profile)
       }
       const breakdownJson = sqliteText(row?.token_breakdown)
-      const breakdown = breakdownJson ? nativeContextBreakdown(JSON.parse(breakdownJson)) : undefined
+      const breakdownValue: unknown = breakdownJson ? JSON.parse(breakdownJson) : undefined
+      const breakdown = breakdownJson ? nativeContextBreakdown(breakdownValue) : undefined
       const used = nonNegativeInteger(row?.context_used) ?? breakdown?.totalUsedTokens
       const limit = nonNegativeInteger(row?.context_limit) ?? breakdown?.maxTokens
       const percent = finiteNumber(row?.context_percent)
       const ratio = percent === undefined
         ? used !== undefined && limit ? used / limit : undefined
         : Math.min(100, Math.max(0, percent)) / 100
-      if (ratio !== undefined) contextUsage.set(composerId, { used, limit, ratio, breakdown })
+      if (ratio !== undefined) {
+        contextUsage.set(composerId, { used, limit, ratio, breakdown })
+        // Display normalization (rounding/clamping/fallback) is not health
+        // proof. Verify the original already-read numbers without reparsing.
+        const rawBreakdown = recordOf(breakdownValue)
+        const rawUsed = row?.context_used ?? rawBreakdown?.totalUsedTokens
+        const rawLimit = row?.context_limit ?? rawBreakdown?.maxTokens
+        const validLimit = rawLimit === undefined || rawLimit === null || Number.isSafeInteger(rawLimit) && Number(rawLimit) > 0
+        const validPercent = row?.context_percent === undefined || row.context_percent === null
+          || typeof row.context_percent === 'number' && Number.isFinite(row.context_percent) && row.context_percent >= 0 && row.context_percent <= 100
+        if (Number.isSafeInteger(rawUsed) && Number(rawUsed) > 0 && validLimit && validPercent && Number.isFinite(ratio)) verifiedContextIds.add(composerId)
+      }
     }
-  } catch {
+  } catch (error) {
     // 逐会话详情是增强信息；读取失败时会话卡回退头部指标/全局配置。
+    const code = sqliteReadCode(error)
+    // SQLITE_ERROR during prepare does not distinguish an absent optional
+    // table from a changed schema. Preserve the original compatibility wait.
+    health = stage === 'prepare' && code === 1 ? { state: 'waiting' }
+      : { state: 'failed', reason: stage === 'record' || stage === 'read' && code === 1 ? 'record' : 'read' }
   }
-  return { profiles, contextUsage }
+  return { profiles, contextUsage, verifiedContextIds, health }
+}
+
+/** Metadata only: an unrelated later failure cannot invalidate owned rows already returned by the original routine. */
+function persistentContextReading(details: ComposerPersistentDetails, targets: readonly string[], queried: readonly string[]): RuntimeUsageReadResult {
+  if (!targets.length || !targets.every(id => queried.includes(id))) return { state: 'waiting' }
+  if (targets.every(id => details.verifiedContextIds.has(id))) return { state: 'ready' }
+  return details.health.state === 'failed' ? details.health : { state: 'waiting' }
 }
 
 /**
@@ -1334,6 +1373,7 @@ function withPersistedLaunchMarkers(database: DatabaseSync, composers: ParsedCom
 }
 
 export class CursorComposerTelemetryReader implements CursorComposerTelemetrySource {
+  private readonly contextObserver?: RuntimeUsageReadObserver
   private readonly modelObserver?: ModelCatalogObserver
   private observeModel(health: ComposerModelState['health']): void {
     if (!this.modelObserver) return
@@ -1395,10 +1435,12 @@ export class CursorComposerTelemetryReader implements CursorComposerTelemetrySou
       channelActivityPollMs,
       transcriptIndexTtlMs,
       modelObserver,
+      contextObserver,
       ...paths
     } = options
     this.paths = { ...defaultPaths(), ...paths }
     this.modelObserver = modelObserver
+    this.contextObserver = contextObserver
     this.now = now ?? Date.now
     this.channelActivityPollMs = Math.max(0, channelActivityPollMs ?? DEFAULT_CHANNEL_ACTIVITY_POLL_MS)
     this.transcriptIndexTtlMs = Math.max(0, transcriptIndexTtlMs ?? DEFAULT_TRANSCRIPT_INDEX_TTL_MS)
@@ -1687,7 +1729,22 @@ export class CursorComposerTelemetryReader implements CursorComposerTelemetrySou
     ) {
       return cached.result
     }
+    // Begin only after the original snapshot cache miss. Binding targets do
+    // not add reads; the original helper still queries its original headers.
+    const boundIds = [...new Set(bindings.flatMap(binding => binding.composerId ? [binding.composerId] : []))]
+    let receipt: ReturnType<RuntimeUsageReadObserver['begin']>
+    try { if (boundIds.length) receipt = this.contextObserver?.begin(Object.freeze({ workspacePath, composerIds: Object.freeze(boundIds) })) }
+    catch { try { this.contextObserver?.unavailable() } catch { /* Original snapshot is independent. */ } }
+    let reported = false, contextResult: RuntimeUsageReadResult = { state: 'waiting' }
+    let contextStage: 'open' | 'headers' | 'details' | 'projection' = 'open'
+    const report = (result = contextResult): void => {
+      if (!receipt || reported) return
+      reported = true
+      try { receipt.complete(Object.freeze(result)) }
+      catch { try { receipt.unavailable() } catch { /* Original return/exception is independent. */ } }
+    }
     if (!existsSync(this.paths.globalStateDatabase)) {
+      report({ state: 'waiting' })
       return {
         ...emptyCursorTelemetrySnapshot('unavailable', '找不到 Cursor 本机会话数据库'),
         workspacePath: normalizedWorkspace
@@ -1698,10 +1755,12 @@ export class CursorComposerTelemetryReader implements CursorComposerTelemetrySou
       this.transcriptDepsCollector = []
       // 复用只读连接（WAL 读事务可见新提交），替代每轮对 20GB 库新开/关闭。
       const database = this.acquireDatabase()
+      contextStage = 'headers'
       const modelState = readComposerModelState(database)
       this.observeModel(modelState.health)
       const json = readCursorComposerHeadersJson(database)
       if (!json) {
+        report({ state: 'waiting' })
         return this.cacheSnapshotRun(fingerprint, normalizedWorkspace, bindingsKey, activitiesKey, {
           ...emptyCursorTelemetrySnapshot('unavailable', 'Cursor 尚未生成会话遥测'),
           workspacePath: normalizedWorkspace,
@@ -1757,11 +1816,22 @@ export class CursorComposerTelemetryReader implements CursorComposerTelemetrySou
         }
       }
       const allComposers = withPersistedLaunchMarkers(database, [...parsed, ...hydrated], bindings)
+      contextStage = 'details'
       const persistentDetails = readComposerPersistentDetails(
         database,
         modelState.root,
         allComposers.map((composer) => composer.telemetry.composerId)
       )
+      if (receipt) {
+        try {
+          const targets = receipt.composerIds ?? boundIds
+          if (targets.length !== boundIds.length || new Set(targets).size !== targets.length || !targets.every(id => boundIds.includes(id))) {
+            receipt.unavailable()
+          } else contextResult = persistentContextReading(persistentDetails, targets, allComposers.map(composer => composer.telemetry.composerId))
+        }
+        catch { try { receipt.unavailable() } catch { /* Diagnostic failure never changes original maps. */ } }
+      }
+      contextStage = 'projection'
       const now = this.now()
       const transcriptSignals = new Map(allComposers.map((composer) => [
         composer.telemetry.composerId,
@@ -1803,7 +1873,7 @@ export class CursorComposerTelemetryReader implements CursorComposerTelemetrySou
             : composerActivity(signals, binding?.channelId, now, composer.telemetry.lastUpdatedAt)
         }
       })
-      return this.cacheSnapshotRun(fingerprint, normalizedWorkspace, bindingsKey, activitiesKey, {
+      const result = this.cacheSnapshotRun(fingerprint, normalizedWorkspace, bindingsKey, activitiesKey, {
         availability: 'available',
         workspacePath: normalizedWorkspace,
         composerProfile,
@@ -1820,7 +1890,12 @@ export class CursorComposerTelemetryReader implements CursorComposerTelemetrySou
         })(),
         updatedAt: now
       })
+      report()
+      return result
     } catch (error) {
+      const code = sqliteReadCode(error)
+      report(contextStage === 'projection' || contextStage === 'headers' && code === 1 ? { state: 'waiting' }
+        : { state: 'failed', reason: error instanceof SyntaxError || contextStage === 'headers' && code === undefined ? 'record' : 'read' })
       return {
         ...emptyCursorTelemetrySnapshot(
           'error',

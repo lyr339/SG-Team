@@ -106,7 +106,7 @@ import { registerAppUpdateIpc } from './register-app-update-ipc'
 import { NotificationService } from '../application/notification-service'
 import { UsageStorageNotifications } from '../application/notifications/usage-storage-notifications'
 import { ModelCatalogNotifications } from '../application/notifications/model-catalog-notifications'
-import { RuntimeUsageNotifications } from '../application/notifications/runtime-usage-notifications'
+import { ComposerContextNotifications, RuntimeUsageNotifications } from '../application/notifications/runtime-usage-notifications'
 import { NotificationDeliveryService } from '../application/notification-delivery-service'
 import { createNativeNotificationPort } from './native-notification-port'
 import { NotificationWorkerPort } from './notification-worker-port'
@@ -178,6 +178,7 @@ let notificationService: NotificationService | undefined
 let usageStorageNotifications: UsageStorageNotifications | undefined
 let modelCatalogNotifications: ModelCatalogNotifications | undefined
 let runtimeUsageNotifications: RuntimeUsageNotifications | undefined
+let composerContextNotifications: ComposerContextNotifications | undefined
 let notificationDeliveryService: NotificationDeliveryService | undefined
 let pageOperationNotifications: PageOperationNotifications | undefined
 let workspaceNotifications: WorkspaceNotifications | undefined
@@ -431,7 +432,9 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     try { modelCatalogNotifications = new ModelCatalogNotifications(notificationService) }
     catch { notificationService.reportHistoryGap() }
   }
-  const cursorTelemetry = new CursorComposerTelemetryReader({ modelObserver: modelCatalogNotifications })
+  const cursorTelemetry = new CursorComposerTelemetryReader({ modelObserver: modelCatalogNotifications, contextObserver: {
+    begin: input => composerContextNotifications?.begin(input), unavailable: () => composerContextNotifications?.unavailable()
+  } })
   teamControlService = new TeamControlService(
     teamControlRepository,
     localSessionBridge,
@@ -473,6 +476,7 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   if (notificationService) {
     try { notificationRuntime = connectSessionNotifications({ notifications: notificationService, desktop: desktopSessionService, team: teamControlService, power: powerMonitor, modelCatalog: modelCatalogNotifications,
       runtimeUsage: { suspend: () => runtimeUsageNotifications?.suspend(), resume: () => runtimeUsageNotifications?.resume() },
+      composerContext: { suspend: () => composerContextNotifications?.suspend(), resume: () => composerContextNotifications?.resume() },
       queue: () => channelMessageRelay!.notificationQueueSnapshot(), watchQueue: fact => channelMessageRelay!.watchNotificationQueueFact(fact) }) }
     catch { notificationService.reportHistoryGap() }
   }
@@ -498,7 +502,10 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   const cursorUsageStore = new CursorUsageStore(join(app.getPath('userData'), 'cursor-usage.json'), usageStorageNotifications)
   const initialUsageTeam = teamControlService.getSnapshot()
   if (notificationService) {
-    try { runtimeUsageNotifications = new RuntimeUsageNotifications(notificationService); runtimeUsageNotifications.setTeam(initialUsageTeam) }
+    try {
+      runtimeUsageNotifications = new RuntimeUsageNotifications(notificationService); runtimeUsageNotifications.setTeam(initialUsageTeam)
+      composerContextNotifications = new ComposerContextNotifications(notificationService); composerContextNotifications.setTeam(initialUsageTeam)
+    }
     catch { notificationService.reportHistoryGap() }
   }
   /**
@@ -787,6 +794,7 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     // 账本的开与关跟着「席位 ↔ Composer 绑定」走：出绑封口、在绑开放、席位重建自然开新账。
     cursorUsageTracker.setBoundComposers(boundComposersOf(snapshot))
     runtimeUsageNotifications?.setTeam(snapshot)
+    composerContextNotifications?.setTeam(snapshot)
     // 不跟随短暂在线/离线状态停采；用户明确结束时由 IPC 回调（onRunEnded）补收最后一笔再封口。
   })
   disposeIpc = registerSessionIpc(desktopSessionService, () => mainWindow)
@@ -1173,7 +1181,8 @@ const notificationQuitBarrier = new NotificationQuitBarrier({
     // this observer AFTER that synchronous final persist, not before it.
     () => Promise.resolve().then(() => usageStorageNotifications?.close()),
     () => modelCatalogNotifications?.close() ?? Promise.resolve(),
-    () => runtimeUsageNotifications?.close() ?? Promise.resolve()
+    () => runtimeUsageNotifications?.close() ?? Promise.resolve(),
+    () => composerContextNotifications?.close() ?? Promise.resolve()
   ], disposeDesktopOnce),
   settled: result => {
     try { notificationRuntimeJournal?.finish(result.confirmed, notificationService?.status().historyIncomplete ?? true, notificationService?.status().historyGapId) }

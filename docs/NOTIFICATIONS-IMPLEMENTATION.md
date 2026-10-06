@@ -369,7 +369,27 @@ ui/group-effects-compact-light.jpg、ui/group-effects-details-light.jpg、ui/gro
 
 `ui/runtime-usage-stats-final-light.jpg`／`runtime-usage-stats-final-expanded-light.jpg`、`runtime-usage-stats-dark-collapsed.jpg`、`runtime-usage-recovered-dark.jpg`、`runtime-usage-scope-change-center-dark.jpg`／`runtime-usage-center-final-dark.jpg` 和 `runtime-usage-ui-audit.json` 使用真实产品组件＋mock preload＋真实领域 reducer。折叠保留未读、展开正文才阅读；真正读取确认与变更范围均安静收束局部说明，但中心明确保留不同事实。来源动作从会话页准确到统计，不操作模型或账号。CSS 1440×769 复核原最小宽度，CSS 615×500 只作局部折行压力测试，不把最小窗口之外的整体导航布局冒充通过。局部 clientWidth=scrollWidth、字号 14px、两侧同色边界已核对；`runtime-usage-ui-cleanup.json` 确认跟随系统、正常视口与无 warn/error，自建标签与 5207 服务关闭。`protected-runtime-usage-audit.json` 证明两份保护树 HEAD／status／binary diff／文件全部一致，原四个 warmup 删除状态保留。
 
-**完整目标仍未完成**：本批是原生运行时补位读取这一入口，不将它代替长期会话主要的 SQLite context 采样，也未声称写后 usage binding 的全部结构诊断、原统计所有数据源或真实额度／账单核对已完成。下批继续审原 SQLite 上下文读取和 binding 的原有缺口，区分正常缺字段、旧版兼容和真实读取失败，仍不增加业务探测。MCP runtime／校验前无归属异常、其他 feed 的旧 scope 消失／同 revision 异内容／恢复关联、大历史准确阅读、长期容量及完整序列、正式包和真实 Windows/macOS 权限／声音／勿扰／系统送达仍按完整矩阵推进。仅本地提交，不推送、发布、安装或结束完整目标。
+**完整目标仍未完成**：本批是原生运行时补位读取这一入口，不将它代替 SQLite context 来源，也未声称写后 usage binding 的全部结构诊断、原统计所有数据源或真实额度／账单核对已完成。第二十一批的接线复核确认：当前主进程没有传入 `contextUsageSink`，不能把原注释所称的 SQLite 用量采样当成已参与统计的事实。下批继续审原 SQLite 上下文读取和 binding 的原有缺口，区分正常缺字段、旧版兼容和真实读取失败，仍不增加业务探测。MCP runtime／校验前无归属异常、其他 feed 的旧 scope 消失／同 revision 异内容／恢复关联、大历史准确阅读、长期容量及完整序列、正式包和真实 Windows/macOS 权限／声音／勿扰／系统送达仍按完整矩阵推进。仅本地提交，不推送、发布、安装或结束完整目标。
+
+### 第二十一批：SQLite 上下文详情读取的真实来源诊断
+
+复核原链路而不是沿注释推断：`DesktopSessionService.forwardContextUsageSamples` 只在注入 `contextUsageSink` 时执行，当前 main 构造只传入运行时用量 sink，没有传入这个 SQLite 采样 sink。因此本批不擅自接通新的入账通道、不改变数值和持久化次数；前文“主要 SQLite 统计采样已接通”的暗示已更正。此次观察的是当前已用于会话上下文详情与兼容配置的原 `readComposerPersistentDetails`，不能由其健康证明实时 Token／Cost 或精确账单已经正确。
+
+原 SQL、查询集合、顺序、一次 prepare／逐 Composer get、model profile／context maps、增强失败后头部／全局回退均保持不变。只在原缓存 miss 的工作区读取接收观察；同一缓存快照即使经过很久也不是第二次原读取。无文件、未生成头部、空／零／缺字段、原查询未含当前绑定都等待。`cursorDiskKV` 的可选表／列在 prepare 阶段出现 SQLite schema 错误时不能分辨具体兼容状态，明确安静等待，不解析错误文案或新查 schema。实际 row 读取／JSON 验证异常与 BUSY／LOCKED 等真实读取失败才形成窄诊断；不记录原错误、JSON、路径、模型或数值身份。
+
+确认健康只使用原 routine 真正返回的全部已绑定正上下文读数。头部旧指标、另外的 Composer、另外的路径／绑定、运行时用量入口健康、缺表或空记录都不关闭此来源的 episode。原循环可以在后续未绑定坏行中止：若全部绑定原 maps 已真实返回，保留这项证明；若先遇到坏行没有到达绑定，不为通知另查一遍来补证明。原 projection 未能返回时也不提前宣布成功；后续非详情处理异常仅保持待读取，不伪报详情读盘失败。恢复使用原 SQL／JSON 中已读到的有效安全整数与范围，原 display 取整／夹断后的值不算源证明，复用原已解析对象，不多 JSON.parse。target getter／observer／缺口处理／诊断错误码 getter 的异常均隔离，不改变原结果或原 fallback。
+
+沿第二十批归属与生命周期传输复用一个有限的 `ScopedLocalReadNotifications`，仅公开 runtime／context 两个封装，分别使用不同 source key、prefix、事件和检查点。没有复制一套计时／持久化／scope 状态机，也不是允许任意插件字符串的通用框架。实际 team 原帧、路径／绑定指纹、5 秒连续失败证据、60 秒缺口、休眠、迟到、私有 ACK 未知与真实退出规则共用；普通角色变化不使原读取失效。上下文 scope 不套运行时的 16 个请求截断，仍以该原 routine 的实际绑定集合确认。
+
+中心来源为“Cursor · 本机上下文详情”，导航本机维护而不是谎称统计页发生了计费故障。维护页有异常才出现一处默认折叠说明；提示保留当前可能仍看到旧／兼容指标的事实，阅读不等于恢复，不切号、不修补、不清数据、不加重试。四边中性细线、原主题字号和足够留白延续，正常状态不增加常驻条或日常未读。
+
+当前证据：`full-regression-context-source-final.log`（302 files，2865 passed，1 skipped）、`typecheck-context-source-final.log`、`build-context-source-final.log`、`dead-code-context-source-final.log`、原 `mcp-smoke-context-source-final.log`／`channel-smoke-context-source-final.log`；原 telemetry、native runtime、model、public return／SQL 次数／引用、真实坏 JSON、两种头部形态、缺表／列、原部分 maps、缓存、独立来源及精确展开阅读一起回归。`context-source-final-audit-review.log` 另覆盖原显示取整／夹断与后续非详情 projection 异常的边界。首轮两个 fixture 断言错误已按原规则纠正：原头部没有 percent 不造 context 对象；七字符 ID 不在原安全 ID 范围，不能假设它进 SQL 循环。没有为了过测试改变原业务解析或 ID 规则。
+
+`scripts/verify-notification-context-source.ts` 使用真实编译 worker＋原 reader＋Cursor-shaped SQLite，在 Node 与 macOS Electron (`ELECTRON_RUN_AS_NODE=1`) 验证真实 malformed JSON／独占读锁、原 available fallback 不变、缓存不是失败持续证据、缺表／零不伪恢复、有效详情返回、读通知不等于恢复、跨 worker 重启／新原因／退出无弹出，fixture 在 finally 精确清理。原 worker／shutdown／recovery／history／context／native-rebase／team-observations／group-effects／mcp-writes／usage-storage／model-catalog／runtime-usage 十二类也在两个 runtime 回归；没有 production main、真实 Cursor、账号、模型或 OS 通知。
+
+`ui/context-source-collapsed-light.jpg`／`context-source-expanded-light.jpg`、`context-source-dark-narrow.jpg`、`context-source-recovered-dark.jpg`、`context-source-scope-change-center-dark.jpg`、`context-source-final-light.jpg` 与 `context-source-ui-audit.json` 是真实组件＋mock preload＋领域 reducer；折叠仍未读，实际正文展开才确认；恢复与 scope 变更在中心保留不同事实。CSS 1440×769 按原软件最小宽度核对，CSS 615×500 只作局部压力，clientWidth=scrollWidth、14px 文字与两侧同色边界已确认。`context-source-ui-cleanup.json` 确认跟随系统、正常视口、无 warn/error；自建标签与 5207 服务关闭。`protected-context-source-audit.json` 保持两保护树 HEAD／status／binary diff／逐文件，原四个 warmup 删除状态未动。
+
+**完整目标仍未完成**：本批不补接 SQLite 统计 sink、不宣称所有源接通。写后 usage binding 的结构／回调诊断、主统计接线的范围核对仍须继续，不因本批元数据就改动计费；无可靠归属的 MCP runtime／校验前异常、其他 feed 的 scope 消失／同 revision 异内容／恢复关联、准确大历史阅读、长期容量与完整事件矩阵、正式包及真实 Windows/macOS 权限／声音／勿扰／送达仍需按原目标做完。仅本地提交，不推送、发布、安装或结束完整目标。
 
 下面保留完整要求，不因分批已有成果缩小。已实现部分仍需匹配该项范围验收；未实现部分继续开工。
 

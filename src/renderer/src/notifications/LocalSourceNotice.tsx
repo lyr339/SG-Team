@@ -6,7 +6,8 @@ import './usage-storage-notice.css'
 const LOCAL_SOURCES = {
   'usage-storage': { events: ['usage.storage-write', 'usage.storage-history'], section: 'stats', key: /^usage-storage:(write|history):[a-f0-9]{64}$/ },
   'model-catalog': { events: ['cursor.model-catalog'], section: 'maintenance', key: /^model-catalog:[a-f0-9]{64}$/ },
-  'usage-runtime': { events: ['usage.runtime-source'], section: 'stats', key: /^usage-runtime:[a-f0-9]{64}$/ }
+  'usage-runtime': { events: ['usage.runtime-source'], section: 'stats', key: /^usage-runtime:[a-f0-9]{64}$/ },
+  'composer-context': { events: ['cursor.context-source'], section: 'maintenance', key: /^composer-context:[a-f0-9]{64}$/ }
 } as const
 type LocalSource = keyof typeof LOCAL_SOURCES
 
@@ -71,7 +72,7 @@ export function LocalSourceNotice({ active = true, source }: { active?: boolean;
     return () => { alive = false; stop() }
   }, [active, source])
   if (!active || snapshot.source !== source || snapshot.records.length === 0) return null
-  return <div className="usage-storage-notices" data-notification-page={`account:${section}`} aria-label={model ? '本机模型目录说明' : source === 'usage-runtime' ? '原生运行时用量说明' : '本机用量记录说明'}>
+  return <div className="usage-storage-notices" data-notification-page={`account:${section}`} aria-label={model ? '本机模型目录说明' : source === 'composer-context' ? '本机上下文详情说明' : source === 'usage-runtime' ? '原生运行时用量说明' : '本机用量记录说明'}>
     {snapshot.records.map(record => <Issue key={`${snapshot.epoch}:${record.id}`} record={record} />)}
   </div>
 }

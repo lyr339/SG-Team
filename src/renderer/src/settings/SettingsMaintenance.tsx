@@ -100,6 +100,7 @@ export function SettingsMaintenance({
     >
       <div ref={compatibilityRef} className="settings-maintenance">
         <LocalSourceNotice active={active} source="model-catalog" />
+        <LocalSourceNotice active={active} source="composer-context" />
         {onEnsureSwitchPump ? (
           <div className="settings-row cursor-maintenance__compatibility">
             <div className="settings-row__copy">
