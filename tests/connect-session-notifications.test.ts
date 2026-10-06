@@ -17,14 +17,18 @@ describe('session notification source connection', () => {
     const owner = new NotificationService({ sourceState, commitSource } as unknown as NotificationRepository)
     const desktop = { getSnapshot: vi.fn(() => frame), subscribe: (callback: typeof emitDesktop) => { emitDesktop = callback; callback(frame); return stopDesktop } }
     const topology = { getSnapshot: vi.fn(() => team), subscribe: (callback: typeof emitTeam) => { emitTeam = callback; callback(team); return stopTeam } }
-    const connection = connectSessionNotifications({ notifications: owner, desktop, team: topology, power })
+    const modelCatalog = { suspend: vi.fn(), resume: vi.fn() }
+    const connection = connectSessionNotifications({ notifications: owner, desktop, team: topology, power, modelCatalog })
     await connection.lifecycle.flush(); const count = commitSource.mock.calls.length
     emitTeam({ ...team, revision: team.revision + 1 }); await connection.lifecycle.flush()
     expect(commitSource.mock.calls.length).toBe(count)
     emitDesktop({ ...frame, runtimeScope: { teamRevision: team.revision + 1 } }); await connection.lifecycle.flush()
     power.emit('suspend'); power.emit('resume')
+    expect(modelCatalog.suspend).toHaveBeenCalledOnce(); expect(modelCatalog.resume).toHaveBeenCalledOnce()
     expect(desktop.getSnapshot).toHaveBeenCalledOnce(); expect(topology.getSnapshot).toHaveBeenCalledOnce()
     connection.dispose(); expect(stopTeam).toHaveBeenCalledOnce(); expect(stopDesktop).toHaveBeenCalledOnce()
     expect(power.listenerCount('resume')).toBe(0); expect(power.listenerCount('suspend')).toBe(0)
+    power.emit('suspend'); power.emit('resume')
+    expect(modelCatalog.suspend).toHaveBeenCalledOnce(); expect(modelCatalog.resume).toHaveBeenCalledOnce()
   })
 })

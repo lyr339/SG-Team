@@ -105,6 +105,7 @@ import { createMacUpdaterPort } from '../infrastructure/app-update/mac-updater-p
 import { registerAppUpdateIpc } from './register-app-update-ipc'
 import { NotificationService } from '../application/notification-service'
 import { UsageStorageNotifications } from '../application/notifications/usage-storage-notifications'
+import { ModelCatalogNotifications } from '../application/notifications/model-catalog-notifications'
 import { NotificationDeliveryService } from '../application/notification-delivery-service'
 import { createNativeNotificationPort } from './native-notification-port'
 import { NotificationWorkerPort } from './notification-worker-port'
@@ -174,6 +175,7 @@ let localSessionBridge: LocalSessionBridge | undefined
 let teamFailoverService: TeamFailoverService | undefined
 let notificationService: NotificationService | undefined
 let usageStorageNotifications: UsageStorageNotifications | undefined
+let modelCatalogNotifications: ModelCatalogNotifications | undefined
 let notificationDeliveryService: NotificationDeliveryService | undefined
 let pageOperationNotifications: PageOperationNotifications | undefined
 let workspaceNotifications: WorkspaceNotifications | undefined
@@ -423,7 +425,11 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   } catch (error) {
     process.stderr.write(`[sg-team-global-mcp] registration failed: ${error instanceof Error ? error.message : String(error)}\n`)
   }
-  const cursorTelemetry = new CursorComposerTelemetryReader()
+  if (notificationService) {
+    try { modelCatalogNotifications = new ModelCatalogNotifications(notificationService) }
+    catch { notificationService.reportHistoryGap() }
+  }
+  const cursorTelemetry = new CursorComposerTelemetryReader({ modelObserver: modelCatalogNotifications })
   teamControlService = new TeamControlService(
     teamControlRepository,
     localSessionBridge,
@@ -461,7 +467,7 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   )
   desktopSessionService.startWatcher()
   if (notificationService) {
-    try { notificationRuntime = connectSessionNotifications({ notifications: notificationService, desktop: desktopSessionService, team: teamControlService, power: powerMonitor,
+    try { notificationRuntime = connectSessionNotifications({ notifications: notificationService, desktop: desktopSessionService, team: teamControlService, power: powerMonitor, modelCatalog: modelCatalogNotifications,
       queue: () => channelMessageRelay!.notificationQueueSnapshot(), watchQueue: fact => channelMessageRelay!.watchNotificationQueueFact(fact) }) }
     catch { notificationService.reportHistoryGap() }
   }
@@ -1155,7 +1161,8 @@ const notificationQuitBarrier = new NotificationQuitBarrier({
     () => groupEffectsNotifications?.close() ?? Promise.resolve(),
     // The original tracker writes once more during disposeDesktopOnce. Seal
     // this observer AFTER that synchronous final persist, not before it.
-    () => Promise.resolve().then(() => usageStorageNotifications?.close())
+    () => Promise.resolve().then(() => usageStorageNotifications?.close()),
+    () => modelCatalogNotifications?.close() ?? Promise.resolve()
   ], disposeDesktopOnce),
   settled: result => {
     try { notificationRuntimeJournal?.finish(result.confirmed, notificationService?.status().historyIncomplete ?? true, notificationService?.status().historyGapId) }

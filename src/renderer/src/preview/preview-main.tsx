@@ -2,6 +2,7 @@ import { reduceGroupEffects } from '../../../domain/group-effects-notification'
 import { observedMcpWrite } from '../../../domain/mcp-write-observation'
 import { reduceMcpWriteNotifications } from '../../../domain/mcp-write-notification'
 import { reduceUsageStorageNotifications } from '../../../domain/usage-storage-notification'
+import { reduceModelCatalogNotifications } from '../../../domain/model-catalog-notification'
 import type { GroupEffectsFrame } from '../../../domain/group-effects'
 import { reduceMemoryIssueNotifications, type MemoryIssueState } from '../../../domain/memory-issue-notification'
 import type { MemoryOperatorReviewProof } from '../../../domain/memory-operator-review'
@@ -1175,6 +1176,15 @@ function updatePreviewGroup(groupId: string, update: (view: typeof state.team.gr
 }
 
 const notificationPreview = createNotificationPreview()
+if (previewParameters.get('notifications') === 'model-catalog') {
+  const key = 'cursor-model-catalog-health', at = Date.now() - 60000
+  const failed = reduceModelCatalogNotifications(undefined, { key, id: 'a'.repeat(64),
+    fact: { state: 'failed', reason: 'record', at } }, true, 1)
+  failed.drafts.forEach(notificationPreview.offer)
+  if (previewParameters.get('modelCatalog') === 'recovered') {
+    reduceModelCatalogNotifications(failed.state, { key, id: 'b'.repeat(64), fact: { state: 'ready', at: at + 1000 } }, true, 2).drafts.forEach(notificationPreview.offer)
+  }
+}
 if (previewParameters.get('notifications') === 'usage-store') {
   const key = 'usage-storage-health', at = Date.now()-60000
   const history = reduceUsageStorageNotifications(undefined, { key, id: 'a'.repeat(64), at,

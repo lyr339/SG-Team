@@ -329,7 +329,29 @@ ui/group-effects-compact-light.jpg、ui/group-effects-details-light.jpg、ui/gro
 
 **完整目标仍未完成**：本批证明本机用量文件的已有读写结果，不把估算、正常长会话尚无精确回合结算当作源故障，不宣称模型目录／原生用量入口／统计所有健康接入已做完。未确认历史不由通知自动修复。模型目录／原生统计数据来源、旧 scope 消失／同 revision 异内容、其他 feeds 的恢复关联、长期容量／全序列、正式应用／包和真实 Windows/macOS 权限／声音／勿扰仍须继续。未 production main、真实账号或模型、Cursor 重启、OS 送达、安装、推送或发布，完整目标保持 active。
 
-下面保留完整要求，不因前三批已有成果缩小。已实现部分仍需匹配该项范围验收；未实现部分继续开工。
+### 第十九批：模型目录来源的真实读取诊断与跨页面局部说明
+
+本批只观察原 `CursorComposerTelemetryReader` 的原目录读取结果，不加查询、轮询、计时器、模型请求或重试。目录缺库／未生成／只有保存的选择（包括 Auto），仍是安静等待；新目录迁移缺失、空数组或部分写入时仍保留原兼容返回。兼容目录可用不等于原来源已恢复；明确的读取异常、无效记录及原 64 MiB 大小保护分别保留窄诊断。无原始 JSON、模型名、路径或凭据进入历史，也不据此宣称会话停止、额度耗尽或账单异常。原 models、profile、root 和查询／解析回退语义保持不变，通知观察与缺口处理抛错不能改变原返回。
+
+只在原读取连续报告同类异常、至少两帧且跨度至少 5 秒时形成 incident。重复心跳不刷条、不增加未读；真正的新原因更新同一 episode，真实目录恢复才安静收口，恢复后的新故障另开 episode。数据库未变的工作区快照缓存不当第二次读取证据；同钟重复、时钟回退、超过 60 秒采样缺口、休眠／唤醒都不外推持续故障。复用原 power 订阅清 tentative 候选与静音基线，没有唤醒探测或新的业务等待。
+
+两轮审查补了原目录缓存的 health 依赖：`ownCatalogEnabled` 单独变化、原 applicationUser 和 catalog 原文未变时，不能把旧 ready 用作新来源的恢复证据。只重算 metadata，保持原模型／profile／root 引用且不重新 JSON.parse。已保存但隐藏、禁用或超出原解析窗口的选中模型，也不冒充可用目录的证明；明确坏条目与正常空目录分开。
+
+将统计说明提取为只接受 `usage-storage | model-catalog` 的小型 `LocalSourceNotice`，保留 `UsageStorageNotice` API。Cursor 维护页只有真实异常时出现一处中性折叠说明，正常不占版面；仍使用现有主题、字号和留白，不加左彩轨、装饰脉冲、渐变胶囊或重试按钮。维护／统计的隐藏子页不订阅，活跃页私有查询＋推送与原业务查询独立。更换来源时不显示或阅读旧来源正文；迟到旧 pull、空／归档／清理结果、私有历史重载后的较低 revision 都按私有 ledger 处理，不伪报业务来源恢复。重载使旧正文阅读观察器失效。
+
+第三轮复核发现真实 ledger 的阅读／归档只增加 summary revision，不增加正文 revision。局部说明现在同时比较这两个版本，真实归档可立即移除说明，旧页面回包不能复活它。只读实际展开且有焦点、可见的对应正文；折叠标题不清未读，阅读、归档和真实来源恢复仍是独立动作。这项修补也覆盖统计说明，没有另起一套状态机。
+
+证据位于当前实现树 `preview-screenshots/notification-implementation/`：`full-regression-model-catalog-final.log`（300 files，2847 passed，1 skipped）、`typecheck-model-catalog-final.log`、`build-model-catalog-final.log`、`dead-code-model-catalog-final.log`，原 `mcp-smoke-model-catalog-final.log`／`channel-smoke-model-catalog-final.log`。原查询数量、返回引用、真实 SQLite 形态、模型迁移、observer 隔离、持久 episode／新原因、旧 ACK 未知结果、power 接线及局部说明的重载／归档／阅读均有回归。
+
+`scripts/verify-notification-model-catalog.ts` 用真实编译通知 worker＋原 reader＋自有 Cursor-shaped SQLite 验证缺库／selected-only 安静、连续失败、gate-only 不伪恢复、跨重启关联、阅读不等于恢复、真实独立目录恢复、休眠及退出不补弹。Node 和 macOS Electron (`ELECTRON_RUN_AS_NODE=1`) 均通过；原 worker／shutdown／recovery／history／context／native-rebase／team-observations／group-effects／mcp-writes／usage-storage 十类隔离脚本也在两个 runtime 回归。所有 fixture 在 finally 精确清理，没有 production main、真实账号／模型请求或 Cursor 重启。
+
+`ui/model-catalog-center-light.jpg`、`model-catalog-maintenance-light.jpg`、`model-catalog-expanded-light.jpg`、`model-catalog-dark-at-minimum.jpg`、`model-catalog-recovered-dark.jpg`、`model-catalog-archived-dark.jpg`、`model-catalog-short-center-dark.jpg` 与 `model-catalog-final-light-at-minimum.jpg` 是 mock preload＋真实 domain reducer＋产品组件的 CUA 验收，不是手拼“已完成”图。`model-catalog-ui-audit.json` 证明折叠仍 1 个未读、展开正文才读、真实恢复安静收束、同正文版本的归档不残留局部说明，四边同色且局部 clientWidth=scrollWidth。CSS 1440×769 复核原软件最小宽度；CSS 554×477／400×346 只用于局部说明和短窗中心边界，不冒充软件最小窗口以外的整体布局已验收。短窗中心 374px、两侧至少 12px，footer 在视口；Escape 回铃铛。`model-catalog-ui-cleanup.json` 确认跟随系统、正常视口恢复及当前页面无 warn/error；自建标签与 5207 服务已关闭。
+
+`protected-model-catalog-audit.json` 按原基线逐文件与 `git diff --binary` 核对两份受保护开发树，HEAD、status、diff 与所有文件状态一致。原 SG-Team 的四个 session-warmup 删除状态原样保留；null 基线明确表示已删除，不把它误报成新改动。未 reset／stash／clean、未写入原开发树。
+
+**完整目标仍未完成**：本批只完成本机模型目录这一来源，不将正常长会话无 exact 结算当作异常，也不宣称所有原生用量／统计入口的健康观察已完成。MCP runtime／校验前无归属异常、旧 scope 整体消失／同 revision 异内容、其他 feeds 恢复关联、更早大历史精确阅读及长期容量／完整序列、正式应用／打包与真实 Windows/macOS 权限／声音／勿扰／系统送达仍须继续。继续遵循跨页面的四层反馈：覆盖事实但不把每页、每次刷新都变成弹条；当前位置就地呈现，离开后再按重要性升级，普通活动默认静默。本批只本地提交，不推送、发布、安装或结束完整目标。
+
+下面保留完整要求，不因分批已有成果缩小。已实现部分仍需匹配该项范围验收；未实现部分继续开工。
 
 1. 通知中心、轻量顶栏入口、单张提醒和独立 renderer store。支持待处理／未读／全部、查询范围、分页、详情、关闭、阅读、归档、确认清理和适当偏好；减少动画、长内容、键盘与窄窗需验收。
 2. 初始读取与实时推送的版本合并；来源页面与实体可见性；展示队列、失焦／悬停暂停、过期成功不补播、原页与全局不双弹。

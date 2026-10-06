@@ -6,6 +6,7 @@ import { SettingsSection } from './SettingsSection'
 import { useNotificationResultRead } from '../notifications/use-notification-result-read'
 import type { NotificationReference } from '../../../domain/notification-reference'
 import { useCompatibilityNotificationRead } from '../notifications/use-compatibility-notification-read'
+import { LocalSourceNotice } from '../notifications/LocalSourceNotice'
 
 type MaintenanceProps = Pick<SettingsPageProps,
   | 'cursorUpdatePreferences' | 'cursorUpdateBusy' | 'cursorUpdateError'
@@ -13,7 +14,7 @@ type MaintenanceProps = Pick<SettingsPageProps,
   | 'automationSettings' | 'automationRun'
   | 'switchPumpStatus' | 'switchPumpBusy' | 'switchPumpFeedback'
   | 'onEnsureSwitchPump' | 'onRemoveSwitchPump' | 'onRefreshSwitchPumpStatus'
->
+> & { active?: boolean }
 
 function updateModeLabel(mode: string | undefined, disabled: boolean): string {
   if (disabled || mode === 'none') return '已关闭'
@@ -39,7 +40,8 @@ export function SettingsMaintenance({
   switchPumpFeedback,
   onEnsureSwitchPump,
   onRemoveSwitchPump,
-  onRefreshSwitchPumpStatus
+  onRefreshSwitchPumpStatus,
+  active = true
 }: MaintenanceProps): React.JSX.Element | null {
   const [policyBusy, setPolicyBusy] = useState(false)
   const [policyFeedback, setPolicyFeedback] = useState<{ ok: boolean; message: string; notification?: NotificationReference }>()
@@ -97,6 +99,7 @@ export function SettingsMaintenance({
       descriptionTitle={cursorUpdatePreferences?.settingsPath}
     >
       <div ref={compatibilityRef} className="settings-maintenance">
+        <LocalSourceNotice active={active} source="model-catalog" />
         {onEnsureSwitchPump ? (
           <div className="settings-row cursor-maintenance__compatibility">
             <div className="settings-row__copy">

@@ -41,6 +41,7 @@ import {
 import type { ProcessBlock } from '../../domain/conversation-entry'
 import type { SessionTranscriptLocation } from '../../domain/session-handoff'
 import { isCursorInternalToolName } from './cursor-cdp-session-creator'
+import type { ModelCatalogObservation, ModelCatalogObserver } from '../../domain/model-catalog-observation'
 
 const APPLICATION_USER_KEY = 'src.vs.platform.reactivestorage.browser.reactiveStorageServiceImpl.persistentStorage.applicationUser'
 const MAX_HEADERS_BYTES = 32 * 1024 * 1024
@@ -108,6 +109,7 @@ export interface CursorComposerTelemetryReaderOptions extends Partial<CursorComp
   now?: () => number
   channelActivityPollMs?: number
   transcriptIndexTtlMs?: number
+  modelObserver?: ModelCatalogObserver
 }
 
 export interface CursorComposerTelemetrySource {
@@ -436,42 +438,77 @@ interface ComposerModelState {
   profile?: AgentExecutionProfile
   models: CursorModelOption[]
   root?: UnknownRecord
+  health: Omit<Extract<ModelCatalogObservation, { state: 'failed' }>, 'at'> | { state: 'ready' | 'waiting' | 'fallback' }
 }
 
 /**
  * applicationUser（~400KB，含 38 条模型目录）原文未变时复用上次解析结果：
  * 它随 Cursor 偏好变化而变，与会话写入无关，逐拍重新 JSON.parse 纯属浪费。
  */
-let modelStateCache: { json: string; catalog?: string; state: ComposerModelState } | undefined
+let modelStateCache: { json: string; catalog?: string; ownCatalogEnabled: boolean; ready: boolean; invalid: boolean; state: ComposerModelState } | undefined
+
+function modelCatalogHealth(ready: boolean, invalid: boolean, fallback: boolean): ComposerModelState['health'] {
+  if (invalid || fallback) return ready ? { state: 'fallback' } : invalid ? { state: 'failed', reason: 'record' } : { state: 'waiting' }
+  return { state: ready ? 'ready' : 'waiting' }
+}
 
 function readComposerModelState(database: DatabaseSync): ComposerModelState {
   try {
     const read = database.prepare('SELECT value FROM ItemTable WHERE key = ?')
     const stored = sqliteText(read.get(APPLICATION_USER_KEY)?.value)
     const json = stored || '{}'
-    if (Buffer.byteLength(json, 'utf8') > MAX_APPLICATION_USER_BYTES) return { models: [] }
+    if (Buffer.byteLength(json, 'utf8') > MAX_APPLICATION_USER_BYTES) return { models: [], health: { state: 'failed', reason: 'size' } }
     const ownCatalogEnabled = ['true', '1'].includes(sqliteText(read.get('cursor.modelCatalogOwnKey.gateEnabled')?.value) ?? '')
     const catalog = ownCatalogEnabled ? sqliteText(read.get('cursor.modelCatalog.v1')?.value) : undefined
-    if (catalog && Buffer.byteLength(catalog, 'utf8') > MAX_APPLICATION_USER_BYTES) return { models: [] }
-    if (modelStateCache?.json === json && modelStateCache.catalog === catalog) return modelStateCache.state
-    const value = JSON.parse(json)
+    if (catalog && Buffer.byteLength(catalog, 'utf8') > MAX_APPLICATION_USER_BYTES) return { models: [], health: { state: 'failed', reason: 'size' } }
+    if (modelStateCache?.json === json && modelStateCache.catalog === catalog) {
+      // The migration gate can change while both preference payloads remain
+      // byte-identical. Re-evaluate only health, not the original parsed data.
+      if (modelStateCache.ownCatalogEnabled !== ownCatalogEnabled) {
+        modelStateCache.ownCatalogEnabled = ownCatalogEnabled
+        modelStateCache.state = { ...modelStateCache.state,
+          health: modelCatalogHealth(modelStateCache.ready, modelStateCache.invalid, ownCatalogEnabled && !catalog) }
+      }
+      return modelStateCache.state
+    }
+    let value: unknown
+    try { value = JSON.parse(json) } catch { return { models: [], health: { state: 'failed', reason: 'record' } } }
     const root = recordOf(value)
     // 3.21.12 can persist the model catalog under its own key while applicationUser still has only Auto.
     // Native code hydrates that catalog when the gate is enabled; don't let its migration erase saved choices.
     let effectiveRoot = root
+    let fallback = ownCatalogEnabled && !catalog
+    let invalid = !root && Boolean(stored)
     if (catalog) {
       try {
         const own = JSON.parse(catalog)
         if (Array.isArray(own) && own.length) effectiveRoot = { ...root, availableDefaultModels2: own }
-      } catch { /* Preserve a valid applicationUser catalog during a partial write. */ }
+        else { fallback = true; invalid ||= !Array.isArray(own) }
+      } catch { fallback = true; invalid = true /* Preserve a valid applicationUser catalog during a partial write. */ }
     }
-    const state: ComposerModelState = { profile: parseComposerProfile(effectiveRoot), models: parseCursorModels(effectiveRoot), root: effectiveRoot }
-    modelStateCache = { json, catalog, state }
+    const models = parseCursorModels(effectiveRoot)
+    const rawEntries = effectiveRoot?.availableDefaultModels2
+    if (rawEntries !== undefined && !Array.isArray(rawEntries)) invalid = true
+    if (Array.isArray(rawEntries)) invalid ||= rawEntries.slice(0, 160).some(value => {
+      const entry = recordOf(value)
+      if (!entry) return true
+      if (entry.hidden === true || entry.isHidden === true || entry.isEnabled === false) return false
+      return !(boundedString(entry.name, 160) || boundedString(entry.serverModelName, 160))
+    })
+    // A saved selection (including a hidden/disabled model) is not evidence of
+    // a usable catalog. Match only entries the unchanged parser considers.
+    const catalogIds = new Set(recordArray(rawEntries).slice(0, 160)
+      .filter(entry => entry.hidden !== true && entry.isHidden !== true && entry.isEnabled !== false)
+      .flatMap(entry => [boundedString(entry.name, 160) || boundedString(entry.serverModelName, 160)].filter(Boolean)))
+    const ready = models.some(model => catalogIds.has(model.modelId))
+    const state: ComposerModelState = { profile: parseComposerProfile(effectiveRoot), models, root: effectiveRoot,
+      health: modelCatalogHealth(ready, invalid, fallback) }
+    modelStateCache = { json, catalog, ownCatalogEnabled, ready, invalid, state }
     return state
   } catch {
     // Composer headers remain useful even if Cursor changes or is midway
     // through writing this unrelated global preference record.
-    return { models: [] }
+    return { models: [], health: { state: 'failed', reason: 'read' } }
   }
 }
 
@@ -1297,6 +1334,12 @@ function withPersistedLaunchMarkers(database: DatabaseSync, composers: ParsedCom
 }
 
 export class CursorComposerTelemetryReader implements CursorComposerTelemetrySource {
+  private readonly modelObserver?: ModelCatalogObserver
+  private observeModel(health: ComposerModelState['health']): void {
+    if (!this.modelObserver) return
+    try { this.modelObserver.observe(Object.freeze({ ...health, at: this.now() })) }
+    catch { try { this.modelObserver.unavailable() } catch { /* Read results and original exceptions are independent. */ } }
+  }
   private readonly paths: CursorComposerTelemetryPaths
   private readonly now: () => number
   private readonly transcriptSignalCache = new Map<string, CachedTranscriptSignals>()
@@ -1351,9 +1394,11 @@ export class CursorComposerTelemetryReader implements CursorComposerTelemetrySou
       now,
       channelActivityPollMs,
       transcriptIndexTtlMs,
+      modelObserver,
       ...paths
     } = options
     this.paths = { ...defaultPaths(), ...paths }
+    this.modelObserver = modelObserver
     this.now = now ?? Date.now
     this.channelActivityPollMs = Math.max(0, channelActivityPollMs ?? DEFAULT_CHANNEL_ACTIVITY_POLL_MS)
     this.transcriptIndexTtlMs = Math.max(0, transcriptIndexTtlMs ?? DEFAULT_TRANSCRIPT_INDEX_TTL_MS)
@@ -1417,10 +1462,13 @@ export class CursorComposerTelemetryReader implements CursorComposerTelemetrySou
    *（Cursor 刚被结束、WAL 尚待恢复）返回 undefined，等下一拍。
    */
   readModelCatalog(): CursorModelOption[] | undefined {
-    if (!existsSync(this.paths.globalStateDatabase)) return undefined
+    if (!existsSync(this.paths.globalStateDatabase)) { this.observeModel({ state: 'waiting' }); return undefined }
     try {
-      return readComposerModelState(this.acquireDatabase()).models
+      const state = readComposerModelState(this.acquireDatabase())
+      this.observeModel(state.health)
+      return state.models
     } catch {
+      this.observeModel({ state: 'failed', reason: 'read' })
       return undefined
     }
   }
@@ -1651,6 +1699,7 @@ export class CursorComposerTelemetryReader implements CursorComposerTelemetrySou
       // 复用只读连接（WAL 读事务可见新提交），替代每轮对 20GB 库新开/关闭。
       const database = this.acquireDatabase()
       const modelState = readComposerModelState(database)
+      this.observeModel(modelState.health)
       const json = readCursorComposerHeadersJson(database)
       if (!json) {
         return this.cacheSnapshotRun(fingerprint, normalizedWorkspace, bindingsKey, activitiesKey, {

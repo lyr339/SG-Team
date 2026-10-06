@@ -124,7 +124,7 @@ export function SettingsPage(props: SettingsPageProps): React.JSX.Element {
           <div hidden={group !== 'import'}><SettingsImportSource {...props} phase={phase} /></div>
           <div hidden={group !== 'automation'} data-notification-page="account:automation"><SettingsAutomation {...props} /></div>
           <div hidden={group !== 'aozai'} data-notification-page="account:aozai"><SettingsAozai {...props} /></div>
-          <div hidden={group !== 'maintenance'}><SettingsMaintenance {...props} /></div>
+          <div hidden={group !== 'maintenance'}><SettingsMaintenance {...props} active={group === 'maintenance'} /></div>
           <div hidden={group !== 'cleanup'} data-notification-page="account:cleanup"><SettingsCleanup {...props} active={group === 'cleanup'} /></div>
           <div hidden={group !== 'update'} data-notification-page="account:update"><SettingsUpdate /></div>
         </div>
