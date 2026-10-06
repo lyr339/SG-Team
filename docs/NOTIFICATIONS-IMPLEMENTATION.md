@@ -413,6 +413,22 @@ ui/group-effects-compact-light.jpg、ui/group-effects-details-light.jpg、ui/gro
 
 **完整目标仍未完成**：本批是收到 binding 之后的原消费器，不证明页面 nativeUsagePayload 在抛异常但尚未发出任何载荷时都已可观察，也不以无事件推出统计故障。SQLite 计费 sink 当前未接入的事实不改，不能把这些健康元数据冒充统计精度修复。接下来按完整矩阵继续审 source 恢复（旧 scope 整体消失／同 revision 异内容和其他 feeds）、大历史准确阅读及长期完整序列、无可靠归属的 MCP runtime／校验前诊断、正式包和真实 Windows/macOS 权限／声音／勿扰／系统送达。单批通过不缩小或结束目标；本批只本地提交，不推送、发布或安装。
 
+### 第二十三批：共用私有检查点的存储代次恢复围栏
+
+复核发现跨来源共有的实际缺口：worker 退出并恢复到较早私有库后，renderer 的 historyReload 会刷新中心，但 `NotificationProjectionSource` 仍可能保留旧 CAS state／committed signature。下一原来源帧内容相同会被去重跳过，原私有投影无法重新对齐；已在途的旧读取或确认也不应成为新库的证明。这不是原业务来源恢复或计费问题，不能由通知重读业务来修。
+
+沿原 repository 生命周期增加 main-only `sourceStorageEpoch()` 内存读取，不加 IPC、网络、SQL、timer 或业务观察订阅。存储 loss 才失效来源缓存；首次 ready 是初始化，不虚报第一笔读取未知。loss 后已经接受的新读取可能等待 replacement ready，这个 ready 不重复换代、误杀属于新 worker 的有效请求；未经过 unavailable 的真实新 generation 也能失效旧请求。原 marker／偏好／中心恢复规则保持，sourceState 和 commitSource 的旧代次回执只留未确认结果，不写 marker、不播旧 record／announcement、不向生产者调用成功投影确认。
+
+共用 transport 在下一个原来源事实进入时比较这个轻量代次，清私有 cached state／committed signature、静音重建基线。它只读实际私有 checkpoint，原业务快照／请求／控制流程不加一次读取或重试；正常同内容帧恢复后仍去重。已在途与已排队原事实保持原顺序，不拿旧 current 的签名吞掉已经进入的新代次同内容帧。每次 private await 后检查代次：旧 value 或 applied 标记不会种回缓存或释放第二十二批的恢复观察。未声明此元数据的旧／测试 port 保留既有契约，没有新增可选配置框架。
+
+证据在 `preview-screenshots/notification-implementation/`：`full-regression-source-epoch-final.log`（303 files，2887 passed，1 skipped）、`typecheck-source-epoch-final.log`、`build-source-epoch-final.log`、`dead-code-source-epoch-final.log`，原 `mcp-smoke-source-epoch-final.log`／`channel-smoke-source-epoch-final.log`。跨两 source 的同内容重投影、没有新来源帧就不重放、旧慢 read 不吞新帧、旧 applied ACK 无 marker／record／announcement、首次初始化／replacement readiness 边界和恢复后的稳定去重均有回归。没有只以 formatter 或 manifest 绿灯代替实际存储恢复。
+
+`scripts/verify-notification-source-epoch.ts` 通过真实当前编译 worker：在同一保留来源对象中写私有阶段 0、保存真实早期 SQLite 备份，再原帧投影到阶段 1。确认旧 SQLite worker 实际退出后，仅替换 fixture 的私有库及自有 WAL／SHM，原 bounded worker 恢复。当前 checkpoint 真回到阶段 0；同内容的下一真实帧重新读取 private CAS 投影为阶段 1，不补播系统提醒；后续 300 个相同原帧不多私有请求。Node 与 macOS Electron (`ELECTRON_RUN_AS_NODE=1`) 均通过，fake native port 没有调用真实 OS；这里没有 business 查询／写事务、Cursor、账号、模型或 production main。各自有临时目录 finally 精确清理。
+
+原 worker／shutdown／recovery／history／context／native-rebase／team-observations／group-effects／mcp-writes／usage-storage／model-catalog／runtime-usage／context-source／usage-binding 十四类亦在两个 runtime 复跑，配合旧失 ACK／退出恢复证明不会引入原业务重放。`protected-source-epoch-audit.json` 保持两保护树 HEAD／status／binary diff／逐文件与四个既有 warmup 删除状态。本批没有改 UI 或打开生产应用，不把上批 browser 样板当本批正式 OS／全 UI 验收。
+
+**完整目标仍未完成**：本批只是 private storage 代次恢复，不能代替 native 业务库的同 revision 异内容／整个旧 scope 消失。审查已定位原组／记忆适配器的 revision-only 事实缓存和原 TeamControlService 的业务缓存边界；后续必须只用真实原读取证明，不能为通知悄悄多查业务库或用缓存数据假装完整实读。其他 feeds 恢复关联、较早大历史准确阅读／长期完整事件序列、无可靠归属 MCP runtime／校验前问题、页面 usage extractor 尚无载荷时的诊断、正式包及真实 Windows/macOS 权限／声音／勿扰／系统送达仍须继续。仅本地提交，不推送、发布、安装或结束完整目标。
+
 下面保留完整要求，不因分批已有成果缩小。已实现部分仍需匹配该项范围验收；未实现部分继续开工。
 
 1. 通知中心、轻量顶栏入口、单张提醒和独立 renderer store。支持待处理／未读／全部、查询范围、分页、详情、关闭、阅读、归档、确认清理和适当偏好；减少动画、长内容、键盘与窄窗需验收。

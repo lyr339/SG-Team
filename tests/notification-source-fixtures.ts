@@ -1,14 +1,15 @@
 import { vi } from 'vitest'
 import { NotificationService } from '../src/application/notification-service'
-import type { NotificationRepository } from '../src/application/notification-repository'
+import type { NotificationRepository, NotificationRepositoryLifecycle } from '../src/application/notification-repository'
 import { SqliteNotificationRepository } from '../src/infrastructure/notifications/sqlite-notification-repository'
 import { emptyTeamControlSnapshot, type TeamControlSnapshot } from '../src/domain/team-control'
 import type { AgentSession } from '../src/domain/agent-session'
 import type { DesktopSnapshot } from '../src/shared/desktop-api'
 
-export function notificationSourceHarness(path = ':memory:') {
+export function notificationSourceHarness(path = ':memory:', subscribeLifecycle?: (listener: (event: NotificationRepositoryLifecycle) => void) => () => void) {
   const ledger = new SqliteNotificationRepository(path)
   const port: NotificationRepository = {
+    ...(subscribeLifecycle ? { subscribeLifecycle } : {}),
     historyGap: async id => ledger.historyGap(id), recordHistoryGap: async (id, now) => ledger.recordHistoryGap(id, now),
     acknowledgeHistoryGap: async (revision, now) => ledger.acknowledgeHistoryGap(revision, now), pruneRoutine: async now => ledger.pruneRoutine(now),
     marker: async key => ledger.marker(key), sourceState: vi.fn(async key => ledger.sourceState(key)),

@@ -1,7 +1,7 @@
 import type { NotificationDraft, NotificationGroupPresentation } from '../../domain/notification'
 import type { NotificationService } from '../notification-service'
 
-interface SourceObservation<T> { key: string; input: T; baseline: boolean }
+interface SourceObservation<T> { key: string; input: T; baseline: boolean; storageEpoch?: number }
 export interface NotificationProjection<S> { state: S; drafts: NotificationDraft[]; group?: NotificationGroupPresentation; complete?: boolean }
 
 /** Shared durability transport, not a workflow engine: domain reducers alone decide facts and presentation. */
@@ -16,11 +16,20 @@ export class NotificationProjectionSource<T, S> {
   private accepting = true
   private closing?: Promise<void>
   private epoch = 0
-  constructor(private readonly owner: Pick<NotificationService, 'sourceState' | 'commitSource' | 'reportHistoryGap'>,
+  private storageEpoch?: number
+  constructor(private readonly owner: Pick<NotificationService, 'sourceState' | 'commitSource' | 'reportHistoryGap'> & Partial<Pick<NotificationService, 'sourceStorageEpoch'>>,
     private readonly decode: (value: unknown, key: string) => S | undefined,
     private readonly reduce: (previous: S | undefined, input: T, baseline: boolean, revision: number) => NotificationProjection<S>,
     private readonly inputSignature: (input: T) => string,
     private readonly onProjected?: (input: T, state: Readonly<S>) => void) {}
+  private checkStorage(): void {
+    const epoch = this.owner.sourceStorageEpoch?.()
+    if (epoch !== undefined && (!Number.isSafeInteger(epoch) || epoch < 0)) throw Error('通知存储代次无效')
+    if (epoch === this.storageEpoch) return
+    this.storageEpoch = epoch
+    this.cache.clear(); this.quietNextObservation()
+    if (this.current) this.current.baseline = true
+  }
   private projected(input: T, state: S): void {
     try { this.onProjected?.(input, state) }
     catch { try { this.owner.reportHistoryGap() } catch { /* A private observer does not invalidate a confirmed projection. */ } }
@@ -28,17 +37,18 @@ export class NotificationProjectionSource<T, S> {
   observe(key: string, input: T): void {
     if (this.closed || !this.accepting) return
     try {
+      this.checkStorage()
       const signature = this.inputSignature(input)
       // Compare within one source, not just adjacent global frames. A/B/A transitions
       // in the same source still survive; interleaved heartbeats do not fill the queue.
       let last: SourceObservation<T> | undefined
       for (let index = this.pending.length - 1; index >= 0; index--) if (this.pending[index]!.key === key) { last = this.pending[index]; break }
       last ??= this.current?.key === key ? this.current : undefined
-      if (last ? this.inputSignature(last.input) === signature : this.committed.get(key) === signature) return
+      if (last ? last.storageEpoch === this.storageEpoch && this.inputSignature(last.input) === signature : this.committed.get(key) === signature) return
       if (this.pending.length >= 128) { this.owner.reportHistoryGap(); return }
       const baseline = !this.seen.has(key)
       this.seen.add(key); if (this.seen.size > 256) this.seen.delete(this.seen.values().next().value!)
-      this.pending.push({ key, input, baseline }); this.start()
+      this.pending.push({ key, input, baseline, storageEpoch: this.storageEpoch }); this.start()
     } catch { this.owner.reportHistoryGap() }
   }
   private start(): void {
@@ -51,9 +61,13 @@ export class NotificationProjectionSource<T, S> {
       this.current = observation
       const epoch = this.epoch
       try {
+        this.checkStorage()
         let cached = this.cache.get(observation.key)
         if (!cached) {
+          const storageEpoch = this.storageEpoch
           const value = await this.owner.sourceState(observation.key)
+          this.checkStorage()
+          if (storageEpoch !== this.storageEpoch) throw Error('原私有检查点读取跨越了存储代次')
           cached = { revision: value.revision, state: this.decode(value.data, observation.key) }; this.cache.set(observation.key, cached)
         }
         if (this.closed) return
@@ -64,7 +78,10 @@ export class NotificationProjectionSource<T, S> {
             if (projection.complete === false) throw Error('通知来源分批未推进检查点')
             this.committed.set(observation.key, this.inputSignature(observation.input)); this.projected(observation.input, projection.state); break
           }
+          const storageEpoch = this.storageEpoch
           const result = await this.owner.commitSource(observation.key, cached.revision, projection.state, projection.drafts, projection.group)
+          this.checkStorage()
+          if (storageEpoch !== this.storageEpoch) throw Error('原私有投影确认跨越了存储代次')
           if (result.applied) {
             this.cache.set(observation.key, { revision: result.source.revision, state: projection.state })
             cached = { revision: result.source.revision, state: projection.state }; conflicts = 0

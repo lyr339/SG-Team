@@ -1,7 +1,7 @@
 import { notificationFingerprint } from '../src/application/notification-fingerprint'
 import { describe, expect, it, vi } from 'vitest'
 import { NotificationService } from '../src/application/notification-service'
-import type { NotificationRepository } from '../src/application/notification-repository'
+import type { NotificationRepository, NotificationRepositoryLifecycle } from '../src/application/notification-repository'
 import { type NotificationDraft, type NotificationRecord } from '../src/domain/notification'
 
 const draft = (patch: Partial<NotificationDraft> = {}): NotificationDraft => ({
@@ -9,6 +9,55 @@ const draft = (patch: Partial<NotificationDraft> = {}): NotificationDraft => ({
   state: 'resolved', scope: { accountId: 'account-1' }, occurredAt: 100, sourceRevision: 1, ...patch
 })
 const change = { changed: true, summary: { revision: 1, total: 1, unread: 1, pending: 0, clearable: 0 } }
+
+describe('private source storage generation fencing', () => {
+  it('initial readiness is not a false loss of the first original source request', async () => {
+    const port = repository()
+    let lifecycle!: (event: NotificationRepositoryLifecycle) => void, release!: () => void
+    port.subscribeLifecycle = listener => { lifecycle = listener; return () => {} }
+    const held = new Promise<void>(done => { release = done })
+    vi.mocked(port.sourceState).mockImplementationOnce(async () => { await held; return { revision: 0 } })
+    const owner = new NotificationService(port)
+    try {
+      const reading = owner.sourceState('source:first')
+      lifecycle({ state: 'recovered', generation: 1 }); release()
+      expect(await reading).toEqual({ revision: 0 }); expect(owner.sourceStorageEpoch()).toBe(0)
+      expect(port.sourceState).toHaveBeenCalledOnce()
+    } finally { await owner.close() }
+  })
+  it('an applied late old storage result cannot publish a record, marker or announcement for the replacement', async () => {
+    const port = repository()
+    let lifecycle!: (event: NotificationRepositoryLifecycle) => void, release!: (value: any) => void
+    port.subscribeLifecycle = listener => { lifecycle = listener; return () => {} }
+    vi.mocked(port.commitSource).mockImplementationOnce(() => new Promise(done => { release = done }))
+    const owner = new NotificationService(port), events = vi.fn(); owner.subscribe(events)
+    try {
+      const original = draft({ announce: true, sourceRevision: 9 }), writing = owner.commitSource('source:test', 0, { value: 9 }, [original])
+      const rejected = expect(writing).rejects.toThrow('存储代次')
+      lifecycle({ state: 'unavailable', generation: 1 }); lifecycle({ state: 'recovered', generation: 2 })
+      const record: NotificationRecord = { ...original, id: 'old-result', createdAt: 1, updatedAt: 1, revision: 9, attentionRevision: 9, readRevision: 0 }
+      release({ applied: true, source: { revision: 9, data: { value: 9 } }, changes: [{ ...change, record }] })
+      await rejected; await owner.flush()
+      expect(events.mock.calls.every(([event]) => !event.change?.record && !event.announcement)).toBe(true)
+      const { sourceRevision: _revision, ...current } = draft()
+      owner.offerCurrent(current); await owner.flush()
+      expect(port.marker).toHaveBeenCalledOnce() // The stale applied result did not seed a private marker.
+    } finally { await owner.close() }
+  })
+  it('a genuinely new storage generation without an unavailable callback also invalidates old checkpoint reads', async () => {
+    const port = repository()
+    let lifecycle!: (event: NotificationRepositoryLifecycle) => void, release!: (value: any) => void
+    port.subscribeLifecycle = listener => { lifecycle = listener; return () => {} }
+    const owner = new NotificationService(port)
+    try {
+      lifecycle({ state: 'recovered', generation: 1 }); await owner.flush()
+      vi.mocked(port.sourceState).mockImplementationOnce(() => new Promise(done => { release = done }))
+      const reading = owner.sourceState('source:old'), rejected = expect(reading).rejects.toThrow('存储代次')
+      lifecycle({ state: 'recovered', generation: 2 }); release({ revision: 9 })
+      await rejected; expect(owner.sourceStorageEpoch()).toBe(1)
+    } finally { await owner.close() }
+  })
+})
 function repository(): NotificationRepository {
   return { marker: vi.fn(async () => ({ sourceRevision: 0 })), sourceState: vi.fn(async () => ({ revision: 0 })), commitSource: vi.fn(async () => ({ applied: true, source: { revision: 1 }, changes: [] })),
     put: vi.fn(async () => change), page: vi.fn(async () => ({ records: [], summary: change.summary, reset: false })),

@@ -22,6 +22,9 @@ export class NotificationService {
   private readonly sourceTasks = new Set<Promise<unknown>>()
   private readonly detachStorage?: () => void
   private storageEpoch = 0
+  private sourceEpoch = 0
+  private storageGeneration?: number
+  private storageUnavailable = false
   private preferencesEpoch = 0
   private recovering?: Promise<void>
   private readonly history?: NotificationHistoryController
@@ -37,6 +40,17 @@ export class NotificationService {
   }
 
   private storageLifecycle(event: NotificationRepositoryLifecycle): void {
+    // Pending requests sent after unavailable may legitimately wait for the
+    // next worker's first ready. Invalidate at loss, not twice at that ready.
+    // The first-ever ready is initialization, not a lost storage generation.
+    if (event.state === 'unavailable') {
+      if (!this.storageUnavailable || this.storageGeneration !== event.generation) ++this.sourceEpoch
+      this.storageUnavailable = true
+    } else {
+      if (this.storageGeneration !== undefined && this.storageGeneration !== event.generation && !this.storageUnavailable) ++this.sourceEpoch
+      this.storageUnavailable = false
+    }
+    this.storageGeneration = event.generation
     const epoch = ++this.storageEpoch
     // An interrupted put may already have committed. Never retain pre-exit
     // content markers or infer rollback from the missing acknowledgement.
@@ -96,6 +110,8 @@ export class NotificationService {
     }
   }
   reportHistoryGap(id?: string): void { this.degraded(true, id) }
+  /** In-process private storage identity; no business read, request, timer or IPC. */
+  sourceStorageEpoch(): number { return this.sourceEpoch }
   status(): { health: NotificationPush['health']; historyIncomplete: boolean; shutdownConfirmed: boolean; historyGapId?: string } {
     return { health: this.health, historyIncomplete: this.historyIncomplete, shutdownConfirmed: this.closeConfirmed && !this.shutdownFailed && this.health === 'ready' && !this.history?.state().unconfirmed, historyGapId: this.history?.journalGapId() }
   }
@@ -116,15 +132,22 @@ export class NotificationService {
     return undefined
   }
   sourceState(key: string): Promise<NotificationSourceState> {
+    const epoch = this.sourceEpoch
     return this.tracked((async () => {
-      try { const source = await this.repository.sourceState(key); this.recovered(); return source }
+      try {
+        const source = await this.repository.sourceState(key)
+        if (epoch !== this.sourceEpoch) throw Error('通知存储代次已变化，原检查点读取未确认')
+        this.recovered(); return source
+      }
       catch (error) { this.degraded(); throw error }
     })())
   }
   commitSource(key: string, expectedRevision: number, data: unknown, drafts: NotificationDraft[], group?: NotificationGroupPresentation): Promise<NotificationSourceResult> {
     if (this.closed || this.closing) return Promise.reject(new Error('通知来源已停止'))
+    const epoch = this.sourceEpoch
     return this.tracked((async () => { try {
       const result = await this.repository.commitSource(key, expectedRevision, data, drafts, this.now())
+      if (epoch !== this.sourceEpoch) throw Error('通知存储代次已变化，原投影回执未确认')
       this.recovered()
       const announced = result.applied ? result.changes.filter(change => {
         const draft = drafts.find(value => value.key === change.record?.key)
