@@ -39,9 +39,14 @@ export interface GroupMembershipTransfer {
   failover: TeamFailoverRecord
 }
 
+/** Connection-local witness captured by an already completed original repository read. Not a business revision or restore verdict. */
+export interface TeamControlReadVersion { revision: number; token: string }
+
 export interface TeamControlRepository extends AgentPresenceStore {
   /** 轻量读取当前修订号；用于避免每个轮询消费者都全量装配团队状态。 */
   revision?(): number
+  /** Pure memory lookup. Must not query or write; legacy repositories can omit it. */
+  lastReadVersion?(): Readonly<TeamControlReadVersion> | undefined
   loadTeamControl(): TeamControlState
   upsertWorkspaceTeam(bundle: WorkspaceTeamBundle): void
   /** 单槽模型选定持久化（lobby 逐会话配置保存出口）。 */

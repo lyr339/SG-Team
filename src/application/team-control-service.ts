@@ -110,6 +110,8 @@ export class TeamControlService {
   private listeners = new Set<TeamControlListener>()
   private lastRevision: number
   private cachedState?: TeamControlState
+  private cachedReadToken?: string
+  private lastEmittedReadToken?: string
   private readonly onerror: (error: unknown) => void
   /** Date.now() can repeat within one millisecond; activeRun ordering requires a strict clock. */
   private lastRunCreatedAt = 0
@@ -127,24 +129,36 @@ export class TeamControlService {
     const state = repository.loadTeamControl()
     this.lastRunCreatedAt = Math.max(0, ...state.runs.map((run) => run.createdAt))
     this.cachedState = state
+    this.cachedReadToken = this.readToken(state.revision)
+    this.lastEmittedReadToken = this.cachedReadToken
     this.lastRevision = state.revision
     this.syncConversationScope(state)
     this.unsubscribeBridge = bridge.subscribe(() => this.emit())
   }
 
   /**
-   * 团队结构只在 revision 变化时重载。旧实现每次 getSnapshot 都执行十余条
+   * 团队结构只在 revision 或同连接的实际存储标识变化时重载。旧实现每次 getSnapshot 都执行十余条
    * SQLite 查询并重新装配全部角色/席位/绑定；多个 250–1000ms watcher 叠加后
    * 让主进程长期占用一个 CPU 核心。外部 MCP 写入仍由轻量 revision 查询发现。
    */
   private loadState(): TeamControlState {
     const revision = this.repository.revision?.()
-    if (this.cachedState && revision !== undefined && revision === this.cachedState.revision) {
+    const readToken = revision === undefined ? undefined : this.readToken(revision)
+    if (this.cachedState && revision !== undefined && revision === this.cachedState.revision
+      && (!this.repository.lastReadVersion || readToken !== undefined && readToken === this.cachedReadToken)) {
       return this.cachedState
     }
     const state = this.repository.loadTeamControl()
     this.cachedState = state
+    this.cachedReadToken = this.readToken(state.revision)
     return state
+  }
+
+  private readToken(revision: number): string | undefined {
+    try {
+      const version = this.repository.lastReadVersion?.()
+      return version?.revision === revision && typeof version.token === 'string' && version.token ? version.token : undefined
+    } catch { return undefined } // Metadata failure invalidates cache use, never the original loaded state.
   }
 
   private nextRunCreatedAt(): number {
@@ -348,7 +362,8 @@ export class TeamControlService {
     this.stopWatcher()
     this.watchTimer = setInterval(() => {
       const revision = this.repository.revision?.() ?? this.repository.loadTeamControl().revision
-      if (revision !== this.lastRevision) this.emit()
+      const readToken = this.readToken(revision)
+      if (revision !== this.lastRevision || readToken !== undefined && readToken !== this.lastEmittedReadToken) this.emit()
     }, Math.max(250, intervalMs))
     this.watchTimer.unref?.()
   }
@@ -485,6 +500,7 @@ export class TeamControlService {
   private emit(): void {
     const snapshot = this.getSnapshot()
     this.lastRevision = snapshot.revision
+    this.lastEmittedReadToken = this.cachedReadToken
     for (const listener of this.listeners) listener(snapshot)
   }
 

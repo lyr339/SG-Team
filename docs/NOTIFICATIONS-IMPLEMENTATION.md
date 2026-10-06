@@ -457,6 +457,20 @@ ui/group-effects-compact-light.jpg、ui/group-effects-details-light.jpg、ui/gro
 
 **完整目标仍未完成**：同 revision 内容差异的原团队热缓存、整个旧 scope 消失与其他 feeds 恢复、大历史准确阅读与长期序列、页面未发 usage 载荷的诊断／MCP 校验前未知、正式包与 Windows/macOS 真权限／声音／勿扰／送达继续按完整矩阵核对。仅本地提交，不推送、发布、安装或结束目标。
 
+### 第二十六批：原团队热缓存使用同连接的真实变化标识
+
+第二十四批留下的原业务热缓存已补上：原 `TeamControlService.loadState` 只比较 team revision，真实等 revision 的外部数据变化会长期不可见。现在沿原那一次 revision／full-load meta SQL 捎带 `data_version` 与 `total_changes()`，不另发 PRAGMA 查询；repository 的 `lastReadVersion` 只是被冻结的内存 lookup，不把这个标识写入业务 schema、native revision、公开 TeamControlSnapshot 或 renderer IPC。SQLite 的 `data_version` 只在同连接内比较，可观察其他连接提交；本连接变化由 `total_changes` 补位。参照 [SQLite data_version](https://www.sqlite.org/pragma.html#pragma_data_version)、[SQLite total_changes](https://www.sqlite.org/c3ref/total_changes.html)，不把跨连接数值比较或这个标识当成备份／恢复原因证明。
+
+稳定数据仍每原 loadState 只有原一次轻量 SQL、复用同一缓存；实际变化标识改变后才执行原全量读取。必须说明成本边界：这是共享原业务库的连接标识，并非只对 topology 的 dirty flag；其他表提交也可造成一次保守 cache miss／原全读，但不因此产生“组已变化／已恢复”通知，通知仍比较实际原 facts。没有扫描目录、加轮询／计时器、触发器／migration、native 写入／API 重试或并行预检。原正常版本变化同样正确失效，旧 repository 可省略只读标识保持旧契约。
+
+full-load 标识在原 meta 查询时、装配 rows 之前捕获；后续并发变化不会被标成这次旧缓存的已观察状态。缓存记录与最后已经 emit 的记录分开：原 active-scope 查询先刷新了缓存时，原 watcher 仍会把等 revision 新快照送给正常消费者，不能因为 cache 被另一个原读取更新就跳过 UI／源更新。原 reload 抛错不覆盖缓存 proof；下一成功原读取仍需重新读取。未知／不可靠 metadata 不作为 cache-hit 证据，也不让 metadata 失败改变原已加载数据返回。没有在当前用户软件上替换活数据库文件，热文件系统强制替换不是本批证明的安全操作。
+
+证据：`full-regression-team-cache-final.log`（306 files，2900 passed，1 skipped）、`typecheck-team-cache-final.log`、`build-team-cache-final.log`、`dead-code-team-cache-final.log`，原 `mcp-smoke-team-cache-final.log`／`channel-smoke-team-cache-final.log`。`tests/team-control-cache-version.test.ts` 以真实原 SQLite 热句柄验证稳定每次原一次 revision、纯内存 witness、外部等 revision change 的一次原 reload、本连接变化、无关表提交不弹 topology 警报、原 watcher 在 scope 已读后仍 emit、错误读数不伪确认和 schema=9 不变。第二十四批 native-content verifier 更新为实际热读取可见，不再永久断言旧缓存缺陷；当前 mem/task/group 源核对继续一致。
+
+`scripts/verify-notification-team-cache.ts` 在 Node 与 macOS Electron (`ELECTRON_RUN_AS_NODE=1`) 用真实编译 private worker＋原 service/repository，100 个稳定原读取恰好 100 个原 revision 查询、零全量重载，witness getter 不执行查询；外部真实等 counter 提交后原热缓存确实重读，后续稳定仍复用。原 watcher 到时真实 emit 新关系而非用 verifier timeout 冒充已发送；无关表数据／原 schema 保留，fixture finally 精确清理。原 worker／shutdown／recovery／history／context／native-rebase／team-observations／group-effects／mcp-writes／usage-storage／model-catalog／runtime-usage／context-source／usage-binding／source-epoch／native-content／task-context 十七类亦在两个 runtime 复跑。`protected-team-cache-audit.json` 保留两保护树 HEAD／status／binary diff／文件与四个既有删除状态。
+
+**完整目标仍未完成**：本批使原完整数据读取可到达，不等于整个旧 workspace/run 消失的通知关联已全部收口，也不能把 current scope 缺席视为已取消／删除／完成。后续继续处理跨进程保留的旧 scope 通知和其他 feeds；准确大历史阅读／长期完整事件序列、页面未发出 usage 载荷及 MCP 校验前不可归属问题、正式包和真实 Windows/macOS 权限／声音／勿扰／送达仍须完成。本批没有改 UI、打开生产 main／当前软件／Cursor、调用实际账号／模型／OS 送达，不能把先前概念样板当作热缓存实机验收；只本地提交，不推送／发布／安装或结束目标。
+
 下面保留完整要求，不因分批已有成果缩小。已实现部分仍需匹配该项范围验收；未实现部分继续开工。
 
 1. 通知中心、轻量顶栏入口、单张提醒和独立 renderer store。支持待处理／未读／全部、查询范围、分页、详情、关闭、阅读、归档、确认清理和适当偏好；减少动画、长内容、键盘与窄窗需验收。

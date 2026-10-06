@@ -71,9 +71,10 @@ try {
   assert.equal((await owner.page({ key: `task:${task.id}` })).records[0]?.subjectState, 'failed')
   assert.match((await owner.page({ eventType: 'memory.rebase' })).records[0]!.title, /相同修订号/)
   assert.match((await owner.page({ eventType: 'task.rebase' })).records[0]!.title, /相同修订号/)
-  // Do not manufacture a fresh group read when the ORIGINAL business service
-  // intentionally reuses its own revision cache. This remains a separate gap.
-  assert.equal(current.control.getSnapshot().groups[0]?.group.name, 'Before source fork')
+  // The original revision statement now carries a connection-local storage
+  // witness. A changed database, even with equal business counter, reloads the
+  // ORIGINAL hot cache; the notification does not issue its own extra query.
+  assert.equal(current.control.getSnapshot().groups[0]?.group.name, 'After source fork')
   await current.close(); current = open()
   const fresh = current.control.getSnapshot(); await current.flush()
   assert.equal(fresh.revision, nativeTeam.revision); assert.equal(fresh.groups[0]?.group.name, 'After source fork')
@@ -91,7 +92,7 @@ try {
   assert.equal((await owner.page({ key: `task:${task.id}` })).records[0]?.subjectState, 'prior-data')
   console.log(JSON.stringify({ runtime: process.versions.electron ? 'Electron' : 'Node', realBuiltWorker: true, realOriginalServicesAndSqlite: true,
     equalNativeRevisionsWithActualChangedRows: true, memoryAndTaskLiveReadsReprojected: true, freshGroupReadAcrossOriginalServiceRestart: true,
-    originalHotGroupCacheNotPretendedFresh: true, missingFactsNotClaimedCompletedOrDeleted: true, currentStateNotBusinessReplay: true,
+    originalHotGroupCacheActuallyReloaded: true, missingFactsNotClaimedCompletedOrDeleted: true, currentStateNotBusinessReplay: true,
     noHistoricalAlertReplay: true, noOriginalBodiesCopied: true, normalSubsequentReadsQuiet: true, isolated: true }, null, 2))
 } finally {
   database?.close(); await current.close().catch(() => {}); await owner.close().catch(() => {})

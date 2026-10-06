@@ -9,7 +9,7 @@ import type {
   AgentRegistrationBatch
 } from '../../application/agent-authorization'
 import type { AgentCheckInReceipt } from '../../application/agent-presence'
-import type { TeamControlRepository } from '../../application/team-control-repository'
+import type { TeamControlReadVersion, TeamControlRepository } from '../../application/team-control-repository'
 import {
   buildGroupRoles,
   defaultGroupPlanPolicy,
@@ -308,6 +308,7 @@ function failoverFromRow(row: SqliteRow): TeamFailoverRecord {
 export class SqliteTeamControlRepository implements TeamControlRepository {
   private readonly database: DatabaseSync
   private readonly revisionStatement: StatementSync
+  private readVersion?: Readonly<TeamControlReadVersion>
 
   constructor(readonly path: string) {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true })
@@ -318,21 +319,39 @@ export class SqliteTeamControlRepository implements TeamControlRepository {
     this.database.exec('PRAGMA busy_timeout = 5000')
     this.migrate()
     this.revisionStatement = this.database.prepare(
-      'SELECT revision FROM team_control_meta WHERE id = 1'
+      `SELECT revision, (SELECT data_version FROM pragma_data_version) AS storage_version,
+        total_changes() AS local_changes FROM team_control_meta WHERE id = 1`
     )
   }
 
   revision(): number {
     const row = this.revisionStatement.get() as SqliteRow | undefined
     if (!row) throw new Error('团队控制数据库缺少 meta 行')
+    this.captureReadVersion(row)
     return numberOf(row.revision)
+  }
+
+  lastReadVersion(): Readonly<TeamControlReadVersion> | undefined { return this.readVersion }
+
+  private captureReadVersion(row: SqliteRow): void {
+    const revision = numberOf(row.revision), external = Number(row.storage_version), local = Number(row.local_changes)
+    if (![revision, external, local].every(value => Number.isSafeInteger(value) && value >= 0)) {
+      this.readVersion = undefined; return // Unknown metadata cannot certify a cache hit or change the original business read.
+    }
+    const token = `${external}:${local}`
+    if (this.readVersion?.revision !== revision || this.readVersion.token !== token) this.readVersion = Object.freeze({ revision, token })
   }
 
   loadTeamControl(): TeamControlState {
     const meta = this.database.prepare(
-      'SELECT schema_version, revision, active_workspace_id, updated_at FROM team_control_meta WHERE id = 1'
+      `SELECT schema_version, revision, active_workspace_id, updated_at,
+        (SELECT data_version FROM pragma_data_version) AS storage_version,
+        total_changes() AS local_changes FROM team_control_meta WHERE id = 1`
     ).get() as SqliteRow | undefined
     if (!meta) throw new Error('团队控制数据库缺少 meta 行')
+    // Capture before assembling original rows. A later concurrent commit
+    // remains observable on the next existing revision read, never cached over.
+    this.captureReadVersion(meta)
 
     const workspaces = (this.database.prepare(
       'SELECT * FROM team_workspaces ORDER BY updated_at DESC, id ASC'
