@@ -110,6 +110,7 @@ export function readMemoryIssueState(value: unknown, key: string): MemoryIssueSt
       occurredAt: 0,
       sourceRevision: 0
     })
+    if (state.observedScope && (row.scope.workspaceId !== state.observedScope.workspaceId || row.scope.runId !== state.observedScope.runId)) throw Error('记忆范围与原来源身份不一致')
   }
   return state
 }
@@ -119,15 +120,17 @@ export function reduceMemoryIssueNotifications(
   baseline: boolean,
   revision: number
 ) {
+  if (previous?.scopeMissing && !input.currentRead) return { state: previous, drafts: [] }
   if (previous && input.revision < previous.revision && !input.currentRead)
     return { state: previous, drafts: [] }
   const rows = { ...previous?.rows },
     drafts: NotificationDraft[] = []
-  const regression = nativeRevisionRegressed(previous, input),
-    rebases = (previous?.rebases ?? 0) + (regression ? 1 : 0)
+  const regression = nativeRevisionRegressed(previous, input), returned = Boolean(previous?.scopeMissing && input.currentRead),
+    rebases = (previous?.rebases ?? 0) + (regression || returned ? 1 : 0)
   const present = new Set(input.facts.map((fact) => fact.identity))
-  const pending = regression
+  const pending = regression || returned
     ? {
+        ...(returned ? { origin: 'scope-returned' as const } : {}),
         from: Math.max(previous!.revision, input.rebaseFrom ?? 0),
         to: input.rebaseTo ?? input.revision,
         missing: Object.keys(rows).filter((id) => !present.has(id))
@@ -138,6 +141,7 @@ export function reduceMemoryIssueNotifications(
           missing: [...previous.pendingRebase.missing]
         }
       : undefined
+  if (returned) for (const id of pending?.missing ?? []) rows[id] = { ...rows[id]!, priorData: false }
   if (pending) {
     while (pending.missing.length && drafts.length < NOTIFICATION_SOURCE_BATCH_LIMIT - 1) {
       const id = pending.missing.shift()!,
@@ -232,7 +236,7 @@ export function reduceMemoryIssueNotifications(
       title,
       detail:
         (pending
-          ? `源数据修订 ${pending.from} → ${pending.to}。先前提醒状态：${old?.state ? previousMemoryLabel[old.state] : '无'}${old?.ceased ? '（原范围已结束）' : ''}，只属于先前数据版本。本次只是重新读取对齐，未回放或重做审核。\n`
+          ? `${pending.origin === 'scope-returned' ? '原范围重新出现在本次原读取中；不声明备份恢复成功。' : `源数据修订 ${pending.from} → ${pending.to}。`}先前提醒状态：${old?.state ? previousMemoryLabel[old.state] : '无'}${old?.ceased ? '（旧提醒范围已失效）' : ''}，只属于先前数据版本。本次只是重新读取对齐，未回放或重做审核。\n`
           : '') +
         `${fact.title}\n` +
         (fact.ceased
@@ -301,8 +305,8 @@ export function reduceMemoryIssueNotifications(
       subjectState: complete ? 'observed' : 'pending',
       category: 'team',
       source: '共享记忆核对',
-      title: pending.from === pending.to ? '相同修订号下的记忆数据已变化' : '检测到较早的记忆数据版本',
-      detail: `源修订 ${pending.from} → ${pending.to}。${complete ? '已按本次原读取重新投影提醒。' : '旧事项正在分批核对。'}先前已发生的确认结果只属于先前数据版本；没有重放提案、审核、队列或 Agent 回执，也不声明业务恢复完成。`,
+      title: pending.origin === 'scope-returned' ? '原记忆范围已在当前读取中重新确认' : pending.from === pending.to ? '相同修订号下的记忆数据已变化' : '检测到较早的记忆数据版本',
+      detail: `${pending.origin === 'scope-returned' ? '原范围重新出现在本次原读取中；不声明备份恢复成功。' : `源修订 ${pending.from} → ${pending.to}。`}${complete ? '已按本次原读取重新投影提醒。' : '旧事项正在分批核对。'}先前已发生的确认结果只属于先前数据版本；没有重放提案、审核、队列或 Agent 回执，也不声明业务恢复完成。`,
       scope:
         input.scope ??
         input.facts[0]?.scope ??
@@ -324,6 +328,9 @@ export function reduceMemoryIssueNotifications(
     state: {
       version: 1 as const,
       key: input.key,
+      ...(input.scope?.workspaceId && input.scope.runId ? { observedScope: { workspaceId: input.scope.workspaceId, runId: input.scope.runId } }
+        : previous?.observedScope ? { observedScope: previous.observedScope } : {}),
+      ...(!input.currentRead && previous?.scopeMissing ? { scopeMissing: previous.scopeMissing } : {}),
       revision: input.revision,
       rows,
       rebases,

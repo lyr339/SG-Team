@@ -471,6 +471,24 @@ full-load 标识在原 meta 查询时、装配 rows 之前捕获；后续并发�
 
 **完整目标仍未完成**：本批使原完整数据读取可到达，不等于整个旧 workspace/run 消失的通知关联已全部收口，也不能把 current scope 缺席视为已取消／删除／完成。后续继续处理跨进程保留的旧 scope 通知和其他 feeds；准确大历史阅读／长期完整事件序列、页面未发出 usage 载荷及 MCP 校验前不可归属问题、正式包和真实 Windows/macOS 权限／声音／勿扰／送达仍须完成。本批没有改 UI、打开生产 main／当前软件／Cursor、调用实际账号／模型／OS 送达，不能把先前概念样板当作热缓存实机验收；只本地提交，不推送／发布／安装或结束目标。
 
+### 第二十七批：从原完整目录核对跨重启的旧范围，不猜业务终态
+
+本批补上 group topology／memory issues／task notifications 三类原来源的完整 workspace/run 缺席关联。`TeamControlService` 从同一次已完成的原完整 state 捎带冻结的工作区／运行身份目录，main-only，不进入公开 snapshot 或 renderer IPC，不额外查询业务库或 runtime。适配器只接受所选原 owner 的递增读取 stamp，并核对目录与同次 snapshot 的完整身份集合；缺 metadata、错 owner、迟到帧、裁剪或孤立 run 都不能授权失效。工作区切换、无 activeRun、停止监测、run 仍在目录但已 completed，都不是“整个原范围消失”。
+
+已确认缺席的旧提醒静音改为 `scope-unconfirmed`／expired，去掉旧导航入口并撤销旧 memory operator proof；原任务状态、提案状态和组事实保留，不猜任务完成／取消、提案已采纳／驳回、会话停止或数据删除。保持原阅读／归档事实，不续未读、不复活已清理的记录，也不制造从未发出的 stock group 通知。目录中的范围重新出现本身不能恢复 memory/task 结果；必须各自匹配的下一次当前原读取确认。重新核对有新的私有事件身份，但不重放旧 success、不声明备份恢复成功，不重做任务、审核、Agent 回执或原请求。
+
+私有 worker 增加固定三种 prefix 的薄目录查询，keyset 每页最多 100，仅返回 key/revision/原 scope，不跨 RPC 搬运全部 source payload，不暴露 renderer 查询入口。每个缺席 episode 的行进度也用短 keyset cursor，不复制数千条 remaining identity 挤占 2 MiB checkpoint 上限；写入仍每批最多 100 个 draft，和进度同一 CAS。未知 ACK 保留可能已提交的实际进度，只在下一真实目录帧重读私有 checkpoint 后继续，没有定时重放或业务 retry。旧 row scope／精确已有 group 记录可在 hash 身份一致时补证；完全清理或只有 hydration 的旧 group checkpoint 无可验证 scope 时不猜当前工作区，等待它自己的原读取。一个不可验证的旧行不会饿死其他已知范围，损坏数据保留并报告历史缺口。成本如实说明：目录变化／私有存储代次后的历史核对会产生独立 private RPC、marker 查读和薄字段 CPU 工作；不是零开销，但原稳定业务读取没有附加业务 SQL、等待、timer 或网络请求。
+
+私有外部 CAS 发出前即失效 producer 的该 key cache；已返回但迟到的旧 read／成功 ACK 不能重新种回旧 cache 或放行旧 projected callback。确定的本机 checkpoint 失效可从真实私有结果重新核对同一已接受事实，不冒充未知写成功；修复基线只消费自己所在代次，不吞随后真实变化，也不跨 wake/storage 代次消费新的静音基线。目录改变、休眠、存储代次、dispose 会围住异步旧核对，唤醒等下一真实原读取，close 排空已接受工作。仍沿原退出 barrier，不延长原退出超时。
+
+容量测试额外揪出并修复了原 task rebase 的真进度漏洞：`pendingRebase` 存在时相同的已处理任务会每批重新输出，超过 100 个 present facts 将永远挤占下一批。现在只在新 observed dataset 开始时标记其 present rows，已处理行清掉 priorData，后续批次能推进；231 条在更新的 native revision 下完整收口，legacy 缺 native counter 也不产生 NaN。范围回来了但实体本次完整原读取仍缺席时，旧 scope-unknown 说明换成 prior-data，依然不推任何业务终态。另一个全套回归暴露的是旧 usage-binding fixture 把两个顺序调用的默认 Date.now 强行要求同一毫秒；现在只冻结该测试的时钟，保持 callback 参数与 CDP 命令的完整等值断言，不改原生产 parser/时间语义或忽略字段。
+
+证据：`full-regression-native-scope-final.log`（307 files，2913 passed，1 skipped）、`typecheck-native-scope-final.log`、`build-native-scope-final.log`、`dead-code-native-scope-final.log`，原 `mcp-smoke-native-scope-final.log`／`channel-smoke-native-scope-final.log`。`tests/notification-native-scope.test.ts` 覆盖完整／切换／completed／stale／clipped、205 个历史 keyset scopes、231 行未知第二批 ACK 后续接、清理不复活、休眠／close、私有代次、legacy 与坏行隔离、旧 proof 撤销、真实源重现及多批原读取；`tests/notification-projection-source.test.ts` 加入迟到 read/ACK、cache 和后续基线围栏。`scripts/verify-notification-native-scope.ts` 在 Node 与 macOS Electron (`ELECTRON_RUN_AS_NODE=1`) 用当前编译 private worker＋真实原 SQLite/service：关闭自有原句柄后恢复自有早期 fixture，旧范围确实从完整原库消失且 private 历史跨重启保留；原范围重现后 memory/task 各自读取才重新确认。100 个稳定原读取仍恰好 100 次原 revision，零追加 reload/原团队再读，真实原任务／提案状态不被通知改写，原正文不进入通知。
+
+十九类 worker／shutdown／recovery／history／context／native-rebase／team-observations／group-effects／mcp-writes／usage-storage／model-catalog／runtime-usage／context-source／usage-binding／source-epoch／native-content／task-context／team-cache／native-scope 在两个 runtime 复跑，见 `native-scope-verification-final-matrix.log`。`protected-native-scope-audit.json` 以与基线相同的 status 模式核对两个保护树 HEAD／status／binary diff／逐文件及四个既有删除状态；fixtures finally 只清理自己的临时目录。没有启动 production main／当前软件／Cursor、调用实际账号／模型／系统通知，本批无 UI/CSS 改动，不拿旧预览或隔离 worker 当正式包实机送达证明。
+
+**完整目标仍未完成**：本批范围是上述三类原完整 workspace/run feeds，不将其他 session／问卷／消息／队列等历史恢复、未知来源、整个长期容量、正式打包与 Windows/macOS 真权限／声音／勿扰／系统送达一起冒充完成。后续仍按完整矩阵继续。只本地提交，不 push／发布／安装，不结束目标。
+
 下面保留完整要求，不因分批已有成果缩小。已实现部分仍需匹配该项范围验收；未实现部分继续开工。
 
 1. 通知中心、轻量顶栏入口、单张提醒和独立 renderer store。支持待处理／未读／全部、查询范围、分页、详情、关闭、阅读、归档、确认清理和适当偏好；减少动画、长内容、键盘与窄窗需验收。

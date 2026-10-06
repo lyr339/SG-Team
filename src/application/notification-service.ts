@@ -1,3 +1,4 @@
+import type { NotificationSourceListPage, NotificationSourceListQuery } from '../domain/native-scope-availability'
 import type { NotificationChange, NotificationDraft, NotificationGroupPresentation, NotificationMarker, NotificationPage, NotificationPreferences, NotificationPush, NotificationQuery, NotificationRecord, NotificationSourceResult, NotificationSourceState } from '../domain/notification'
 import { normalizeNotificationPreferences, notificationContentSignature, notificationIsUnread, notificationSafeText, NotificationActionError, validateNotificationDraft } from '../domain/notification'
 import type { NotificationRepository, NotificationRepositoryLifecycle } from './notification-repository'
@@ -140,6 +141,26 @@ export class NotificationService {
         this.recovered(); return source
       }
       catch (error) { this.degraded(); throw error }
+    })())
+  }
+  listNativeSources(query: NotificationSourceListQuery): Promise<NotificationSourceListPage> {
+    const epoch = this.sourceEpoch
+    return this.tracked((async () => {
+      try {
+        if (!this.repository.listNativeSources) throw Error('私有原来源目录不可用')
+        const page = await this.repository.listNativeSources(query)
+        if (epoch !== this.sourceEpoch) throw Error('私有原来源目录读取跨越存储代次')
+        this.recovered(); return page
+      } catch (error) { this.degraded(); throw error }
+    })())
+  }
+  /** Reuses the existing private marker command, including archived/cleared records. No original-source or renderer query. */
+  sourceMarker(key: string): Promise<NotificationMarker> {
+    const epoch = this.sourceEpoch
+    return this.tracked((async () => {
+      const marker = await this.repository.marker(key)
+      if (epoch !== this.sourceEpoch) throw Error('私有通知标记读取跨越存储代次')
+      return marker
     })())
   }
   commitSource(key: string, expectedRevision: number, data: unknown, drafts: NotificationDraft[], group?: NotificationGroupPresentation): Promise<NotificationSourceResult> {

@@ -79,11 +79,14 @@ export function reduceGroupTopologyNotifications(
 ) {
   const groups = { ...previous?.groups },
     drafts: NotificationDraft[] = []
+  if (previous?.scopeMissing && !input.currentRead) return { state: previous, drafts }
   if (previous && input.revision < previous.revision && !input.currentRead) return { state: previous, drafts }
   const regression = nativeRevisionRegressed(previous, input)
-  const rebases = (previous?.rebases ?? 0) + (regression ? 1 : 0)
-  const pending = regression
+  const returned = Boolean(previous?.scopeMissing && input.currentRead)
+  const rebases = (previous?.rebases ?? 0) + (regression || returned ? 1 : 0)
+  const pending = regression || returned
     ? {
+        ...(returned ? { origin: 'scope-returned' as const } : {}),
         from: Math.max(previous!.revision, input.rebaseFrom ?? 0),
         to: input.rebaseTo ?? input.revision,
         missing: Object.keys(groups).filter((id) => !input.facts.some((fact) => fact.id === id))
@@ -92,6 +95,7 @@ export function reduceGroupTopologyNotifications(
       ? { ...previous.pendingRebase, missing: [...previous.pendingRebase.missing] }
       : undefined
   const priorData = new Set(previous?.priorData)
+  if (returned) for (const id of pending?.missing ?? []) priorData.delete(id) // Scope is present again, but this entity is not in its original read.
   if (pending) {
     while (pending.missing.length && drafts.length < NOTIFICATION_SOURCE_BATCH_LIMIT - 1) {
       const id = pending.missing.shift()!,
@@ -138,7 +142,9 @@ export function reduceGroupTopologyNotifications(
         : !old
           ? '协作组已创建'
           : '协作组关系已变化'
-    if (pending) changes.push(`源数据修订 ${pending.from} → ${pending.to}。之前的关系属于先前数据版本；这不是一次重新建组或恢复成功回执。`)
+    if (pending) changes.push(pending.origin === 'scope-returned'
+      ? '原范围重新出现在这次原读取中；只重新核对当前关系，不证明备份恢复成功或重新建组。'
+      : `源数据修订 ${pending.from} → ${pending.to}。之前的关系属于先前数据版本；这不是一次重新建组或恢复成功回执。`)
     if (old && old.status !== fact.status) changes.push('组状态已按原记录更新。')
     if (old && old.leadSlotId !== fact.leadSlotId) changes.push(fact.leadSlotId ? '有效主控已变化。' : '当前没有有效主控。')
     if (old && old.planning !== fact.planning)
@@ -178,8 +184,8 @@ export function reduceGroupTopologyNotifications(
       subjectState: complete ? 'observed' : 'pending',
       category: 'team',
       source: '协作数据核对',
-      title: pending.from === pending.to ? '相同修订号下的组关系数据已变化' : '检测到较早的组关系数据版本',
-      detail: `源修订 ${pending.from} → ${pending.to}。${complete ? '已按本次原读取重新投影通知。' : '旧摘要仍在分批核对。'}原业务没有被通知回放或改变，先前记录不作为当前关系证明。`,
+      title: pending.origin === 'scope-returned' ? '原组关系范围已在当前读取中重新确认' : pending.from === pending.to ? '相同修订号下的组关系数据已变化' : '检测到较早的组关系数据版本',
+      detail: `${pending.origin === 'scope-returned' ? '原范围重新出现在本次原读取中；不声明备份恢复成功。' : `源修订 ${pending.from} → ${pending.to}。`}${complete ? '已按本次原读取重新投影通知。' : '旧摘要仍在分批核对。'}原业务没有被通知回放或改变，先前记录不作为当前关系证明。`,
       scope: { workspaceId: input.workspaceId, runId: input.runId },
       target: { kind: 'run', runId: input.runId },
       origin: { module: 'run' },
@@ -198,6 +204,8 @@ export function reduceGroupTopologyNotifications(
     state: {
       version: 1 as const,
       key: input.key,
+      observedScope: { workspaceId: input.workspaceId, runId: input.runId },
+      ...(!input.currentRead && previous?.scopeMissing ? { scopeMissing: previous.scopeMissing } : {}),
       revision: input.revision,
       groups,
       rebases,

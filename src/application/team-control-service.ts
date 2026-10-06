@@ -29,6 +29,7 @@ import type {
 } from '../shared/desktop-api'
 import type { CursorComposerTelemetrySource } from '../infrastructure/cursor/cursor-composer-telemetry'
 import { verifyAgentRuntime } from './verify-agent-runtime'
+import { validateNativeScopeCatalogue, type NativeScopeCatalogue } from '../domain/native-scope-availability'
 
 /** 逐会话模型选定的形状校验：只信结构，目录可用性由渲染层弹层选项保证。 */
 function sanitizeModelSelection(value: unknown): CursorModelSelection {
@@ -179,7 +180,13 @@ export class TeamControlService {
     }
     const snapshot = this.project(state, runtime)
     if (this.readObservers.size) {
-      const value = { snapshot, stamp: { owner: this.readOwner, sequence: ++this.readSequence } }
+      let catalogue: NativeScopeCatalogue | undefined
+      try {
+        catalogue = Object.freeze({ workspaceIds: Object.freeze(state.workspaces.map(workspace => workspace.id)),
+          runs: Object.freeze(state.runs.map(run => Object.freeze({ workspaceId: run.workspaceId, runId: run.id }))) })
+        validateNativeScopeCatalogue(catalogue)
+      } catch { catalogue = undefined /* Unverified metadata cannot change original reads or authorize missing-scope projection. */ }
+      const value: TeamControlReadObservation = { snapshot, stamp: { owner: this.readOwner, sequence: ++this.readSequence }, ...(catalogue ? { catalogue } : {}) }
       for (const listener of this.readObservers) { try { listener(value) } catch { /* Observers cannot change the original result. */ } }
     }
     return snapshot

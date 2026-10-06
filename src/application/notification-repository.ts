@@ -1,5 +1,6 @@
 import type { NotificationChange, NotificationDraft, NotificationMarker, NotificationPage, NotificationPreferences, NotificationQuery, NotificationSourceResult, NotificationSourceState } from '../domain/notification'
 import type { NotificationHistoryIntegrity, NotificationHistoryStatus } from '../domain/notification-history'
+import type { NotificationSourceListPage, NotificationSourceListQuery } from '../domain/native-scope-availability'
 
 /** Storage lifecycle, not a business event or proof that an interrupted write rolled back. */
 export interface NotificationRepositoryLifecycle { state: 'unavailable' | 'recovered'; generation: number }
@@ -12,6 +13,7 @@ export interface NotificationRepository {
   subscribeLifecycle?(listener: (event: NotificationRepositoryLifecycle) => void): () => void
   marker(key: string): Promise<NotificationMarker>
   sourceState(key: string): Promise<NotificationSourceState>
+  listNativeSources?(query: NotificationSourceListQuery): Promise<NotificationSourceListPage>
   commitSource(key: string, expectedRevision: number, data: unknown, drafts: NotificationDraft[], now: number): Promise<NotificationSourceResult>
   put(draft: NotificationDraft, now: number): Promise<NotificationChange>
   page(query?: NotificationQuery): Promise<NotificationPage>

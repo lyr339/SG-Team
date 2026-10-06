@@ -126,6 +126,7 @@ import { WorkspaceNotifications } from '../application/notifications/workspace-n
 import { CompatibilityNotifications } from '../application/notifications/compatibility-notifications'
 import { connectGroupTopologyNotifications } from '../application/notifications/group-topology-notifications'
 import { connectMemoryIssueNotifications } from '../application/notifications/memory-issue-notifications'
+import { connectNativeScopeAvailabilityNotifications } from '../application/notifications/native-scope-availability'
 import { membershipTransferNotification } from '../domain/membership-transfer-notification'
 // electron-updater 是 CJS，`autoUpdater` 是 exports 上的惰性 getter：主进程是 ESM，命名导入会在链接期
 // 找不到该导出（cjs-module-lexer 认不出 getter），只能默认导入整个 module.exports 再取属性。
@@ -188,6 +189,7 @@ let compatibilityNotifications: CompatibilityNotifications | undefined
 let groupTopologyNotificationSource: ReturnType<typeof connectGroupTopologyNotifications> | undefined
 let groupEffectsNotifications: GroupEffectsNotifications | undefined
 let memoryIssueNotificationSource: ReturnType<typeof connectMemoryIssueNotifications> | undefined
+let nativeScopeAvailabilityNotifications: ReturnType<typeof connectNativeScopeAvailabilityNotifications> | undefined
 let disposeTeamMemoryInspectionIpc:(()=>void)|undefined
 let notificationRuntimeJournal: NotificationRuntimeJournal | undefined
 let disposeNotificationIpc: (() => void) | undefined
@@ -726,6 +728,9 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
       operatorMessageNotificationSource = connectOperatorMessageNotifications(teamCollaborationService, getTeam, notificationService)
       groupTopologyNotificationSource = connectGroupTopologyNotifications(teamControlService, notificationService)
       memoryIssueNotificationSource = connectMemoryIssueNotifications(teamMemoryService, getTeam, notificationService)
+      nativeScopeAvailabilityNotifications = connectNativeScopeAvailabilityNotifications(teamControlService, notificationService, {
+        'group-topology:': groupTopologyNotificationSource.source, 'memory-issues:': memoryIssueNotificationSource.source, 'task-notifications:': taskNotificationSource.source
+      }, { power: powerMonitor, catalogueObserved: catalogue => memoryIssueNotificationSource?.observeScopeCatalogue(catalogue) })
     } catch { notificationService.reportHistoryGap() }
   }
   disposeTeamMemoryInspectionIpc=registerTeamMemoryInspectionIpc(teamMemoryService,()=>teamControlService!.getSnapshot(),()=>mainWindow,{
@@ -1182,6 +1187,7 @@ const notificationQuitBarrier = new NotificationQuitBarrier({
     () => compatibilityNotifications?.close() ?? Promise.resolve(),
     () => groupTopologyNotificationSource?.close() ?? Promise.resolve(),
     () => memoryIssueNotificationSource?.close() ?? Promise.resolve(),
+    () => nativeScopeAvailabilityNotifications?.close() ?? Promise.resolve(),
     () => groupEffectsNotifications?.close() ?? Promise.resolve(),
     // The original tracker writes once more during disposeDesktopOnce. Seal
     // this observer AFTER that synchronous final persist, not before it.

@@ -17,6 +17,7 @@ import {
 } from '../../domain/memory-operator-review'
 import { NotificationProjectionSource } from './projection-source'
 import { NativeReadOrder } from './native-read-order'
+import type { NativeScopeCatalogue } from '../../domain/native-scope-availability'
 
 const hash = (parts: unknown[]) => createHash('sha256').update(JSON.stringify(parts)).digest('hex')
 const sourceKey = (workspaceId: string, runId: string) => 'memory-issues:' + hash([workspaceId, runId])
@@ -227,6 +228,20 @@ export function connectMemoryIssueNotifications(
   }
   return {
     source,
+    scopeUnavailable(workspaceId: string, runId: string): void {
+      const key = sourceKey(workspaceId, runId)
+      revoke(key)
+      if (activeKey === key) activeKey = undefined
+    },
+    observeScopeCatalogue(catalogue: NativeScopeCatalogue): void {
+      if (detached) return
+      const workspaces = new Set(catalogue.workspaceIds), runs = new Set(catalogue.runs.map(scope => JSON.stringify([scope.workspaceId, scope.runId])))
+      for (const cached of last.values()) {
+        const scope = cached.input.scope
+        if (scope?.workspaceId && scope.runId && (!workspaces.has(scope.workspaceId) || !runs.has(JSON.stringify([scope.workspaceId, scope.runId]))))
+          this.scopeUnavailable(scope.workspaceId, scope.runId)
+      }
+    },
     observeOperatorReview(value: MemoryOperatorReviewObservation): void {
       if (detached) return
       try {

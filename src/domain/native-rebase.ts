@@ -1,3 +1,4 @@
+import { validateNativeScopeMetadata, type NativeScopeMetadata } from './native-scope-availability'
 export interface NativeVersionEvidence {
   currentRead?: boolean
   readOwner?: string
@@ -7,11 +8,12 @@ export interface NativeVersionEvidence {
   readSignature?: string
 }
 export interface NativeRebasePending {
+  origin?: 'scope-returned'
   from: number
   to: number
   missing: string[]
 }
-export interface NativeRebaseState {
+export interface NativeRebaseState extends NativeScopeMetadata {
   readOwner?: string
   readEpoch?: number
   rebases?: number
@@ -20,6 +22,7 @@ export interface NativeRebaseState {
 }
 /** Pure metadata validation, not a reset permission policy or workflow state machine. */
 export function validateNativeRebaseState(state: NativeRebaseState, maxMissing: number): void {
+  validateNativeScopeMetadata(state)
   if (
     (state.readOwner !== undefined && (typeof state.readOwner !== 'string' || !state.readOwner || state.readOwner.length > 128)) ||
     [state.readEpoch, state.rebases].some((value) => value !== undefined && (!Number.isSafeInteger(value) || value < 0)) ||
@@ -29,11 +32,11 @@ export function validateNativeRebaseState(state: NativeRebaseState, maxMissing: 
   const pending = state.pendingRebase
   if (
     pending &&
-    (!Number.isSafeInteger(pending.from) ||
+    ((pending.origin !== undefined && pending.origin !== 'scope-returned') || !Number.isSafeInteger(pending.from) ||
       !Number.isSafeInteger(pending.to) ||
       pending.from < 0 ||
       pending.to < 0 ||
-      pending.to > pending.from ||
+      pending.to > pending.from && pending.origin !== 'scope-returned' ||
       !Array.isArray(pending.missing) ||
       pending.missing.length > maxMissing ||
       new Set(pending.missing).size !== pending.missing.length ||

@@ -14,6 +14,42 @@ function lifecycleHarness(path = ':memory:') {
 }
 
 describe('shared projection durability transport', () => {
+  it('known private checkpoint invalidation fences an already returned but delayed read and reloads without a false history gap', async () => {
+    const h = notificationSourceHarness(), projected = vi.fn()
+    const baselines: boolean[] = []
+    let release!: () => void, entered!: () => void
+    const waiting = new Promise<void>(done => { entered = done }), gate = new Promise<void>(done => { release = done })
+    vi.mocked(h.port.sourceState).mockImplementationOnce(async key => { const old = h.ledger.sourceState(key); entered(); await gate; return old })
+    const source = new NotificationProjectionSource<number, { value: number; repaired?: boolean }>(h.owner, value => value as { value: number; repaired?: boolean } | undefined,
+      (old, value, baseline) => { baselines.push(baseline); return { state: { ...old, value }, drafts: [] } }, String, projected)
+    try {
+      source.observe('source:a', 1); await waiting
+      h.ledger.commitSource('source:a', 0, { value: 0, repaired: true }, [], 1)
+      source.invalidateCheckpoint('source:a'); release(); await source.flush()
+      expect(h.ledger.sourceState('source:a')).toMatchObject({ revision: 2, data: { value: 1, repaired: true } })
+      expect(projected).toHaveBeenCalledExactlyOnceWith(1, { value: 1, repaired: true })
+      expect(h.port.sourceState).toHaveBeenCalledTimes(2); expect(h.owner.status().historyIncomplete).toBe(false)
+      source.observe('source:a', 2); await source.flush(); expect(baselines).toEqual([true, false])
+    } finally { release(); await source.close(); await h.owner.close() }
+  })
+  it('a delayed successful ACK cannot cache over a newer external private CAS or release the stale projected callback', async () => {
+    const h = notificationSourceHarness(), projected = vi.fn()
+    let release!: () => void, entered!: () => void
+    const waiting = new Promise<void>(done => { entered = done }), gate = new Promise<void>(done => { release = done })
+    vi.mocked(h.port.commitSource).mockImplementationOnce(async (...args) => { const result = h.ledger.commitSource(...args); entered(); await gate; return result })
+    const source = new NotificationProjectionSource<number, { value: number; repaired?: boolean }>(h.owner, value => value as { value: number; repaired?: boolean } | undefined,
+      (old, value) => ({ state: { ...old, value }, drafts: [] }), String, projected)
+    try {
+      source.observe('source:a', 1); await waiting
+      h.ledger.commitSource('source:a', 1, { value: 1, repaired: true }, [], 1)
+      source.invalidateCheckpoint('source:a'); release(); await source.flush()
+      expect(h.ledger.sourceState('source:a').revision).toBe(2)
+      expect(projected).toHaveBeenCalledExactlyOnceWith(1, { value: 1, repaired: true })
+      const reads = vi.mocked(h.port.sourceState).mock.calls.length
+      source.observe('source:a', 1); await source.flush(); expect(h.port.sourceState).toHaveBeenCalledTimes(reads)
+      expect(h.owner.status().historyIncomplete).toBe(false)
+    } finally { release(); await source.close(); await h.owner.close() }
+  })
   it('a new private storage generation invalidates cached identical source input and reprojects from the actual checkpoint, quietly and only on another real frame', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'sg-projection-epoch-')), path = join(dir, 'notifications.sqlite'), h = lifecycleHarness(path)
     const baselines: boolean[] = []

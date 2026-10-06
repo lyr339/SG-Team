@@ -27,6 +27,9 @@ function fixture() {
 }
 
 it('retains original parser/callback arguments and command sequence with observation enabled; healthy traffic never makes a success log or extra private queries', async () => {
+  // The original parser defaults a legacy payload without t to Date.now(). Two
+  // sequential receiver calls need one controlled instant, not a lucky same-ms wall clock.
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(10_000)
   const f = fixture(), callbacks = vi.fn(), samples = vi.fn(), plain = stream({ onUsageEvent: callbacks, onUsageSample: samples })
   try {
     expect(await f.observer.attach()).toBe(true); expect(await plain.observer.attach()).toBe(true)
@@ -42,7 +45,7 @@ it('retains original parser/callback arguments and command sequence with observa
     await f.source.source.flush()
     expect(vi.mocked(f.h.port.sourceState).mock.calls.length).toBe(count); expect(f.h.ledger.page().summary.total).toBe(0)
     expect(f.socket.sent.map(call => [call.method, call.params])).toEqual(commands)
-  } finally { plain.observer.dispose(); await f.close() }
+  } finally { plain.observer.dispose(); await f.close(); clock.mockRestore() }
 })
 
 it('aggregates two original affected bindings into one episode; a healthy other member and zero/legacy frames cannot resolve them', async () => {

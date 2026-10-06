@@ -13,6 +13,7 @@ export function notificationSourceHarness(path = ':memory:', subscribeLifecycle?
     historyGap: async id => ledger.historyGap(id), recordHistoryGap: async (id, now) => ledger.recordHistoryGap(id, now),
     acknowledgeHistoryGap: async (revision, now) => ledger.acknowledgeHistoryGap(revision, now), pruneRoutine: async now => ledger.pruneRoutine(now),
     marker: async key => ledger.marker(key), sourceState: vi.fn(async key => ledger.sourceState(key)),
+    listNativeSources: vi.fn(async query => ledger.listNativeSources(query)),
     commitSource: vi.fn(async (key, expected, data, drafts, now) => ledger.commitSource(key, expected, data, drafts, now)),
     put: async (draft, now) => ledger.put(draft, now), page: async query => ledger.page(query), read: async (id, revision, now) => ledger.read(id, revision, now),
     readAll: async (query, revision, now) => ledger.readAll(query, revision, now), archive: async (id, now) => ledger.archive(id, now), clearRead: async (query, now) => ledger.clearRead(query, now),

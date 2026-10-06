@@ -1,3 +1,4 @@
+import type { NotificationSourceListPage, NotificationSourceListQuery } from '../domain/native-scope-availability'
 import type { Worker } from 'node:worker_threads'
 import type { NotificationRepository, NotificationRepositoryLifecycle } from '../application/notification-repository'
 import type { NotificationChange, NotificationDraft, NotificationMarker, NotificationPage, NotificationPreferences, NotificationQuery, NotificationSourceResult, NotificationSourceState } from '../domain/notification'
@@ -160,6 +161,7 @@ export class NotificationWorkerPort implements NotificationRepository {
   pruneRoutine(now: number): Promise<NotificationChange & { removed: number; more: boolean }> { return this.call({ kind: 'pruneRoutine', now }) }
   marker(key: string): Promise<NotificationMarker> { return this.call({ kind: 'marker', key }) }
   sourceState(key: string): Promise<NotificationSourceState> { return this.call({ kind: 'sourceState', key }) }
+  listNativeSources(query: NotificationSourceListQuery): Promise<NotificationSourceListPage> { return this.call({ kind: 'listNativeSources', query }) }
   commitSource(key: string, expectedRevision: number, data: unknown, drafts: NotificationDraft[], now: number): Promise<NotificationSourceResult> {
     return this.call({ kind: 'commitSource', key, expectedRevision, data, drafts, now })
   }

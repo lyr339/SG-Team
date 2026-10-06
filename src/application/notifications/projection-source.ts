@@ -1,7 +1,8 @@
 import type { NotificationDraft, NotificationGroupPresentation } from '../../domain/notification'
 import type { NotificationService } from '../notification-service'
 
-interface SourceObservation<T> { key: string; input: T; baseline: boolean; storageEpoch?: number }
+interface SourceObservation<T> { key: string; input: T; baseline: boolean; storageEpoch?: number; quietEpoch: number; invalidated?: boolean; reloads?: number }
+class CheckpointInvalidated extends Error {}
 export interface NotificationProjection<S> { state: S; drafts: NotificationDraft[]; group?: NotificationGroupPresentation; complete?: boolean }
 
 /** Shared durability transport, not a workflow engine: domain reducers alone decide facts and presentation. */
@@ -34,6 +35,16 @@ export class NotificationProjectionSource<T, S> {
     try { this.onProjected?.(input, state) }
     catch { try { this.owner.reportHistoryGap() } catch { /* A private observer does not invalidate a confirmed projection. */ } }
   }
+  private remember(key: string): void {
+    this.seen.add(key); if (this.seen.size > 256) this.seen.delete(this.seen.values().next().value!)
+  }
+  private completedObservation(observation: SourceObservation<T>, state: S): void {
+    this.committed.set(observation.key, this.inputSignature(observation.input))
+    // A proven reload consumes its own quiet repair, not a later wake/storage
+    // baseline. Otherwise the following genuine change would be wrongly quiet.
+    if (observation.reloads && observation.quietEpoch === this.epoch) this.remember(observation.key)
+    this.projected(observation.input, state)
+  }
   observe(key: string, input: T): void {
     if (this.closed || !this.accepting) return
     try {
@@ -44,11 +55,11 @@ export class NotificationProjectionSource<T, S> {
       let last: SourceObservation<T> | undefined
       for (let index = this.pending.length - 1; index >= 0; index--) if (this.pending[index]!.key === key) { last = this.pending[index]; break }
       last ??= this.current?.key === key ? this.current : undefined
-      if (last ? last.storageEpoch === this.storageEpoch && this.inputSignature(last.input) === signature : this.committed.get(key) === signature) return
+      if (last ? !last.invalidated && last.storageEpoch === this.storageEpoch && this.inputSignature(last.input) === signature : this.committed.get(key) === signature) return
       if (this.pending.length >= 128) { this.owner.reportHistoryGap(); return }
       const baseline = !this.seen.has(key)
-      this.seen.add(key); if (this.seen.size > 256) this.seen.delete(this.seen.values().next().value!)
-      this.pending.push({ key, input, baseline, storageEpoch: this.storageEpoch }); this.start()
+      this.remember(key)
+      this.pending.push({ key, input, baseline, storageEpoch: this.storageEpoch, quietEpoch: this.epoch }); this.start()
     } catch { this.owner.reportHistoryGap() }
   }
   private start(): void {
@@ -68,6 +79,7 @@ export class NotificationProjectionSource<T, S> {
           const value = await this.owner.sourceState(observation.key)
           this.checkStorage()
           if (storageEpoch !== this.storageEpoch) throw Error('原私有检查点读取跨越了存储代次')
+          if (observation.invalidated) throw new CheckpointInvalidated()
           cached = { revision: value.revision, state: this.decode(value.data, observation.key) }; this.cache.set(observation.key, cached)
         }
         if (this.closed) return
@@ -76,12 +88,13 @@ export class NotificationProjectionSource<T, S> {
           const projection = this.reduce(cached.state, observation.input, observation.baseline || epoch !== this.epoch, cached.revision + 1)
           if (!projection.drafts.length && JSON.stringify(cached.state) === JSON.stringify(projection.state)) {
             if (projection.complete === false) throw Error('通知来源分批未推进检查点')
-            this.committed.set(observation.key, this.inputSignature(observation.input)); this.projected(observation.input, projection.state); break
+            this.completedObservation(observation, projection.state); break
           }
           const storageEpoch = this.storageEpoch
           const result = await this.owner.commitSource(observation.key, cached.revision, projection.state, projection.drafts, projection.group)
           this.checkStorage()
           if (storageEpoch !== this.storageEpoch) throw Error('原私有投影确认跨越了存储代次')
+          if (observation.invalidated) throw new CheckpointInvalidated()
           if (result.applied) {
             this.cache.set(observation.key, { revision: result.source.revision, state: projection.state })
             cached = { revision: result.source.revision, state: projection.state }; conflicts = 0
@@ -89,23 +102,32 @@ export class NotificationProjectionSource<T, S> {
               if (++batches >= 64) throw Error('通知来源分批超出本次处理上限')
               continue
             }
-            this.committed.set(observation.key, this.inputSignature(observation.input)); this.projected(observation.input, projection.state); break
+            this.completedObservation(observation, projection.state); break
           }
           cached = { revision: result.source.revision, state: this.decode(result.source.data, observation.key) }; this.cache.set(observation.key, cached)
           if (++conflicts >= 3) { this.committed.delete(observation.key); this.owner.reportHistoryGap(); break }
         }
         if (this.cache.size > 32) this.cache.delete(this.cache.keys().next().value!)
         if (this.committed.size > 256) this.committed.delete(this.committed.keys().next().value!)
-      } catch {
+      } catch (error) {
         // Unknown write outcomes are not replayed blindly. The next genuine source
         // frame reloads the atomic checkpoint; a failed write is never cached as seen.
-        this.cache.delete(observation.key); this.committed.delete(observation.key); this.owner.reportHistoryGap()
+        this.cache.delete(observation.key); this.committed.delete(observation.key)
+        if (error instanceof CheckpointInvalidated && (observation.reloads ?? 0) < 3 && !this.closed)
+          this.pending.unshift({ ...observation, invalidated: false, reloads: (observation.reloads ?? 0) + 1, baseline: true })
+        else this.owner.reportHistoryGap()
       } finally { this.current = undefined }
     }
   }
   quietNextObservation(): void {
     ++this.epoch; this.seen.clear(); this.committed.clear()
     for (const observation of this.pending) observation.baseline = true
+  }
+  /** A known external private CAS update, not a business refresh or source replay. Next original frame reloads this key. */
+  invalidateCheckpoint(key: string): void {
+    this.cache.delete(key); this.committed.delete(key); this.seen.delete(key)
+    if (this.current?.key === key) { this.current.baseline = true; this.current.invalidated = true }
+    for (const observation of this.pending) if (observation.key === key) observation.baseline = true
   }
   async flush(): Promise<void> { while (this.processing) await this.processing }
   close(): Promise<void> {

@@ -1,3 +1,4 @@
+import { NATIVE_SCOPE_SOURCE_PREFIXES, validNativeScope, type NotificationSourceListPage, type NotificationSourceListQuery } from '../../domain/native-scope-availability'
 import { randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
@@ -200,6 +201,22 @@ export class SqliteNotificationRepository {
     if (!row) return { revision: 0 }
     if (!Number.isSafeInteger(row.revision) || row.revision < 0) throw new Error('通知来源版本异常，原数据保留。')
     return { revision: row.revision, data: JSON.parse(row.payload) as unknown }
+  }
+  /** Internal private checkpoints only. Fixed source prefixes, keyset pagination, no renderer IPC or business DB. */
+  listNativeSources(query: NotificationSourceListQuery): NotificationSourceListPage {
+    if (!NATIVE_SCOPE_SOURCE_PREFIXES.includes(query.prefix) || query.after !== undefined && (typeof query.after !== 'string' || !new RegExp(`^${query.prefix}[a-f0-9]{64}$`).test(query.after))
+      || query.limit !== undefined && (!Number.isSafeInteger(query.limit) || query.limit < 1 || query.limit > 100)) throw Error('私有来源目录查询无效')
+    const limit = query.limit ?? 100
+    const rows = this.db.prepare(`SELECT source_key,revision,json_extract(payload,'$.observedScope') AS scope FROM desktop_notification_sources
+      WHERE source_key>=? AND source_key<? AND source_key>? ORDER BY source_key LIMIT ?`)
+      .all(query.prefix, query.prefix + '\uffff', query.after ?? '', limit + 1) as Array<{ source_key: string; revision: number; scope: string | null }>
+    const entries = rows.slice(0, limit).map(row => {
+      if (!new RegExp(`^${query.prefix}[a-f0-9]{64}$`).test(row.source_key) || !Number.isSafeInteger(row.revision) || row.revision < 0) throw Error('私有原来源身份无法验证')
+      const scope: unknown = row.scope === null ? undefined : JSON.parse(row.scope)
+      if (scope !== undefined && !validNativeScope(scope)) throw Error('私有原来源范围无法验证')
+      return { key: row.source_key, revision: row.revision, ...(scope ? { scope } : {}) }
+    })
+    return { rows: entries, ...(rows.length > limit ? { nextKey: entries.at(-1)!.key } : {}) }
   }
   commitSource(key: string, expectedRevision: number, data: unknown, drafts: NotificationDraft[], now: number): NotificationSourceResult {
     if (!key || key.length > 300 || !Number.isSafeInteger(expectedRevision) || expectedRevision < 0 || drafts.length > NOTIFICATION_SOURCE_BATCH_LIMIT) throw new Error('通知来源提交无效')

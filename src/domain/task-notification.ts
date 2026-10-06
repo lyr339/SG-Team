@@ -86,22 +86,27 @@ export function readTaskNotificationState(value: unknown, key: string): TaskNoti
       sourceRevision: 0,
       occurredAt: 0
     })
+    if (state.observedScope && row.scope && (row.scope.workspaceId !== undefined || row.scope.runId !== undefined)
+      && (row.scope.workspaceId !== state.observedScope.workspaceId || row.scope.runId !== state.observedScope.runId)) throw Error('任务范围与原来源身份不一致')
   }
   return state
 }
 export function reduceTaskNotifications(old: TaskNotificationState | undefined, input: TaskNotificationInput, baseline: boolean, revision: number) {
+  if (old?.scopeMissing && !input.currentRead) return { state: old, drafts: [] }
   if (old?.nativeRevision !== undefined && input.nativeRevision !== undefined && input.nativeRevision < old.nativeRevision && !input.currentRead)
     return { state: old, drafts: [] }
   const regression =
     old?.nativeRevision !== undefined &&
     input.nativeRevision !== undefined &&
     nativeRevisionRegressed({ ...old, revision: old.nativeRevision }, { ...input, revision: input.nativeRevision })
-  const rebases = (old?.rebases ?? 0) + (regression ? 1 : 0),
+  const returned = Boolean(old?.scopeMissing && input.currentRead)
+  const rebases = (old?.rebases ?? 0) + (regression || returned ? 1 : 0),
     present = new Set(input.facts.map((fact) => fact.id))
-  const pending = regression
+  const pending = regression || returned
     ? {
-        from: Math.max(old!.nativeRevision!, input.rebaseFrom ?? 0),
-        to: input.rebaseTo ?? input.nativeRevision!,
+        ...(returned ? { origin: 'scope-returned' as const } : {}),
+        from: Math.max(old!.nativeRevision ?? input.nativeRevision ?? 0, input.rebaseFrom ?? 0),
+        to: input.rebaseTo ?? input.nativeRevision ?? old!.nativeRevision ?? 0,
         missing: Object.keys(old!.rows).filter((id) => !present.has(id))
       }
     : old?.pendingRebase
@@ -110,6 +115,9 @@ export function reduceTaskNotifications(old: TaskNotificationState | undefined, 
   const state: TaskNotificationState = {
     version: 1,
     key: input.key,
+    ...(input.scope?.workspaceId && input.scope.runId ? { observedScope: { workspaceId: input.scope.workspaceId, runId: input.scope.runId } }
+      : old?.observedScope ? { observedScope: old.observedScope } : {}),
+    ...(!input.currentRead && old?.scopeMissing ? { scopeMissing: old.scopeMissing } : {}),
     rows: { ...old?.rows },
     ...(input.nativeRevision !== undefined ? { nativeRevision: input.nativeRevision } : {}),
     ...(input.currentRead || old?.readOwner
@@ -118,6 +126,13 @@ export function reduceTaskNotifications(old: TaskNotificationState | undefined, 
       : {})
   }
   const drafts: NotificationDraft[] = []
+  // Mark present rows once at the beginning of this observed dataset, not on
+  // every continuation. Processed rows clear priorData and cannot monopolize
+  // subsequent batches merely because pendingRebase is still present.
+  if (regression || returned) for (const [id, row] of Object.entries(state.rows)) {
+    if (present.has(id)) state.rows[id] = { ...row, priorData: true }
+    else if (returned) state.rows[id] = { ...row, priorData: false }
+  }
   if (pending)
     while (pending.missing.length && drafts.length < NOTIFICATION_SOURCE_BATCH_LIMIT - 1) {
       const id = pending.missing.shift()!,
@@ -152,7 +167,7 @@ export function reduceTaskNotifications(old: TaskNotificationState | undefined, 
     const same =
       previous &&
       JSON.stringify([previous.status, previous.attemptId, previous.reviewId]) === JSON.stringify([fact.status, fact.attemptId, fact.reviewId]) &&
-      !previous.priorData && !pending
+      !previous.priorData
     if (same) continue
     if (drafts.length >= NOTIFICATION_SOURCE_BATCH_LIMIT - (pending ? 1 : 0)) {
       complete = false
@@ -193,7 +208,7 @@ export function reduceTaskNotifications(old: TaskNotificationState | undefined, 
                 : '原任务已进入新的执行状态',
       detail:
         (pending
-          ? `原数据修订 ${pending.from} → ${pending.to}。先前提醒阶段：${previous?.status ? previousTaskLabel[previous.status] : '无'}，属于先前数据版本；本次只是重新对齐通知，没有重做任务、领取或验收。\n`
+          ? `${pending.origin === 'scope-returned' ? '原范围重新出现在本次原读取中；不声明备份恢复成功。' : `原数据修订 ${pending.from} → ${pending.to}。`}先前提醒阶段：${previous?.status ? previousTaskLabel[previous.status] : '无'}，属于先前数据版本；本次只是重新对齐通知，没有重做任务、领取或验收。\n`
           : '') +
         (fact.status === 'failed'
           ? `来源已给出任务最终未完成状态${fact.failure ? `：${notificationSafeText(fact.failure).slice(0, 800)}` : '。'}\n中间尝试失败不据此通知，不会自动重试。`
@@ -228,8 +243,8 @@ export function reduceTaskNotifications(old: TaskNotificationState | undefined, 
       subjectState: complete ? 'observed' : 'pending',
       category: 'team',
       source: '组任务核对',
-      title: pending.from === pending.to ? '相同修订号下的任务数据已变化' : '检测到较早的任务数据版本',
-      detail: `原修订 ${pending.from} → ${pending.to}。${complete ? '已按原读取核对当前通知。' : '旧提醒仍在分批核对。'}先前任务结果不作为当前阶段证明；没有重放任务、租约或验收，也不声明业务恢复完成。`,
+      title: pending.origin === 'scope-returned' ? '原任务范围已在当前读取中重新确认' : pending.from === pending.to ? '相同修订号下的任务数据已变化' : '检测到较早的任务数据版本',
+      detail: `${pending.origin === 'scope-returned' ? '原范围重新出现在本次原读取中；不声明备份恢复成功。' : `原修订 ${pending.from} → ${pending.to}。`}${complete ? '已按原读取核对当前通知。' : '旧提醒仍在分批核对。'}先前任务结果不作为当前阶段证明；没有重放任务、租约或验收，也不声明业务恢复完成。`,
       scope: input.scope ?? {},
       target: input.scope?.runId ? { kind: 'run', runId: input.scope.runId } : undefined,
       origin: { module: 'run' },
