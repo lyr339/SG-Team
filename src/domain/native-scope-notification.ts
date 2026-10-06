@@ -1,6 +1,7 @@
 import { readGroupTopologyState, type GroupTopologyState } from './group-topology-notification'
 import { readMemoryIssueState, type MemoryIssueState } from './memory-issue-notification'
 import { readTaskNotificationState, type TaskNotificationState } from './task-notification'
+import { operatorMessageIds, readOperatorMessageState, type OperatorMessageState } from './team-message-notification'
 import { NOTIFICATION_SOURCE_BATCH_LIMIT, type NotificationDraft, type NotificationScope } from './notification'
 import { missingNativeScopeDraft, validNativeScope, type NativeScopeRef, type NativeScopeMissing, type NativeScopeSourcePrefix } from './native-scope-availability'
 
@@ -8,19 +9,21 @@ export type NativeScopeCheckpoint =
   | { kind: 'group'; state: GroupTopologyState }
   | { kind: 'memory'; state: MemoryIssueState }
   | { kind: 'task'; state: TaskNotificationState }
+  | { kind: 'operator'; state: OperatorMessageState }
 
 /** Existing decoders remain the authority; malformed/unknown checkpoints are never silently overwritten. */
 export function readNativeScopeCheckpoint(data: unknown, key: string, prefix: NativeScopeSourcePrefix): NativeScopeCheckpoint | undefined {
   if (data === undefined) return undefined
   if (prefix === 'group-topology:') return { kind: 'group', state: readGroupTopologyState(data, key)! }
   if (prefix === 'memory-issues:') return { kind: 'memory', state: readMemoryIssueState(data, key)! }
+  if (prefix === 'operator-messages:') return { kind: 'operator', state: readOperatorMessageState(data, key)! }
   return { kind: 'task', state: readTaskNotificationState(data, key)! }
 }
 
 /** Old row-bearing checkpoints can identify their scope, but never by guessing from the active page. */
 export function nativeCheckpointScope(checkpoint: NativeScopeCheckpoint): NativeScopeRef | undefined {
   if (checkpoint.state.observedScope) return checkpoint.state.observedScope
-  if (checkpoint.kind === 'group') return undefined
+  if (checkpoint.kind === 'group' || checkpoint.kind === 'operator') return undefined
   const scopes = Object.values(checkpoint.state.rows).map(row => row.scope)
   const first = scopes[0]
   if (!first?.workspaceId || !first.runId || scopes.some(scope => scope?.workspaceId !== first.workspaceId || scope.runId !== first.runId)) return undefined
@@ -31,7 +34,7 @@ export function nativeCheckpointScope(checkpoint: NativeScopeCheckpoint): Native
 /** Private-only metadata repair. Keep original statuses, no workflow action, no inferred completion/cancellation. */
 export function reduceMissingNativeScope(checkpoint: NativeScopeCheckpoint, scope: NativeScopeRef, initial: { episode: string; at: number }, revision: number) {
   const previous = checkpoint.state
-  const ids = (checkpoint.kind === 'group' ? Object.keys(checkpoint.state.groups) : Object.keys(checkpoint.state.rows)).sort()
+  const ids = (checkpoint.kind === 'group' ? Object.keys(checkpoint.state.groups) : checkpoint.kind === 'operator' ? [...operatorMessageIds(checkpoint.state)] : Object.keys(checkpoint.state.rows)).sort()
   const missing: NativeScopeMissing = previous.scopeMissing
     ? { ...previous.scopeMissing }
     : { ...initial, rowsClosed: false, summaryClosed: false }
@@ -61,6 +64,12 @@ export function reduceMissingNativeScope(checkpoint: NativeScopeCheckpoint, scop
         { ...row.scope, memoryId: row.id, memoryVersion: String(row.version) }))
     }
     Object.assign(state, { rows })
+  } else if (checkpoint.kind === 'operator') {
+    while (remaining.length && drafts.length < NOTIFICATION_SOURCE_BATCH_LIMIT) {
+      const id = remaining.shift()!; missing.after = id
+      drafts.push(make(`operator-message:${id}`, 'team.operator-message', '此协作消息的原运行范围未确认', false))
+    }
+    delete (state as OperatorMessageState).pendingMessages
   } else {
     const rows = { ...checkpoint.state.rows }
     while (remaining.length && drafts.length < NOTIFICATION_SOURCE_BATCH_LIMIT) {
@@ -73,11 +82,11 @@ export function reduceMissingNativeScope(checkpoint: NativeScopeCheckpoint, scop
   }
   missing.rowsClosed = !remaining.length
   if (missing.rowsClosed && !missing.summaryClosed && drafts.length < NOTIFICATION_SOURCE_BATCH_LIMIT) {
-    if (previous.rebases) drafts.push(make(`${checkpoint.kind}-rebase:${previous.key.slice(-64)}:${previous.rebases}`, `${checkpoint.kind}.rebase`, '先前数据核对的原运行范围未确认', false))
+    if (previous.rebases && checkpoint.kind !== 'operator') drafts.push(make(`${checkpoint.kind}-rebase:${previous.key.slice(-64)}:${previous.rebases}`, `${checkpoint.kind}.rebase`, '先前数据核对的原运行范围未确认', false))
     missing.summaryClosed = true
     delete state.pendingRebase
   }
   // Verify the newly assembled state before any write; source-specific capacities/receipts stay intact.
-  readNativeScopeCheckpoint(state, previous.key, checkpoint.kind === 'group' ? 'group-topology:' : checkpoint.kind === 'memory' ? 'memory-issues:' : 'task-notifications:')
+  readNativeScopeCheckpoint(state, previous.key, checkpoint.kind === 'group' ? 'group-topology:' : checkpoint.kind === 'memory' ? 'memory-issues:' : checkpoint.kind === 'operator' ? 'operator-messages:' : 'task-notifications:')
   return { state, drafts, complete: missing.rowsClosed && missing.summaryClosed }
 }

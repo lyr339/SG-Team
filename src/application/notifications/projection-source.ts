@@ -20,9 +20,12 @@ export class NotificationProjectionSource<T, S> {
   private storageEpoch?: number
   constructor(private readonly owner: Pick<NotificationService, 'sourceState' | 'commitSource' | 'reportHistoryGap'> & Partial<Pick<NotificationService, 'sourceStorageEpoch'>>,
     private readonly decode: (value: unknown, key: string) => S | undefined,
-    private readonly reduce: (previous: S | undefined, input: T, baseline: boolean, revision: number) => NotificationProjection<S>,
+    private readonly reduce: (previous: S | undefined, input: T, baseline: boolean, revision: number) => NotificationProjection<S> | Promise<NotificationProjection<S>>,
     private readonly inputSignature: (input: T) => string,
-    private readonly onProjected?: (input: T, state: Readonly<S>) => void) {}
+    private readonly onProjected?: (input: T, state: Readonly<S>) => void,
+    private readonly batchLimit = 64) {
+    if (!Number.isSafeInteger(batchLimit) || batchLimit < 1 || batchLimit > 1024) throw Error('通知来源分批上限无效')
+  }
   private checkStorage(): void {
     const epoch = this.owner.sourceStorageEpoch?.()
     if (epoch !== undefined && (!Number.isSafeInteger(epoch) || epoch < 0)) throw Error('通知存储代次无效')
@@ -85,7 +88,14 @@ export class NotificationProjectionSource<T, S> {
         if (this.closed) return
         let conflicts = 0, batches = 0
         while (!this.closed) {
-          const projection = this.reduce(cached.state, observation.input, observation.baseline || epoch !== this.epoch, cached.revision + 1)
+          const reductionEpoch = this.epoch, reductionStorage = this.storageEpoch
+          const resultOrPromise = this.reduce(cached.state, observation.input, observation.baseline || epoch !== this.epoch, cached.revision + 1)
+          const projection = resultOrPromise instanceof Promise ? await resultOrPromise : resultOrPromise
+          this.checkStorage()
+          if (this.closed) return
+          if (reductionStorage !== this.storageEpoch) throw Error('私有通知核对跨越了存储代次')
+          if (observation.invalidated) throw new CheckpointInvalidated()
+          if (reductionEpoch !== this.epoch) continue // Recompute quiet presentation; an async private read cannot bypass a newer wake baseline.
           if (!projection.drafts.length && JSON.stringify(cached.state) === JSON.stringify(projection.state)) {
             if (projection.complete === false) throw Error('通知来源分批未推进检查点')
             this.completedObservation(observation, projection.state); break
@@ -99,7 +109,7 @@ export class NotificationProjectionSource<T, S> {
             this.cache.set(observation.key, { revision: result.source.revision, state: projection.state })
             cached = { revision: result.source.revision, state: projection.state }; conflicts = 0
             if (projection.complete === false) {
-              if (++batches >= 64) throw Error('通知来源分批超出本次处理上限')
+              if (++batches >= this.batchLimit) throw Error('通知来源分批超出本次处理上限')
               continue
             }
             this.completedObservation(observation, projection.state); break

@@ -725,11 +725,12 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     try {
       const getTeam = () => notificationRuntime?.currentTeam() ?? teamControlService!.getSnapshot()
       taskNotificationSource = connectTaskNotifications(taskPoolService, getTeam, notificationService)
-      operatorMessageNotificationSource = connectOperatorMessageNotifications(teamCollaborationService, getTeam, notificationService)
+      operatorMessageNotificationSource = connectOperatorMessageNotifications(teamCollaborationService, getTeam, notificationService, { power: powerMonitor })
       groupTopologyNotificationSource = connectGroupTopologyNotifications(teamControlService, notificationService)
       memoryIssueNotificationSource = connectMemoryIssueNotifications(teamMemoryService, getTeam, notificationService)
       nativeScopeAvailabilityNotifications = connectNativeScopeAvailabilityNotifications(teamControlService, notificationService, {
-        'group-topology:': groupTopologyNotificationSource.source, 'memory-issues:': memoryIssueNotificationSource.source, 'task-notifications:': taskNotificationSource.source
+        'group-topology:': groupTopologyNotificationSource.source, 'memory-issues:': memoryIssueNotificationSource.source, 'task-notifications:': taskNotificationSource.source,
+        'operator-messages:': operatorMessageNotificationSource.source
       }, { power: powerMonitor, catalogueObserved: catalogue => memoryIssueNotificationSource?.observeScopeCatalogue(catalogue) })
     } catch { notificationService.reportHistoryGap() }
   }

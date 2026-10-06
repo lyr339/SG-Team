@@ -5,6 +5,7 @@ import { NATIVE_SCOPE_SOURCE_PREFIXES, validNativeScope, validateNativeScopeCata
 import { nativeCheckpointScope, readNativeScopeCheckpoint, reduceMissingNativeScope, type NativeScopeCheckpoint } from '../../domain/native-scope-notification'
 import type { NotificationService } from '../notification-service'
 import { NativeReadOrder } from './native-read-order'
+import { operatorMessageIds, preserveOperatorMessageMetadata } from '../../domain/team-message-notification'
 
 interface ProjectionPort { flush(): Promise<void>; invalidateCheckpoint(key: string): void }
 interface PowerPort { on(name: 'suspend' | 'resume', listener: () => void): unknown; removeListener(name: 'suspend' | 'resume', listener: () => void): unknown }
@@ -29,7 +30,19 @@ export function connectNativeScopeAvailabilityNotifications(
 
   const legacyScope = async (checkpoint: NativeScopeCheckpoint, prefix: NativeScopeSourcePrefix, stillCurrent: () => boolean): Promise<NativeScopeRef | undefined> => {
     const scope = nativeCheckpointScope(checkpoint)
-    if (scope || checkpoint.kind !== 'group') return scope
+    if (scope) return scope
+    if (checkpoint.kind === 'operator') {
+      const ids = operatorMessageIds(checkpoint.state)
+      for (let index = 0; index < ids.length && stillCurrent(); index += 100) {
+        const rows = await owner.operatorMessageRecords(ids.slice(index, index + 100).map(id => `operator-message:${id}`))
+        for (const row of rows) {
+          const ref = { workspaceId: row.scope.workspaceId, runId: row.scope.runId }
+          if (validNativeScope(ref) && `${prefix}${hash([ref.workspaceId, ref.runId])}` === checkpoint.state.key) return ref
+        }
+      }
+      return undefined
+    }
+    if (checkpoint.kind !== 'group') return undefined
     // The old group checkpoint lacks a scope descriptor. Only its exact existing
     // semantic records can identify it. No title matching or active-scope fallback.
     const keys = Object.values(checkpoint.state.groups).map(fact => `group-topology:${fact.identity}`)
@@ -57,6 +70,10 @@ export function connectNativeScopeAvailabilityNotifications(
       if (`${prefix}${hash([scope.workspaceId, scope.runId])}` !== key) throw Error('旧通知范围无法从原身份验证')
       if (exists(frame, scope) || checkpoint.state.scopeMissing?.summaryClosed && checkpoint.state.scopeMissing.rowsClosed) return
       const projection = reduceMissingNativeScope(checkpoint, scope, { episode: hash([key, stored.revision + 1, frame.at]), at: frame.at }, stored.revision + 1)
+      if (checkpoint.kind === 'operator' && projection.drafts.length) {
+        projection.drafts = preserveOperatorMessageMetadata(projection.drafts, await owner.operatorMessageRecords(projection.drafts.map(draft => draft.key)))
+        if (!check(frame, epoch)) return
+      }
       // A hydration-only group may never have emitted a notification. Metadata
       // repair must not manufacture it; archived/tombstoned markers still count.
       const drafts = []

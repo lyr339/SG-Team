@@ -22,7 +22,7 @@ function observer(h: ReturnType<typeof notificationSourceHarness>) {
   let listener!: (value: TeamControlReadObservation) => void, sequence = 0
   const team = { getReadOwnerId: () => 'owned-catalogue', subscribeReadObservation: (value: typeof listener) => { listener = value; return vi.fn() } }
   const source = () => ({ flush: vi.fn(async () => {}), invalidateCheckpoint: vi.fn() })
-  const sources = { 'group-topology:': source(), 'memory-issues:': source(), 'task-notifications:': source() }
+  const sources = { 'group-topology:': source(), 'memory-issues:': source(), 'task-notifications:': source(), 'operator-messages:': source() }
   const events: NotificationPush[] = []; h.owner.subscribe(event => events.push(event))
   const connected = connectNativeScopeAvailabilityNotifications(team, h.owner, sources, { now: () => 20_000 })
   const emit = (value = snapshot(), override: Partial<TeamControlReadObservation> = {}) => listener({ snapshot: value,

@@ -36,7 +36,8 @@ function open() {
   const groups = connectGroupTopologyNotifications(control, owner), memories = connectMemoryIssueNotifications(memory, () => { throw Error('must reuse original context') }, owner),
     taskSource = connectTaskNotifications(tasks, () => { throw Error('must reuse original task context') }, owner)
   const scopeSource = connectNativeScopeAvailabilityNotifications(control, owner, {
-    'group-topology:': groups.source, 'memory-issues:': memories.source, 'task-notifications:': taskSource.source
+    'group-topology:': groups.source, 'memory-issues:': memories.source, 'task-notifications:': taskSource.source,
+    'operator-messages:': { flush: async () => {}, invalidateCheckpoint: () => {} }
   }, { catalogueObserved: catalogue => memories.observeScopeCatalogue(catalogue) })
   let closed = false, revisionReads = 0, fullLoads = 0
   const revision = repository.revision.bind(repository), load = repository.loadTeamControl.bind(repository)

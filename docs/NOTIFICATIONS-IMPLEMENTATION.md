@@ -489,6 +489,26 @@ full-load 标识在原 meta 查询时、装配 rows 之前捕获；后续并发�
 
 **完整目标仍未完成**：本批范围是上述三类原完整 workspace/run feeds，不将其他 session／问卷／消息／队列等历史恢复、未知来源、整个长期容量、正式打包与 Windows/macOS 真权限／声音／勿扰／系统送达一起冒充完成。后续仍按完整矩阵继续。只本地提交，不 push／发布／安装，不结束目标。
 
+### 第二十八批：原协作消息读取、紧凑身份和可续接的历史核对
+
+本批处理上一批明确留下的 operator-message feed，而非把其他消息／会话来源一并宣布完成。原 `TeamCollaborationService.getSnapshot` 现在从原那一次 TeamControl 读取和原那一次 `loadRun` 捎带 main-only context／owner／递增 stamp；原先的读取顺序、返回 snapshot、创建／回复／已读／响应回执、watcher 间隔和业务 SQL 不变。production 通知订阅改为原读取证据，不再订阅后另读 `notificationRuntime.currentTeam` 或重新查询 TeamControl；旧无 observation 的 provider 保留既有契约。订阅者异常不能改变原结果，原读取失败也不以空消息替代，不做额外业务 query／等待／探针／重试。
+
+只有已验证的当前完整 run/operator 读取才可核对缺席。错 owner、迟到 stamp、不同 run、group-clipped 快照、重复／不完整 message identity 集合不授权旧消息失效；切换工作区或原组不可见不等于原消息已撤回。比较原已返回的 ID／kind／sender slot／thread／group／创建时刻／thread subject 薄字段，sender role label 是展示 metadata，不是 native dataset restore 证据；原正文和 Agent receipts 不被通知 adapter 读取或拷入 checkpoint，不能把薄字段指纹描述成完整正文校验。同 counter 实际薄字段变化／较早原版本会静音重新核对；消息本次完整读取缺席则记为 prior-data／expired，保留原组范围及 activity 重要性，移除旧导航，不猜用户已回复、Agent 已读或原消息已删除。新的 native kind/subject 有新的事件身份，但安静重核不凭空续一次用户需求；notice 的原阅读版本、归档和清理事实保留。
+
+scope catalogue 已加入 `operator-messages:`。完整原 workspace/run 消失可跨重启静音失效旧协作通知；原目录重现仅证明范围存在，不恢复消息结果，必须下一次原 collaboration read 确认。旧 v1 seen-only checkpoint 可从精确 private record 的原 scope 验证，不从当前页面猜身份；private archived record 也参与核对，已清理或自动保留移除的记录不造出来。原格式 ID 在不同来源 scope 下保存／返回时，已验证的当前记录使用单条实际 private record 的更高版本，而不被另一个来源较高 counter 永久吞掉；A/B/A 再入 scope 会安静重新核对，过期老范围不会覆盖已经属于其他原范围的记录。
+
+私有 worker 新增一个固定 operator-message key、最多 100 个的 exact metadata 读取，含 archived 但不含通知／业务正文，不开放 renderer 任意查询接口。域 reducer 仍是纯通知投影；异步的 private metadata 核对由 source durability transport 围住，原同步 reducer 不被强制插入 Promise 等待。private storage 代次、确定的 checkpoint 失效、关闭、休眠／唤醒不能被迟到 async reduction 或 ACK 跨过；静音重算也适用于已经落下的 unfinished batch，不在 wake 后补弹。close 排空已接受事实并解绑自己的 power/read 订阅，沿用原退出 barrier／timeout，不延长退出，也没有新业务 watcher 或原数据轮询。
+
+持久 v2 索引保留 v1 全部身份，不存 50,000 条冗余 row metadata／正文或 remaining ID 副本。针对原 `team-message:UUID` 使用明确、无损的公共前缀编码，任意 legacy ID 原样保留；两个 runtime 的真实 private worker RPC 已存下、读回 50,000 个**原格式的合成身份**，小于既有 2 MiB 上限，不是读取／投递了 50,000 条真实业务消息。分批进度只存短 keyset cursor，cursor 必须指向已保存的原身份；未知 ACK 重读实际 private checkpoint 后才续接，不自动重跑业务。50,000 身份容量需要至多 500 个 100-draft 批次，所以只为本 feed 显式设置 512 批有界 transport guard；其他来源仍是原 64 批，不取消无进度／超界保护。6,501 身份的纯 transport 验证能从同一个已接受 frame 连续推进 66 批，无第二次原读取；231 条真实 original SQLite 消息＋worker 路径和未知第二批 ACK 测试验证落盘／续接，均不是所有 50,000 业务事项的正式环境性能验收。任意 legacy 长 ID、超过容量、损坏或源／private 不可用仍报告历史缺口，不偷偷淘汰重要身份。
+
+正常新增／变更使用**已确认 private projection** 的有界内存薄签名增量，只在 durable previous signature 对得上时生效；未知 ACK、换库／owner／scope、重启或优化 cache 淘汰则回到完整 private 核对。231 个原消息里增加一条只提交那一条，原 receipt-only revision 和 100 次稳定原读取不改通知记录／checkpoint。成本如实说明：每个真实 original message read 仍需原薄字段 CPU 提取、摘要和签名；reentry／历史恢复需 private metadata RPC 和有界 CAS 分批，不是零开销或无限容量承诺。private 核对不与业务库共用写锁，不增加原团队／消息 SQL 或业务等待。
+
+证据：`full-regression-operator-read-final.log`（308 files，2928 passed，1 skipped）、`typecheck-operator-read-final.log`、`build-operator-read-final.log`、`dead-code-operator-read-final.log`。`tests/operator-message-read-notifications.test.ts` 覆盖原正文／receipt getter 不触碰、current scope/context 不二读、stale／clipped／incomplete、同 counter 薄字段差异、label 非 native rebase、准确原组／归档／activity／清理、已确认增量、未知 ACK、睡眠解绑、50,000 身份无损大小、6,501 身份续批、A/B/A 版本及真实原 SQLite 读取顺序和回执保持。共享 source transport 加入真实 async reduction 的 wake/storage 代次围栏测试。
+
+`scripts/verify-notification-operator-reads.ts` 在 Node 与 macOS Electron (`ELECTRON_RUN_AS_NODE=1`) 使用当前编译 private worker＋原 collaboration/control SQLite/service：231 条原消息完整恢复、稳定 100 次原读取恰好各 100 个原 team/message read、原 counters 相同时实际 kind/subject 变化可见、缺原消息不猜 responded/deleted、原 scope 冷恢复跨重启且只由 specific read 重新确认、用户读版本／Agent receipts 分离、原正文不复制、历史提醒不重放，以及单独的 private ID 容量证明。二十类 worker／shutdown／recovery／history／context／native-rebase／team-observations／group-effects／mcp-writes／usage-storage／model-catalog／runtime-usage／context-source／usage-binding／source-epoch／native-content／task-context／team-cache／native-scope／operator-reads 在两个 runtime 复跑，见 `operator-read-verification-final-matrix.log`；原通信冒烟 `mcp-smoke-operator-read-final.log`／`channel-smoke-operator-read-final.log`，保护核对 `protected-operator-read-audit.json`。初始 verifier 误把读取前的 readRevision=0 当成已读回执；已改为核对真实 `owner.read` 返回的确认，不靠忽略字段通过。
+
+本批无 UI/CSS 变更、没有启动 production main／当前软件／Cursor、运行真实账号或模型／OS 送达；自己的 fixture finally 精确清理，两个保护树及四个既有删除状态不变。仅本地提交，不 push／发布／安装。**完整目标仍未完成**：会话／问卷／回复／队列等剩余 feed 的历史与未知恢复、准确大历史阅读及整套长期容量／性能、未发 usage 载荷或 MCP 校验前不可归属诊断、正式包和 Windows/macOS 真权限／声音／勿扰／送达仍要继续逐项核验，不拿这一批绿色结果替代完整事件矩阵。
+
 下面保留完整要求，不因分批已有成果缩小。已实现部分仍需匹配该项范围验收；未实现部分继续开工。
 
 1. 通知中心、轻量顶栏入口、单张提醒和独立 renderer store。支持待处理／未读／全部、查询范围、分页、详情、关闭、阅读、归档、确认清理和适当偏好；减少动画、长内容、键盘与窄窗需验收。

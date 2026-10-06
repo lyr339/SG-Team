@@ -1,4 +1,6 @@
 import type { AssignedAgentSkill } from './agent-skill'
+import type { NativeReadStamp } from './native-read-observation'
+import type { TeamControlSnapshot } from './team-control'
 
 export type TeamMessageKind = 'directive' | 'question' | 'response' | 'status' | 'notice'
 
@@ -87,6 +89,13 @@ export interface TeamCollaborationSnapshot {
   messageOrder: string[]
   events: TeamCollaborationEvent[]
   updatedAt: number
+}
+
+/** Main-only evidence from the original complete operator read; never renderer IPC or a second query. */
+export interface TeamCollaborationReadObservation {
+  snapshot: TeamCollaborationSnapshot
+  context: TeamControlSnapshot
+  stamp: NativeReadStamp
 }
 
 export interface CreateTeamMessageInput {

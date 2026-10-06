@@ -14,6 +14,33 @@ function lifecycleHarness(path = ':memory:') {
 }
 
 describe('shared projection durability transport', () => {
+  it('an async private reduction cannot bypass a newer quiet baseline or release its old presentation', async () => {
+    const h = notificationSourceHarness(), baselines: boolean[] = [], projected = vi.fn()
+    let release!: () => void, entered!: () => void, held = false
+    const waiting = new Promise<void>(done => { entered = done }), gate = new Promise<void>(done => { release = done })
+    const source = new NotificationProjectionSource<number, number>(h.owner, value => value as number | undefined, async (_old, value, baseline) => {
+      baselines.push(baseline); if (value === 2 && !held) { held = true; entered(); await gate } return { state: value, drafts: [] }
+    }, String, projected)
+    try {
+      source.observe('source:a', 1); await source.flush(); source.observe('source:a', 2); await waiting
+      source.quietNextObservation(); release(); await source.flush()
+      expect(baselines).toEqual([true, false, true]); expect(projected.mock.calls.filter(([value]) => value === 2)).toHaveLength(1)
+      expect(h.ledger.sourceState('source:a').data).toBe(2)
+    } finally { release(); await source.close(); await h.owner.close() }
+  })
+  it('an async private reduction is fenced across storage loss; no commit or callback until the next genuine frame', async () => {
+    const h = lifecycleHarness(), projected = vi.fn()
+    let release!: () => void, entered!: () => void, held = false
+    const waiting = new Promise<void>(done => { entered = done }), gate = new Promise<void>(done => { release = done })
+    const source = new NotificationProjectionSource<number, number>(h.owner, value => value as number | undefined, async (_old, value) => {
+      if (!held) { held = true; entered(); await gate } return { state: value, drafts: [] }
+    }, String, projected)
+    try {
+      source.observe('source:a', 1); await waiting; h.lifecycle({ state: 'unavailable', generation: 1 }); h.lifecycle({ state: 'recovered', generation: 2 })
+      release(); await source.flush(); expect(h.ledger.sourceState('source:a').revision).toBe(0); expect(projected).not.toHaveBeenCalled()
+      source.observe('source:a', 1); await source.flush(); expect(h.ledger.sourceState('source:a').data).toBe(1)
+    } finally { release(); await source.close(); await h.owner.close() }
+  })
   it('known private checkpoint invalidation fences an already returned but delayed read and reloads without a false history gap', async () => {
     const h = notificationSourceHarness(), projected = vi.fn()
     const baselines: boolean[] = []

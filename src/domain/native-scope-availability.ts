@@ -1,6 +1,6 @@
 import { validateNotificationDraft, type NotificationDraft, type NotificationScope } from './notification'
 
-export const NATIVE_SCOPE_SOURCE_PREFIXES = ['group-topology:', 'memory-issues:', 'task-notifications:'] as const
+export const NATIVE_SCOPE_SOURCE_PREFIXES = ['group-topology:', 'memory-issues:', 'task-notifications:', 'operator-messages:'] as const
 export type NativeScopeSourcePrefix = typeof NATIVE_SCOPE_SOURCE_PREFIXES[number]
 export interface NativeScopeRef { workspaceId: string; runId: string }
 /** Original complete TeamControl state only; omission or a clipped projection is not a missing-scope verdict. */
@@ -36,7 +36,7 @@ export function missingNativeScopeDraft(input: {
   key: string; eventType: string; scope: NotificationScope; activity: boolean; title: string; episode: string; at: number; revision: number
 }): NotificationDraft {
   const draft: NotificationDraft = { key: input.key, eventId: `${input.key}:scope-missing:${input.episode}`, eventType: input.eventType,
-    subjectState: 'scope-unconfirmed', category: 'team', source: input.activity ? '协作组' : input.eventType === 'task.state' ? '组任务' : '共享记忆',
+    subjectState: 'scope-unconfirmed', category: 'team', source: input.eventType === 'team.operator-message' ? '协作消息' : input.activity ? '协作组' : input.eventType === 'task.state' ? '组任务' : '共享记忆',
     title: input.title, detail: '本次原完整范围读取没有确认这条提醒所属的工作区或运行范围。\n先前结果仍属历史，不据此判断任务完成、取消、提案已审核、会话停止或数据已删除；通知没有重放原操作。',
     scope: { ...input.scope }, tone: 'info', attention: input.activity ? 'activity' : 'notice', state: 'expired', occurredAt: input.at, timeBasis: 'observed',
     sourceRevision: input.revision, announce: false, renewAttention: false, respectCleared: true }

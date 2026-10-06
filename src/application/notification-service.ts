@@ -5,6 +5,7 @@ import type { NotificationRepository, NotificationRepositoryLifecycle } from './
 import { NotificationHistoryController, notificationHistoryPort } from './notifications/history-controller'
 import type { NotificationHistoryIntegrity } from '../domain/notification-history'
 import { notificationFingerprint } from './notification-fingerprint'
+import type { OperatorMessageRecordMetadata } from '../domain/team-message-notification'
 
 /** One asynchronous owner, independent from business transaction locks or renderer route lifetimes. */
 export class NotificationService {
@@ -161,6 +162,17 @@ export class NotificationService {
       const marker = await this.repository.marker(key)
       if (epoch !== this.sourceEpoch) throw Error('私有通知标记读取跨越存储代次')
       return marker
+    })())
+  }
+  operatorMessageRecords(keys: string[]): Promise<OperatorMessageRecordMetadata[]> {
+    const epoch = this.sourceEpoch
+    return this.tracked((async () => {
+      try {
+        if (!this.repository.operatorMessageRecords) throw Error('私有协作消息元数据暂不可用')
+        const records = await this.repository.operatorMessageRecords(keys)
+        if (epoch !== this.sourceEpoch) throw Error('私有协作消息核对跨越存储代次')
+        this.recovered(); return records
+      } catch (error) { this.degraded(); throw error }
     })())
   }
   commitSource(key: string, expectedRevision: number, data: unknown, drafts: NotificationDraft[], group?: NotificationGroupPresentation): Promise<NotificationSourceResult> {

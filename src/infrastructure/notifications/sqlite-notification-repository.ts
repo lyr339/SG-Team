@@ -7,6 +7,7 @@ import type { NotificationChange, NotificationDraft, NotificationMarker, Notific
 import { normalizeNotificationPreferences, notificationContentSignature, notificationIsPending, notificationSafeText, NotificationActionError, validateNotificationDraft, NOTIFICATION_SOURCE_BATCH_LIMIT, NOTIFICATION_SOURCE_PAYLOAD_LIMIT } from '../../domain/notification'
 import { NOTIFICATION_ROUTINE_RETENTION_MS, validateNotificationGapId, validateNotificationIntegrity, type NotificationHistoryIntegrity, type NotificationHistoryStatus } from '../../domain/notification-history'
 import { notificationFingerprint, fingerprintSignature } from '../../application/notification-fingerprint'
+import type { OperatorMessageRecordMetadata } from '../../domain/team-message-notification'
 
 type StoredRow = { payload: string }
 const knownNegativeTransactions = new WeakSet<object>()
@@ -231,6 +232,18 @@ export class SqliteNotificationRepository {
       this.db.prepare(`INSERT INTO desktop_notification_sources VALUES(?,?,?,?) ON CONFLICT(source_key)
         DO UPDATE SET revision=excluded.revision,payload=excluded.payload,updated_at=excluded.updated_at`).run(key, revision, payload, now)
       return { applied: true, source: { revision, data }, changes }
+    })
+  }
+  /** Internal exact keys, including archived records. Thin private metadata only; no arbitrary renderer query or original DB. */
+  operatorMessageRecords(keys: string[]): OperatorMessageRecordMetadata[] {
+    if (!Array.isArray(keys) || keys.length > 100 || keys.some(key => typeof key !== 'string' || !key.startsWith('operator-message:') || key.length <= 17 || key.length > 297)
+      || new Set(keys).size !== keys.length) throw Error('私有协作消息元数据查询无效')
+    if (!keys.length) return []
+    const rows = this.db.prepare(`SELECT payload FROM desktop_notifications WHERE semantic_key IN (${keys.map(() => '?').join(',')})`).all(...keys) as StoredRow[]
+    return rows.map(row => {
+      const record = decodeRecord(row.payload)
+      if (record.eventType !== 'team.operator-message') throw Error('原协作消息记录类型无法验证')
+      return { key: record.key, scope: record.scope, attention: record.attention, source: record.source, subjectState: record.subjectState, sourceRevision: record.sourceRevision }
     })
   }
   page(query: NotificationQuery = {}): NotificationPage {

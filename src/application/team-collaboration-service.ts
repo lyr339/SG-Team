@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type {
   TeamCollaborationSnapshot,
+  TeamCollaborationReadObservation,
   TeamMessage,
   TeamMessageKind
 } from '../domain/team-collaboration'
@@ -28,6 +29,9 @@ function assertCollaborationWritable(status: TeamRun['status']): void {
 
 export class TeamCollaborationService {
   private readonly listeners = new Set<Listener>()
+  private readonly readObservers = new Set<(value: TeamCollaborationReadObservation) => void>()
+  private readonly readOwner = randomUUID()
+  private readSequence = 0
   private readonly unsubscribeTeam: () => void
   private watchTimer?: ReturnType<typeof setInterval>
   private lastRevision: number
@@ -41,8 +45,19 @@ export class TeamCollaborationService {
   }
 
   getSnapshot(): TeamCollaborationSnapshot {
-    const runId = this.team.getSnapshot().activeRun?.id
-    return runId ? this.repository.loadRun(runId) : emptyTeamCollaborationSnapshot()
+    const context = this.team.getSnapshot(), runId = context.activeRun?.id
+    const snapshot = runId ? this.repository.loadRun(runId) : emptyTeamCollaborationSnapshot()
+    if (this.readObservers.size) {
+      const value = { snapshot, context, stamp: { owner: this.readOwner, sequence: ++this.readSequence } }
+      for (const listener of this.readObservers) { try { listener(value) } catch { /* The original result/receipt does not depend on notification observers. */ } }
+    }
+    return snapshot
+  }
+
+  getReadOwnerId(): string { return this.readOwner }
+  subscribeReadObservation(listener: (value: TeamCollaborationReadObservation) => void): () => void {
+    this.readObservers.add(listener)
+    return () => { this.readObservers.delete(listener) }
   }
 
   subscribe(listener: Listener): () => void {
@@ -129,6 +144,7 @@ export class TeamCollaborationService {
     this.stopWatcher()
     this.unsubscribeTeam()
     this.listeners.clear()
+    this.readObservers.clear()
   }
 
   private emit(): void {
