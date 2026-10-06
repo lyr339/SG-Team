@@ -8,8 +8,19 @@ export type TaskStatus =
   | 'cancelled'
 
 export type AttemptStatus = 'leased' | 'running' | 'review' | 'done' | 'failed' | 'cancelled'
+/** Context captured by the ORIGINAL active-scope read, not another team query. */
+export interface TaskScopeReadContext {
+  workspaceId?: string
+  runId?: string
+  scopeRevision: number
+  runStatus?: import('./team-control').TeamRunStatus
+}
 /** Main-only ordering evidence from an original TaskPoolService read. */
-export interface TaskPoolReadObservation {snapshot:TaskPoolSnapshot;stamp:import('./native-read-observation').NativeReadStamp}
+export interface TaskPoolReadObservation {
+  snapshot: TaskPoolSnapshot
+  stamp: import('./native-read-observation').NativeReadStamp
+  context?: TaskScopeReadContext
+}
 export type TaskReviewStatus = 'queued' | 'leased' | 'approved' | 'rejected' | 'cancelled'
 export type TaskReviewDecision = 'accept' | 'reject'
 

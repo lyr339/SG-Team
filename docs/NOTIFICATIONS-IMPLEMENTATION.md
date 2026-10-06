@@ -445,6 +445,18 @@ ui/group-effects-compact-light.jpg、ui/group-effects-details-light.jpg、ui/gro
 
 **完整目标仍未完成**：本批不能凭通知指纹穿透原 TeamControlService 的 revision cache。其原热句柄在业务 counter 与内容都被外部替换但仍相同 revision 时的原缓存、整个旧 workspace/run 消失与其他 feeds 恢复，必须继续用真实原读取核对；不得偷偷为通知加业务轮询或 fake 一个完整源读取。原 task 适配器读取 scope 的既有 getTeam 冗余、页面无 binding 载荷时的诊断、MCP runtime／校验前无法归属、准确大历史阅读／完整序列和长期容量、正式包及真实 Windows/macOS 权限／声音／勿扰／送达继续按完整范围推进。仅本地提交，不推送、发版、安装或结束目标。
 
+### 第二十五批：任务通知复用原读取上下文，去掉第二次团队查询
+
+第二十四批复核定位的冗余已收掉：原 `TaskPoolService.getSnapshot` 依次 load task pool、读取 active scope；通知适配器此前随后再调用 getTeam，触发另一个团队投影／遥测，既多读取又会使一次任务事实和后来的 scope 混配。本批保留原 pool→scope 顺序，把原 scope 的 workspace／run／scopeRevision／runStatus 作为 main-only 薄 context 捎带给原 read observation，不把它写入公开 TaskPoolSnapshot 或新增 renderer IPC。TeamControl 的原 loadState 只执行一次，新增的 runStatus 来自同一原 state，不多数据库查询。没有新增业务请求／写事务／订阅／轮询。
+
+只在原选定 owner、递增 stamp、相同 scopeRevision／workspace／run 时使用 context；当前明确 completed 的原状态才能走完成规则，成功空 scope 不冒充 run 结束。不匹配或畸形 context 留私有缺口，不回退到另一时刻的新团队读取。旧 provider 没有 original context 的既有 fallback 契约保留，但正式 TaskPoolService＋TeamControl 接线不再依赖它。observer context 构造及订阅者异常不影响原公开读取，thin context 冻结而不修改原 snapshot，不读取原模型／任务正文或凭据。
+
+证据：`full-regression-task-context-final.log`（305 files，2895 passed，1 skipped）、`typecheck-task-context-final.log`、`build-task-context-final.log`、`dead-code-task-context-final.log`，原 `mcp-smoke-task-context-final.log`／`channel-smoke-task-context-final.log`。`tests/task-notification-context.test.ts` 核对真实 repository/service 每原任务读取恰好一个 task load＋一个 active scope，零第二次 TeamControl getSnapshot／runtime 查询；原顺序、冻结 metadata、抛错隔离、empty／stale／mismatch 与旧 provider 一起覆盖。`scripts/verify-notification-task-context.ts` 在 Node 和 macOS Electron (`ELECTRON_RUN_AS_NODE=1`) 串联原 task/control 仓储服务＋真实当前编译 private worker，原取消／已结束 scope 正常观察，30 个原读取没有额外团队投影，自有目录 finally 精确清理。
+
+原 worker／shutdown／recovery／history／context／native-rebase／team-observations／group-effects／mcp-writes／usage-storage／model-catalog／runtime-usage／context-source／usage-binding／source-epoch／native-content 十六类也在两个 runtime 复跑。`protected-task-context-audit.json` 保留两个保护树 HEAD／status／binary diff／逐文件和原四个 warmup 删除状态。未启动 production main、当前软件或 Cursor，未调用实际账号／模型／系统通知；本批不改 UI，不把旧 screenshot 当本批正式环境证明。
+
+**完整目标仍未完成**：同 revision 内容差异的原团队热缓存、整个旧 scope 消失与其他 feeds 恢复、大历史准确阅读与长期序列、页面未发 usage 载荷的诊断／MCP 校验前未知、正式包与 Windows/macOS 真权限／声音／勿扰／送达继续按完整矩阵核对。仅本地提交，不推送、发布、安装或结束目标。
+
 下面保留完整要求，不因分批已有成果缩小。已实现部分仍需匹配该项范围验收；未实现部分继续开工。
 
 1. 通知中心、轻量顶栏入口、单张提醒和独立 renderer store。支持待处理／未读／全部、查询范围、分页、详情、关闭、阅读、归档、确认清理和适当偏好；减少动画、长内容、键盘与窄窗需验收。

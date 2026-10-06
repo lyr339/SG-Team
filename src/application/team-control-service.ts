@@ -19,6 +19,7 @@ import {
   type TeamMemberReadiness,
   type TeamMemberView,
   type TeamRun,
+  type TeamRunStatus,
   type WorkspaceTeamBundle
 } from '../domain/team-control'
 import type {
@@ -183,12 +184,14 @@ export class TeamControlService {
     return activeRunOf(this.loadState())?.status
   }
 
-  getActiveTaskScope(): { workspaceId?: string; runId?: string; scopeRevision: number } {
+  getActiveTaskScope(): { workspaceId?: string; runId?: string; scopeRevision: number; runStatus?: TeamRunStatus } {
     const state = this.loadState()
+    const run = activeRunOf(state)
     return {
       workspaceId: state.activeWorkspaceId,
-      runId: activeRunOf(state)?.id,
-      scopeRevision: state.revision
+      runId: run?.id,
+      scopeRevision: state.revision,
+      runStatus: run?.status
     }
   }
 

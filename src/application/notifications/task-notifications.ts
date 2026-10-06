@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import type { TaskPoolSnapshot, TaskPoolReadObservation } from '../../domain/task-pool'
+import type { TaskPoolSnapshot, TaskPoolReadObservation, TaskScopeReadContext } from '../../domain/task-pool'
 import type { TeamControlSnapshot } from '../../domain/team-control'
 import type { NotificationService } from '../notification-service'
 import {
@@ -34,10 +34,24 @@ export function connectTaskNotifications(
         input.facts.map((fact) => [fact.id, fact.title, fact.status, fact.attemptId, fact.reviewId, fact.scope, fact.failure])
       ])
   )
-  const observe = (snapshot: TaskPoolSnapshot, currentRead: boolean) => {
+  const observe = (snapshot: TaskPoolSnapshot, currentRead: boolean, context?: TaskScopeReadContext) => {
     try {
-      const team = getTeam()
-      if (!snapshot.runId || snapshot.runId !== team.activeRun?.id || snapshot.workspaceId !== team.activeWorkspaceId) return
+      let completed: boolean
+      if (currentRead && context) {
+        if (!Number.isSafeInteger(context.scopeRevision) || context.scopeRevision < 0
+          || context.scopeRevision !== snapshot.scopeRevision || context.workspaceId !== snapshot.workspaceId || context.runId !== snapshot.runId) {
+          owner.reportHistoryGap(); return
+        }
+        if (!context.runId) return // Original successful empty scope is not an ended task/run.
+        if (context.runStatus !== 'running' && context.runStatus !== 'completed') { owner.reportHistoryGap(); return }
+        completed = context.runStatus === 'completed'
+      } else {
+        // Existing legacy providers without original scope context keep their
+        // established contract. Production doesn't perform this second read.
+        const team = getTeam()
+        if (!snapshot.runId || snapshot.runId !== team.activeRun?.id || snapshot.workspaceId !== team.activeWorkspaceId) return
+        completed = team.activeRun.status === 'completed'
+      }
       const key = `task-notifications:${createHash('sha256')
         .update(JSON.stringify([snapshot.workspaceId, snapshot.runId]))
         .digest('hex')}`
@@ -70,7 +84,7 @@ export function connectTaskNotifications(
         rebaseTo: version.rebaseTo,
         nativeRevision: snapshot.revision,
         scope: { workspaceId: snapshot.workspaceId, runId: snapshot.runId },
-        completed: team.activeRun.status === 'completed',
+        completed,
         now: Date.now(),
         facts
       })
@@ -81,7 +95,7 @@ export function connectTaskNotifications(
   const stop = tasks.subscribeReadObservation
     ? tasks.subscribeReadObservation((value) => {
         const origin = order.accept(value.stamp)
-        if (origin !== 'stale') observe(value.snapshot, origin === 'current')
+        if (origin !== 'stale') observe(value.snapshot, origin === 'current', value.context)
       })
     : tasks.subscribe((snapshot) => observe(snapshot, false))
   let detached = false

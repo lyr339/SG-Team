@@ -1,12 +1,14 @@
 import { randomUUID } from 'node:crypto'
 import { transactTaskPool, type TaskPoolRepository } from './task-pool-transaction'
-import { sameTaskGroup, type PlanTaskInput, type TaskPoolAggregate, type TaskPoolSnapshot, type TaskPoolState, type TeamTask,type TaskPoolReadObservation } from '../domain/task-pool'
+import { sameTaskGroup, type PlanTaskInput, type TaskPoolAggregate, type TaskPoolSnapshot, type TaskPoolState, type TeamTask, type TaskPoolReadObservation, type TaskScopeReadContext } from '../domain/task-pool'
 import type { TeamRunStatus } from '../domain/team-control'
 
 export interface ActiveTaskScope {
   workspaceId?: string
   runId?: string
   scopeRevision: number
+  /** Optional main-only observation data; undefined with no active run. Legacy providers may omit the field. */
+  runStatus?: TeamRunStatus
 }
 
 export interface ActiveRunProvider {
@@ -56,9 +58,16 @@ export class TaskPoolService {
   }
 
   getSnapshot(): TaskPoolSnapshot {
-    const snapshot = this.snapshotForActiveRun(this.repository.load(), this.activeScope())
+    // Preserve original evaluation order: pool load, then original scope read.
+    const state = this.repository.load(), scope = this.activeScope()
+    const snapshot = this.snapshotForActiveRun(state, scope)
     if (this.readObservers.size) {
-      const value = { snapshot, stamp: { owner: this.readOwner, sequence: ++this.readSequence } }
+      let context: TaskScopeReadContext | undefined
+      try {
+        if (Object.hasOwn(scope, 'runStatus')) context = Object.freeze({ workspaceId: scope.workspaceId, runId: scope.runId,
+          scopeRevision: scope.scopeRevision, runStatus: scope.runStatus })
+      } catch { /* Optional observer metadata cannot change the original read. */ }
+      const value: TaskPoolReadObservation = { snapshot, stamp: { owner: this.readOwner, sequence: ++this.readSequence }, ...(context ? { context } : {}) }
       for (const listener of this.readObservers) { try { listener(value) } catch { /* Original reads/execution never depend on display. */ } }
     }
     return snapshot
