@@ -5,6 +5,27 @@ import { notificationFrame, notificationSourceHarness, notificationTeam } from '
 
 const reply = (patch: Partial<ConversationEntry> = {}): ConversationEntry => ({ id: 'native:1', channelId: '1', role: 'assistant', status: 'complete', source: 'cursor', text: '相同的完整回答', timestamp: 2_000, streamId: 'stream-a', turn: 'turn-a', ...patch })
 describe('final reply source with persistent association evidence', () => {
+  it('keeps an old explicitly read reply read after more than the in-memory identity window and later history backfill', async () => {
+    const h = notificationSourceHarness(), source = new ReplyNotifications(h.owner, () => 1000), team = notificationTeam()
+    try {
+      source.observe(notificationFrame(), team); await source.flush()
+      source.observe(notificationFrame({ conversations: { '1': [reply()] } }), team); await source.flush()
+      const first = h.ledger.page().records[0]!; await h.owner.read(first.id, first.revision)
+      for (let start = 0; start < 2100; start += 100) {
+        const entries = Array.from({ length: 100 }, (_, offset) => {
+          const i = start + offset
+          return reply({ id: `native:later-${i}`, streamId: `stream-later-${i}`, turn: `turn-later-${i}`, timestamp: 3000 + i })
+        })
+        source.observe(notificationFrame({ conversations: { '1': entries } }), team); await source.flush()
+      }
+      source.observe(notificationFrame({ conversations: { '1': [reply({ id: 'reply:canonical-old', replyToEntryId: 'outbox:old' })] } }), team); await source.flush()
+      const restored = h.ledger.page({ key: first.key }).records[0]!
+      expect(h.ledger.page().summary.total).toBe(2101)
+      expect(restored.id).toBe(first.id)
+      expect(restored.attentionRevision).toBe(first.attentionRevision)
+      expect(restored.readRevision).toBe(first.attentionRevision)
+    } finally { await source.close(); await h.owner.close() }
+  })
   it('late canonical metadata does not resurrect a result explicitly cleared by its human reader', async () => {
     const h = notificationSourceHarness(); const source = new ReplyNotifications(h.owner)
     try {
@@ -23,7 +44,7 @@ describe('final reply source with persistent association evidence', () => {
       source.observe(frame, notificationTeam()); await source.flush()
       expect((await h.owner.page()).historyIncomplete).toBe(false)
       const count = vi.mocked(h.port.commitSource).mock.calls.length
-      expect(count).toBe(1)
+      expect(count).toBe(20)
       for (let index = 0; index < 250; index++) source.observe(frame, notificationTeam())
       await source.flush(); expect(h.port.commitSource).toHaveBeenCalledTimes(count)
     } finally { source.stop(); await h.owner.close() }

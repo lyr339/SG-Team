@@ -1,64 +1,103 @@
-import { NOTIFICATION_SOURCE_BATCH_LIMIT, type NotificationDraft, type NotificationScope } from './notification'
+import { type NotificationDraft, type NotificationScope } from './notification'
+import { REPLY_IDENTITY_BATCH_LIMIT, REPLY_IDENTITY_LOOKUP_LIMIT, validReplyIdentityRow, type ReplyIdentityRow, type ReplyIdentityMatch, type ReplyIdentityBatch } from './reply-identity-index'
 export interface NotificationReplyFact { key: string; entryId: string; at: number; scope: NotificationScope; name: string; failed: boolean; aliases?: string[] }
-export interface ReplyNotificationInput { key: string; facts: NotificationReplyFact[]; now: number; monitorStartedAt?: number; signature?: string }
-interface ReplyIdentity { aliases: string[]; entryId: string; failed: boolean; recorded: boolean }
-export interface ReplyNotificationState { version: 2; key: string; seen: string[]; rows: Record<string, ReplyIdentity> }
+export interface ReplyNotificationInput { key: string; facts: NotificationReplyFact[]; now: number; monitorStartedAt?: number; signature: string }
+type ReplyIdentity = Omit<ReplyIdentityRow, 'key'>
+interface ReplyScan { signature: string; offset: number; stock?: number | 'all' }
+/** Small working cache only. Historical authority lives in the worker-owned normalized identity index. */
+export interface ReplyNotificationState { version: 3; key: string; seen: string[]; rows: Record<string, ReplyIdentity>; indexed: boolean; indexOffset?: number; scan?: ReplyScan }
 export function readReplyNotificationState(value: unknown, key: string): ReplyNotificationState | undefined {
   if (value === undefined) return undefined
-  const state = value as ReplyNotificationState
-  const version = (value as { version?: unknown })?.version
-  if (!state || version !== 1 && version !== 2 || state.key !== key || !Array.isArray(state.seen) || state.seen.length > 2_000 || state.seen.some(value => typeof value !== 'string')) throw Error('回复通知检查点异常')
-  if (version === 1) return { ...state, version: 2, rows: {} }
+  const state = value as ReplyNotificationState, version = (value as { version?: unknown })?.version
+  if (!state || ![1, 2, 3].includes(version as number) || state.key !== key || !Array.isArray(state.seen) || state.seen.length > 2_000 || state.seen.some(value => typeof value !== 'string')) throw Error('回复通知检查点异常')
+  if (version === 1) return { version: 3, key, seen: state.seen, rows: {}, indexed: false }
   if (!state.rows || Array.isArray(state.rows) || Object.keys(state.rows).length > 2_000) throw Error('回复通知检查点异常')
-  for (const row of Object.values(state.rows)) if (!row || typeof row.entryId !== 'string' || typeof row.failed !== 'boolean' || typeof row.recorded !== 'boolean'
-    || !Array.isArray(row.aliases) || row.aliases.length > 8 || row.aliases.some(alias => typeof alias !== 'string')) throw Error('回复通知检查点异常')
+  for (const [key, row] of Object.entries(state.rows)) if (!row || Object.keys(row).includes('key') || !validReplyIdentityRow({ key, ...row })) throw Error('回复通知检查点异常')
+  if (version === 2) return { version: 3, key, seen: state.seen, rows: state.rows, indexed: false }
+  if (Object.keys(state).some(key => !['version', 'key', 'seen', 'rows', 'indexed', 'indexOffset', 'scan'].includes(key)) || typeof state.indexed !== 'boolean'
+    || state.indexOffset !== undefined && (!Number.isSafeInteger(state.indexOffset) || state.indexOffset < 0 || state.indexOffset > Object.keys(state.rows).length || state.indexed)
+    || state.scan !== undefined && (!state.scan || typeof state.scan !== 'object' || Object.keys(state.scan).some(key => !['signature', 'offset', 'stock'].includes(key))
+      || !/^[a-f0-9]{64}$/.test(state.scan.signature) || !Number.isSafeInteger(state.scan.offset) || state.scan.offset < 0
+      || state.scan.stock !== undefined && state.scan.stock !== 'all' && (!Number.isSafeInteger(state.scan.stock) || state.scan.stock < 0))) throw Error('回复通知分批检查点异常')
   return state
 }
-export function reduceReplyNotifications(old: ReplyNotificationState | undefined, input: ReplyNotificationInput, baseline: boolean, revision: number) {
-  const seen = new Set(old?.seen); const drafts: NotificationDraft[] = []
-  const rows = { ...old?.rows }; const aliasKeys = new Map<string, string>()
-  for (const [key, row] of Object.entries(rows)) for (const alias of row.aliases) aliasKeys.set(alias, key)
-  const parents = new Map<string, string>()
-  const root = (key: string): string => {
-    let result = key
-    while (parents.has(result) && parents.get(result) !== result) result = parents.get(result)!
-    while (parents.has(key) && parents.get(key) !== result) { const next = parents.get(key)!; parents.set(key, result); key = next }
-    return result
+const aliasesOf = (fact: NotificationReplyFact): string[] => [...new Set([fact.key, ...fact.aliases ?? []])]
+/** Resolve exact in-frame bridges before slicing, so a late bridge cannot create two notifications at a batch boundary. */
+export function groupReplyNotificationFacts(facts: NotificationReplyFact[], matches: readonly ReplyIdentityMatch[] = []): NotificationReplyFact[] {
+  const parents = facts.map((_, index) => index), owners = new Map<string, number>()
+  const root = (index: number): number => {
+    while (parents[index] !== index) { parents[index] = parents[parents[index]!]!; index = parents[index]! }
+    return index
   }
-  for (const fact of input.facts) {
-    const keys = [fact.key, ...fact.aliases ?? []].map(alias => root(aliasKeys.get(alias) ?? fact.key))
-    const winner = keys.find(key => rows[key]?.recorded) ?? keys.find(key => seen.has(key)) ?? keys[0]!
-    for (const key of keys) if (key !== winner) parents.set(key, winner)
-    for (const alias of [fact.key, ...fact.aliases ?? []]) aliasKeys.set(alias, winner)
+  const matchingOwners = new Map<string, string[]>()
+  for (const match of matches) for (const alias of match.aliases) matchingOwners.set(alias, [...matchingOwners.get(alias) ?? [], match.row.key])
+  for (const [index, fact] of facts.entries()) {
+    const references = aliasesOf(fact)
+    for (const alias of references.flatMap(alias => [alias, ...matchingOwners.get(alias) ?? []])) {
+      const previous = owners.get(alias)
+      if (previous !== undefined) parents[root(index)] = root(previous)
+      owners.set(alias, index)
+    }
   }
-  for (const [key, row] of Object.entries(rows)) {
-    const winner = root(key)
-    if (winner === key) continue
-    const previous = rows[winner] ?? row
-    rows[winner] = { ...previous, aliases: [...new Set([winner, ...previous.aliases, ...row.aliases])].slice(0, 8), recorded: previous.recorded || row.recorded }
-    delete rows[key]; seen.delete(key)
+  const grouped = new Map<number, NotificationReplyFact>()
+  for (const [index, fact] of facts.entries()) {
+    const key = root(index), previous = grouped.get(key)
+    const selected = previous?.entryId.startsWith('reply:') && !fact.entryId.startsWith('reply:') ? previous : fact
+    grouped.set(key, { ...selected, aliases: [...new Set([...previous?.aliases ?? [], ...aliasesOf(fact)])] })
   }
-  // Resolve all facts first, so a relay record and native fallback in the same
-  // frame cannot briefly publish conflicting results for one logical reply.
-  const selected = new Map<string, NotificationReplyFact>()
-  for (const fact of input.facts) {
-    const aliases = [...new Set([fact.key, ...fact.aliases ?? []])]
-    const key = root(aliasKeys.get(fact.key) ?? fact.key)
-    const known = selected.get(key)
-    selected.set(key, known?.entryId.startsWith('reply:') && !fact.entryId.startsWith('reply:')
-      ? { ...known, aliases: [...new Set([...known.aliases ?? [], ...aliases])] }
-      : { ...fact, aliases: [...new Set([...known?.aliases ?? [], ...aliases])] })
-    for (const alias of aliases) aliasKeys.set(alias, key)
+  return [...grouped.values()]
+}
+export function replyNotificationSlice(old: ReplyNotificationState | undefined, input: ReplyNotificationInput) {
+  const start = old?.scan?.signature === input.signature ? old.scan.offset : 0
+  if (start > input.facts.length) throw Error('回复通知分批位置不能超出原观察')
+  const facts: NotificationReplyFact[] = [], aliases = new Set<string>()
+  for (let index = start; index < input.facts.length; index++) {
+    const fact = input.facts[index]!
+    const added = aliasesOf(fact).filter(alias => !aliases.has(alias))
+    if (aliases.size + added.length > REPLY_IDENTITY_LOOKUP_LIMIT || facts.length === REPLY_IDENTITY_BATCH_LIMIT) break
+    facts.push(fact); for (const alias of added) aliases.add(alias)
   }
-  let complete = true
-  for (const [key, fact] of selected) {
-    const previous = rows[key]; const existed = seen.has(key)
-    const aliases = [...new Set([key, ...previous?.aliases ?? [], ...fact.aliases ?? []])].slice(0, 8)
+  if (!facts.length && start < input.facts.length) throw Error('单条回复身份关联超过本次有界核对容量，历史保留')
+  return { facts, aliases: [...aliases], start, end: start + facts.length }
+}
+/** Legacy rows are imported with their source cursor; missing old aliases are never invented. */
+function backfillReplyIdentityIndex(old: ReplyNotificationState) {
+  const offset = old.indexOffset ?? 0, entries = Object.entries(old.rows)
+  const rows = entries.slice(offset, offset + REPLY_IDENTITY_BATCH_LIMIT).map(([key, row]) => ({ key, ...row }))
+  const end = offset + rows.length
+  return { state: { ...old, indexed: end === entries.length, ...(end < entries.length ? { indexOffset: end } : { indexOffset: undefined }) }, drafts: [], complete: false,
+    ...(rows.length ? { replyIdentities: { sourceKey: old.key, rows } } : {}) }
+}
+export function reduceReplyNotifications(old: ReplyNotificationState | undefined, input: ReplyNotificationInput, baseline: boolean, revision: number, matches?: readonly ReplyIdentityMatch[]) {
+  if (old && !old.indexed) return backfillReplyIdentityIndex(old)
+  const seen = new Set(old?.seen), rows = { ...old?.rows }, drafts: NotificationDraft[] = []
+  const slice = replyNotificationSlice(old, input)
+  const candidates = matches ?? Object.entries(old?.rows ?? {}).map(([key, row]) => ({ row: { key, ...row }, aliases: [key, ...row.aliases] }))
+  const selected = groupReplyNotificationFacts(slice.facts, candidates)
+  const stock = old?.scan?.stock ?? (!old && baseline ? input.monitorStartedAt ?? 'all' : undefined)
+  const changed: ReplyIdentityRow[] = [], links: NonNullable<ReplyIdentityBatch['links']> = [], merges: NonNullable<ReplyIdentityBatch['merges']> = []
+  for (const original of selected) {
+    const aliases = aliasesOf(original), related = candidates.filter(match => match.aliases.some(alias => aliases.includes(alias)))
+    if (related.filter(match => match.row.recorded).length > 1) throw Error('回复身份关联有多条已发布记录，不猜测归并')
+    const prior = related.find(match => match.row.recorded) ?? related.find(match => match.row.key === original.key) ?? related[0]
+    const key = prior?.row.key ?? original.key, previous = prior?.row
+    // A trimmed native history frame cannot downgrade an already proven canonical reference.
+    const fact = previous?.entryId.startsWith('reply:') && !original.entryId.startsWith('reply:') ? { ...original, entryId: previous.entryId, failed: previous.failed } : original
+    const existed = Boolean(previous) || seen.has(key)
     const newFailure = fact.failed && (!existed || previous?.failed === false)
-    const stock = !old && baseline && (input.monitorStartedAt === undefined || fact.at < input.monitorStartedAt)
-    const publish = !stock && (!existed || newFailure || previous?.recorded === true && (previous.entryId !== fact.entryId || previous.failed !== fact.failed))
-    if (publish && drafts.length >= NOTIFICATION_SOURCE_BATCH_LIMIT) { complete = false; break }
-    rows[key] = { aliases, entryId: fact.entryId, failed: fact.failed, recorded: previous?.recorded === true || publish }; seen.add(key)
+    const historical = stock === 'all' || typeof stock === 'number' && fact.at < stock
+    const publish = !historical && (!existed || newFailure || previous?.recorded === true && (previous.entryId !== fact.entryId || previous.failed !== fact.failed))
+    const row: ReplyIdentityRow = { key, aliases: [...new Set([key, ...previous?.aliases ?? [], ...aliases])].slice(0, 8), entryId: fact.entryId, failed: fact.failed, recorded: previous?.recorded === true || publish }
+    const missing = aliases.filter(alias => !prior?.aliases.includes(alias))
+    const losers = related.filter(match => match.row.key !== key)
+    if (!previous || JSON.stringify(previous) !== JSON.stringify(row) || missing.length || losers.length) {
+      changed.push(row); for (const alias of missing) links.push({ key, alias })
+      for (const loser of losers) {
+        merges.push({ from: loser.row.key, to: key }); seen.delete(loser.row.key); delete rows[loser.row.key]
+      }
+    }
+    const { key: _key, ...cached } = row
+    rows[key] = cached; seen.add(key)
     if (!publish) continue
     drafts.push({ key: `reply:${key}`, eventId: `reply:${key}:${fact.failed ? 'failed' : 'complete'}`, eventType: 'session.reply', subjectState: fact.failed ? 'failed' : 'complete',
       category: 'sessions', source: `会话 · ${fact.name}`, title: fact.failed ? `${fact.name} 有一条未完成的回复记录` : `${fact.name} 有新回复`,
@@ -68,6 +107,8 @@ export function reduceReplyNotifications(old: ReplyNotificationState | undefined
       announce: !baseline && newFailure, renewAttention: !existed || newFailure, respectCleared: existed && !newFailure,
       ...(!baseline && !existed && !fact.failed ? { liveSignal: 'reply' as const } : {}) })
   }
-  const kept = [...seen].slice(-2_000)
-  return { state: { version: 2 as const, key: input.key, seen: kept, rows: Object.fromEntries(kept.flatMap(key => rows[key] ? [[key, rows[key]]] : [])) }, drafts, complete }
+  const kept = [...seen].slice(-2_000), complete = slice.end === input.facts.length
+  return { state: { version: 3 as const, key: input.key, seen: kept, rows: Object.fromEntries(kept.flatMap(key => rows[key] ? [[key, rows[key]]] : [])), indexed: true,
+    ...(!complete ? { scan: { signature: input.signature, offset: slice.end, ...(stock !== undefined ? { stock } : {}) } } : {}) }, drafts, complete,
+    ...(changed.length ? { replyIdentities: { sourceKey: input.key, rows: changed, ...(links.length ? { links } : {}), ...(merges.length ? { merges } : {}) } } : {}) }
 }

@@ -637,4 +637,34 @@ source checkpoint v2 每个既有身份仅增加一个 `~` 前缀表示“已检
 
 当前证据：`native-entry-{typecheck,regression,build,dead-code}-final.log`（314 files、3005 passed、1 skipped）、`native-entry-focused-final.log`；二十四类 Node/macOS Electron as-node fixtures 及原 MCP/channel 冒烟全过，见 `native-entry-verification-matrix-final.log` 和 `native-entry-verification-final-native-entry-{node,electron}.log`。保护树/既有四个删除保持，`protected-native-entry-audit.json`。本批没有改 UI/CSS，不用旧截图或无 GUI 的 worker 声称全视觉已通过。
 
+### 接续中的长回复关联复现（未解决、未提交）
+
+当前 HEAD `fb6dade` 后新增 `reply-notifications.test.ts` 的长历史回归：原回复确认已读，推进 2,100 条其他真实格式回复，再回填原回复的晚到 canonical/outbox 引用。相同 key 的普通回填已有 ledger 内容签名保护，最初的同 key 试验通过；真正缺口是 aliases 从 source 的 2,000 条窗口丢失后，canonical key 改变不能找到旧通知。`reply-window-reproduction.log` 明确失败：应有 2,101 条，实际 2,102 条。不能把所有历史回填都称为重播，也不能把该用例跳过后声称完成。
+
+下一步需让 reply 的 canonical/aliases 关联在 private 存储持久化，并与 source 游标/通知变更短事务提交；2,000 条只做内存/快照工作集，不作为历史权威。保留 stock 回复不变新未读、晚到别名不重复、已读/清理/归档不复活、不同 scope 不合并、失去 ACK/CAS/storageEpoch 围栏和原 2MiB transport 上限。不能仅拉大 JSON 上限或按时间水位丢弃晚到真回复。此回归目前仍失败、工作树未提交，不发布或结束目标。
+
+接续补了 `reply-identity-index.ts` 的私有 transport 数据契约和 `reply-identity-index.test.ts`：只接收 reply-source namespace、每批最多 100 个唯一 canonical hash、每行最多 8 个唯一 alias hash、有限 entry 引用和 failed/recorded 标志，拒绝正文、额外字段和任意其他 source。`reply-index-contract.log` 两项通过，但这只是协议基础，**尚未接 SQLite 索引、worker 和 reducer**，长历史回归仍未修复。不要将数据契约文件或绿测试当作目标已经实现，也不要仅增大 cache。
+
+进一步新增 `SqliteReplyIdentityIndex` 的规范化 private 索引实现及 storage tests：canonical 行与 alias 候选分表，按 source namespace 隔离，旧 aliases 不因 2,000 工作缓存淘汰而丢失；一次最多 100 行写入/800 hashes 查询，超过候选上限不猜合并。它不自建业务事务，caller 的 source 短事务回滚时索引同时回滚；多个 owner 保留为候选，不静默覆盖。`reply-index-storage.log` 五项通过，foundation typecheck 通过。**尚未挂到正式 private schema migration、worker/commitSource 或 reply adapter/reducer**，只在自己的隔离内存 DB 测试，不能声称目标路径修复。当前 WIP 未提交、未发布，失败的长历史回归继续保留。
+
 **完整目标仍未完成**：本批解决来源伪权威和疑似失联丢待处理，不是全部历史恢复。复核同时定位后续范围：回复 source 的 2,000 身份/aliases cache 仍需长期去重与关联保障；问卷旧终态和真实原记录恢复的重核、队列跨 scope/备份恢复、未发 usage/MCP 未知归属、全布局与正式包/原生 Windows/macOS 送达继续。普通 old/missing 不假设完成，也不为通知追加业务预检。只本地提交，不 push、发布、安装或重启，原完整要求保留。
+
+## 第三十五批 · 长回复的持久身份关联与原子投影
+
+本批接入第三十四批留下的失败回归和索引基础，不再把基础组件通过当作目标路径修复。权威复现是：一条回复被明确读过，随后推进 2,100 条独立回复，原 stream/turn 在晚到 canonical/outbox 引用中仍然存在，原实现却生成第二条未读（2,101 变 2,102）。现在该原用例通过，未删除或放宽断言。
+
+- 私有 schema 5 增加 canonical metadata 和 alias ownership 两张规范化表；只留 hash、entry 引用、终态和是否已有记录，不复制回复正文。alias ownership 不随 2,000 条工作缓存淘汰；payload 自身只留八个工作引用，查询另返回**实际命中的历史 aliases**，避免历史关联存在却因 payload 裁切再次漏配。没有把全索引塞进 source JSON，也没有扩大原 2MiB 上限。
+- source checkpoint、通知变化和索引 sidecar 在既有 worker-owned 短事务里一起 CAS 提交。任一项写入失败全部回滚，stale revision 不写 aliases；未知 ACK 只在下个原 source frame 重新加载，不重放原业务。私有 metadata 查询和 projection 确认各自保留 storageEpoch 围栏，迟到旧代次 metadata 不写到替换后的历史。
+- reply checkpoint v3 有明确的有界扫描位置；原生同 frame 的 entry/stream/turn/anchor 桥接先合并再切批，避免桥接位于后页时先制造两条回复。一次最多 100 个身份写入、800 个唯一 hash 核对；stock、已知结果、没有 draft 的批次一样推进，初始 stock 的时间边界跨批保持。9,001 条初始存量全部建立身份，不只是最后 2,000 条，也不制造旧未读。
+- 已有记录保留原 ID、read/attention revision、归档和清理事实；晚到 canonical 只补原结果引用，不作为新回复。已证明 canonical 不被裁切后的 native fallback 降级。failed→complete 更新原记录；同 CH 不同真实 generation 仍是不同来源。两个已发布 owner 有歧义时明确拒绝猜合并，只有确切桥接的未发布 stock 身份可归并，且搬迁全部旧 aliases。published 身份不能回退为未发布，也不能作为被删除的归并项。
+- 旧 v1/v2 source 只对**实际保留下来的** rows 做最多 100 行的私有 backfill，连同游标一起提交，不在启动事务里重写所有历史。新 schema 缺表/结构异常不会默默建空表来伪称恢复；较新 schema 拒绝降级。原全局 user_version 和无关表保持。旧版此前已经裁切掉的 aliases、未知混合存量/新增及备份回退仍不能宣称无损恢复，继续作为后续历史重核范围。
+- 再次审查去掉无意义的扫描写放大：已持久化且未变的前缀只按有界页读取，在 private 异步 reducer 中推进临时扫描，遇到真实变化才做原子提交。2,100 条已知前缀后增加一条回复，只新增一次 source 写入，不为每个临时 offset 重写约 1MiB 的缓存。没有新增业务请求、轮询或重试，也没改原请求顺序、闸门、互斥、Agent 回执或 UI。
+
+最终证据位于当前实现树 `preview-screenshots/notification-implementation/`：
+
+- `reply-index-full-regression-final.log`：318 files、3037 passed、1 skipped；`reply-index-review-regression-final.log` 另外覆盖本批最后一轮防御审查。
+- `reply-index-typecheck-final.log`、`reply-index-build-final.log`、`reply-index-dead-code-final.log`：类型、构建和 dead-code 检查。
+- `reply-index-verification-matrix-final.log`：24 类 fixtures 在 Node 和 macOS Electron as-node 使用当前编译 worker 复跑通过，另有隔离 Electron 退出 fixture 与原 MCP/channel smoke。新 `verify-notification-reply-identities.ts` 实物验证 cache 淘汰、worker/私有 SQLite 重启、已读/归档/清理不复活、stock 全量分批及真实 SQL trigger 失败时三部分一起回滚；仅自己的 PRIVATE 文件与数据，不是正式 main 或真实模型。
+- `protected-reply-index-audit.json`：两个保护树逐文件、HEAD、porcelain status 和 binary diff 保持；原四个删除继续为删除。fixtures 的临时目录在 finally 精确清理，未创建 preview tab/server。
+
+本批只本地提交，未 push、发布、安装或重启用户软件/Cursor，没有真实账号操作、模型请求或 OS 通知。**完整目标仍未完成**：旧版丢失身份与恢复时的混合历史归属、问卷旧终态/真实恢复、队列跨 scope/备份恢复、未发 usage/MCP 校验前不可归属诊断、全布局/长期容量/正式包及 Windows/macOS 真权限/声音/勿扰/送达仍须逐项核验，不能用这次回复修复替代完整验收。

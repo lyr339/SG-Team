@@ -3,7 +3,7 @@ import type { DesktopSnapshot } from '../../shared/desktop-api'
 import type { TeamControlSnapshot } from '../../domain/team-control'
 import type { NotificationService } from '../notification-service'
 import { nativeAssistantEntry } from '../../domain/native-assistant-entry'
-import { readReplyNotificationState, reduceReplyNotifications, type NotificationReplyFact, type ReplyNotificationInput, type ReplyNotificationState } from '../../domain/reply-notification'
+import { readReplyNotificationState, reduceReplyNotifications, replyNotificationSlice, groupReplyNotificationFacts, type NotificationReplyFact, type ReplyNotificationInput, type ReplyNotificationState } from '../../domain/reply-notification'
 import { sessionNotificationObservation } from './session-lifecycle-notifications'
 import { NotificationProjectionSource } from './projection-source'
 
@@ -15,7 +15,21 @@ export class ReplyNotifications {
   private readonly startedAt: number
   constructor(private readonly owner: NotificationService, private readonly now: () => number = Date.now) {
     this.startedAt = now()
-    this.source = new NotificationProjectionSource(owner, readReplyNotificationState, reduceReplyNotifications, input => input.signature!)
+    this.source = new NotificationProjectionSource(owner, readReplyNotificationState, async (old, input, baseline, revision) => {
+      if (old && !old.indexed) return reduceReplyNotifications(old, input, baseline, revision)
+      let working = old
+      for (let batch = 0; batch < 1024; batch++) {
+        const slice = replyNotificationSlice(working, input)
+        const matches = await owner.replyIdentities(input.key, slice.aliases)
+        const projection = reduceReplyNotifications(working, input, baseline, revision, matches)
+        if (projection.replyIdentities || projection.drafts.length || projection.complete !== false) return projection
+        // These rows already have durable identity receipts. Walking an unchanged
+        // prefix needs no SQLite writes for each temporary scan offset. Any real
+        // change below still commits its index, final cache and cursor atomically.
+        working = projection.state
+      }
+      throw Error('回复通知核对超过本次有界容量，未确认的历史保留')
+    }, input => input.signature, undefined, 1024)
   }
   observe(snapshot: DesktopSnapshot, team: TeamControlSnapshot): void {
     if (this.stopped || snapshot.runtimeScope && (snapshot.runtimeScope.workspaceId !== team.activeWorkspaceId || snapshot.runtimeScope.runId !== team.activeRun?.id || snapshot.runtimeScope.teamRevision !== team.revision)) return
@@ -36,7 +50,8 @@ export class ReplyNotifications {
               .filter(([, value]) => value).map(([kind, value]) => hash([session.identity, kind, value]))
             facts.push({ key, aliases, entryId: entry.id, at: entry.timestamp, name: session.name, scope: { ...session.scope, groupId: undefined }, failed: entry.status === 'failed' })
           }
-          extracted = { reference: entries, facts, signature: hash(facts) }; this.extracted.set(session.identity, extracted)
+          const grouped = groupReplyNotificationFacts(facts)
+          extracted = { reference: entries, facts: grouped, signature: hash(grouped) }; this.extracted.set(session.identity, extracted)
         }
         const key = `reply-source:${session.identity}`
         // Extraction cache is not a durability receipt. Feed even the same array

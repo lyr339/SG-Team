@@ -4,9 +4,9 @@ import { reduceOperatorMessages } from '../src/domain/team-message-notification'
 describe('human notification reading is independent of agent transport', () => {
   it('equal words in different associated replies remain different identities, and replay stays quiet', () => {
     const fact = { key: 'stable-anchor-1', entryId: 'reply:1', at: 100, scope: { sessionId: 'real-session', channelId: '1' }, name: '实现 · CH-1', failed: false }
-    const first = reduceReplyNotifications(undefined, { key: 'reply-source:1', facts: [fact], now: 200 }, true, 1)
+    const first = reduceReplyNotifications(undefined, { key: 'reply-source:1', facts: [fact], signature: '1'.repeat(64), now: 200 }, true, 1)
     expect(first.drafts).toHaveLength(0)
-    const next = reduceReplyNotifications(first.state, { key: first.state.key, facts: [fact, { ...fact, key: 'stable-anchor-2', entryId: 'reply:2' }], now: 300 }, false, 2)
+    const next = reduceReplyNotifications(first.state, { key: first.state.key, signature: '2'.repeat(64), facts: [fact, { ...fact, key: 'stable-anchor-2', entryId: 'reply:2' }], now: 300 }, false, 2)
     expect(next.drafts).toHaveLength(1); expect(next.drafts[0]?.target).toMatchObject({ entryId: 'reply:2' })
     expect(next.drafts[0]?.announce).toBe(false)
   })

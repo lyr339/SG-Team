@@ -9,6 +9,8 @@ import { NOTIFICATION_ROUTINE_RETENTION_MS, validateNotificationGapId, validateN
 import { notificationFingerprint, fingerprintSignature } from '../../application/notification-fingerprint'
 import type { OperatorMessageRecordMetadata } from '../../domain/team-message-notification'
 import type { McpWriteRecordMetadata } from '../../domain/mcp-write-notification'
+import { validateReplyIdentityBatch, type ReplyIdentityBatch, type ReplyIdentityMatch } from '../../domain/reply-identity-index'
+import { SqliteReplyIdentityIndex } from './sqlite-reply-identity-index'
 
 type StoredRow = { payload: string }
 const knownNegativeTransactions = new WeakSet<object>()
@@ -38,10 +40,12 @@ function decodeRecord(payload: string): NotificationRecord {
 /** Synchronous on purpose: this repository is owned ONLY by the notification worker. */
 export class SqliteNotificationRepository {
   private readonly db: DatabaseSync
+  private readonly replyIndex: SqliteReplyIdentityIndex
   private closed = false
   constructor(databasePath: string) {
     mkdirSync(dirname(databasePath), { recursive: true })
     this.db = new DatabaseSync(databasePath)
+    this.replyIndex = new SqliteReplyIdentityIndex(this.db)
     try {
       this.db.exec(`PRAGMA busy_timeout=250;
         CREATE TABLE IF NOT EXISTS desktop_notification_meta (id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL, preferences TEXT NOT NULL,schema_version INTEGER NOT NULL DEFAULT 3);
@@ -61,8 +65,8 @@ export class SqliteNotificationRepository {
           if (!columns.some(column => column.name === 'content_signature')) this.db.exec('ALTER TABLE desktop_notification_tombstones ADD COLUMN content_signature TEXT')
           this.db.exec('UPDATE desktop_notification_meta SET schema_version=2 WHERE id=1')
         })
-      } else if (![2, 3, 4].includes(version)) throw new Error('通知历史格式暂不支持，原有数据未修改')
-      if (version === 4) {
+      } else if (![2, 3, 4, 5].includes(version)) throw new Error('通知历史格式暂不支持，原有数据未修改')
+      if (version >= 4) {
         for (const table of ['desktop_notification_sources', 'desktop_notification_integrity', 'desktop_notification_gap_keys'])
           if (!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) throw Error('通知历史结构异常，原数据保留')
         if (!this.db.prepare('SELECT 1 FROM desktop_notification_integrity WHERE id=1').get()) throw Error('通知历史完整性证据缺失，原数据保留')
@@ -74,7 +78,7 @@ export class SqliteNotificationRepository {
           CREATE TABLE IF NOT EXISTS desktop_notification_gap_keys (gap_id TEXT PRIMARY KEY);`)
         // Older rows lack evidence of their past diagnostic/action importance.
         // Migration preserves them rather than guessing they're disposable.
-        if (version !== 4) {
+        if (version < 4) {
           this.db.exec(`UPDATE desktop_notifications SET payload=json_set(payload,'$.retentionProtected',json('true'));
             UPDATE desktop_notification_meta SET schema_version=4 WHERE id=1;`)
           let after = ''
@@ -86,6 +90,13 @@ export class SqliteNotificationRepository {
           }
         }
       })
+      // Version 4 checkpoints are backfilled in bounded source CAS batches, not
+      // an unbounded initialization transaction. Never recreate missing v5 data.
+      if (version < 5) this.transaction(() => {
+        this.replyIndex.create(); this.replyIndex.validateStructure()
+        this.db.exec('UPDATE desktop_notification_meta SET schema_version=5 WHERE id=1')
+      })
+      else this.replyIndex.validateStructure()
       this.historyGap() // Invalid v4 integrity never silently becomes a fresh, clean ledger.
     } catch (error) { this.db.close(); throw error }
   }
@@ -220,15 +231,21 @@ export class SqliteNotificationRepository {
     })
     return { rows: entries, ...(rows.length > limit ? { nextKey: entries.at(-1)!.key } : {}) }
   }
-  commitSource(key: string, expectedRevision: number, data: unknown, drafts: NotificationDraft[], now: number): NotificationSourceResult {
+  replyIdentities(sourceKey: string, aliases: string[]): ReplyIdentityMatch[] { return this.replyIndex.lookup(sourceKey, aliases) }
+  commitSource(key: string, expectedRevision: number, data: unknown, drafts: NotificationDraft[], now: number, replyIdentities?: ReplyIdentityBatch): NotificationSourceResult {
     if (!key || key.length > 300 || !Number.isSafeInteger(expectedRevision) || expectedRevision < 0 || drafts.length > NOTIFICATION_SOURCE_BATCH_LIMIT) throw new Error('通知来源提交无效')
     const payload = JSON.stringify(data)
     if (!payload || Buffer.byteLength(payload, 'utf8') > NOTIFICATION_SOURCE_PAYLOAD_LIMIT) throw new Error('通知来源状态过大或无效')
     for (const draft of drafts) validateNotificationDraft(draft)
+    if (replyIdentities) {
+      validateReplyIdentityBatch(replyIdentities)
+      if (replyIdentities.sourceKey !== key) throw Error('私有回复身份不能跨来源提交')
+    }
     return this.transaction(() => {
       const source = this.sourceState(key)
       if (source.revision !== expectedRevision) return { applied: false, source, changes: [] }
       const changes = drafts.map(draft => this.putInTransaction(draft, now))
+      if (replyIdentities) this.replyIndex.write(replyIdentities)
       const revision = expectedRevision + 1
       this.db.prepare(`INSERT INTO desktop_notification_sources VALUES(?,?,?,?) ON CONFLICT(source_key)
         DO UPDATE SET revision=excluded.revision,payload=excluded.payload,updated_at=excluded.updated_at`).run(key, revision, payload, now)

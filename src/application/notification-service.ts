@@ -7,6 +7,7 @@ import type { NotificationHistoryIntegrity } from '../domain/notification-histor
 import { notificationFingerprint } from './notification-fingerprint'
 import type { OperatorMessageRecordMetadata } from '../domain/team-message-notification'
 import type { McpWriteRecordMetadata } from '../domain/mcp-write-notification'
+import type { ReplyIdentityBatch, ReplyIdentityMatch } from '../domain/reply-identity-index'
 
 /** One asynchronous owner, independent from business transaction locks or renderer route lifetimes. */
 export class NotificationService {
@@ -192,11 +193,22 @@ export class NotificationService {
       } catch (error) { this.degraded(); throw error }
     })())
   }
-  commitSource(key: string, expectedRevision: number, data: unknown, drafts: NotificationDraft[], group?: NotificationGroupPresentation): Promise<NotificationSourceResult> {
+  replyIdentities(sourceKey: string, aliases: string[]): Promise<ReplyIdentityMatch[]> {
+    const epoch = this.sourceEpoch
+    return this.tracked((async () => {
+      try {
+        if (!this.repository.replyIdentities) throw Error('私有回复关联索引暂不可用')
+        const matches = await this.repository.replyIdentities(sourceKey, aliases)
+        if (epoch !== this.sourceEpoch) throw Error('私有回复身份读取跨越存储代次')
+        this.recovered(); return matches
+      } catch (error) { this.degraded(); throw error }
+    })())
+  }
+  commitSource(key: string, expectedRevision: number, data: unknown, drafts: NotificationDraft[], group?: NotificationGroupPresentation, replyIdentities?: ReplyIdentityBatch): Promise<NotificationSourceResult> {
     if (this.closed || this.closing) return Promise.reject(new Error('通知来源已停止'))
     const epoch = this.sourceEpoch
     return this.tracked((async () => { try {
-      const result = await this.repository.commitSource(key, expectedRevision, data, drafts, this.now())
+      const result = await this.repository.commitSource(key, expectedRevision, data, drafts, this.now(), replyIdentities)
       if (epoch !== this.sourceEpoch) throw Error('通知存储代次已变化，原投影回执未确认')
       this.recovered()
       const announced = result.applied ? result.changes.filter(change => {

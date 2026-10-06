@@ -6,6 +6,7 @@ import type { NotificationWorkerCommand, NotificationWorkerReply } from './notif
 import type { NotificationHistoryIntegrity, NotificationHistoryStatus } from '../domain/notification-history'
 import type { OperatorMessageRecordMetadata } from '../domain/team-message-notification'
 import type { McpWriteRecordMetadata } from '../domain/mcp-write-notification'
+import type { ReplyIdentityBatch, ReplyIdentityMatch } from '../domain/reply-identity-index'
 
 type WorkerFactory = (options: { workerData: { databasePath: string } }) => Worker
 type Waiter = { resolve: (value: unknown) => void; reject: (reason: Error) => void; timer: ReturnType<typeof setTimeout> }
@@ -168,8 +169,9 @@ export class NotificationWorkerPort implements NotificationRepository {
   listNativeSources(query: NotificationSourceListQuery): Promise<NotificationSourceListPage> { return this.call({ kind: 'listNativeSources', query }) }
   operatorMessageRecords(keys: string[]): Promise<OperatorMessageRecordMetadata[]> { return this.call({ kind: 'operatorMessageRecords', keys }) }
   mcpWriteRecords(keys: string[]): Promise<McpWriteRecordMetadata[]> { return this.call({ kind: 'mcpWriteRecords', keys }) }
-  commitSource(key: string, expectedRevision: number, data: unknown, drafts: NotificationDraft[], now: number): Promise<NotificationSourceResult> {
-    return this.call({ kind: 'commitSource', key, expectedRevision, data, drafts, now })
+  replyIdentities(sourceKey: string, aliases: string[]): Promise<ReplyIdentityMatch[]> { return this.call({ kind: 'replyIdentities', sourceKey, aliases }) }
+  commitSource(key: string, expectedRevision: number, data: unknown, drafts: NotificationDraft[], now: number, replyIdentities?: ReplyIdentityBatch): Promise<NotificationSourceResult> {
+    return this.call({ kind: 'commitSource', key, expectedRevision, data, drafts, now, replyIdentities })
   }
   page(query?: NotificationQuery): Promise<NotificationPage> { return this.call({ kind: 'page', query }) }
   read(id: string, revision: number, now: number): Promise<NotificationChange> { return this.call({ kind: 'read', id, revision, now }) }
