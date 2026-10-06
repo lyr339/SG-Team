@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { MessageContent } from '../MessageContent'
 import { collaborationActorLabel, collaborationPairKey, visibleCollaborationLinks, type CollaborationMapFacts } from './collaboration-map-view'
@@ -24,6 +24,7 @@ export function GroupCollaborationDialog({ facts, workspaceName, onClose, onOpen
   const [paused, setPaused] = useState(false), [reduced, setReduced] = useState(false)
   const [memberId, setMemberId] = useState<string>(), [linkId, setLinkId] = useState<string>(), [messageId, setMessageId] = useState<string | undefined>(focusMessageId)
   const messageRef = useRef<HTMLDivElement>(null)
+  const detailRef = useRef<HTMLElement>(null), revealRecordId = useRef<string | undefined>(undefined)
   const [hoverLink, setHoverLink] = useState<string>(), [recordsOpen, setRecordsOpen] = useState(false), [pendingOnly, setPendingOnly] = useState(false)
   const [recordLimit, setRecordLimit] = useState(30), [clock, tick] = useState(0), [error, setError] = useState('')
   useEffect(() => {
@@ -123,6 +124,20 @@ export function GroupCollaborationDialog({ facts, workspaceName, onClose, onOpen
     message.sender.type === 'agent' && message.sender.slotId === selectedMember.id || message.recipient.type === 'agent' && message.recipient.slotId === selectedMember.id) : facts.messages.at(-1))
   const notificationKey = latestMessage?.recipient.type === 'operator' && latestMessage.sender.type === 'agent' ? `operator-message:${latestMessage.id}` : undefined
   const messageDigest = useOperatorMessageNotificationRead(messageRef, latestMessage, facts, latestMessage ? facts.threadSubjects[latestMessage.threadId] : undefined)
+  const revealDetail = useCallback((): void => {
+    const detail = detailRef.current, body = detail?.closest<HTMLElement>('.collaboration-dialog__body')
+    if (!detail || !body) return
+    // Measure only on explicit record activation. The sticky tools can wrap;
+    // using their real height avoids both clipping and a guessed fixed inset.
+    const tools = body.querySelector<HTMLElement>(':scope > .collaboration-dialog__tools')
+    const top = body.scrollTop + detail.getBoundingClientRect().top - body.getBoundingClientRect().top - (tools?.getBoundingClientRect().height ?? 0) - 12
+    body.scrollTop = Math.max(0, top)
+    detail.focus({ preventScroll: true })
+  }, [])
+  useLayoutEffect(() => {
+    const expected = revealRecordId.current; revealRecordId.current = undefined
+    if (expected && expected === messageId && latestMessage?.id === expected) revealDetail()
+  }, [messageId, latestMessage?.id, revealDetail])
   const openMember = (id: string): void => {
     restoreFocus.current = false
     if (!onOpenMember(id)) { restoreFocus.current = true; setError('该成员的会话已变更，暂时无法打开；协作记录仍可查看。') }
@@ -131,6 +146,11 @@ export function GroupCollaborationDialog({ facts, workspaceName, onClose, onOpen
     setMessageId(message.id); setMemberId(undefined); setHoverLink(undefined)
     const pair = message.sender.type === 'agent' && message.recipient.type === 'agent' ? collaborationPairKey(message.sender.slotId, message.recipient.slotId) : undefined
     setLinkId(facts.links.some(link => link.id === pair) ? pair : undefined)
+  }
+  const selectRecord = (message: TeamMessage): void => {
+    revealRecordId.current = message.id
+    selectMessage(message)
+    if (messageId === message.id) { revealRecordId.current = undefined; revealDetail() }
   }
   const pendingIds = useMemo(() => new Set(facts.links.flatMap(link => link.pending.map(message => message.id))), [facts.links])
   const effectivePendingOnly = pendingOnly && !facts.closed
@@ -148,7 +168,7 @@ export function GroupCollaborationDialog({ facts, workspaceName, onClose, onOpen
   }
   // Source navigation prioritizes the message; normal group browsing remains graph-first.
   const detailPanel = (
-    <section className="collaboration-detail" aria-label="当前协作详情">
+    <section ref={detailRef} className="collaboration-detail" aria-label="当前协作详情" tabIndex={-1}>
       {selectedMember ? <header><strong>{selectedMember.name} · CH-{selectedMember.channelId ?? '?'}</strong><span>{selectedMember.stateLabel}</span></header>
         : latestMessage ? <header><strong>{collaborationActorLabel(facts, latestMessage, true)} <i aria-hidden="true">→</i> {collaborationActorLabel(facts, latestMessage, false)}</strong>
           <span>{selectedLink?.label ?? (facts.closed ? '历史记录' : '最近记录')}</span></header> : <header><strong>{messageId ? '原消息待核对' : facts.scoped ? '尚无组内消息' : '消息记录暂未同步'}</strong></header>}
@@ -192,7 +212,7 @@ export function GroupCollaborationDialog({ facts, workspaceName, onClose, onOpen
           {!focusMessageId ? detailPanel : null}
           <div className="collaboration-records__head"><button type="button" className="collaboration-text-button" aria-expanded={recordsOpen} onClick={() => setRecordsOpen(value => !value)}>{recordsOpen ? '收起记录' : '查看协作记录'} · {records.length}</button>
             {!facts.closed && (facts.pendingCount || pendingOnly) ? <button type="button" className="collaboration-text-button is-pending" aria-pressed={pendingOnly} onClick={() => { setPendingOnly(value => !value); setRecordsOpen(true) }}>{pendingOnly ? '全部记录' : `待回应 ${facts.pendingCount}`}</button> : null}</div>
-          {recordsOpen ? <div className="collaboration-records"><ol>{records.slice(-recordLimit).reverse().map(message => <li key={message.id}><button type="button" className={message.id === messageId ? 'is-selected' : ''} aria-pressed={message.id === messageId} onClick={() => selectMessage(message)}>
+          {recordsOpen ? <div className="collaboration-records"><ol>{records.slice(-recordLimit).reverse().map(message => <li key={message.id}><button type="button" className={message.id === messageId ? 'is-selected' : ''} aria-pressed={message.id === messageId} onClick={() => selectRecord(message)}>
             <strong>{collaborationActorLabel(facts, message, true)} <i aria-hidden="true">→</i> {collaborationActorLabel(facts, message, false)}</strong>
             <span>{message.content.slice(0, 180)}</span><small>{new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}{pendingIds.has(message.id) ? ' · 待回应' : ''}</small>
           </button></li>)}</ol>{records.length > recordLimit ? <button type="button" className="collaboration-text-button" onClick={() => setRecordLimit(n => n + 30)}>查看更多记录（剩余 {records.length - recordLimit}）</button> : null}

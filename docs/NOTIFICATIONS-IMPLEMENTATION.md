@@ -592,3 +592,15 @@ main service 从自己的 private sourceEpoch 给 page／record／change／push 
 中途删掉无用 effect dependency 时，开发 HMR 保留的旧 hook 树报过 dependency-array 长度变化警告，原证据保留在 `ui/operator-source-read-development-audit.json`；代码稳定后的冷加载重新执行上述流程，`ui/operator-source-read-audit.json` 的 logs 为空，不靠清除旧日志冒充通过。最终图为 `ui/operator-source-read-after-final.jpg` 和 `ui/operator-source-read-narrow-dark-final.jpg`。临时 override 已用文档 API 清除，preview 外观回到 system，自建标签/服务清理；没有启动当前软件、Cursor、真实账号/模型、退款/删除或 OS 通知。
 
 只本地提交，不 push、发版或安装；保护树核对见 `protected-operator-source-read-audit.json`。**完整目标仍未完成**：本批收口原协作消息，不替代 legacy MCP 原 proof 的恢复关联、会话/问卷/回复/队列历史恢复、未发 usage 载荷和 MCP 校验前未知归属、长期容量/完整布局、正式包和 Windows/macOS 权限/声音/勿扰/送达验收。后续继续逐项实现，原完整要求不缩减。
+
+## 第三十二批 · 协作记录选择后的正文定位
+
+第三十一批提交后再查看实际截图，发现图例工具栏的 sticky 覆盖问题：浏览器把被点击的记录按钮滚入视野，但并未把它对应的正文完整带到工具栏下方；正文可能仍有一部分可见，从而符合原通知阅读门禁，却给用户留下首行被压住的粗糙体验。旧截图保留为发现依据，不把测试计数当作这项视觉已通过。
+
+只对用户明确激活记录按钮新增局部定位：等待选中正文 DOM 提交后，读取实际工具栏高度（窄窗会换行），把详情标题和正文带到其下方并留 12px 间距，同时将键盘焦点移到详情。复点已选记录也能返回正文；正文内部的文本选择、图片查看和普通检查继续只固定消息，不触发滚动。没有固定猜测图例高度、常驻 observer、定时器或 render 中测量；没有新增业务/通知 API 调用代码，没有改内容、原请求顺序、图布局或 Agent 回执。
+
+React 回归覆盖实际 74px 工具栏的定位计算、重复激活和正文检查不滚动。typecheck 首次发现 ref 缺初值的 React 类型错误，补为显式 `string | undefined` 后完整重跑，不带编译错误提交。`operator-record-reveal-{focused,typecheck,regression,build,dead-code}.log` 最终通过，312 files、2975 passed、1 skipped。主进程/worker 没有改动，沿用第三十一批的当前 worker 矩阵证据，不把 renderer 单点修复冒充新 OS 送达验收。
+
+真实 CUA 984×554 重现原场景后，工具栏 bottom151.9、详情 top163.7，正文 top207.1/bottom290.0，均在 body bottom491.1 以内；320×720 暗色换行工具栏 bottom161.7、详情 top173.6，正文 top217.0/bottom373.4，同样完整可见。焦点在详情，原未读仍只在对应正文显示后消减，logs=[]。见 `ui/operator-record-reveal-audit.json`、`ui/operator-record-reveal-after.jpg`、`ui/operator-record-reveal-narrow-dark.jpg`；两种截图逐一查看，不把旧部分遮挡图当最终效果。viewport override 和 preview 外观已清理，自建标签/服务停止。
+
+本批仅本地提交并保留完整目标。legacy proof 恢复、其余历史 feed、全布局及长期容量、正式包与 Windows/macOS 原生权限/声音/勿扰/送达仍需继续，不声明整套已经结束。

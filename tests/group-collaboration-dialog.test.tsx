@@ -93,6 +93,27 @@ describe('collaboration dialog lifecycle and truthful states', () => {
     expect(document.querySelector('.collaboration-detail')?.textContent).toContain('原消息待核对')
     expect(document.querySelector('.collaboration-detail')?.textContent).not.toContain(another.content)
   })
+  it('record activation reveals the committed detail below the actual wrapped sticky tools; inspection does not scroll', async () => {
+    const f = facts(); await render(f)
+    await act(async () => button('查看协作记录').click())
+    const body = document.querySelector<HTMLElement>('.collaboration-dialog__body')!, detail = document.querySelector<HTMLElement>('.collaboration-detail')!
+    const tools = document.querySelector<HTMLElement>('.collaboration-dialog__tools')!
+    const rect = (top: number, height: number) => ({ top, bottom: top + height, height, width: 500, left: 0, right: 500, x: 0, y: top, toJSON: () => ({}) })
+    const a = vi.spyOn(body, 'getBoundingClientRect').mockReturnValue(rect(100, 400)), b = vi.spyOn(detail, 'getBoundingClientRect').mockReturnValue(rect(500, 200))
+    const c = vi.spyOn(tools, 'getBoundingClientRect').mockReturnValue(rect(100, 74))
+    const record = document.querySelector<HTMLButtonElement>('.collaboration-records li button')!
+    try {
+      body.scrollTop = 120
+      await act(async () => record.click())
+      expect(body.scrollTop).toBe(434); expect(document.activeElement).toBe(detail)
+      body.scrollTop = 99
+      await act(async () => record.click())
+      expect(body.scrollTop).toBe(413) // Clicking an already pinned row can still bring its body back.
+      body.scrollTop = 77
+      await act(async () => detail.querySelector('p')!.dispatchEvent(new MouseEvent('pointerdown', { button: 0, bubbles: true })))
+      expect(body.scrollTop).toBe(77) // Text selection/image inspection keeps the user's viewport.
+    } finally { a.mockRestore(); b.mockRestore(); c.mockRestore() }
+  })
   it('node selection is local until the explicit open-session action and uses slot identity', async () => {
     const f = facts(), actions = await render(f)
     const node = document.querySelector<HTMLButtonElement>('.collaboration-node')!
