@@ -69,6 +69,30 @@ describe('collaboration dialog lifecycle and truthful states', () => {
     expect(document.querySelector('.collaboration-detail__message')?.getAttribute('data-notification-key')).toBe('operator-message:to-human')
     expect(document.querySelector('.collaboration-detail')!.compareDocumentPosition(document.querySelector('.collaboration-canvas')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
+  it('a pinned original message missing from a later snapshot is not replaced with or read as a newer unrelated message', async () => {
+    const f = facts(), original = f.messages[0]!, human = { ...original, id: 'to-human', content: '原消息正文', recipient: { type: 'operator' as const } }
+    f.messages.push(human)
+    await act(async () => root.render(<GroupCollaborationDialog facts={f} focusMessageId={human.id} onClose={vi.fn()} onOpenMember={() => true} />))
+    const missing = { ...f, messages: [original, { ...human, id: 'another-human', content: '另一条需要显式选择的消息' }] }
+    await act(async () => root.render(<GroupCollaborationDialog facts={missing} focusMessageId={human.id} onClose={vi.fn()} onOpenMember={() => true} />))
+    expect(document.querySelector('.collaboration-detail__message')).toBeNull()
+    expect(document.querySelector('.collaboration-detail')?.textContent).toContain('不替换成别的消息')
+    expect(document.querySelector('.collaboration-detail')?.textContent).not.toContain('另一条需要显式选择的消息')
+  })
+  it('a pinned agent-to-agent message cannot fall back to another message on the still-existing pair link', async () => {
+    const f = facts(), original = f.messages[0]!
+    const another = { ...original, id: 'another-pair-message', createdAt: original.createdAt + 1, content: '不要自动替换为此连线的新消息' }
+    const initial = { ...f, messages: [original, another], links: [{ ...f.links[0]!, messages: [original, another], latest: another }] }
+    await render(initial)
+    await act(async () => button('查看协作记录').click())
+    const record = [...document.querySelectorAll<HTMLButtonElement>('.collaboration-records li button')].find(node => node.textContent?.includes(original.content))!
+    await act(async () => record.click())
+    const missing = { ...initial, messages: [another], links: [{ ...initial.links[0]!, messages: [another], latest: another }] }
+    await act(async () => root.render(<StrictMode><GroupCollaborationDialog facts={missing} onClose={vi.fn()} onOpenMember={() => true} /></StrictMode>))
+    expect(document.querySelector('.collaboration-detail__message')).toBeNull()
+    expect(document.querySelector('.collaboration-detail')?.textContent).toContain('原消息待核对')
+    expect(document.querySelector('.collaboration-detail')?.textContent).not.toContain(another.content)
+  })
   it('node selection is local until the explicit open-session action and uses slot identity', async () => {
     const f = facts(), actions = await render(f)
     const node = document.querySelector<HTMLButtonElement>('.collaboration-node')!

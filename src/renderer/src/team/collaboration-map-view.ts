@@ -29,6 +29,7 @@ export interface CollaborationMapLink {
 }
 
 export interface CollaborationMapFacts {
+  workspaceId: string
   scopeKey: string
   runId: string
   groupId: string
@@ -43,6 +44,7 @@ export interface CollaborationMapFacts {
   members: CollaborationMapMember[]
   links: CollaborationMapLink[]
   messages: TeamMessage[]
+  threadSubjects: Record<string, string>
   pendingCount: number
   operatorCount: number
   formerMemberCount: number
@@ -148,11 +150,13 @@ export function collaborationMapFacts(
     links.set(id, link)
   }
   const leadId = view.effectiveLeadSlotId && memberById.has(view.effectiveLeadSlotId) ? view.effectiveLeadSlotId : undefined
+  // Keep each native thread subject once; do not duplicate it for every message.
+  const threadSubjects = scoped ? Object.fromEntries(snapshot.threads.filter(thread => thread.runId === run.id).map(thread => [thread.id, thread.subject])) : {}
   return {
-    scopeKey: `${run.id}:${group.id}`, runId: run.id, groupId: group.id, name: group.name, goal: group.goal,
+    workspaceId: run.workspaceId, scopeKey: `${run.id}:${group.id}`, runId: run.id, groupId: group.id, name: group.name, goal: group.goal,
     closed, dissolved: group.status === 'dissolved', scoped,
     leadId, missingLead: !closed && !!view.effectiveLeadSlotId && !leadId, actingLead: !!leadId && group.actingLeadSlotId === leadId,
-    members, links: [...links.values()].sort((a, b) => a.id.localeCompare(b.id)), messages,
+    members, links: [...links.values()].sort((a, b) => a.id.localeCompare(b.id)), messages, threadSubjects,
     pendingCount: [...links.values()].reduce((total, link) => total + link.pending.length, 0),
     operatorCount, formerMemberCount
   }

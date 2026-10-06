@@ -574,3 +574,21 @@ main service 从自己的 private sourceEpoch 给 page／record／change／push 
 证据在 `preview-screenshots/notification-implementation/ui/scope-clipping-audit.json` 及同前缀浅深主题、窄窗、长内容截图；`scope-clipping-focused.log`、`scope-clipping-regression.log`、`scope-clipping-typecheck.log`、`scope-clipping-build.log`、`scope-clipping-dead-code.log` 记录当前回归与构建通过。`protected-scope-clipping-audit.json` 确认两个保护树和四个既有删除没有变化。临时 viewport 和 preview 外观已恢复，自建 tab/server 清理，不启动 production main、Cursor 或 OS 通知。
 
 本次本地提交仅包含视觉修复和对应 tests/doc；第三十一批未提交的来源接线仍保留，修正了其 fixture 将 UI `scoped` 标记误传给持久通知 scope 的测试错误，没有放宽生产校验。该接线虽参与当前工作树回归通过，仍未单独完成原页视觉/worker 验收，不混入本次提交。未 push、发布、安装或重启；没有 Windows 真机证据，完整通知目标仍未完成。
+
+## 第三十一批 · 原协作消息的精确原页阅读
+
+接续上一轮已提交的视觉修复，核对并完成之前未提交的 operator-message 阅读接线。主进程与 renderer 共用既有 native 薄字段数组：`id / kind / createdAt / sender slotId / groupId / threadId / subject`。Node SHA-256 与 WebCrypto 计算同一材料；它不是完整正文 hash，不读取或复制正文、凭据、Agent read/responded receipt。组视图保留原 workspace 身份，线程主题按 thread 只保存一份，不按每条消息重复拷贝。
+
+原页只在当前选中正文实际可见、窗口有焦点、确切 workspace/run/group/message/kind/digest 一致时，由原 private reader 确认相应通知版本；沿用其 storageEpoch、分页、并发上限、迟到回包和卸载围栏。认可合法 `:facts:<digest>:data:N` 重核身份，不把固定旧 eventId、prior-data、scope-unconfirmed 或别的组/批次冒充当前原事实。没有有效 WebCrypto proof 就保留未读，不回退到标题/CH 匹配或原业务探测。Toast 抑制复用同一个精确元素 matcher；抑制本身不写人类已读，更不改 Agent 回执。
+
+二次审查又发现两处边界：正文 DOM 已切作用域而旧 passive reader 尚未清理时，仅比 message/digest 不足；现在 readable predicate 同时核对所有原 scope/kind 属性。固定 messageId 当前缺席时，仍存的 pair link 不得把自己的 latest message 顶上来；现在保留明确“原消息待核对”，不会替换为另一条人类或 Agent-to-Agent 消息。App 已按 scope/message key 重挂载显式来源导航，未另加选择状态机、轮询或业务重试。
+
+`tests/operator-message-source-read.test.tsx` 覆盖真实 private ledger、Node/WebCrypto 一致材料、合法 rebase suffix、元数据变化、focus/可见性/覆盖模态、迟到查询与 DOM 边界、卸载后的迟到 crypto、晚提交 push 及 legacy 的显式阅读降级；原 Agent receipt 保持不变。组原页 tests 补了人类消息缺席和仍存在 pair 的 Agent-to-Agent 固定消息缺席；map tests 确认只取当前 run 的线程主题；Toast tests 确认精确抑制和错误作用域不抑制，且不擅自读通知。
+
+最终 typecheck / 全套 tests / build / dead-code 检查通过：`operator-source-read-*-final.log`，312 files、2974 passed、1 skipped。更新的 operator-reads verifier 在真实构建 worker、真实原 Team/Collaboration 服务下，检查 shared tuple 与持久 digest、相同 counter 的新主题/类型重核、旧 scope/缺席恢复、50,000 原格式身份和原请求次数不增；共二十二类隔离 fixtures（含 operator-reads）在 Node 与 macOS Electron as-node 复跑全通过，连同原 MCP/channel 冒烟见 `operator-source-read-verification-matrix.log`。这些不是 production main 或原生 OS 送达实机。
+
+真实 CUA 冷加载纯 preview `operator-read` 使用实际产品组件和同一个原薄 metadata proof，私有 fixture 有合法 rebase suffix。进入运行页、打开协作图看到晚到的普通状态，仍为 1 未读；明确选择对应正文并可见后变为 0，中心保留 1 条已读记录。旧 `human` fixture 保留固定 eventId：正文可见仍 1 未读，用户在中心明确阅读后才为 0；来源动作仍定位原消息，不跳到晚到状态。默认实际 984×554 与 320×720 暗色的协作 dialog/body 无横向溢出；图本身保留原局部横向滚动。窄窗检查不是全 App 导航通过证明：在低于 native 最小窗宽的纯浏览器里遇到顶栏点击重叠，仍列入后续全布局审查，不用此单点截图泛称“所有响应式完成”。
+
+中途删掉无用 effect dependency 时，开发 HMR 保留的旧 hook 树报过 dependency-array 长度变化警告，原证据保留在 `ui/operator-source-read-development-audit.json`；代码稳定后的冷加载重新执行上述流程，`ui/operator-source-read-audit.json` 的 logs 为空，不靠清除旧日志冒充通过。最终图为 `ui/operator-source-read-after-final.jpg` 和 `ui/operator-source-read-narrow-dark-final.jpg`。临时 override 已用文档 API 清除，preview 外观回到 system，自建标签/服务清理；没有启动当前软件、Cursor、真实账号/模型、退款/删除或 OS 通知。
+
+只本地提交，不 push、发版或安装；保护树核对见 `protected-operator-source-read-audit.json`。**完整目标仍未完成**：本批收口原协作消息，不替代 legacy MCP 原 proof 的恢复关联、会话/问卷/回复/队列历史恢复、未发 usage 载荷和 MCP 校验前未知归属、长期容量/完整布局、正式包和 Windows/macOS 权限/声音/勿扰/送达验收。后续继续逐项实现，原完整要求不缩减。

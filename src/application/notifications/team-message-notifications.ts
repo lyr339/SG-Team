@@ -5,6 +5,7 @@ import type { NotificationService } from '../notification-service'
 import { readOperatorMessageState, reduceOperatorMessages, preserveOperatorMessageMetadata, type OperatorMessageInput, type OperatorMessageState, type NotificationOperatorMessageFact } from '../../domain/team-message-notification'
 import { NotificationProjectionSource } from './projection-source'
 import { NativeReadOrder } from './native-read-order'
+import { operatorMessageNativeFields } from '../../domain/operator-message-read'
 
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 // The native digest already covers ID/kind/thread/time/group/subject. Role name
@@ -53,7 +54,8 @@ export function connectOperatorMessageNotifications(messages: {
         if (currentRead && (!message || message.id !== id || message.runId !== run.id)) throw Error('原协作消息范围或身份无法确认')
         if (!message || message.id !== id || message.runId !== run.id || message.recipient.type !== 'operator' || message.sender.type !== 'agent') continue
         const thread = threads.get(message.threadId), subject = thread?.runId === run.id ? thread.subject : undefined
-        const native = [id, message.kind, message.createdAt, message.sender.slotId, message.groupId, message.threadId, subject]
+        const native = operatorMessageNativeFields(message, subject)
+        if (!native) throw Error('原协作消息阅读身份无法确认')
         nativeFacts.push(native)
         facts.push(Object.freeze({ id, kind: message.kind, at: message.createdAt, sender: members.get(message.sender.slotId) ?? '原成员', ...(subject ? { subject } : {}),
           scope: Object.freeze({ workspaceId: run.workspaceId, runId: run.id, ...(message.groupId ? { groupId: message.groupId } : {}) }), digest: hash(native) }))

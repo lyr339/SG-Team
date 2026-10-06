@@ -8,6 +8,7 @@ import { notificationElementVisible } from './notification-visible'
 import { notificationSessionScopeMatches } from './notification-session-scope'
 import { notificationIsQuiet, notificationSessionMode } from '../../../domain/notification-delivery-policy'
 import { mcpWriteResultElement } from './mcp-write-result-element'
+import { operatorMessageResultElement } from './operator-message-result-element'
 
 function nextReminder(store: NotificationStore): ToastCandidate[] {
   const preferences = store.snapshot().preferences
@@ -22,6 +23,10 @@ function sourceResultVisible(record: NotificationRecord): boolean {
   if (!document.hasFocus() || !record.origin) return false
   if (record.eventType === 'mcp.write-result') {
     const result = mcpWriteResultElement(document, record)
+    return Boolean(result && notificationElementVisible(result))
+  }
+  if (record.eventType === 'team.operator-message') {
+    const result = operatorMessageResultElement(document, record)
     return Boolean(result && notificationElementVisible(result))
   }
   if (record.eventType === 'question.state' && record.target?.kind === 'session') {

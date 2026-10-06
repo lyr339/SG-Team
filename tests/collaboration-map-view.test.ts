@@ -20,6 +20,16 @@ function fixture() {
 }
 
 describe('real collaboration diagram projection', () => {
+  it('carries original workspace identity and exact current-run thread subjects, without copying a foreign scope', () => {
+    const f = fixture(), own = { ...f.message('to-operator'), recipient: { type: 'operator' as const } }
+    f.put(own)
+    f.snapshot.threads.push({ id: own.threadId, runId: f.run.id, groupId: f.group.group.id, subject: '原线程主题', createdAt: 1, updatedAt: 1 },
+      { id: 'foreign-thread', runId: 'other-run', subject: '不采用别的批次主题', createdAt: 1, updatedAt: 1 })
+    expect(f.facts().workspaceId).toBe(f.run.workspaceId)
+    expect(f.facts().threadSubjects).toEqual({ [own.threadId]: '原线程主题' })
+    f.snapshot.runId = 'other-run'
+    expect(f.facts().scoped).toBe(false); expect(f.facts().threadSubjects).toEqual({})
+  })
   it('uses slot identity, exact run/group scope and deduplicated written messages', () => {
     const f = fixture(), own = f.message('own'), foreign = { ...f.message('foreign'), groupId: 'other' }, old = { ...f.message('old'), runId: 'old-run' }
     f.put(own, foreign, old)

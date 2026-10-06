@@ -16,6 +16,7 @@ import { NotificationService } from '../src/application/notification-service'
 import { connectOperatorMessageNotifications } from '../src/application/notifications/team-message-notifications'
 import { connectNativeScopeAvailabilityNotifications } from '../src/application/notifications/native-scope-availability'
 import { operatorMessageIds, readOperatorMessageState, type OperatorMessageState } from '../src/domain/team-message-notification'
+import { operatorMessageNativeFields, operatorMessageNotificationDigest } from '../src/domain/operator-message-read'
 import type { NotificationPush } from '../src/domain/notification'
 import type { DesktopSnapshot } from '../src/shared/desktop-api'
 
@@ -59,6 +60,10 @@ try {
   const originalSourceKey = `operator-messages:${hash([team.activeWorkspaceId, runId])}`, checkpoint = readOperatorMessageState((await owner.sourceState(originalSourceKey)).data, originalSourceKey)!
   assert.equal(checkpoint.seenEncoding, 'team-message-uuid'); assert.equal(operatorMessageIds(checkpoint).length, 231)
   const active = (await owner.page({ key: `operator-message:${rows[0]!.id}` })).records[0]!
+  const firstNative = original.messages[rows[0]!.id]!, firstSubject = original.threads.find(thread => thread.id === firstNative.threadId)?.subject
+  assert.deepEqual(operatorMessageNativeFields(firstNative, firstSubject), [firstNative.id, firstNative.kind, firstNative.createdAt, firstNative.sender.type === 'agent' ? firstNative.sender.slotId : undefined,
+    firstNative.groupId, firstNative.threadId, firstSubject]) // Existing durable native tuple, not a new body/receipt hash.
+  assert.equal(operatorMessageNotificationDigest(active), hash(operatorMessageNativeFields(firstNative, firstSubject)))
   const readReceipt = await owner.read(active.id, active.revision)
   assert.equal(readReceipt.record?.readRevision, active.attentionRevision)
   const counts = current.counts(), committed = (await owner.sourceState(originalSourceKey)).revision
@@ -74,6 +79,9 @@ try {
   assert.equal(rechecked.id, active.id); assert.equal(rechecked.subjectState, 'response'); assert.notEqual(rechecked.eventId, active.eventId); assert.match(rechecked.detail!, /current same-counter subject/)
   assert.equal(rechecked.attentionRevision, active.attentionRevision); assert.equal(rechecked.readRevision, readReceipt.record?.readRevision)
   assert.equal(changed.messages[rows[0]!.id]?.receipt.readAt, undefined)
+  const changedNative = changed.messages[rows[0]!.id]!, changedSubject = changed.threads.find(thread => thread.id === changedNative.threadId)?.subject
+  assert.equal(operatorMessageNotificationDigest(rechecked), hash(operatorMessageNativeFields(changedNative, changedSubject)))
+  assert.notEqual(operatorMessageNotificationDigest(rechecked), operatorMessageNotificationDigest(active))
   vacuumDatabaseInto(path, populated)
   database.prepare('DELETE FROM team_messages WHERE id=?').run(rows[1]!.id)
   current.messages.getSnapshot(); await current.flush()
@@ -102,7 +110,7 @@ try {
   console.log(JSON.stringify({ runtime: process.versions.electron ? 'Electron' : 'Node', realBuiltWorker: true, realOriginalCollaborationAndTeamServices: true,
     originalOneTeamReadAndOneMessageReadPreserved: true, stable100OriginalReadsNoPrivateRewrites: true, equalCounterThinContentReconciled: true,
     missingRecordAndWholeScopeNotClaimedRespondedOrDeleted: true, crossRestartHistoryNeedsSpecificOriginalRead: true,
-    agentReceiptsUntouched: true, noBodyCopied: true, noHistoricalAlertsReplayed: true, realRpcStores50000NativeFormatIdentitiesUnderOriginal2MiBLimit: true, isolated: true }, null, 2))
+    exactSharedThinNativeDigest: true, agentReceiptsUntouched: true, noBodyCopied: true, noHistoricalAlertsReplayed: true, realRpcStores50000NativeFormatIdentitiesUnderOriginal2MiBLimit: true, isolated: true }, null, 2))
 } finally {
   database?.close(); await current.close().catch(() => {}); await owner.close().catch(() => {})
   await Promise.allSettled(workers.filter(worker => worker.threadId !== -1).map(worker => worker.terminate()))

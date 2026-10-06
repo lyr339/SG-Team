@@ -6,7 +6,7 @@ import { CollaborationCanvas } from './CollaborationCanvas'
 import { CollaborationMapIcon } from './GroupCollaborationEntry'
 import type { TeamMessage } from '../../../domain/team-collaboration'
 import './collaboration-map.css'
-import { useNotificationResultRead } from '../notifications/use-notification-result-read'
+import { useOperatorMessageNotificationRead } from '../notifications/use-operator-message-notification-read'
 
 interface Props {
   facts: CollaborationMapFacts
@@ -70,8 +70,7 @@ export function GroupCollaborationDialog({ facts, workspaceName, onClose, onOpen
     if (memberId && !facts.members.some(member => member.id === memberId)) setMemberId(undefined)
     if (linkId && !facts.links.some(link => link.id === linkId)) { setLinkId(undefined); setHoverLink(undefined) }
     if (hoverLink && !facts.links.some(link => link.id === hoverLink)) setHoverLink(undefined)
-    if (messageId && !facts.messages.some(message => message.id === messageId)) setMessageId(undefined)
-  }, [facts, memberId, linkId, messageId, hoverLink])
+  }, [facts, memberId, linkId, hoverLink])
   useEffect(() => {
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : undefined
     const saved = [...document.body.children].filter((element): element is HTMLElement => element instanceof HTMLElement && element !== backdrop.current)
@@ -119,11 +118,11 @@ export function GroupCollaborationDialog({ facts, workspaceName, onClose, onOpen
   }, [])
   const selectedMember = facts.members.find(member => member.id === memberId)
   const selectedLink = display.links.find(link => link.id === focusLinkId)
-  const selectedMessage = facts.messages.find(message => message.id === messageId) ?? selectedLink?.message
-  const latestMessage = selectedMessage ?? (selectedMember ? [...facts.messages].reverse().find(message =>
+  const selectedMessage = messageId ? facts.messages.find(message => message.id === messageId) : selectedLink?.message
+  const latestMessage = messageId ? selectedMessage : selectedMessage ?? (selectedMember ? [...facts.messages].reverse().find(message =>
     message.sender.type === 'agent' && message.sender.slotId === selectedMember.id || message.recipient.type === 'agent' && message.recipient.slotId === selectedMember.id) : facts.messages.at(-1))
   const notificationKey = latestMessage?.recipient.type === 'operator' && latestMessage.sender.type === 'agent' ? `operator-message:${latestMessage.id}` : undefined
-  useNotificationResultRead(messageRef, notificationKey, notificationKey)
+  const messageDigest = useOperatorMessageNotificationRead(messageRef, latestMessage, facts, latestMessage ? facts.threadSubjects[latestMessage.threadId] : undefined)
   const openMember = (id: string): void => {
     restoreFocus.current = false
     if (!onOpenMember(id)) { restoreFocus.current = true; setError('该成员的会话已变更，暂时无法打开；协作记录仍可查看。') }
@@ -152,11 +151,15 @@ export function GroupCollaborationDialog({ facts, workspaceName, onClose, onOpen
     <section className="collaboration-detail" aria-label="当前协作详情">
       {selectedMember ? <header><strong>{selectedMember.name} · CH-{selectedMember.channelId ?? '?'}</strong><span>{selectedMember.stateLabel}</span></header>
         : latestMessage ? <header><strong>{collaborationActorLabel(facts, latestMessage, true)} <i aria-hidden="true">→</i> {collaborationActorLabel(facts, latestMessage, false)}</strong>
-          <span>{selectedLink?.label ?? (facts.closed ? '历史记录' : '最近记录')}</span></header> : <header><strong>{facts.scoped ? '尚无组内消息' : '消息记录暂未同步'}</strong></header>}
-      {latestMessage ? <div ref={messageRef} className="collaboration-detail__message" data-notification-key={notificationKey} data-notification-event={notificationKey}
+          <span>{selectedLink?.label ?? (facts.closed ? '历史记录' : '最近记录')}</span></header> : <header><strong>{messageId ? '原消息待核对' : facts.scoped ? '尚无组内消息' : '消息记录暂未同步'}</strong></header>}
+      {latestMessage ? <div ref={messageRef} className="collaboration-detail__message" data-notification-key={notificationKey}
+        data-notification-operator-message={notificationKey ? latestMessage.id : undefined} data-notification-operator-digest={messageDigest}
+        data-notification-operator-workspace={facts.workspaceId} data-notification-operator-run={facts.runId} data-notification-operator-group={facts.groupId}
+        data-notification-operator-kind={latestMessage.kind}
         onPointerDownCapture={event => { if (event.button === 0) holdMessageForInspection() }}
         onClickCapture={holdImageMessage} onContextMenuCapture={holdMessageForInspection}><MessageContent text={latestMessage.content} /><time dateTime={new Date(latestMessage.createdAt).toISOString()} title={new Date(latestMessage.createdAt).toLocaleString()}>{new Date(latestMessage.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</time></div>
-        : <p>{facts.scoped ? '成员加入并不等于已经通信；有真实组内消息后才会显示连线。' : '等待当前组的记录同步，不使用其他组或批次的数据。关闭后重新打开可重试同步。'}</p>}
+        : <p role={messageId ? 'status' : undefined}>{messageId ? '这条已定位的原消息当前没有在本次组记录中确认。不替换成别的消息，也不推断已回复、撤回或删除；可在全部记录中明确选择其他事项。'
+          : facts.scoped ? '成员加入并不等于已经通信；有真实组内消息后才会显示连线。' : '等待当前组的记录同步，不使用其他组或批次的数据。关闭后重新打开可重试同步。'}</p>}
       {error ? <p className="collaboration-dialog__error" role="alert">{error}</p> : null}
     </section>
   )

@@ -19,6 +19,7 @@ import { reduceContextThresholdNotifications } from '../../../domain/context-thr
 import { StrictMode } from 'react'
 import { createNotificationPreview } from './notification-preview'
 import { reduceOperatorMessages } from '../../../domain/team-message-notification'
+import { operatorMessageNativeFields } from '../../../domain/operator-message-read'
 import { reduceQueueNotifications } from '../../../domain/queue-notification'
 import { pageOperationNotification, pageOperationReference, type PageNotificationOperation, type PageOperationOutcome } from '../../../domain/page-operation-notification'
 import { createRoot } from 'react-dom/client'
@@ -196,7 +197,7 @@ if (previewRunStatus && initialTeam.activeRun) {
 //（席位形态：全部待命 / 待命+执行中+离线+待确认（CH-2 单独配置了另一模型）/ 各席配置分叉、没有多数 /
 //  已结束 / 会话池里两个协作组 + 一个刚解散的组）。
 const independentScene = (['live', 'mixed', 'spread', 'ended', 'groups'] as const).find((scene) => scene === previewParameters.get('independent'))
-  ?? (['operator-memory','group-effects','native-content'].includes(previewParameters.get('notifications')??'') ? 'groups' : undefined)
+  ?? (['operator-memory','group-effects','native-content','operator-read'].includes(previewParameters.get('notifications')??'') ? 'groups' : undefined)
 const poolLayoutCase = previewParameters.get('poolLayout')
 if (independentScene && initialTeam.activeRun) {
   const solo = initialTeam.members.find((member) => member.slot.solo === true)!
@@ -1363,7 +1364,7 @@ function previewPageResult(kind: PageNotificationOperation, id: string | undefin
   notificationPreview.offer(pageOperationNotification({ kind, id: actualId }, outcome, Date.now()))
   return pageOperationReference(kind, actualId)
 }
-if (previewParameters.get('notifications') === 'human' && state.team.activeRun && state.team.groups[0]) {
+if (['human','operator-read'].includes(previewParameters.get('notifications') ?? '') && state.team.activeRun && state.team.groups[0]) {
   const run = state.team.activeRun, group = state.team.groups[0], sender = group.members[0]!
   const message: TeamMessage = { id: 'preview:operator-message', runId: run.id, groupId: group.group.id, threadId: 'preview:operator-thread', clientMessageId: 'preview:operator-message',
     sender: { type: 'agent', slotId: sender.slot.id }, recipient: { type: 'operator' }, kind: 'question', createdAt: previewNow - 12_000,
@@ -1373,9 +1374,19 @@ if (previewParameters.get('notifications') === 'human' && state.team.activeRun &
   const unrelated = { ...message, id: 'preview:operator-latest', clientMessageId: 'preview:operator-latest', kind: 'status' as const, createdAt: previewNow,
     content: '这是一条晚到的普通状态记录，不应该替换你正在看的原消息。' }
   previewCollaboration.messages[unrelated.id] = unrelated; previewCollaboration.messageOrder.push(unrelated.id)
-  const projected = reduceOperatorMessages(undefined, { key: 'preview:operator-source', now: previewNow, facts: [{ id: message.id, kind: message.kind, at: message.createdAt,
-    sender: sender.role.name, subject: '确认后续方向', scope: { workspaceId: run.workspaceId, runId: run.id, groupId: group.group.id } }] }, true, 1)
-  projected.drafts.forEach(notificationPreview.offer)
+  const subject = '确认后续方向'
+  const project = (digest?: string) => {
+    const projected = reduceOperatorMessages(digest ? { version: 2, key: 'preview:operator-source', seen: [], rebases: 7 } : undefined, { key: 'preview:operator-source', now: previewNow, facts: [{ id: message.id, kind: message.kind, at: message.createdAt,
+      sender: sender.role.name, subject, scope: { workspaceId: run.workspaceId, runId: run.id, groupId: group.group.id }, ...(digest ? { digest } : {}) }] }, true, 1)
+    projected.drafts.forEach(notificationPreview.offer)
+  }
+  if (previewParameters.get('notifications') === 'operator-read') {
+    previewCollaboration.threads.push({ id: message.threadId, runId: run.id, groupId: group.group.id, subject, createdAt: message.createdAt, updatedAt: message.createdAt })
+    // Same native metadata as production. Browser-only fixture; no account,
+    // model, Agent receipt, notification read or business request is simulated.
+    void crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(operatorMessageNativeFields(message, subject))))
+      .then(result => project([...new Uint8Array(result)].map(byte => byte.toString(16).padStart(2, '0')).join('')))
+  } else project() // Keep the old fixed-event legacy scene for explicit-center reading checks.
 }
 notificationPreview.observeUpdate(previewUpdateStatus())
 if (automationSceneRun?.operationId) {

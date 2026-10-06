@@ -22,6 +22,24 @@ describe('single calm notification toast', () => {
     await act(async () => root.render(<NotificationToast store={store} blocked={false} onOpen={() => {}} />))
   })
   afterEach(async () => { await act(async () => root.unmount()); release(); host.remove(); vi.restoreAllMocks(); vi.useRealTimers() })
+  it.each([false, true])('operator source suppression requires the exact visible digest and scope; wrong scope = %s', async wrongScope => {
+    const body = document.createElement('div'), digest = '1'.repeat(64), nativeScope = { workspaceId: 'workspace', runId: 'run', groupId: 'group' }
+    Object.assign(body.dataset, { notificationOperatorMessage: 'native-message', notificationOperatorDigest: digest,
+      notificationOperatorWorkspace: wrongScope ? 'other-workspace' : nativeScope.workspaceId, notificationOperatorRun: nativeScope.runId,
+      notificationOperatorGroup: nativeScope.groupId, notificationOperatorKind: 'question' })
+    vi.spyOn(body, 'getBoundingClientRect').mockReturnValue({ width: 300, height: 70, top: 100, bottom: 170, left: 10, right: 310, x: 10, y: 100, toJSON: () => ({}) })
+    document.body.append(body)
+    const original: NotificationRecord = { ...record('operator-result'), key: 'operator-message:native-message', category: 'team', eventType: 'team.operator-message',
+      eventId: `operator-message:native-message:facts:${digest}:data:7`, subjectState: 'question', scope: nativeScope,
+      target: { kind: 'collaboration', runId: nativeScope.runId, groupId: nativeScope.groupId, messageId: 'native-message' }, origin: { module: 'run' } }
+    try {
+      await act(async () => store.accept({ health: 'ready', historyIncomplete: false, change: { changed: true, record: original,
+        summary: { revision: 1, total: 1, unread: 1, pending: 0, clearable: 0 } }, announcement: { id: 'operator-announcement', expiresAt: Date.now() + 60_000 } }))
+      expect(Boolean(document.querySelector('.notification-toast'))).toBe(wrongScope)
+      expect(api.readNotification).not.toHaveBeenCalled(); expect(api.readAllNotifications).not.toHaveBeenCalled()
+      expect(store.snapshot().summary.unread).toBe(1)
+    } finally { body.remove() }
+  })
   const push = async (id: string, revision = 1) => {
     await act(async () => store.accept({ change: { changed: true, summary: { revision, total: revision, unread: revision, pending: 0, clearable: 0 }, record: record(id) },
       announcement: { id, expiresAt: Date.now() + 60_000 }, health: 'ready', historyIncomplete: false }))
