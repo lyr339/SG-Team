@@ -5,6 +5,7 @@ import type { NotificationChange, NotificationDraft, NotificationMarker, Notific
 import type { NotificationWorkerCommand, NotificationWorkerReply } from './notification-worker'
 import type { NotificationHistoryIntegrity, NotificationHistoryStatus } from '../domain/notification-history'
 import type { OperatorMessageRecordMetadata } from '../domain/team-message-notification'
+import type { McpWriteRecordMetadata } from '../domain/mcp-write-notification'
 
 type WorkerFactory = (options: { workerData: { databasePath: string } }) => Worker
 type Waiter = { resolve: (value: unknown) => void; reject: (reason: Error) => void; timer: ReturnType<typeof setTimeout> }
@@ -166,6 +167,7 @@ export class NotificationWorkerPort implements NotificationRepository {
   sourceState(key: string): Promise<NotificationSourceState> { return this.call({ kind: 'sourceState', key }) }
   listNativeSources(query: NotificationSourceListQuery): Promise<NotificationSourceListPage> { return this.call({ kind: 'listNativeSources', query }) }
   operatorMessageRecords(keys: string[]): Promise<OperatorMessageRecordMetadata[]> { return this.call({ kind: 'operatorMessageRecords', keys }) }
+  mcpWriteRecords(keys: string[]): Promise<McpWriteRecordMetadata[]> { return this.call({ kind: 'mcpWriteRecords', keys }) }
   commitSource(key: string, expectedRevision: number, data: unknown, drafts: NotificationDraft[], now: number): Promise<NotificationSourceResult> {
     return this.call({ kind: 'commitSource', key, expectedRevision, data, drafts, now })
   }

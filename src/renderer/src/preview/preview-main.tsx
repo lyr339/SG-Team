@@ -1252,13 +1252,14 @@ if (previewParameters.get('notifications') === 'usage-store') {
   if (previewParameters.get('usageStore') === 'recovered') reduceUsageStorageNotifications(write.state, { key, id: 'c'.repeat(64), at: at+2000,
     fact: { kind: 'save', result: 'confirmed' } }, true, 3).drafts.forEach(notificationPreview.offer)
 }
-if (['mcp-write','source-history'].includes(previewParameters.get('notifications') ?? '') && state.team.activeRun) {
+if (['mcp-write','mcp-legacy','source-history'].includes(previewParameters.get('notifications') ?? '') && state.team.activeRun) {
   const member = state.team.members.find(member => member.binding && state.desktop.sessions.some(session => session.channelId === member.binding!.channelId && session.composerId)), binding = member?.binding
   const session = state.desktop.sessions.find(session => session.channelId === binding?.channelId)
   if (member && binding && session) {
     binding.composerId = session.composerId // Explicit mock installation, not a production binding or probe.
+    if (previewParameters.get('notifications') === 'mcp-legacy') binding.agentSessionId = `${binding.workspaceId}:ch-${binding.channelId}:${binding.generation}`
     const at = Date.now() - 30000, entryId = 'preview-mcp-write-entry'
-    const scope = { workspaceId: binding.workspaceId, runId: binding.runId, slotId: member.slot.id, groupId: member.slot.groupId,
+    const scope = { workspaceId: binding.workspaceId, runId: binding.runId, slotId: member.slot.id,
       bindingGeneration: binding.generation, sessionId: session.id, channelId: session.channelId, generation: String(session.generation), composerId: session.composerId }
     const examples = [
       { tool: 'team_memory', args: { channel_id: session.channelId, action: 'propose' }, payload: { ok: false, agentSessionId: binding.agentSessionId, code: 'internal_error', sgWriteFailure: { version: 1, reason: 'storage' }, message: '隔离预览：原写入没有返回确认。' } },
@@ -1271,7 +1272,14 @@ if (['mcp-write','source-history'].includes(previewParameters.get('notifications
         text: '原任务已经开始；后续协作记录尚未确认。记忆写入没有返回确认，不能据此认定未执行，也不要重复已成功的操作。', processBlocks: blocks }]
     const facts = examples.map((example, i) => ({ ...observedMcpWrite(`mcp-SG Team-${example.tool}`, example.args, JSON.stringify(example.payload))!,
       identity: String(i + 1).repeat(64), attentionKey: String(i + 1).repeat(64), blockId: blocks[i]!.id, entryId, at: at + i, name: `${session.roleName} · CH-${session.channelId}`, scope }))
-    reduceMcpWriteNotifications(undefined, { key: 'preview-mcp-write', facts, signature: 'isolated', now: at, monitorStartedAt: at }, true, 1).drafts.forEach(notificationPreview.offer)
+    const input = { key: 'preview-mcp-write', facts, signature: 'isolated', now: at, monitorStartedAt: at }
+    const projected = reduceMcpWriteNotifications(undefined, input, true, 1)
+    if (previewParameters.get('notifications') === 'mcp-legacy') {
+      const old = projected.drafts.map(draft => ({ ...draft, target: draft.target?.kind === 'session' ? { ...draft.target, mcpWrite: undefined } : draft.target }))
+      old.forEach(notificationPreview.offer)
+      reduceMcpWriteNotifications({ version: 1, key: input.key, seen: facts.map(f => f.identity), attentionFamilies: projected.state.attentionFamilies }, input, true, 2, old)
+        .drafts.forEach(notificationPreview.offer)
+    } else projected.drafts.forEach(notificationPreview.offer)
     if (previewParameters.get('notifications') === 'source-history' && facts[0]) {
       // Two actual native outputs, behind 230 newer unmounted records. A first-page-only observer cannot find them.
       const filler = Array.from({ length: 230 }, (_, index) => ({ ...facts[0]!, identity: (index + 1000).toString(16).padStart(64, '0'), attentionKey: (index + 2000).toString(16).padStart(64, '0'),

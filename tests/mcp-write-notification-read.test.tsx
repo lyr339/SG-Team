@@ -41,6 +41,13 @@ describe('one scoped native output read observer, not one subscription per proce
     await act(async () => (host.querySelector('[data-step-id] button') as HTMLButtonElement).click())
     await act(async () => { await Promise.resolve(); vi.advanceTimersByTime(30) })
   }
+  it('current comparison metadata cannot auto-read an old summary even when the native output exactly matches it', async () => {
+    const old = { ...record, subjectState: 'legacy-comparison' }
+    api.getNotificationPage.mockResolvedValue(page([old]))
+    await act(async () => root.render(<Workspace />)); await expand()
+    expect(api.getNotificationPage).toHaveBeenCalledOnce(); expect(api.readNotification).not.toHaveBeenCalled()
+    expect(mcpWriteResultElement(host, old)).toBeUndefined()
+  })
   it('does not query/read a collapsed header or input; actual native output expansion queries once and reads its exact result', async () => {
     await act(async () => root.render(<Workspace />))
     expect(api.getNotificationPage).not.toHaveBeenCalled(); expect(api.readNotification).not.toHaveBeenCalled()

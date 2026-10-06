@@ -8,6 +8,7 @@ import { normalizeNotificationPreferences, notificationContentSignature, notific
 import { NOTIFICATION_ROUTINE_RETENTION_MS, validateNotificationGapId, validateNotificationIntegrity, type NotificationHistoryIntegrity, type NotificationHistoryStatus } from '../../domain/notification-history'
 import { notificationFingerprint, fingerprintSignature } from '../../application/notification-fingerprint'
 import type { OperatorMessageRecordMetadata } from '../../domain/team-message-notification'
+import type { McpWriteRecordMetadata } from '../../domain/mcp-write-notification'
 
 type StoredRow = { payload: string }
 const knownNegativeTransactions = new WeakSet<object>()
@@ -244,6 +245,19 @@ export class SqliteNotificationRepository {
       const record = decodeRecord(row.payload)
       if (record.eventType !== 'team.operator-message') throw Error('原协作消息记录类型无法验证')
       return { key: record.key, scope: record.scope, attention: record.attention, source: record.source, subjectState: record.subjectState, sourceRevision: record.sourceRevision }
+    })
+  }
+  mcpWriteRecords(keys: string[]): McpWriteRecordMetadata[] {
+    if (!Array.isArray(keys) || keys.length > 100 || keys.some(key => typeof key !== 'string' || !/^mcp-write:[a-f0-9]{64}$/.test(key))
+      || new Set(keys).size !== keys.length) throw Error('私有 MCP 摘要元数据查询无效')
+    if (!keys.length) return []
+    const rows = this.db.prepare(`SELECT payload FROM desktop_notifications WHERE semantic_key IN (${keys.map(() => '?').join(',')})`).all(...keys) as StoredRow[]
+    return rows.map(row => {
+      const r = decodeRecord(row.payload)
+      if (r.eventType !== 'mcp.write-result') throw Error('原 MCP 摘要类型无法验证')
+      return { key: r.key, eventId: r.eventId, subjectState: r.subjectState, scope: r.scope, target: r.target, title: r.title, detail: r.detail, source: r.source,
+        tone: r.tone, state: r.state, attention: r.attention, occurredAt: r.occurredAt, timeBasis: r.timeBasis, sourceRevision: r.sourceRevision,
+        archivedAt: r.archivedAt, origin: r.origin }
     })
   }
   page(query: NotificationQuery = {}): NotificationPage {

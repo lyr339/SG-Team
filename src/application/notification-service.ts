@@ -6,6 +6,7 @@ import { NotificationHistoryController, notificationHistoryPort } from './notifi
 import type { NotificationHistoryIntegrity } from '../domain/notification-history'
 import { notificationFingerprint } from './notification-fingerprint'
 import type { OperatorMessageRecordMetadata } from '../domain/team-message-notification'
+import type { McpWriteRecordMetadata } from '../domain/mcp-write-notification'
 
 /** One asynchronous owner, independent from business transaction locks or renderer route lifetimes. */
 export class NotificationService {
@@ -176,6 +177,17 @@ export class NotificationService {
         if (!this.repository.operatorMessageRecords) throw Error('私有协作消息元数据暂不可用')
         const records = await this.repository.operatorMessageRecords(keys)
         if (epoch !== this.sourceEpoch) throw Error('私有协作消息核对跨越存储代次')
+        this.recovered(); return records
+      } catch (error) { this.degraded(); throw error }
+    })())
+  }
+  mcpWriteRecords(keys: string[]): Promise<McpWriteRecordMetadata[]> {
+    const epoch = this.sourceEpoch
+    return this.tracked((async () => {
+      try {
+        if (!this.repository.mcpWriteRecords) throw Error('私有 MCP 摘要元数据暂不可用')
+        const records = await this.repository.mcpWriteRecords(keys)
+        if (epoch !== this.sourceEpoch) throw Error('私有 MCP 摘要核对跨越存储代次')
         this.recovered(); return records
       } catch (error) { this.degraded(); throw error }
     })())

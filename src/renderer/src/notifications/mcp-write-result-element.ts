@@ -4,7 +4,7 @@ import { mcpWriteReadIdentity } from '../../../domain/mcp-write-observation'
 
 /** A visible header, another CH, or an old binding is not the original write result. */
 export function mcpWriteResultElement(root: ParentNode, record: NotificationRecord): HTMLElement | undefined {
-  if (record.eventType !== 'mcp.write-result' || record.target?.kind !== 'session' || !record.target.blockId || !record.target.mcpWrite) return
+  if (record.eventType !== 'mcp.write-result' || record.subjectState === 'legacy-comparison' || record.target?.kind !== 'session' || !record.target.blockId || !record.target.mcpWrite) return
   for (const element of root.querySelectorAll<HTMLElement>('[data-notification-mcp-block]')) {
     if (element.dataset.notificationMcpBlock !== record.target.blockId || element.dataset.notificationMcpStatus !== record.subjectState
       || element.dataset.notificationMcpChannel !== record.scope.channelId || element.dataset.notificationMcpProof !== mcpWriteReadIdentity(record.target.mcpWrite)) continue

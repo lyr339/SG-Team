@@ -21,6 +21,10 @@ import type { ProcessBlockTool } from '../../src/domain/conversation-entry'
 import type { DesktopSnapshot } from '../../src/shared/desktop-api'
 import type { NotificationService } from '../../src/application/notification-service'
 import { McpWriteNotifications } from '../../src/application/notifications/mcp-write-notifications'
+import { sessionNotificationObservation } from '../../src/application/notifications/session-lifecycle-notifications'
+import { readMcpWriteState } from '../../src/domain/mcp-write-notification'
+import { createHash } from 'node:crypto'
+import type { NotificationDraft } from '../../src/domain/notification'
 import { createUnifiedChannelServer } from '../../src/mcp/unified-channel-server'
 import type { TeamChannelRuntime } from '../../src/mcp/team-tools'
 
@@ -63,7 +67,7 @@ export async function nativeMcpResultBlock(
 }
 
 /** Shared protocol/evidence fixture for Vitest and the compiled-worker Node/Electron smoke. */
-export async function verifyOriginalMcpWrites(owner: NotificationService) {
+export async function verifyOriginalMcpWrites(owner: NotificationService, options: { legacyComparison?: boolean } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'sg-notification-mcp-business-'))
   const cleanup: Array<() => void | Promise<void>> = []
   const calls: Record<string, number> = {}
@@ -199,9 +203,39 @@ export async function verifyOriginalMcpWrites(owner: NotificationService) {
     assert.equal(page.records.some(record => record.subjectState === 'secondary-unconfirmed' && record.title.includes('已返回')), true)
     assert.equal(/PRIVATE|fixture status IO|database is locked|proposal body/.test(JSON.stringify(page)), false)
     assert.equal(calls['memory.propose'], 3) // Three explicit MCP requests, never an observer retry.
+    if (options.legacyComparison) {
+      // Convert only this fixture's PRIVATE checkpoint/records to the supported
+      // older format. Original MCP/server/SQLite outcomes remain untouched.
+      const observations = sessionNotificationObservation(frame, team, clock, clock).facts
+      const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
+      for (const observation of observations) {
+        const key = `mcp-write-source:${observation.identity}`, checkpoint = await owner.sourceState(key)
+        const state = readMcpWriteState(checkpoint.data, key)
+        if (!state) continue
+        const rows = page.records.filter(row => state.seen.some(id => row.key === `mcp-write:${id.replace(/^~/, '')}`))
+        const drafts: NotificationDraft[] = rows.map(({ id: _id, revision: _revision, attentionRevision: _attention, readRevision: _read, createdAt: _created, updatedAt: _updated,
+          readAt: _readAt, archivedAt: _archived, storageEpoch: _epoch, ...row }) => ({ ...row, sourceRevision: row.sourceRevision + 1,
+          target: row.target?.kind === 'session' ? { ...row.target, mcpWrite: undefined } : row.target, renewAttention: false, announce: false }))
+        assert.equal((await owner.commitSource(key, checkpoint.revision, { ...state, version: 1, seen: state.seen.map(id => id.replace(/^~/, '')) }, drafts)).applied, true)
+        source.source.invalidateCheckpoint(key)
+      }
+      const announced: unknown[] = [], stop = owner.subscribe(event => { if (event.announcement) announced.push(event.announcement) })
+      const beforeComparison = { ...calls }
+      try {
+        source.observe(frame, team); await source.source.flush()
+        assert.deepEqual(calls, beforeComparison)
+        const compared = await owner.page()
+        assert.equal(compared.summary.total, page.summary.total); assert.equal(compared.summary.unread, page.summary.unread)
+        assert.equal(compared.records.filter(row => row.subjectState === 'legacy-comparison').length, page.records.length)
+        assert.ok(compared.records.every(row => row.detail?.includes('当前结果仅供对照')))
+        assert.equal(announced.length, 0)
+        assert.equal(/PRIVATE|proposal body/.test(JSON.stringify(compared)), false)
+      } finally { stop() }
+    }
     return { realOriginalMcpServer: true, realSqliteWriteLock: true, realNativeHookModernAndLegacy: true, originalRequests: requests,
       definitions: tools.length, healthyAndDomainRefusalsQuiet: true, successfulPrimaryWithUnconfirmedSecondary: true,
-      originalBusinessCountsPreserved: true, previousUnknownAttemptImmutable: true, noRawParametersOrBodies: true, isolated: true }
+      originalBusinessCountsPreserved: true, previousUnknownAttemptImmutable: true, noRawParametersOrBodies: true,
+      ...(options.legacyComparison ? { currentComparisonWithoutHistoricalIdentityClaim: true, comparisonDidNotReadOldSummariesOrReplayModelCalls: true } : {}), isolated: true }
   } finally {
     for (const close of cleanup.reverse()) { try { await close() } catch {} }
     rmSync(directory, { recursive: true, force: true })

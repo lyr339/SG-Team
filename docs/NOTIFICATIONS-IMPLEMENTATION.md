@@ -604,3 +604,21 @@ React 回归覆盖实际 74px 工具栏的定位计算、重复激活和正文�
 真实 CUA 984×554 重现原场景后，工具栏 bottom151.9、详情 top163.7，正文 top207.1/bottom290.0，均在 body bottom491.1 以内；320×720 暗色换行工具栏 bottom161.7、详情 top173.6，正文 top217.0/bottom373.4，同样完整可见。焦点在详情，原未读仍只在对应正文显示后消减，logs=[]。见 `ui/operator-record-reveal-audit.json`、`ui/operator-record-reveal-after.jpg`、`ui/operator-record-reveal-narrow-dark.jpg`；两种截图逐一查看，不把旧部分遮挡图当最终效果。viewport override 和 preview 外观已清理，自建标签/服务停止。
 
 本批仅本地提交并保留完整目标。legacy proof 恢复、其余历史 feed、全布局及长期容量、正式包与 Windows/macOS 原生权限/声音/勿扰/送达仍需继续，不声明整套已经结束。
+
+## 第三十三批 · 旧 MCP 摘要的安全对照关联
+
+权威代码复核确认：旧 `McpWriteState.seen` 命中后直接跳过，旧摘要缺少 `target.mcpWrite` 时无法获得可靠来源入口；而旧摘要本身没有保存完整实体身份，不能拿当前工具 JSON 回填成“过去的原身份已恢复”。因此本批完成的是明确标注的**当前结果对照关联**，不是伪造历史 proof 或自动确认旧消息。
+
+只沿原 sealed/live Cursor 工具快照观察，在原调用 namespace、完整 workspace/run/slot/session/composer/installation generation、原 block/entry/time 和支持的旧生成格式严格一致时接入。Agent ID 另按 `agent-registrations.ts` 强制的 `workspaceId:ch-channel:generation` 格式核对，不从角色名/CH 推测。旧状态/格式/范围不匹配、已有精确 proof、归档/清理的记录均不替换。对照记录保留原 ID、原重要程度、attention/read revision 和已读时间，明确“当前结果仅供对照”；当前工具身份只服务对照导航，`legacy-comparison` 永远不被原页 reader 当成历史已读证明。不推旧 toast、不新增未读、不自动回复/重试/撤销业务。
+
+新增 worker 内部 `mcpWriteRecords` 只接收最多 100 个唯一、精确 `mcp-write:<digest>` key，返回已存的有限摘要 metadata；不接任意 SQL、不复制原参数/完整工具输出、不新增 renderer IPC 或公共 MCP 工具。主 service 和 projection 的 storageEpoch 双重围栏拒绝迟到旧代次 metadata；read-only BUSY 使用原有有界重试/worker session 围栏。正常新事实仍走同步 reducer 快路，不为每个 Token 做迁移查询。
+
+source checkpoint v2 每个既有身份仅增加一个 `~` 前缀表示“已检查”，不是历史 proof 或人类回执；没有再存一份 20,000 条身份。缺席、清理或歧义的记录同样推进检查点，231 条真实 private ledger 走 100/100/31，不因头批无法关联而死循环。单个 MCP source 的原 20,000 身份容量对应至多 200 批，处理围栏调整为 256；超过原容量仍披露缺口，不截重要数据。实际 compiled worker 在 Node/Electron RPC 保存并读回 20,000 已检查身份＋10,000 提醒 family，仍在原 2MiB 限制内。
+
+`tests/mcp-legacy-comparison.test.ts` 验证已读/未读保留、精确范围/时间/注册 actor、已有 proof 不覆写、未知格式不猜、跨 private generation 不落地、清理竞态不复活、metadata namespace/上限和有界容量。`mcp-write-notification-read.test.tsx` 验证即使当前原输出完全匹配对照身份，旧摘要也不会自动被读取。最终 typecheck/tests/build/dead-code 通过：`mcp-legacy-*-final.log`，313 files、2989 passed、1 skipped。
+
+新 verifier 复用原 MCP/server/SQLite/modern+legacy hook fixture，只把自己 PRIVATE 通知行和游标降成旧格式，再按当前原快照核对；原业务计数保持、旧未读不被偷清、无模型或原业务重放、无原文复制。二十三类 fixtures 在 Node 与 macOS Electron as-node 复跑及原 MCP/channel 冒烟全通过：`mcp-legacy-verification-matrix.log`；新增容量 RPC 实物见 `mcp-legacy-capacity-{node,electron}.log`。不是 production main、真实账号/Cursor 或实际 OS 通知验收。
+
+纯 CUA 产品组件预览：当前 native JSON 展开后仍 2 未读，中心明确阅读一条后变为 1，“对照工具结果”导航定位确切 `preview-mcp-write-0`，另一条旧摘要仍未读。精简说明不塞内部字段术语；默认实际 984×554 和暗色 320×720 面板无横向溢出、logs=[]。证据 `ui/mcp-legacy-audit.json`、`ui/mcp-legacy-center.jpg`、`ui/mcp-legacy-narrow-dark.jpg`。临时主题/viewport、自己 tab/server 清理，保护树与四个既有删除保持，见 `protected-mcp-legacy-audit.json`。
+
+只本地提交。**完整目标仍未完成**：不支持的历史格式/缺失身份只保留明确阅读，不声称无损恢复过去实体；会话/问卷/回复/队列的历史恢复、未发 usage 载荷和 MCP 校验前未知归属、长期容量/完整布局、正式包及 Windows/macOS 真权限/声音/勿扰/送达仍继续。完整要求和既有业务闸门不缩减，不 push、发布、安装或重启。

@@ -6,6 +6,7 @@ import { observedMcpWrite } from '../../domain/mcp-write-observation'
 import {
   readMcpWriteState,
   reduceMcpWriteNotifications,
+  legacyMcpWriteCandidates,
   type McpWriteFact,
   type McpWriteState,
   type McpWriteInput
@@ -32,8 +33,15 @@ export class McpWriteNotifications {
     this.source = new NotificationProjectionSource(
       owner,
       readMcpWriteState,
-      reduceMcpWriteNotifications,
-      (input) => input.signature
+      (previous, input, baseline, revision) => {
+        const candidates = legacyMcpWriteCandidates(previous, input)
+        if (!candidates.length) return reduceMcpWriteNotifications(previous, input, baseline, revision)
+        return owner.mcpWriteRecords(candidates.map(f => `mcp-write:${f.identity}`))
+          .then(rows => reduceMcpWriteNotifications(previous, input, baseline, revision, rows))
+      },
+      (input) => input.signature,
+      undefined,
+      256 // 20,000 old identities can be inspected in <=200 private 100-item transactions.
     )
   }
   observe(snapshot: DesktopSnapshot, team: TeamControlSnapshot): void {
