@@ -12,12 +12,15 @@
 .notification-icon-button { display: grid; place-items: center; flex: none; width: 28px; height: 28px; padding: 0; color: var(--muted); background: transparent; border: 0; border-radius: 6px; cursor: pointer; }
 .notification-icon-button svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; }
 .notification-icon-button:hover { color: var(--text); background: color-mix(in srgb, var(--text) 6%, transparent); }
-.notification-panel__toolbar { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 0 18px; border-bottom: 1px solid var(--color-border-tertiary); }
-.notification-tabs { display: flex; align-items: center; gap: 16px; }
-.notification-tabs button { min-height: 37px; padding: 3px 0 9px; color: var(--muted); background: transparent; border: 0; border-bottom: 2px solid transparent; font-size: var(--fs-13); cursor: pointer; }
+.notification-panel__toolbar { flex: none; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; padding: 0 18px; border-bottom: 1px solid var(--color-border-tertiary); }
+.notification-tabs { display: flex; flex: none; align-items: center; gap: 16px; }
+.notification-tabs button { display: inline-flex; align-items: center; justify-content: center; min-height: 40px; padding: 8px 0; color: var(--muted); background: transparent; border: 0; border-bottom: 2px solid transparent; font-size: var(--fs-13); line-height: 1.4; white-space: nowrap; cursor: pointer; }
 .notification-tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent-deep); font-weight: 600; }
 .notification-tabs button:hover { color: var(--text); }
-.notification-panel__toolbar select { max-width: 120px; padding: 3px 0 7px; border: 0; color: var(--text-soft); background: var(--surface-solid); font-size: var(--fs-12); cursor: pointer; }
+/* controls.css reserves 56px for the native select's padding/arrow. Keep its
+   intrinsic label width; wrap the toolbar instead of shrinking or clipping it. */
+.notification-panel__toolbar select { flex: none; width: auto; max-width: 100%; min-height: 32px; margin-left: auto; padding: 4px 0; border: 0; border-radius: 6px; color: var(--text-soft); background: var(--surface-solid); font-size: var(--fs-12); line-height: 1.4; cursor: pointer; }
+.notification-panel__toolbar select:hover { color: var(--text); background-color: var(--surface-soft); }
 .notification-panel__body { min-height: 0; flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
 .notification-list { margin: 0; padding: 0 18px; list-style: none; }
 .notification-row { min-width: 0; padding: 15px 0 14px; border-bottom: 1px solid var(--color-border-tertiary); content-visibility: auto; contain-intrinsic-size: auto 114px; }
@@ -57,7 +60,7 @@
 .notification-more { width: calc(100% - 36px); min-height: 32px; margin: 8px 18px 14px; color: var(--text-soft); background: transparent; border: 1px solid var(--color-border-secondary); border-radius: 7px; font-size: var(--fs-12); cursor: pointer; }
 .notification-more:hover { background: var(--surface-soft); }
 .notification-panel__footer { flex: none; padding: 9px 18px; border-top: 1px solid var(--color-border-tertiary); }
-.notification-panel__footer-actions { display: flex; align-items: center; gap: 17px; }
+.notification-panel__footer-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 17px; }
 .notification-panel__footer-actions > button:last-child { margin-left: auto; }
 .notification-confirm p { margin: 3px 0 5px; color: var(--text-soft); font-size: var(--fs-13); line-height: 1.5; }
 .notification-confirm > div { display: flex; justify-content: flex-end; gap: 16px; }
@@ -79,9 +82,9 @@
 .notification-preference:has(input:disabled) { cursor: default; opacity: .68; }
 .notification-preferences__note { margin: 2px 0 7px; color: var(--muted); font-size: var(--fs-12); line-height: 1.6; text-wrap: pretty; }
 .notification-preferences__feedback { margin: 6px 0; color: var(--color-text-warning); font-size: var(--fs-12); line-height: 1.65; overflow-wrap: anywhere; }
-.notification-hours { display: flex; align-items: end; gap: 13px; padding: 3px 0 8px; }
+.notification-hours { display: grid; grid-template-columns: minmax(0, 8em) auto minmax(0, 8em); align-items: end; gap: 10px; width: fit-content; max-width: 100%; padding: 3px 0 8px; }
 .notification-hours label { display: grid; gap: 6px; min-width: 0; color: var(--muted); font-size: var(--fs-12); }
-.notification-hours input { width: 108px; min-height: 32px; box-sizing: border-box; padding: 4px 8px; color: var(--text); background: var(--surface-solid); border: 1px solid var(--line); border-radius: 6px; font-size: var(--fs-13); font-variant-numeric: tabular-nums; }
+.notification-hours input { width: 100%; min-width: 0; min-height: 32px; box-sizing: border-box; padding: 4px 8px; color: var(--text); background: var(--surface-solid); border: 1px solid var(--line); border-radius: 6px; font-size: var(--fs-13); line-height: 1.4; font-variant-numeric: tabular-nums; }
 .notification-hours > span { align-self: center; padding-top: 22px; color: var(--muted); }
 .notification-category-table { width: 100%; margin-top: 8px; border-collapse: collapse; font-size: var(--fs-13); }
 .notification-category-table thead th { padding: 9px 4px; color: var(--muted); font-weight: 500; text-align: center; }
@@ -93,7 +96,7 @@
 .notification-category-table input { width: 15px; height: 15px; margin: 0; accent-color: var(--accent-deep); }
 .notification-preferences__save { margin: 15px 0 0; color: var(--muted); font-size: var(--fs-12); line-height: 1.5; }
 .notification-session-preference { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px 12px; margin: 13px 0 3px; padding-top: 12px; border-top: 1px solid var(--line-faint); color: var(--muted); font-size: var(--fs-12); }
-.notification-session-preference select { padding: 4px 7px; min-height: 28px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); background: var(--surface-solid); font-size: var(--fs-12); }
+.notification-session-preference select { padding: 4px 7px; min-height: 32px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); background: var(--surface-solid); font-size: var(--fs-12); line-height: 1.4; }
 .notification-session-preference small { grid-column: 1 / -1; color: var(--muted); line-height: 1.6; }
 .notification-toast { position: fixed; z-index: 145; right: max(16px, env(safe-area-inset-right)); bottom: max(16px, env(safe-area-inset-bottom)); display: grid; grid-template-columns: 18px minmax(0, 1fr) 28px; align-items: start; gap: 10px; width: min(420px, calc(100vw - 32px)); box-sizing: border-box; padding: 14px 12px 12px 16px; color: var(--text); background: var(--surface-solid); border: 1px solid var(--color-border-secondary); border-radius: 11px; box-shadow: var(--shadow-lg); animation: notification-enter 170ms ease-out; }
 .notification-toast > .notification-status-icon { margin-top: 20px; }
@@ -107,7 +110,7 @@
 .notification-toast__actions button + button { color: var(--muted); font-weight: 500; }
 .notification-toast__error { color: var(--color-text-warning) !important; }
 @keyframes notification-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
-@media (max-width: 520px) { .notification-panel-anchor { right: 12px !important; } .notification-panel__toolbar { gap: 8px; } .notification-tabs { gap: 12px; } }
+@media (max-width: 520px) { .notification-panel-anchor { right: 12px !important; } .notification-tabs { gap: 12px; } }
 @media (prefers-reduced-motion: reduce) { .notification-panel, .notification-toast { animation: none; } .notification-row__open > svg:last-child, .notification-preference > i, .notification-preference > i::after { transition: none; } }
 
 /* Integrity is factual, local and quiet; no colored rail or success-like dismissal. */

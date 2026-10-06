@@ -562,3 +562,15 @@ main service 从自己的 private sourceEpoch 给 page／record／change／push 
 11. 逐项执行设计文档的事件序列验收和真实组件视觉验证、原流程回归；正式打包环境及 Windows 边界验收。只有所有范围有当前证据后才能宣布整套完成。
 
 当前 preview 已提供 sample / long / many / toast、结构化自动化结果以及 human 协作消息场景，使用产品组件和领域映射，不接真实账号。正式主进程已接入软件更新、会话生命周期、具体重启意图、批量发起、自动化步骤结果、独立处理／清理、冷热切换以及第五批的消息／问卷／任务来源；其他重要跨页面来源、长期容量及系统送达实机仍未完成。每个剩余要求仍需逐源接入与验收，不能将完整目标勾为完成。
+
+## 视觉漏检修复 · 2026-10-07
+
+用户指出“所有工作区”文字被遮挡，优先停止扩展来源接线，复现和修复通知中心实际渲染。之前的功能测试和 panel 整体宽度检查没有证明原生 select 的文字区域足够，不能据此宣称视觉验收通过。
+
+根因是 toolbar 的 `max-width: 120px` 与 `controls.css` 的全局原生 select 样式叠加：左右 padding 合计 56px，实际只剩 64px，而当前 14px 字体的五个汉字需要约 70px。局部控件取消固定像素限宽、保留原生语义和共享箭头、禁止 flex 压缩；工具栏空间不足时整组换行，不缩小字体、不增加自定义弹层或业务请求。tabs 使用明确行高和对称内边距；底部动作可换行；定时安静字段改为有界 grid，避免固定宽度字段在窄窗溢出；会话提醒偏好的原生 select 同时统一行高和最小高度。
+
+真实 CUA 纯 preview 验收了默认实际视口 984×554、320px/480px 实际窄窗、984×360 低高度、浅深主题、两个工作区选项、长标题/路径详情、定时安静和会话“重点关注”字段。选择框现在按原生内容撑到约 126px，完整显示“所有工作区”和“当前工作区”；窄窗的 panel/body/toolbar 没有横向溢出。保留键盘筛选、精确阅读、确认清理和原作用域查询，新增真实 ledger 的范围切换回归确认不触发已读；CSS 契约测试只证明声明边界，实际渲染由截图与 DOM 测量单独证明。
+
+证据在 `preview-screenshots/notification-implementation/ui/scope-clipping-audit.json` 及同前缀浅深主题、窄窗、长内容截图；`scope-clipping-focused.log`、`scope-clipping-regression.log`、`scope-clipping-typecheck.log`、`scope-clipping-build.log`、`scope-clipping-dead-code.log` 记录当前回归与构建通过。`protected-scope-clipping-audit.json` 确认两个保护树和四个既有删除没有变化。临时 viewport 和 preview 外观已恢复，自建 tab/server 清理，不启动 production main、Cursor 或 OS 通知。
+
+本次本地提交仅包含视觉修复和对应 tests/doc；第三十一批未提交的来源接线仍保留，修正了其 fixture 将 UI `scoped` 标记误传给持久通知 scope 的测试错误，没有放宽生产校验。该接线虽参与当前工作树回归通过，仍未单独完成原页视觉/worker 验收，不混入本次提交。未 push、发布、安装或重启；没有 Windows 真机证据，完整通知目标仍未完成。

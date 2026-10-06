@@ -98,6 +98,21 @@ describe('notification center real-ledger interactions', () => {
     expect(host.querySelector('.notification-panel__refresh')).toBeNull()
     expect(repository.page().summary.unread).toBe(41)
   })
+  it('keeps both native range labels complete and switches query scope without reading notifications', async () => {
+    const other = repository.put(draft({ key: 'other-workspace', title: '其他工作区结果', scope: { workspaceId: 'b' } }), Date.now())
+    const global = repository.put(draft({ key: 'global-result', title: '全局维护结果', scope: {} }), Date.now())
+    await act(async () => { for (const listener of listeners) listener({ health: 'ready', historyIncomplete: false, change: global }) })
+    const scope = host.querySelector<HTMLSelectElement>('select[aria-label="通知工作区范围"]')!
+    expect([...scope.options].map(option => option.textContent)).toEqual(['所有工作区', '当前工作区'])
+    await act(async () => { scope.value = 'current'; scope.dispatchEvent(new Event('change', { bubbles: true })) })
+    expect(api.getNotificationPage).toHaveBeenLastCalledWith({ filter: 'all', workspaceId: 'a', limit: 30 })
+    expect(host.textContent).toContain('全局维护结果'); expect(host.textContent).not.toContain('其他工作区结果')
+    await act(async () => { scope.value = 'all'; scope.dispatchEvent(new Event('change', { bubbles: true })) })
+    expect(api.getNotificationPage).toHaveBeenLastCalledWith({ filter: 'all', limit: 30 })
+    expect(host.textContent).toContain(other.record!.title)
+    expect(api.readNotification).not.toHaveBeenCalled(); expect(api.readAllNotifications).not.toHaveBeenCalled()
+    expect(repository.page().summary.unread).toBe(4)
+  })
   it('a failed changed-scope lookup cannot leave the old list/count actionable under the new scope label', async () => {
     vi.mocked(api.getNotificationPage).mockRejectedValueOnce(Error('private read failed'))
     const scope = host.querySelector<HTMLSelectElement>('select[aria-label="通知工作区范围"]')!
