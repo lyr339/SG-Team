@@ -4,6 +4,7 @@ export interface NativeVersionEvidence {
   readEpoch?: number
   rebaseFrom?: number
   rebaseTo?: number
+  readSignature?: string
 }
 export interface NativeRebasePending {
   from: number
@@ -15,12 +16,14 @@ export interface NativeRebaseState {
   readEpoch?: number
   rebases?: number
   pendingRebase?: NativeRebasePending
+  readSignature?: string
 }
 /** Pure metadata validation, not a reset permission policy or workflow state machine. */
 export function validateNativeRebaseState(state: NativeRebaseState, maxMissing: number): void {
   if (
     (state.readOwner !== undefined && (typeof state.readOwner !== 'string' || !state.readOwner || state.readOwner.length > 128)) ||
-    [state.readEpoch, state.rebases].some((value) => value !== undefined && (!Number.isSafeInteger(value) || value < 0))
+    [state.readEpoch, state.rebases].some((value) => value !== undefined && (!Number.isSafeInteger(value) || value < 0)) ||
+    (state.readSignature !== undefined && (typeof state.readSignature !== 'string' || !/^[a-f0-9]{64}$/.test(state.readSignature)))
   )
     throw Error('原读取代次或恢复计数无效')
   const pending = state.pendingRebase
@@ -42,10 +45,12 @@ export function nativeRevisionRegressed(
   previous: (NativeRebaseState & { revision: number }) | undefined,
   input: NativeVersionEvidence & { revision: number }
 ): boolean {
+  if (input.readSignature !== undefined && (typeof input.readSignature !== 'string' || !/^[a-f0-9]{64}$/.test(input.readSignature))) throw Error('原读取内容指纹无效')
   return Boolean(
     previous &&
       input.currentRead &&
       (input.revision < previous.revision ||
+        (input.revision === previous.revision && previous.readSignature !== undefined && input.readSignature !== undefined && input.readSignature !== previous.readSignature) ||
         (input.rebaseFrom !== undefined && (input.readOwner !== previous.readOwner || input.readEpoch !== previous.readEpoch)))
   )
 }

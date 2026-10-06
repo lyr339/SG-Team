@@ -58,7 +58,7 @@ export function connectMemoryIssueNotifications(
   )
   const last = new Map<
     string,
-    { input: MemoryIssueInput; teamStamp: string; verified: boolean; activeGroups: Set<string> }
+    { input: MemoryIssueInput; teamStamp: string; nativeSignature: string; verified: boolean; activeGroups: Set<string> }
   >()
   let activeKey: string | undefined
 
@@ -110,7 +110,15 @@ export function connectMemoryIssueNotifications(
       activeKey = key
       if (!key || !run) return
 
-      const nativeVersion = order.version(key, snapshot.revision, currentRead)
+      // Original rows already returned by the service. Never persist bodies,
+      // re-read the repository or assume equal revision means equal contents.
+      const items = snapshot.items
+      const originalRows = snapshot.itemOrder.flatMap(id => { const item = items[id]; return item ? [item] : [] })
+      const nativeSignature = hash(originalRows.map(item => [
+        item.id, item.workspaceId, item.runId, item.groupId, item.version, item.status,
+        item.supersedesId, item.supersededById, item.title, item.updatedAt
+      ]).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))))
+      const nativeVersion = order.version(key, snapshot.revision, currentRead, nativeSignature)
       const activeGroups = new Set(
         team.groups
           .filter((view) => view.group.runId === run.id && view.group.status === 'active')
@@ -122,15 +130,17 @@ export function connectMemoryIssueNotifications(
       ])
       const cached = last.get(key)
       if (currentRead && cached && nativeVersion.epoch !== cached.input.readEpoch) {
-        // A genuine lower native read may contain the same item IDs. A request
-        // from the newer database is not evidence in this earlier data version.
+        // A genuine changed native dataset may contain the same item IDs.
+        // An older request is not authority for this new observed dataset.
         for (const fact of cached.input.facts) proofs.delete(fact.identity)
       }
       if (
         cached?.verified &&
         cached.input.revision === snapshot.revision &&
         cached.teamStamp === teamStamp &&
-        cached.input.readEpoch === nativeVersion.epoch
+        cached.input.readEpoch === nativeVersion.epoch &&
+        cached.nativeSignature === nativeSignature &&
+        cached.input.readSignature === nativeVersion.readSignature
       ) {
         // Original reads already happen in orchestration. Offer unchanged facts
         // again so an unknown private ACK can reload its CAS checkpoint.
@@ -139,6 +149,7 @@ export function connectMemoryIssueNotifications(
           currentRead,
           readOwner: nativeVersion.owner,
           readEpoch: nativeVersion.epoch,
+          readSignature: nativeVersion.readSignature,
           rebaseFrom: nativeVersion.rebaseFrom,
           rebaseTo: nativeVersion.rebaseTo,
           now: Date.now()
@@ -150,13 +161,13 @@ export function connectMemoryIssueNotifications(
         currentRead,
         readOwner: nativeVersion.owner,
         readEpoch: nativeVersion.epoch,
+        readSignature: nativeVersion.readSignature,
         rebaseFrom: nativeVersion.rebaseFrom,
         rebaseTo: nativeVersion.rebaseTo,
         key,
         revision: snapshot.revision,
         now: Date.now(),
-        facts: snapshot.itemOrder.flatMap((id) => {
-          const item = snapshot.items[id]
+        facts: originalRows.flatMap((item) => {
           if (!item || item.runId !== run.id || item.workspaceId !== run.workspaceId) return []
           const identity = identityOf(item.workspaceId, item.runId, item.id, item.version)
           if (proofs.get(identity)?.groupId !== item.groupId) proofs.delete(identity)
@@ -164,7 +175,7 @@ export function connectMemoryIssueNotifications(
           const state =
             !scopeVerified && item.status === 'proposed'
               ? 'unconfirmed'
-              : memoryRevisionIssue(item, item.supersedesId ? snapshot.items[item.supersedesId] : undefined)
+              : memoryRevisionIssue(item, item.supersedesId ? items[item.supersedesId] : undefined)
           const ceased =
             run.status === 'completed' ||
             Boolean(
@@ -195,7 +206,7 @@ export function connectMemoryIssueNotifications(
       const present = new Set(input.facts.map((fact) => fact.identity))
       for (const fact of cached?.input.facts ?? [])
         if (!present.has(fact.identity)) proofs.delete(fact.identity)
-      last.set(key, { input, teamStamp, verified: true, activeGroups })
+      last.set(key, { input, teamStamp, nativeSignature, verified: true, activeGroups })
       if (last.size > 16) {
         const oldest = last.keys().next().value!
         for (const fact of last.get(oldest)!.input.facts) proofs.delete(fact.identity)

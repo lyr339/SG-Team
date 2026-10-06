@@ -153,7 +153,7 @@ export function reduceMemoryIssueNotifications(
         category: 'team',
         source: '共享记忆',
         title: '这项提醒属于先前数据版本',
-        detail: `此前修订 ${pending.from} 保存了这项提醒。本次较早修订 ${pending.to} 的完整读取没有这项修订事项；不推断已采纳、驳回、删除或清理。`,
+        detail: `此前修订 ${pending.from} 保存了这项提醒。本次修订 ${pending.to} 的完整读取没有这项修订事项；不推断已采纳、驳回、删除或清理。`,
         scope: {
           ...old.scope,
           memoryId: old.id,
@@ -224,7 +224,7 @@ export function reduceMemoryIssueNotifications(
                     : '这项修订在当前读取中仍待审查'
     drafts.push({
       key,
-      eventId: `${key}:${state}${state === 'operator-review' ? `:${requestEpoch}` : ''}`,
+      eventId: `${key}:${state}${state === 'operator-review' ? `:${requestEpoch}` : ''}${rebases ? `:data:${rebases}` : ''}`,
       eventType: 'memory.issue',
       subjectState: state,
       category: 'team',
@@ -301,7 +301,7 @@ export function reduceMemoryIssueNotifications(
       subjectState: complete ? 'observed' : 'pending',
       category: 'team',
       source: '共享记忆核对',
-      title: '检测到较早的记忆数据版本',
+      title: pending.from === pending.to ? '相同修订号下的记忆数据已变化' : '检测到较早的记忆数据版本',
       detail: `源修订 ${pending.from} → ${pending.to}。${complete ? '已按本次原读取重新投影提醒。' : '旧事项正在分批核对。'}先前已发生的确认结果只属于先前数据版本；没有重放提案、审核、队列或 Agent 回执，也不声明业务恢复完成。`,
       scope:
         input.scope ??
@@ -329,6 +329,7 @@ export function reduceMemoryIssueNotifications(
       rebases,
       readOwner: input.readOwner ?? previous?.readOwner,
       readEpoch: input.readEpoch ?? previous?.readEpoch ?? 0,
+      ...(input.readSignature !== undefined ? { readSignature: input.readSignature } : previous?.readSignature ? { readSignature: previous.readSignature } : {}),
       ...(!complete && pending ? { pendingRebase: pending } : {})
     },
     drafts,

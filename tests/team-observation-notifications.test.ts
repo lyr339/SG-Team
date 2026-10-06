@@ -299,7 +299,9 @@ describe('unchanged native memory reads stay cheap without hiding unknown privat
       f.listeners.forEach(fn=>fn({kind:'snapshot',snapshot}));await f.source.source.flush()
       expect(f.h.ledger.page().summary.pending).toBe(1)
       for(let i=0;i<20;i++)f.listeners.forEach(fn=>fn({kind:'snapshot',snapshot}))
-      await f.source.source.flush();expect(reads).toBe(1);expect(f.h.ledger.page().summary.total).toBe(1)
+      // Equal revision is not an immutability proof. Each original read checks
+      // thin row metadata once, while reusing derived facts and private writes.
+      await f.source.source.flush();expect(reads).toBe(21);expect(f.h.ledger.page().summary.total).toBe(1)
       const sourceCommits=vi.mocked(f.h.port.commitSource).mock.calls.filter(call=>call[0].startsWith('memory-issues:'))
       expect(sourceCommits).toHaveLength(1);expect(f.h.owner.status().historyIncomplete).toBe(true)
     }finally{await f.source.close();await f.h.owner.close()}

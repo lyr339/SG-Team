@@ -113,7 +113,8 @@ export function reduceTaskNotifications(old: TaskNotificationState | undefined, 
     rows: { ...old?.rows },
     ...(input.nativeRevision !== undefined ? { nativeRevision: input.nativeRevision } : {}),
     ...(input.currentRead || old?.readOwner
-      ? { readOwner: input.readOwner ?? old?.readOwner, readEpoch: input.readEpoch ?? old?.readEpoch ?? 0, rebases }
+      ? { readOwner: input.readOwner ?? old?.readOwner, readEpoch: input.readEpoch ?? old?.readEpoch ?? 0, rebases,
+        ...(input.readSignature !== undefined ? { readSignature: input.readSignature } : old?.readSignature ? { readSignature: old.readSignature } : {}) }
       : {})
   }
   const drafts: NotificationDraft[] = []
@@ -151,7 +152,7 @@ export function reduceTaskNotifications(old: TaskNotificationState | undefined, 
     const same =
       previous &&
       JSON.stringify([previous.status, previous.attemptId, previous.reviewId]) === JSON.stringify([fact.status, fact.attemptId, fact.reviewId]) &&
-      !previous.priorData
+      !previous.priorData && !pending
     if (same) continue
     if (drafts.length >= NOTIFICATION_SOURCE_BATCH_LIMIT - (pending ? 1 : 0)) {
       complete = false
@@ -174,7 +175,7 @@ export function reduceTaskNotifications(old: TaskNotificationState | undefined, 
     const terminal = fact.status === 'done' || fact.status === 'failed'
     drafts.push({
       key: `task:${fact.id}`,
-      eventId: `task:${fact.id}:${fact.attemptId ?? 'none'}:${fact.reviewId ?? 'none'}:${fact.status}`,
+      eventId: `task:${fact.id}:${fact.attemptId ?? 'none'}:${fact.reviewId ?? 'none'}:${fact.status}${rebases ? `:data:${rebases}` : ''}`,
       subjectState: fact.status,
       eventType: 'task.state',
       category: 'team',
@@ -227,7 +228,7 @@ export function reduceTaskNotifications(old: TaskNotificationState | undefined, 
       subjectState: complete ? 'observed' : 'pending',
       category: 'team',
       source: '组任务核对',
-      title: '检测到较早的任务数据版本',
+      title: pending.from === pending.to ? '相同修订号下的任务数据已变化' : '检测到较早的任务数据版本',
       detail: `原修订 ${pending.from} → ${pending.to}。${complete ? '已按原读取核对当前通知。' : '旧提醒仍在分批核对。'}先前任务结果不作为当前阶段证明；没有重放任务、租约或验收，也不声明业务恢复完成。`,
       scope: input.scope ?? {},
       target: input.scope?.runId ? { kind: 'run', runId: input.scope.runId } : undefined,

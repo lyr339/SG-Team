@@ -41,7 +41,6 @@ export function connectTaskNotifications(
       const key = `task-notifications:${createHash('sha256')
         .update(JSON.stringify([snapshot.workspaceId, snapshot.runId]))
         .digest('hex')}`
-      const version = order.version(key, snapshot.revision, currentRead)
       const facts = snapshot.taskOrder.flatMap((id) => {
         const task = snapshot.tasks[id]
         if (!task || task.runId !== snapshot.runId) return []
@@ -58,11 +57,15 @@ export function connectTaskNotifications(
           }
         ]
       })
+      const nativeSignature = createHash('sha256').update(JSON.stringify(facts.map(fact => [fact.id, fact.title, fact.status, fact.attemptId, fact.reviewId, fact.scope, fact.failure])
+        .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))))).digest('hex')
+      const version = order.version(key, snapshot.revision, currentRead, nativeSignature)
       source.observe(key, {
         key,
         currentRead,
         readOwner: version.owner,
         readEpoch: version.epoch,
+        readSignature: version.readSignature,
         rebaseFrom: version.rebaseFrom,
         rebaseTo: version.rebaseTo,
         nativeRevision: snapshot.revision,

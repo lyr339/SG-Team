@@ -429,6 +429,22 @@ ui/group-effects-compact-light.jpg、ui/group-effects-details-light.jpg、ui/gro
 
 **完整目标仍未完成**：本批只是 private storage 代次恢复，不能代替 native 业务库的同 revision 异内容／整个旧 scope 消失。审查已定位原组／记忆适配器的 revision-only 事实缓存和原 TeamControlService 的业务缓存边界；后续必须只用真实原读取证明，不能为通知悄悄多查业务库或用缓存数据假装完整实读。其他 feeds 恢复关联、较早大历史准确阅读／长期完整事件序列、无可靠归属 MCP runtime／校验前问题、页面 usage extractor 尚无载荷时的诊断、正式包及真实 Windows/macOS 权限／声音／勿扰／系统送达仍须继续。仅本地提交，不推送、发布、安装或结束完整目标。
 
+### 第二十四批：原组／记忆／任务的同修订号内容矛盾核对
+
+原适配器的 revision-only memo 会忽略同修订号的实际新返回内容，不能以“counter 没变”证明 facts 没变。本批沿原已返回快照做有限薄字段内容指纹，只把哈希放入 main-only read evidence／私有 checkpoint；不复制原正文／文件／凭据、不多 native SQL 或发起业务查询／操作。组关系区分原成员／角色／lead／planPolicy 字段和 runtime-only 的 effective lead：后者可更新安静关系摘要，却不作为 native 数据恢复证据。记忆只捕获每次原返回的薄 item 元数据，派生 facts 保持复用；原测试的“相同 revision 就不访问 item”错误前提改为每原帧一次薄字段核对，没有放宽私有重写或额外原读取次数。
+
+在选定原 service owner 和递增真实 read stamp 下，相同 native revision 但原通知相关内容指纹不同会换核对代次。checkpoint 同时记已验证指纹，跨原 service 重启也可核对相同 counter 的不同实际返回；旧 checkpoint 没有指纹时不臆造 checksum。无 owner／stale stamp 不授权此 rebase；仍比较实际 legacy facts 的 memo，不让它们在相同 revision 下永远被旧缓存遮住。读数或时间变化不进指纹。记忆先前 operator proof 在已确认数据换代时撤销，不借旧 ID／版本推测原请求仍适用。
+
+相同修订的源变化沿原分批 CAS 对齐，不回放创建、审核、取消、租约或 Agent 回执，不宣布业务“恢复完成”；缺少原条目的旧提醒只说明属于先前数据投影，不猜完成／删除。summary 文案明确“相同修订号下的数据已变化”，不把 5→5 叫作较早版本。重核 fact 事件身份包含实际核对代次；同状态但不同失败原因不能被 status-only compare 丢弃，看到／读过旧正文的确认不能消费新正文。正常后续原读取复用 facts 和私有去重，不增成功流水账或补播旧提醒。
+
+证据为 `full-regression-native-content-final.log`（304 files，2891 passed，1 skipped）、`typecheck-native-content-final.log`、`build-native-content-final.log`、`dead-code-native-content-final.log`，原 `mcp-smoke-native-content-final.log`／`channel-smoke-native-content-final.log`。实际 SQLite 不改 counter 的 row 变化、live memory／task 原返回、ordered topology 原返回／runtime-only lead、same-state 新原因／exact event 阅读、缺条目、正常帧复用和 legacy 兼容一起回归。fixture 遵守原 bridge 接口及原 clientProposalId／source label 校验，不为测试修改业务解析规则。
+
+`scripts/verify-notification-native-content.ts` 在 Node／macOS Electron (`ELECTRON_RUN_AS_NODE=1`) 用真实编译 private worker＋原三种 service／repository 验证。隔离业务库仅由 fixture 构造同 counter 的数据分支，原通知逻辑不写业务。mem／task 当前原读取能核对；组的原 service 热 revision cache 仍返回旧数据时，明确断言通知没有假装看见新关系。原 service 关闭并按原构造重新读取后，实际等 revision 新关系才更新私有投影。无旧提示补播，原正文不进入 checkpoint，旧条目缺失不伪报终态；自有目录 finally 精确清理。原 worker／shutdown／recovery／history／context／native-rebase／team-observations／group-effects／mcp-writes／usage-storage／model-catalog／runtime-usage／context-source／usage-binding／source-epoch 十五类亦在两个 runtime 回归。本批不调用实际 Cursor／账号／模型／OS 通知或 production main。
+
+`ui/native-content-center-light.jpg`／`native-content-expanded-light.jpg`／`native-content-dark-narrow.jpg`／`native-content-final-light.jpg` 和 `native-content-ui-audit.json` 使用真实 domain reducer＋mock preload＋产品组件。same 5→5 文案不承诺恢复成功，普通关系事实放折叠日常动态，中心只计一个需阅读摘要；进入中心／看到标题不读，实际展开正文才读。CSS 1440×769 复核原最小宽度，615×500 只作通知中心局部压力；面板 clientWidth=scrollWidth=438，footer／边界在视口，Escape 回入口，不把整个窄应用设计当通过。`native-content-ui-cleanup.json` 确认跟随系统／正常视口及无页面 warn/error，自建标签和 5207 服务关闭。两份保护树仍与基线一致，见 `protected-native-content-audit.json`。
+
+**完整目标仍未完成**：本批不能凭通知指纹穿透原 TeamControlService 的 revision cache。其原热句柄在业务 counter 与内容都被外部替换但仍相同 revision 时的原缓存、整个旧 workspace/run 消失与其他 feeds 恢复，必须继续用真实原读取核对；不得偷偷为通知加业务轮询或 fake 一个完整源读取。原 task 适配器读取 scope 的既有 getTeam 冗余、页面无 binding 载荷时的诊断、MCP runtime／校验前无法归属、准确大历史阅读／完整序列和长期容量、正式包及真实 Windows/macOS 权限／声音／勿扰／送达继续按完整范围推进。仅本地提交，不推送、发版、安装或结束目标。
+
 下面保留完整要求，不因分批已有成果缩小。已实现部分仍需匹配该项范围验收；未实现部分继续开工。
 
 1. 通知中心、轻量顶栏入口、单张提醒和独立 renderer store。支持待处理／未读／全部、查询范围、分页、详情、关闭、阅读、归档、确认清理和适当偏好；减少动画、长内容、键盘与窄窗需验收。

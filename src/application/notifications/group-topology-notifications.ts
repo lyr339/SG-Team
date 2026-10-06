@@ -35,7 +35,7 @@ export function connectGroupTopologyNotifications(
     }
   )
   const order = new NativeReadOrder(team.getReadOwnerId?.())
-  const cache = new Map<string, { revision: number; facts: GroupTopologyInput['facts'] }>()
+  const cache = new Map<string, { projectionSignature: string; facts: GroupTopologyInput['facts'] }>()
   const observe = (snapshot: TeamControlSnapshot, currentRead: boolean) => {
     try {
       const run = snapshot.activeRun
@@ -46,38 +46,43 @@ export function connectGroupTopologyNotifications(
           .update(JSON.stringify([run.workspaceId, run.id]))
           .digest('hex')
       const old = cache.get(key)
-      const nativeVersion = order.version(key, snapshot.revision, currentRead)
-      const facts =
-        old?.revision === snapshot.revision
-          ? old.facts
-          : snapshot.groups
-              .filter((view) => view.group.runId === run.id)
-              .map((view) => ({
-                id: view.group.id,
-                identity: createHash('sha256')
-                  .update(JSON.stringify([run.workspaceId, run.id, view.group.id]))
-                  .digest('hex'),
-                name: notificationSafeText(view.group.name).slice(0, 80),
-                status: view.group.status,
-                leadSlotId: view.effectiveLeadSlotId,
-                planning: view.effectiveLeadSlotId
-                  ? ('lead' as const)
-                  : groupMembersMayPlan(view.group)
-                    ? ('members' as const)
-                    : ('operator' as const),
-                members: view.members
-                  .map((member) => ({
-                    slotId: member.slot.id,
-                    label: `${notificationSafeText(member.role.name).slice(0, 48)} · CH-${member.binding?.channelId ?? member.slot.channelId ?? '?'}`
-                  }))
-                  .sort((a, b) => a.slotId.localeCompare(b.slotId))
-              }))
-      cache.set(key, { revision: snapshot.revision, facts })
+      const nativeSignature = createHash('sha256').update(JSON.stringify(snapshot.groups.filter(view => view.group.runId === run.id)
+        .map(view => [view.group.id, view.group.name, view.group.status, view.group.leadSlotId, view.group.actingLeadSlotId, view.group.planPolicy,
+          view.members.map(member => [member.slot.id, member.role.id, member.role.name, member.binding?.channelId ?? member.slot.channelId])
+            .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))])
+        .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))))).digest('hex')
+      const nativeVersion = order.version(key, snapshot.revision, currentRead, nativeSignature)
+      const projected = snapshot.groups
+        .filter((view) => view.group.runId === run.id)
+        .map((view) => ({
+          id: view.group.id,
+          identity: createHash('sha256')
+            .update(JSON.stringify([run.workspaceId, run.id, view.group.id]))
+            .digest('hex'),
+          name: notificationSafeText(view.group.name).slice(0, 80),
+          status: view.group.status,
+          leadSlotId: view.effectiveLeadSlotId,
+          planning: view.effectiveLeadSlotId
+            ? ('lead' as const)
+            : groupMembersMayPlan(view.group)
+              ? ('members' as const)
+              : ('operator' as const),
+          members: view.members
+            .map((member) => ({
+              slotId: member.slot.id,
+              label: `${notificationSafeText(member.role.name).slice(0, 48)} · CH-${member.binding?.channelId ?? member.slot.channelId ?? '?'}`
+            }))
+            .sort((a, b) => a.slotId.localeCompare(b.slotId))
+        }))
+      const projectionSignature = JSON.stringify(projected)
+      const facts = old?.projectionSignature === projectionSignature ? old.facts : projected
+      cache.set(key, { projectionSignature, facts })
       if (cache.size > 16) cache.delete(cache.keys().next().value!)
       source.observe(key, {
         currentRead,
         readOwner: nativeVersion.owner,
         readEpoch: nativeVersion.epoch,
+        readSignature: nativeVersion.readSignature,
         rebaseFrom: nativeVersion.rebaseFrom,
         rebaseTo: nativeVersion.rebaseTo,
         key,

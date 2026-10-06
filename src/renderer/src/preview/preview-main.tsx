@@ -5,6 +5,7 @@ import { reduceUsageStorageNotifications } from '../../../domain/usage-storage-n
 import { reduceModelCatalogNotifications } from '../../../domain/model-catalog-notification'
 import { reduceRuntimeUsageNotifications } from '../../../domain/runtime-usage-notification'
 import { reduceUsageBindingNotifications } from '../../../domain/usage-binding-notification'
+import { reduceGroupTopologyNotifications } from '../../../domain/group-topology-notification'
 import type { GroupEffectsFrame } from '../../../domain/group-effects'
 import { reduceMemoryIssueNotifications, type MemoryIssueState } from '../../../domain/memory-issue-notification'
 import type { MemoryOperatorReviewProof } from '../../../domain/memory-operator-review'
@@ -195,7 +196,7 @@ if (previewRunStatus && initialTeam.activeRun) {
 //（席位形态：全部待命 / 待命+执行中+离线+待确认（CH-2 单独配置了另一模型）/ 各席配置分叉、没有多数 /
 //  已结束 / 会话池里两个协作组 + 一个刚解散的组）。
 const independentScene = (['live', 'mixed', 'spread', 'ended', 'groups'] as const).find((scene) => scene === previewParameters.get('independent'))
-  ?? (['operator-memory','group-effects'].includes(previewParameters.get('notifications')??'') ? 'groups' : undefined)
+  ?? (['operator-memory','group-effects','native-content'].includes(previewParameters.get('notifications')??'') ? 'groups' : undefined)
 const poolLayoutCase = previewParameters.get('poolLayout')
 if (independentScene && initialTeam.activeRun) {
   const solo = initialTeam.members.find((member) => member.slot.solo === true)!
@@ -1178,6 +1179,19 @@ function updatePreviewGroup(groupId: string, update: (view: typeof state.team.gr
 }
 
 const notificationPreview = createNotificationPreview()
+if (previewParameters.get('notifications') === 'native-content' && state.team.activeRun && state.team.groups[0]) {
+  const run = state.team.activeRun, view = state.team.groups[0]!, at = Date.now() - 60000, key = 'group-topology:' + '1'.repeat(64)
+  const fact = { id: view.group.id, identity: '2'.repeat(64), name: view.group.name, status: view.group.status,
+    leadSlotId: view.effectiveLeadSlotId, planning: view.effectiveLeadSlotId ? 'lead' as const : 'members' as const,
+    members: view.members.map(member => ({ slotId: member.slot.id, label: `${member.role.name} · CH-${member.slot.channelId}` })) }
+  const before = reduceGroupTopologyNotifications(undefined, { key, workspaceId: run.workspaceId, runId: run.id, revision: 5, now: at,
+    currentRead: true, readOwner: 'preview-native', readEpoch: 0, readSignature: 'a'.repeat(64), facts: [fact] }, true, 1)
+  before.drafts.forEach(notificationPreview.offer)
+  const changed = { ...fact, name: '接口联调与兼容复核' }
+  view.group.name = changed.name // The original preview source corresponds to the returned current relation.
+  reduceGroupTopologyNotifications(before.state, { key, workspaceId: run.workspaceId, runId: run.id, revision: 5, now: at + 1000,
+    currentRead: true, readOwner: 'preview-native', readEpoch: 1, readSignature: 'b'.repeat(64), rebaseFrom: 5, rebaseTo: 5, facts: [changed] }, true, 2).drafts.forEach(notificationPreview.offer)
+}
 if (previewParameters.get('notifications') === 'usage-binding' && state.team.activeRun && state.team.activeWorkspaceId) {
   const key = 'usage-binding-health', scope = '1'.repeat(64), at = Date.now() - 60000
   const scopeRef = { workspaceId: state.team.activeWorkspaceId, runId: state.team.activeRun.id }
