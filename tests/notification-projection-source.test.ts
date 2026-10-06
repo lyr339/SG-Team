@@ -3,6 +3,23 @@ import { NotificationProjectionSource } from '../src/application/notifications/p
 import { notificationSourceHarness } from './notification-source-fixtures'
 
 describe('shared projection durability transport', () => {
+  it('publishes a private projection callback only after proven state, including unknown-ACK reload, and callback failures do not invalidate committed state', async () => {
+    const h = notificationSourceHarness(), projected = vi.fn(), original = h.port.commitSource.bind(h.port)
+    const source = new NotificationProjectionSource<number, number>(h.owner, value => value as number | undefined,
+      (_old, value) => ({ state: value, drafts: [] }), String, projected)
+    try {
+      vi.mocked(h.port.commitSource).mockRejectedValueOnce(Error('not written'))
+      source.observe('source:a', 1); await source.flush(); expect(projected).not.toHaveBeenCalled()
+      vi.mocked(h.port.commitSource).mockImplementationOnce(async (...args) => { await original(...args); throw Error('ACK lost') })
+      source.observe('source:a', 1); await source.flush(); expect(projected).not.toHaveBeenCalled()
+      source.observe('source:a', 1); await source.flush(); expect(projected).toHaveBeenCalledExactlyOnceWith(1, 1)
+      projected.mockImplementationOnce(() => { throw Error('observer failure after commit') })
+      source.observe('source:a', 2); await source.flush()
+      expect(h.ledger.sourceState('source:a').data).toBe(2)
+      const loads = vi.mocked(h.port.sourceState).mock.calls.length
+      source.observe('source:a', 3); await source.flush(); expect(h.port.sourceState).toHaveBeenCalledTimes(loads)
+    } finally { await source.close(); await h.owner.close() }
+  })
   it('a failed continuation retains only the committed partial checkpoint and resumes on the next real frame', async () => {
     const h = notificationSourceHarness()
     let writes = 0

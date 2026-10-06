@@ -20,6 +20,8 @@ const runtime: NotificationRecord = { ...usage, id: 'runtime-incident', key: 'us
   title: '用量补位读数尚未确认', detail: '正常没有精确回合结算不算异常。这里仅记录原读取持续异常。' }
 const context: NotificationRecord = { ...model, id: 'context-incident', key: 'composer-context:' + '4'.repeat(64), eventType: 'cursor.context-source',
   eventId: 'context-read-failed', title: '本机上下文详情尚未确认', detail: '仅说明原详情读取，头部旧指标不表示该入口恢复，不反推统计。' }
+const binding: NotificationRecord = { ...runtime, id: 'binding-incident', key: 'usage-binding:' + '5'.repeat(64), eventId: 'binding-receive-failed', eventType: 'usage.binding-source',
+  scope: { workspaceId: 'workspace-fixture', runId: 'run-fixture' }, title: '写后用量接收尚未确认', detail: '2 个绑定来源的原接收流程持续报告异常。' }
 function page(...records: NotificationRecord[]): NotificationPage {
   return { records, summary: { revision: Math.max(0, ...records.map(record => record.revision)), total: records.length, unread: records.length, pending: 0, clearable: 0 }, reset: false }
 }
@@ -35,7 +37,8 @@ beforeEach(() => {
   api = { getNotificationPage: vi.fn(async (query: any) => query.eventType === model.eventType || query.key === model.key ? page(model)
       : query.eventType === usage.eventType || query.key === usage.key ? page(usage)
       : query.eventType === runtime.eventType || query.key === runtime.key ? page(runtime)
-      : query.eventType === context.eventType || query.key === context.key ? page(context) : page()),
+      : query.eventType === context.eventType || query.key === context.key ? page(context)
+      : query.eventType === binding.eventType || query.key === binding.key ? page(binding) : page()),
     onNotificationChanged: vi.fn((listener: any) => { listeners.add(listener); return () => listeners.delete(listener) }),
     readNotification: vi.fn(async () => ({ changed: true, record: { ...model, readRevision: 10 }, summary: page(model).summary })) }
   Object.assign(window, { sgDesktop: api })
@@ -170,4 +173,15 @@ it('keeps context details separate from model/runtime usage sources and acknowle
   const details = host.querySelector('details')!
   await act(async () => { details.open = true; details.dispatchEvent(new Event('toggle')); await new Promise(requestAnimationFrame) })
   expect(api.readNotification).toHaveBeenCalledWith({ id: context.id, revision: context.revision })
+})
+
+it('shows one grouped write-binding issue on statistics, not one banner per member or an unrelated session target', async () => {
+  await act(async () => root.render(<LocalSourceNotice source="usage-binding" />))
+  expect(api.getNotificationPage).toHaveBeenCalledExactlyOnceWith({ eventType: 'usage.binding-source', limit: 1 })
+  expect(host.querySelectorAll('details')).toHaveLength(1); expect(host.textContent).toContain('2 个绑定来源')
+  expect(api.readNotification).not.toHaveBeenCalled()
+  await act(async () => push({ ...binding, revision: 12, scope: { ...binding.scope, sessionId: 'foreign' }, detail: 'should not replace body' }))
+  expect(host.textContent).not.toContain('should not replace body')
+  await act(async () => push({ ...binding, revision: 13, state: 'expired', title: '原写后用量监测已变化' }))
+  expect(host.querySelector('details')).toBeNull(); expect(api.readNotification).not.toHaveBeenCalled()
 })

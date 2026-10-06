@@ -165,6 +165,7 @@ export function SettingsStats({ usageSnapshot, statsSeats, statsGroups, active }
       <div className="settings-stats">
         <UsageStorageNotice active={active !== false} />
         <LocalSourceNotice active={active !== false} source="usage-runtime" />
+        <LocalSourceNotice active={active !== false} source="usage-binding" />
         <div className="stats-empty">
           <strong>暂无可展示的用量</strong>
           <p>发起一次会话后，这里会给出成本节奏、Token 构成、模型分布与每个会话的明细账。费用为等价 API 成本参考值。</p>
@@ -179,6 +180,7 @@ export function SettingsStats({ usageSnapshot, statsSeats, statsGroups, active }
     <div className="settings-stats">
       <UsageStorageNotice active={active !== false} />
       <LocalSourceNotice active={active !== false} source="usage-runtime" />
+      <LocalSourceNotice active={active !== false} source="usage-binding" />
       <div className="stats-controls">
         <div className="stats-range" role="group" aria-label="统计时间范围">
           {STATS_RANGE_OPTIONS.map((option) => (

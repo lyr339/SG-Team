@@ -25,6 +25,7 @@ export function connectSessionNotifications(input: {
   modelCatalog?: { suspend(): void; resume(): void }
   runtimeUsage?: { suspend(): void; resume(): void }
   composerContext?: { suspend(): void; resume(): void }
+  usageBinding?: { suspend(): void; resume(): void }
 }) {
   const lifecycle = new SessionLifecycleNotifications(input.notifications)
   const questions = new QuestionNotifications(input.notifications)
@@ -36,8 +37,8 @@ export function connectSessionNotifications(input: {
   let desktop = input.desktop.getSnapshot()
   const stopTeam = input.team.subscribe(next => { team = next; lifecycle.observe(desktop, team); questions.observe(desktop, team); replies.observe(desktop, team); queue?.observe(desktop, team); context.observe(desktop, team); mcp.observe(desktop, team) })
   const stopDesktop = input.desktop.subscribe(next => { desktop = next; lifecycle.observe(desktop, team); questions.observe(desktop, team); replies.observe(desktop, team); queue?.observe(desktop, team); context.observe(desktop, team); mcp.observe(desktop, team) })
-  const suspend = () => { lifecycle.suspend(); questions.suspend(); replies.suspend(); queue?.suspend(); context.suspend(); mcp.suspend(); input.modelCatalog?.suspend(); input.runtimeUsage?.suspend(); input.composerContext?.suspend() }
-  const resume = () => { lifecycle.resume(); questions.resume(); replies.resume(); queue?.resume(); context.resume(); mcp.resume(); input.modelCatalog?.resume(); input.runtimeUsage?.resume(); input.composerContext?.resume() } // Wait for the existing next source event, not a new network/telemetry probe.
+  const suspend = () => { lifecycle.suspend(); questions.suspend(); replies.suspend(); queue?.suspend(); context.suspend(); mcp.suspend(); input.modelCatalog?.suspend(); input.runtimeUsage?.suspend(); input.composerContext?.suspend(); input.usageBinding?.suspend() }
+  const resume = () => { lifecycle.resume(); questions.resume(); replies.resume(); queue?.resume(); context.resume(); mcp.resume(); input.modelCatalog?.resume(); input.runtimeUsage?.resume(); input.composerContext?.resume(); input.usageBinding?.resume() } // Wait for the existing next source event, not a new network/telemetry probe.
   input.power.on('suspend', suspend); input.power.on('resume', resume)
   let detached = false
   const detach = (): void => {

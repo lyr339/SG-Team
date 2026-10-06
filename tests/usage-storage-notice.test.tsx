@@ -27,7 +27,7 @@ afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi
 it('keeps normal stats quiet and renders the same warning even when corruption led to an empty usage snapshot', async () => {
   await act(async () => root.render(<SettingsStats usageSnapshot={{}} active />))
   expect(host.textContent).toContain('用量记录保存未确认'); expect(host.textContent).toContain('暂无可展示的用量')
-  expect(api.getNotificationPage).toHaveBeenCalledTimes(3)
+  expect(api.getNotificationPage).toHaveBeenCalledTimes(4)
   expect(api.readNotification).not.toHaveBeenCalled()
 })
 it('queries only when active, ignores usage ticks, and does not consume unread from a collapsed title', async () => {

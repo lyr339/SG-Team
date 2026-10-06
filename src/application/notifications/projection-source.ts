@@ -19,7 +19,12 @@ export class NotificationProjectionSource<T, S> {
   constructor(private readonly owner: Pick<NotificationService, 'sourceState' | 'commitSource' | 'reportHistoryGap'>,
     private readonly decode: (value: unknown, key: string) => S | undefined,
     private readonly reduce: (previous: S | undefined, input: T, baseline: boolean, revision: number) => NotificationProjection<S>,
-    private readonly inputSignature: (input: T) => string) {}
+    private readonly inputSignature: (input: T) => string,
+    private readonly onProjected?: (input: T, state: Readonly<S>) => void) {}
+  private projected(input: T, state: S): void {
+    try { this.onProjected?.(input, state) }
+    catch { try { this.owner.reportHistoryGap() } catch { /* A private observer does not invalidate a confirmed projection. */ } }
+  }
   observe(key: string, input: T): void {
     if (this.closed || !this.accepting) return
     try {
@@ -57,7 +62,7 @@ export class NotificationProjectionSource<T, S> {
           const projection = this.reduce(cached.state, observation.input, observation.baseline || epoch !== this.epoch, cached.revision + 1)
           if (!projection.drafts.length && JSON.stringify(cached.state) === JSON.stringify(projection.state)) {
             if (projection.complete === false) throw Error('通知来源分批未推进检查点')
-            this.committed.set(observation.key, this.inputSignature(observation.input)); break
+            this.committed.set(observation.key, this.inputSignature(observation.input)); this.projected(observation.input, projection.state); break
           }
           const result = await this.owner.commitSource(observation.key, cached.revision, projection.state, projection.drafts, projection.group)
           if (result.applied) {
@@ -67,7 +72,7 @@ export class NotificationProjectionSource<T, S> {
               if (++batches >= 64) throw Error('通知来源分批超出本次处理上限')
               continue
             }
-            this.committed.set(observation.key, this.inputSignature(observation.input)); break
+            this.committed.set(observation.key, this.inputSignature(observation.input)); this.projected(observation.input, projection.state); break
           }
           cached = { revision: result.source.revision, state: this.decode(result.source.data, observation.key) }; this.cache.set(observation.key, cached)
           if (++conflicts >= 3) { this.committed.delete(observation.key); this.owner.reportHistoryGap(); break }

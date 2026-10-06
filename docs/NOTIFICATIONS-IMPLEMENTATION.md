@@ -391,6 +391,28 @@ ui/group-effects-compact-light.jpg、ui/group-effects-details-light.jpg、ui/gro
 
 **完整目标仍未完成**：本批不补接 SQLite 统计 sink、不宣称所有源接通。写后 usage binding 的结构／回调诊断、主统计接线的范围核对仍须继续，不因本批元数据就改动计费；无可靠归属的 MCP runtime／校验前异常、其他 feed 的 scope 消失／同 revision 异内容／恢复关联、准确大历史阅读、长期容量与完整事件矩阵、正式包及真实 Windows/macOS 权限／声音／勿扰／送达仍需按原目标做完。仅本地提交，不推送、发布、安装或结束完整目标。
 
+### 第二十二批：写后用量 binding 的原接收／回调诊断
+
+只观察原 `__sgTeamUsage` 消费器已有的解析、分桶和回调结果。没有改页面 hook 表达式／版本、增加 Runtime binding／CDP 命令、读盘、模型请求、轮询或回调重试。原 `onUsageEvent`／`onUsageSample` 调用次数、参数、丢弃规则、旧补丁兼容、tracker 入账／计价／持久化保持原样。通知不会把回调同步返回当作已入账或已落盘，也不会重放原计数。观察器 begin／完成／私有确认／诊断错误都不能破坏原 write-signal／process／usage 通道。
+
+归属使用原已有 executionContextCreated／Cleared／Destroyed 事件、原 hook 验证状态、当前 socket 和原 team 订阅帧，不加页面探针。只用当前主世界上下文中、实际当前成员和仓储一致的完整绑定身份；旧 socket 已由原围栏隔离，旧／未确认／已销毁执行上下文不喂通知，原业务消费仍按原规则。文档重载／销毁、绑定／Agent 身份／工作区变更、休眠／恢复、真实退出分别围住迟到通知回执，不能用新范围的健康载荷宣布旧范围已恢复。单纯唤醒只清候选与旧回执，不伪造文档变化；若原文档确实仍在，同一受影响绑定的真实新载荷可安静收口原 episode。进入未连接期后仅重试文案变化不再产生新的文档代次或反复私有检查点写入，原状态回调仍保持原规则。
+
+现代载荷的可归属正计数、原接收回调返回才是本入口恢复证据；零值、缺 generation 的旧事件、正常没有精确回合结算和未知扩展形态安静等待，不造故障，也不清已有问题。已确认当前绑定的真实结构异常或原回调异常，要在至少两次原消费、跨度至少 5 秒后才进入通知；同钟 echo、时钟回退／超长采样缺口不外推连续失败。坏 JSON／无归属异常最多留下同文档一次私有证据缺口，不猜 CH、不复制原文或弹假“计费失败”。
+
+多个成员异常合并为同范围一条 episode 和一处局部说明，正文列出已验证 CH 及窄原因，不制造每成员一条顶栏弹条。同一故障不随高频数据增长刷未读；新成员／新原因有对应新正文。每个受影响身份独立收口，一个健康成员不能消除其他成员问题。部分恢复安静更新同条；只有全部当前受影响来源返回才能收束，而“接收确认”依然不保证统计已校准或存储已成功。128 个已知身份的投影保留全量受影响集合，展示在原 4000 字限制内节制截取并明确剩余数量；此测试不是完整长期容量验收。
+
+二次审查修了私有恢复确认竞态：不能收到一帧 good 就把内存恢复观察移除，因为私有通知可能尚未落盘、或已经落盘但丢 ACK。共用 transport 只新增可选的 `onProjected` 回调，仅在真实 applied 或恢复到可验证的无变化 durable 状态时调用；失败／冲突不调用，回调自身异常也不失效已确认检查点。接收源用对应失败身份和确认标记释放观察，晚到的旧 ready ACK 不能抹掉后续已确认新故障。只有下一真实原载荷才能重核私有未知结果，没有 timer／业务重试。确认恢复后的正常帧不再触发私有查询／提交，高频正常数据只做内存判定，避免为通知造落盘流水账。
+
+统计页仅在真实异常时显示一条默认折叠的中性说明，局部使用实际 workspace／run 归属，来源导航仍只打开统计，不修补、换号、付款或切 Cursor 工作区。不同来源的标签放回有限静态配置，未加入长串条件文案或新的样式系统。共用准确正文阅读保持折叠不读、展开且可见才读，阅读、归档、原接收恢复与统计实际恢复分开。
+
+证据位于 `preview-screenshots/notification-implementation/`：`full-regression-usage-binding-final.log`（303 files，2880 passed，1 skipped）、`typecheck-usage-binding-final.log`、`build-usage-binding-final.log`、`dead-code-usage-binding-final.log`；原 `mcp-smoke-usage-binding-final.log`／`channel-smoke-usage-binding-final.log`。原 observer 和 usage pipeline 回归，加上 source／transport／UI 的正常帧无额外写读、原调用参数／次数与命令序列相等、两成员独立收口、真实 callback throw 不重试、私有 ACK 未知／晚 ready、新绑定／旧上下文隔离等测试。最后归属 fixture 修正了 structuredClone 保留成员／仓储共享引用的事实，真正构造二者不一致，未改业务测试替身来躲过归属围栏。
+
+`scripts/verify-notification-usage-binding.ts` 在 Node 与 macOS Electron (`ELECTRON_RUN_AS_NODE=1`) 串联真实编译私有 worker、原 CursorStreamObserver 接收器、原 tracker／store，仅 socket 是不联网的 fixture。真实无效载荷不多调回调、不改变原统计；真实回调 throw 每原帧只调用一次；两个故障聚成一条，只有分别恢复才收束；跨 worker／文档重启保留旧问题的未监测事实，退出排空不弹通知。原 worker／shutdown／recovery／history／context／native-rebase／team-observations／group-effects／mcp-writes／usage-storage／model-catalog／runtime-usage／context-source 十三类亦在两个 runtime 回归。各自有目录 finally 精确清理，不运行生产 main、真实 Cursor／账号／模型或系统送达。
+
+`ui/usage-binding-final-light.jpg`／`usage-binding-final-expanded-light.jpg`、`usage-binding-dark-narrow.jpg`、`usage-binding-partial-dark.jpg`、`usage-binding-recovered-dark.jpg`、`usage-binding-scope-change-center-dark.jpg`／`usage-binding-center-dark.jpg` 及 `usage-binding-ui-audit.json` 是真实组件＋mock preload＋实际 reducer。两成员仅一处折叠说明／一个未读，展开才阅读；部分恢复仍有剩余成员、全部恢复与文档变更分别收口而保留不同历史事实。中心动作从会话页正确定位统计，不产生业务操作。CSS 1440×769 复核原最小宽度、615×500 只作局部压力；局部 clientWidth=scrollWidth、14px 正文、两侧同色边界保持，窄窗以外的整体应用导航不冒充本批通过。`usage-binding-ui-cleanup.json` 确认跟随系统／正常视口恢复和无页面 warn/error，自建标签及 5207 服务关闭。`protected-usage-binding-audit.json` 保留两个保护树的 HEAD／status／binary diff／文件和原四个 warmup 删除状态。
+
+**完整目标仍未完成**：本批是收到 binding 之后的原消费器，不证明页面 nativeUsagePayload 在抛异常但尚未发出任何载荷时都已可观察，也不以无事件推出统计故障。SQLite 计费 sink 当前未接入的事实不改，不能把这些健康元数据冒充统计精度修复。接下来按完整矩阵继续审 source 恢复（旧 scope 整体消失／同 revision 异内容和其他 feeds）、大历史准确阅读及长期完整序列、无可靠归属的 MCP runtime／校验前诊断、正式包和真实 Windows/macOS 权限／声音／勿扰／系统送达。单批通过不缩小或结束目标；本批只本地提交，不推送、发布或安装。
+
 下面保留完整要求，不因分批已有成果缩小。已实现部分仍需匹配该项范围验收；未实现部分继续开工。
 
 1. 通知中心、轻量顶栏入口、单张提醒和独立 renderer store。支持待处理／未读／全部、查询范围、分页、详情、关闭、阅读、归档、确认清理和适当偏好；减少动画、长内容、键盘与窄窗需验收。

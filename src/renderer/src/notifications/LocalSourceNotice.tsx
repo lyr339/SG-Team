@@ -4,10 +4,11 @@ import { useNotificationResultRead } from './use-notification-result-read'
 import './usage-storage-notice.css'
 
 const LOCAL_SOURCES = {
-  'usage-storage': { events: ['usage.storage-write', 'usage.storage-history'], section: 'stats', key: /^usage-storage:(write|history):[a-f0-9]{64}$/ },
-  'model-catalog': { events: ['cursor.model-catalog'], section: 'maintenance', key: /^model-catalog:[a-f0-9]{64}$/ },
-  'usage-runtime': { events: ['usage.runtime-source'], section: 'stats', key: /^usage-runtime:[a-f0-9]{64}$/ },
-  'composer-context': { events: ['cursor.context-source'], section: 'maintenance', key: /^composer-context:[a-f0-9]{64}$/ }
+  'usage-storage': { events: ['usage.storage-write', 'usage.storage-history'], section: 'stats', label: '本机用量记录说明', key: /^usage-storage:(write|history):[a-f0-9]{64}$/ },
+  'model-catalog': { events: ['cursor.model-catalog'], section: 'maintenance', label: '本机模型目录说明', key: /^model-catalog:[a-f0-9]{64}$/ },
+  'usage-runtime': { events: ['usage.runtime-source'], section: 'stats', label: '原生运行时用量说明', key: /^usage-runtime:[a-f0-9]{64}$/ },
+  'composer-context': { events: ['cursor.context-source'], section: 'maintenance', label: '本机上下文详情说明', key: /^composer-context:[a-f0-9]{64}$/ },
+  'usage-binding': { events: ['usage.binding-source'], section: 'stats', label: '写后用量接收说明', key: /^usage-binding:[a-f0-9]{64}$/ }
 } as const
 type LocalSource = keyof typeof LOCAL_SOURCES
 
@@ -21,8 +22,7 @@ function Issue({ record }: { record: NotificationRecord }) {
 }
 /** Private history only. Does not poll business data, retry an operation, or clear an Agent receipt. */
 export function LocalSourceNotice({ active = true, source }: { active?: boolean; source: LocalSource }): React.JSX.Element | null {
-  const model = source === 'model-catalog'
-  const { events, section, key } = LOCAL_SOURCES[source]
+  const { events, section, key, label } = LOCAL_SOURCES[source]
   const [snapshot, setSnapshot] = useState<{ source: LocalSource; epoch: number; records: NotificationRecord[] }>({ source, epoch: 0, records: [] })
   useEffect(() => {
     const api = window.sgDesktop
@@ -32,7 +32,9 @@ export function LocalSourceNotice({ active = true, source }: { active?: boolean;
     type Row = { record: NotificationRecord; sequence: number; historyRevision: number }
     let rows = new Map<string, Row>()
     const valid = (r: NotificationRecord) => (events as readonly string[]).includes(r.eventType ?? '') && key.test(r.key)
-      && Object.values(r.scope).every(value => value === undefined) && r.target?.kind === 'settings' && r.target.section === section
+      && (source === 'usage-binding' ? Object.keys(r.scope).every(field => ['workspaceId', 'runId'].includes(field))
+          && typeof r.scope.workspaceId === 'string' && !!r.scope.workspaceId && typeof r.scope.runId === 'string' && !!r.scope.runId
+        : Object.values(r.scope).every(value => value === undefined)) && r.target?.kind === 'settings' && r.target.section === section
     const accept = (into: Map<string, Row>, r: NotificationRecord, at: number, historyRevision: number) => {
       if (!valid(r)) return
       const old = into.get(r.eventType!)
@@ -72,7 +74,7 @@ export function LocalSourceNotice({ active = true, source }: { active?: boolean;
     return () => { alive = false; stop() }
   }, [active, source])
   if (!active || snapshot.source !== source || snapshot.records.length === 0) return null
-  return <div className="usage-storage-notices" data-notification-page={`account:${section}`} aria-label={model ? '本机模型目录说明' : source === 'composer-context' ? '本机上下文详情说明' : source === 'usage-runtime' ? '原生运行时用量说明' : '本机用量记录说明'}>
+  return <div className="usage-storage-notices" data-notification-page={`account:${section}`} aria-label={label}>
     {snapshot.records.map(record => <Issue key={`${snapshot.epoch}:${record.id}`} record={record} />)}
   </div>
 }

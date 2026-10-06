@@ -1,6 +1,7 @@
 import WebSocket from 'ws'
 import type { CursorUsageEvent, CursorUsageSample } from '../../domain/cursor-usage'
 import { nativeUsagePayload } from './cursor-native-usage'
+import type { UsageBindingObserver, UsageBindingReceipt, UsageBindingResult } from '../../domain/usage-binding-observation'
 import { CHANNEL_USER_DELIVERY_MARKER } from '../../domain/channel-delivery-policy'
 import { cursorStatusLineOf, parseCursorStatusLine, type CursorStatusLine } from '../../domain/cursor-status-line'
 import {
@@ -1282,6 +1283,7 @@ export interface StreamObserverSocket {
 }
 
 export interface CursorStreamObserverOptions {
+  usageObserver?: UsageBindingObserver
   port?: number
   fetchPageSocketUrl?: (port: number, timeoutMs: number) => Promise<string | undefined>
   openSocket?: (webSocketDebuggerUrl: string) => StreamObserverSocket
@@ -1350,12 +1352,30 @@ export function parseNativeResponse(value: unknown): CursorNativeResponse | unde
   return typeof raw.generating === 'boolean' ? { id, text, generating: raw.generating } : { id, text }
 }
 
+/** Diagnosis only. Never changes the existing parser, callback arguments or accounting decisions. */
+function usageBindingResult(raw: Record<string, unknown>): UsageBindingResult {
+  if (typeof raw.g !== 'string' || !raw.g.trim() || raw.g.length > 200) return { state: 'waiting' } // Legacy/unattributed settlement.
+  const timeValid = raw.t === undefined || typeof raw.t === 'number' && Number.isSafeInteger(raw.t) && raw.t >= 0 && raw.t <= 8_640_000_000_000_000
+  if (raw.kind === 'sample') {
+    if (raw.used === undefined || raw.used === 0) return { state: 'waiting' }
+    return typeof raw.used === 'number' && Number.isSafeInteger(raw.used) && raw.used > 0 && timeValid
+      ? { state: 'ready' } : { state: 'failed', reason: 'record' }
+  }
+  if (raw.kind !== undefined && raw.kind !== 'checkpoint') return { state: 'waiting' }
+  const values = [raw.i, raw.o, raw.r, raw.w].map(value => value ?? 0)
+  if (!timeValid || values.some(value => typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0)
+    || Number(values[2]) + Number(values[3]) > Number(values[0])) return { state: 'failed', reason: 'record' }
+  return Number(values[0]) + Number(values[1]) > 0 ? { state: 'ready' } : { state: 'waiting' }
+}
+
 interface PendingCall {
   resolve: (value: unknown) => void
   reject: (error: Error) => void
 }
 
 export class CursorStreamObserver {
+  private readonly usageObserver?: UsageBindingObserver
+  private readonly usageContexts = new Set<number>()
   private readonly port: number
   private readonly fetchPageSocketUrl: NonNullable<CursorStreamObserverOptions['fetchPageSocketUrl']>
   private readonly openSocket: NonNullable<CursorStreamObserverOptions['openSocket']>
@@ -1387,6 +1407,7 @@ export class CursorStreamObserver {
   private lastStatus?: { state: 'connected' | 'reconnecting' | 'unavailable'; detail: string }
 
   constructor(options: CursorStreamObserverOptions = {}) {
+    this.usageObserver = options.usageObserver
     const envPort = Number(process.env[CURSOR_CDP_PORT_ENV])
     this.port = options.port
       ?? (Number.isInteger(envPort) && envPort > 0 && envPort < 65_536 ? envPort : CURSOR_CDP_DEFAULT_PORT)
@@ -1611,7 +1632,13 @@ export class CursorStreamObserver {
   /** 状态去重：同一 (state, detail) 不重复上报，健康自检每拍不制造快照噪音。 */
   private setStatus(state: 'connected' | 'reconnecting' | 'unavailable', detail: string): void {
     if (this.lastStatus?.state === state && this.lastStatus.detail === detail) return
+    const lostCurrentDocument = !this.lastStatus || this.lastStatus.state === 'connected'
     this.lastStatus = { state, detail }
+    if (state !== 'connected') {
+      this.usageContexts.clear()
+      // A new retry caption is not another document transition or source fact.
+      if (lostCurrentDocument) try { this.usageObserver?.reset() } catch { try { this.usageObserver?.unavailable() } catch { /* Never changes the original stream status. */ } }
+    }
     this.onStatus({ state, detail, updatedAt: Date.now() })
   }
 
@@ -1675,13 +1702,21 @@ export class CursorStreamObserver {
       return
     }
     if (message.method === 'Runtime.executionContextCreated') {
-      const context = (message.params as { context?: { auxData?: { isDefault?: unknown } } } | undefined)?.context
+      const context = (message.params as { context?: { id?: unknown; auxData?: { isDefault?: unknown } } } | undefined)?.context
+      if (context?.auxData?.isDefault === true && typeof context.id === 'number' && Number.isSafeInteger(context.id) && context.id > 0) this.usageContexts.add(context.id)
       // 只认主世界（isDefault）：扩展/隔离世界里没有 Cursor 的 composer 服务。
       if (context?.auxData?.isDefault === true && !this.hookVerified) this.scheduleHookReinstall()
       return
     }
+    if (message.method === 'Runtime.executionContextDestroyed') {
+      const id = (message.params as { executionContextId?: unknown } | undefined)?.executionContextId
+      if (typeof id === 'number' && this.usageContexts.delete(id) && !this.usageContexts.size) {
+        try { this.usageObserver?.reset() } catch { try { this.usageObserver?.unavailable() } catch { /* No business effect. */ } }
+      }
+      return
+    }
     if (message.method === 'Runtime.bindingCalled') {
-      const params = message.params as { name?: unknown; payload?: unknown } | undefined
+      const params = message.params as { name?: unknown; payload?: unknown; executionContextId?: unknown } | undefined
       if (params?.name === CURSOR_STREAM_BINDING_NAME && typeof params.payload === 'string' && params.payload) {
         this.onWriteSignal(params.payload.slice(0, 120), Date.now())
       }
@@ -1712,33 +1747,49 @@ export class CursorStreamObserver {
         }
       }
       if (params?.name === CURSOR_USAGE_BINDING_NAME && typeof params.payload === 'string' && params.payload) {
-        this.dispatchUsagePayload(params.payload)
+        this.dispatchUsagePayload(params.payload, this.hookVerified && typeof params.executionContextId === 'number' && this.usageContexts.has(params.executionContextId))
       }
     }
   }
 
   /** 写后样本/结算共用 binding；旧补丁无 generation 的事件仅兼容解析。 */
-  private dispatchUsagePayload(payload: string): void {
+  private dispatchUsagePayload(payload: string, attributable = false): void {
+    let receipt: UsageBindingReceipt | undefined, stage: 'record' | 'callback' = 'record'
+    let outcome: UsageBindingResult = { state: 'waiting' }
+    const report = (result = outcome): void => {
+      try { receipt?.complete(Object.freeze(result)) }
+      catch { try { receipt?.unavailable() } catch { /* Original callback is independent. */ } }
+    }
+    const unattributed = (): void => { if (attributable) try { this.usageObserver?.unattributed() } catch { /* No business effect. */ } }
     try {
       const raw = JSON.parse(payload) as Record<string, unknown>
       const composerId = typeof raw.c === 'string' ? raw.c.trim() : ''
-      if (!composerId) return
+      if (!composerId) { unattributed(); return }
+      if (attributable) {
+        try { receipt = this.usageObserver?.begin(composerId) }
+        catch { try { this.usageObserver?.unavailable() } catch { /* Preserve original payload consumption. */ } }
+        if (receipt) try { outcome = usageBindingResult(raw) }
+        catch { try { receipt.unavailable() } catch { /* Metadata does not change original return. */ } }
+      }
       const generationId = typeof raw.g === 'string' && raw.g.length <= 200 ? raw.g : undefined
       const modelId = typeof raw.m === 'string' ? raw.m.slice(0, 160) : undefined
       if (raw.kind === 'sample') {
         if (generationId && typeof raw.used === 'number' && Number.isSafeInteger(raw.used) && raw.used > 0) {
+          stage = 'callback'
           this.onUsageSample({ composerId, generationId, modelId, used: raw.used,
             ...(raw.stopped === true ? { stopped: true } : {}),
             occurredAt: typeof raw.t === 'number' ? raw.t : Date.now() })
         }
+        report()
         return
       }
       if ([raw.i, raw.o, raw.r, raw.w].some((value) => value !== undefined
-        && (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0))) return
+        && (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0))) { report(); return }
       const toCount = (value: unknown): number => {
         const num = Number(value ?? 0)
         return Number.isFinite(num) && num > 0 ? num : 0
       }
+      stage = 'callback'
       this.onUsageEvent({
         composerId,
         ...(generationId ? { generationId } : {}),
@@ -1749,8 +1800,11 @@ export class CursorStreamObserver {
         cacheWriteTokens: toCount(raw.w),
         occurredAt: toCount(raw.t) || Date.now()
       })
+      report()
     } catch {
       // 非法 JSON / 结构漂移：丢弃，不影响写信号通道
+      if (receipt) report({ state: 'failed', reason: stage })
+      else unattributed()
     }
   }
 

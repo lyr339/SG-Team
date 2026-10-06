@@ -20,7 +20,8 @@ describe('session notification source connection', () => {
     const modelCatalog = { suspend: vi.fn(), resume: vi.fn() }
     const runtimeUsage = { suspend: vi.fn(), resume: vi.fn() }
     const composerContext = { suspend: vi.fn(), resume: vi.fn() }
-    const connection = connectSessionNotifications({ notifications: owner, desktop, team: topology, power, modelCatalog, runtimeUsage, composerContext })
+    const usageBinding = { suspend: vi.fn(), resume: vi.fn() }
+    const connection = connectSessionNotifications({ notifications: owner, desktop, team: topology, power, modelCatalog, runtimeUsage, composerContext, usageBinding })
     await connection.lifecycle.flush(); const count = commitSource.mock.calls.length
     emitTeam({ ...team, revision: team.revision + 1 }); await connection.lifecycle.flush()
     expect(commitSource.mock.calls.length).toBe(count)
@@ -29,6 +30,7 @@ describe('session notification source connection', () => {
     expect(modelCatalog.suspend).toHaveBeenCalledOnce(); expect(modelCatalog.resume).toHaveBeenCalledOnce()
     expect(runtimeUsage.suspend).toHaveBeenCalledOnce(); expect(runtimeUsage.resume).toHaveBeenCalledOnce()
     expect(composerContext.suspend).toHaveBeenCalledOnce(); expect(composerContext.resume).toHaveBeenCalledOnce()
+    expect(usageBinding.suspend).toHaveBeenCalledOnce(); expect(usageBinding.resume).toHaveBeenCalledOnce()
     expect(desktop.getSnapshot).toHaveBeenCalledOnce(); expect(topology.getSnapshot).toHaveBeenCalledOnce()
     connection.dispose(); expect(stopTeam).toHaveBeenCalledOnce(); expect(stopDesktop).toHaveBeenCalledOnce()
     expect(power.listenerCount('resume')).toBe(0); expect(power.listenerCount('suspend')).toBe(0)
@@ -36,5 +38,6 @@ describe('session notification source connection', () => {
     expect(modelCatalog.suspend).toHaveBeenCalledOnce(); expect(modelCatalog.resume).toHaveBeenCalledOnce()
     expect(runtimeUsage.suspend).toHaveBeenCalledOnce(); expect(runtimeUsage.resume).toHaveBeenCalledOnce()
     expect(composerContext.suspend).toHaveBeenCalledOnce(); expect(composerContext.resume).toHaveBeenCalledOnce()
+    expect(usageBinding.suspend).toHaveBeenCalledOnce(); expect(usageBinding.resume).toHaveBeenCalledOnce()
   })
 })

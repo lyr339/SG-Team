@@ -4,6 +4,7 @@ import { reduceMcpWriteNotifications } from '../../../domain/mcp-write-notificat
 import { reduceUsageStorageNotifications } from '../../../domain/usage-storage-notification'
 import { reduceModelCatalogNotifications } from '../../../domain/model-catalog-notification'
 import { reduceRuntimeUsageNotifications } from '../../../domain/runtime-usage-notification'
+import { reduceUsageBindingNotifications } from '../../../domain/usage-binding-notification'
 import type { GroupEffectsFrame } from '../../../domain/group-effects'
 import { reduceMemoryIssueNotifications, type MemoryIssueState } from '../../../domain/memory-issue-notification'
 import type { MemoryOperatorReviewProof } from '../../../domain/memory-operator-review'
@@ -1177,6 +1178,26 @@ function updatePreviewGroup(groupId: string, update: (view: typeof state.team.gr
 }
 
 const notificationPreview = createNotificationPreview()
+if (previewParameters.get('notifications') === 'usage-binding' && state.team.activeRun && state.team.activeWorkspaceId) {
+  const key = 'usage-binding-health', scope = '1'.repeat(64), at = Date.now() - 60000
+  const scopeRef = { workspaceId: state.team.activeWorkspaceId, runId: state.team.activeRun.id }
+  const first = reduceUsageBindingNotifications(undefined, { key, scope, scopeRef, id: 'a'.repeat(64), at,
+    fact: { state: 'failed', identity: '1'.repeat(64), channel: '1', reason: 'record' } }, true, 1)
+  first.drafts.forEach(notificationPreview.offer)
+  const second = reduceUsageBindingNotifications(first.state, { key, scope, scopeRef, id: 'b'.repeat(64), at: at + 1000,
+    fact: { state: 'failed', identity: '2'.repeat(64), channel: '2', reason: 'callback' } }, true, 2)
+  second.drafts.forEach(notificationPreview.offer)
+  const phase = previewParameters.get('bindingReceive')
+  if (phase === 'partial' || phase === 'recovered') {
+    const partial = reduceUsageBindingNotifications(second.state, { key, scope, scopeRef, id: 'c'.repeat(64), at: at + 2000,
+      fact: { state: 'ready', identity: '1'.repeat(64), channel: '1' } }, true, 3)
+    partial.drafts.forEach(notificationPreview.offer)
+    if (phase === 'recovered') reduceUsageBindingNotifications(partial.state, { key, scope, scopeRef, id: 'd'.repeat(64), at: at + 3000,
+      fact: { state: 'ready', identity: '2'.repeat(64), channel: '2' } }, true, 4).drafts.forEach(notificationPreview.offer)
+  }
+  if (phase === 'changed') reduceUsageBindingNotifications(second.state, { key, scope: '2'.repeat(64), scopeRef, id: 'c'.repeat(64), at: at + 2000,
+    fact: { state: 'scope' } }, true, 3).drafts.forEach(notificationPreview.offer)
+}
 if (previewParameters.get('notifications') === 'context-source') {
   const key = 'composer-context-health', scope = '1'.repeat(64), at = Date.now() - 60000
   const failed = reduceRuntimeUsageNotifications(undefined, { key, scope, id: 'a'.repeat(64), at, result: { state: 'failed', reason: 'record' } }, true, 1, 'context')

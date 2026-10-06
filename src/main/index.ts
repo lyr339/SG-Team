@@ -107,6 +107,7 @@ import { NotificationService } from '../application/notification-service'
 import { UsageStorageNotifications } from '../application/notifications/usage-storage-notifications'
 import { ModelCatalogNotifications } from '../application/notifications/model-catalog-notifications'
 import { ComposerContextNotifications, RuntimeUsageNotifications } from '../application/notifications/runtime-usage-notifications'
+import { UsageBindingNotifications } from '../application/notifications/usage-binding-notifications'
 import { NotificationDeliveryService } from '../application/notification-delivery-service'
 import { createNativeNotificationPort } from './native-notification-port'
 import { NotificationWorkerPort } from './notification-worker-port'
@@ -179,6 +180,7 @@ let usageStorageNotifications: UsageStorageNotifications | undefined
 let modelCatalogNotifications: ModelCatalogNotifications | undefined
 let runtimeUsageNotifications: RuntimeUsageNotifications | undefined
 let composerContextNotifications: ComposerContextNotifications | undefined
+let usageBindingNotifications: UsageBindingNotifications | undefined
 let notificationDeliveryService: NotificationDeliveryService | undefined
 let pageOperationNotifications: PageOperationNotifications | undefined
 let workspaceNotifications: WorkspaceNotifications | undefined
@@ -477,6 +479,7 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     try { notificationRuntime = connectSessionNotifications({ notifications: notificationService, desktop: desktopSessionService, team: teamControlService, power: powerMonitor, modelCatalog: modelCatalogNotifications,
       runtimeUsage: { suspend: () => runtimeUsageNotifications?.suspend(), resume: () => runtimeUsageNotifications?.resume() },
       composerContext: { suspend: () => composerContextNotifications?.suspend(), resume: () => composerContextNotifications?.resume() },
+      usageBinding: { suspend: () => usageBindingNotifications?.suspend(), resume: () => usageBindingNotifications?.resume() },
       queue: () => channelMessageRelay!.notificationQueueSnapshot(), watchQueue: fact => channelMessageRelay!.watchNotificationQueueFact(fact) }) }
     catch { notificationService.reportHistoryGap() }
   }
@@ -505,6 +508,7 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     try {
       runtimeUsageNotifications = new RuntimeUsageNotifications(notificationService); runtimeUsageNotifications.setTeam(initialUsageTeam)
       composerContextNotifications = new ComposerContextNotifications(notificationService); composerContextNotifications.setTeam(initialUsageTeam)
+      usageBindingNotifications = new UsageBindingNotifications(notificationService); usageBindingNotifications.setTeam(initialUsageTeam)
     }
     catch { notificationService.reportHistoryGap() }
   }
@@ -533,6 +537,7 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   })
   cursorUsageTrackerRef = cursorUsageTracker
   cursorStreamObserver = new CursorStreamObserver({
+    usageObserver: usageBindingNotifications,
     port: cursorCdpCreator.debugPort,
     fetchPageSocketUrl: () => cursorCdpCreator.resolveWorkbenchSocket(activeTeamWorkspacePath()),
     onWriteSignal: (composerId) => streamService.notifyComposerWriteSignal(composerId),
@@ -795,6 +800,7 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     cursorUsageTracker.setBoundComposers(boundComposersOf(snapshot))
     runtimeUsageNotifications?.setTeam(snapshot)
     composerContextNotifications?.setTeam(snapshot)
+    usageBindingNotifications?.setTeam(snapshot)
     // 不跟随短暂在线/离线状态停采；用户明确结束时由 IPC 回调（onRunEnded）补收最后一笔再封口。
   })
   disposeIpc = registerSessionIpc(desktopSessionService, () => mainWindow)
@@ -1182,7 +1188,8 @@ const notificationQuitBarrier = new NotificationQuitBarrier({
     () => Promise.resolve().then(() => usageStorageNotifications?.close()),
     () => modelCatalogNotifications?.close() ?? Promise.resolve(),
     () => runtimeUsageNotifications?.close() ?? Promise.resolve(),
-    () => composerContextNotifications?.close() ?? Promise.resolve()
+    () => composerContextNotifications?.close() ?? Promise.resolve(),
+    () => usageBindingNotifications?.close() ?? Promise.resolve()
   ], disposeDesktopOnce),
   settled: result => {
     try { notificationRuntimeJournal?.finish(result.confirmed, notificationService?.status().historyIncomplete ?? true, notificationService?.status().historyGapId) }
