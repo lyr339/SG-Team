@@ -27,19 +27,32 @@ export class QueueNotifications {
   private readonly startedAt: number
   private cache?: { facts: readonly ChannelQueueFact[]; scope: string; references: unknown[]; groups: Map<string, QueueNotificationInput> }
   private readonly annotations = new Map<string, { runId?: string; value: QueueHandoffAnnotation }>()
-  constructor(private readonly owner: NotificationService, private readonly getQueue: () => { facts: readonly ChannelQueueFact[]; historyIncomplete: boolean }, private readonly now: () => number = Date.now,
+  constructor(private readonly owner: NotificationService, private readonly getQueue: () => { facts: readonly ChannelQueueFact[]; historyIncomplete: boolean; inspectionId?: string }, private readonly now: () => number = Date.now,
     private readonly watchQueue?: (fact: ChannelQueueFact) => void) {
     this.startedAt = now()
     this.source = new NotificationProjectionSource(owner, (value, key) => {
       const state = readQueueNotificationState(value, key)
       for (const annotation of Object.values(state?.handoffs ?? {})) {
         const code = state?.rows[annotation.id]?.[0]
-        if (code === 'q' || code === 'h' || code === 'u' || code === 'd') this.watch({ entryId: annotation.entryId, channelId: annotation.channelId, runId: state?.runId,
+        if (code === 'q' || code === 'h' || code === 'u' || code === 'd' || code === 'b') this.watch({ entryId: annotation.entryId, channelId: annotation.channelId, runId: state?.runId,
           createdAt: annotation.issuedAt, held: code === 'h' })
       }
       return state
-    }, reduceQueueNotifications,
-      input => input.signature!)
+    }, (old, input, baseline, revision) => {
+      const current = this.getQueue()
+      if (input.inspectionId && current.inspectionId !== input.inspectionId) {
+        this.owner.reportHistoryGap()
+        return { state: old ?? { version: 2 as const, key: input.key, rows: {}, handoffs: {} }, drafts: [] }
+      }
+      const byId = new Map(current.facts.map(fact => [fact.entryId, fact]))
+      const facts = input.facts.map(fact => {
+        const latest = byId.get(fact.entryId)
+        const currentInspection = Boolean(fact.inspection && fact.inspection.id === current.inspectionId && latest?.inspection?.id === fact.inspection.id
+          && latest.inspection.sequence === fact.inspection.sequence && latest.channelId === fact.channelId && latest.runId === input.runId)
+        return { ...fact, currentInspection }
+      })
+      return reduceQueueNotifications(old, { ...input, facts }, baseline, revision)
+    }, input => input.signature!)
   }
   private watch(fact: ChannelQueueFact): void { try { this.watchQueue?.(fact) } catch { this.owner.reportHistoryGap() } }
   observe(snapshot: DesktopSnapshot, team: TeamControlSnapshot): void {
@@ -67,17 +80,21 @@ export class QueueNotifications {
           const current = sessionScopes.get(raw.channelId)
           const scope: NotificationScope = raw.runId ? current?.runId === raw.runId ? { ...current, groupId: undefined } : { runId: raw.runId, workspaceId, channelId: raw.channelId }
             : current ? { sessionId: current.sessionId, channelId: current.channelId, composerId: current.composerId, generation: current.generation, bindingGeneration: current.bindingGeneration } : { channelId: raw.channelId }
-          const reply = replies.get(replyKey(raw.channelId, raw.entryId))
+          // beginScope and listPendingOutbound use exact run_id, including NULL.
+          // A current-window echo cannot close another run or an unsent retired row.
+          const compatible = raw.runId === team.activeRun?.id && (raw.deliveredAt !== undefined || raw.withdrawnAt === undefined && raw.retiredAt === undefined)
+          const reply = compatible ? replies.get(replyKey(raw.channelId, raw.entryId)) : undefined
           const phase = reply ? 'replied' : raw.deliveredAt !== undefined ? 'delivered' : raw.withdrawnAt !== undefined ? 'withdrawn' : raw.retiredAt !== undefined ? 'retired' : raw.unconfirmed ? 'unconfirmed' : raw.held ? 'held' : 'queued'
           group.facts.push({ id: queueNotificationIdentity(raw.entryId), entryId: raw.entryId, channelId: raw.channelId, phase,
-            at: reply?.at ?? raw.deliveredAt ?? raw.withdrawnAt ?? raw.retiredAt ?? raw.unconfirmedAt ?? raw.createdAt, scope, ...(reply ? { replyEntryId: reply.id } : {}) })
+            at: reply?.at ?? raw.deliveredAt ?? raw.withdrawnAt ?? raw.retiredAt ?? raw.unconfirmedAt ?? raw.createdAt, scope,
+            inspection: raw.inspection, rowConfirmed: raw.deliveredAt !== undefined || raw.withdrawnAt !== undefined || raw.retiredAt !== undefined, takenAt: raw.deliveredAt, ...(reply ? { replyEntryId: reply.id } : {}) })
         }
         for (const group of groups.values()) group.signature = hash([group.key, group.workspaceId, group.facts])
         this.cache = { facts: queue.facts, scope, references, groups }
       }
       for (const [key, group] of this.cache.groups) {
         const annotations = [...this.annotations.values()].filter(value => keyFor(value.runId) === key).map(value => value.value)
-        this.source.observe(key, { ...group, now: this.now(), monitorStartedAt: this.startedAt, annotations, signature: `${group.signature}:${this.annotationRevision}` })
+        this.source.observe(key, { ...group, now: this.now(), monitorStartedAt: this.startedAt, inspectionId: queue.inspectionId, annotations, signature: `${group.signature}:${this.annotationRevision}:${queue.inspectionId ?? "legacy"}` })
       }
     } catch { this.owner.reportHistoryGap() }
   }

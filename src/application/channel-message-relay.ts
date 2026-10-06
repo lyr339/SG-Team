@@ -139,6 +139,8 @@ export class ChannelMessageRelay {
   private readonly queueFacts = new Map<string, ChannelQueueFact>()
   private queueView?: readonly ChannelQueueFact[]
   private queueHistoryGap = false
+  private readonly queueInspectionId = randomUUID()
+  private queueInspectionSequence = 0
   private readonly watchedQueueIds = new Set<string>()
   /** sessions 增量缓存：fingerprint 命中即复用引用（结构共享，渲染层 memo 红利）。 */
   private readonly sessionCache = new Map<string, { fingerprint: string; session: AgentSession }>()
@@ -171,9 +173,9 @@ export class ChannelMessageRelay {
     return this.conversations.get(String(channelId).trim())
   }
   /** Existing hydrate/delivery reads feed this view; observing it performs no database read or poll. */
-  notificationQueueSnapshot(): { facts: readonly ChannelQueueFact[]; historyIncomplete: boolean } {
+  notificationQueueSnapshot(): { facts: readonly ChannelQueueFact[]; historyIncomplete: boolean; inspectionId: string } {
     this.queueView ??= [...this.queueFacts.values()]
-    return { facts: this.queueView, historyIncomplete: this.queueHistoryGap }
+    return { facts: this.queueView, historyIncomplete: this.queueHistoryGap, inspectionId: this.queueInspectionId }
   }
   /** Pin only an explicitly associated handoff; use the original lightweight sync query even beyond its timeline window. */
   watchNotificationQueueFact(fact: ChannelQueueFact): void {
@@ -184,23 +186,26 @@ export class ChannelMessageRelay {
     if (!id || !/^\d+$/.test(fact.channelId)) return
     if (this.watchedQueueIds.size >= 2_000 && !this.watchedQueueIds.has(id)) { this.queueHistoryGap = true; return }
     this.watchedQueueIds.add(id)
-    if (!this.queueFacts.has(fact.entryId)) this.setQueueFact({ ...fact, unconfirmed: true, unconfirmedAt: this.now() })
+    if (!this.queueFacts.has(fact.entryId)) this.setQueueFact({ ...fact, inspection: undefined, unconfirmed: true, unconfirmedAt: this.now() })
   }
   private captureQueueFact(message: ChannelOutboundMessage): void {
     if (message.silent || resolveOutboundKind(message.text, message.kind) !== 'user') return
     this.setQueueFact({ entryId: `outbox:${message.id}`, channelId: message.channelId, runId: message.runId, createdAt: message.createdAt,
-      held: Boolean(message.holdSessionToken), deliveredAt: message.deliveredAt, withdrawnAt: message.withdrawnAt, retiredAt: message.retiredAt })
+      held: Boolean(message.holdSessionToken), deliveredAt: message.deliveredAt, withdrawnAt: message.withdrawnAt, retiredAt: message.retiredAt }, true)
   }
-  private setQueueFact(fact: ChannelQueueFact): void {
+  private setQueueFact(fact: ChannelQueueFact, inspected = false): boolean {
     const previous = this.queueFacts.get(fact.entryId)
-    if (previous && JSON.stringify(previous) === JSON.stringify(fact)) return
-    this.queueFacts.set(fact.entryId, fact); this.queueView = undefined
+    const semantic = (value: ChannelQueueFact) => JSON.stringify({ ...value, inspection: undefined })
+    if (previous && semantic(previous) === semantic(fact) && (!inspected || previous.inspection)) return false
+    const value = inspected ? { ...fact, inspection: { id: this.queueInspectionId, sequence: ++this.queueInspectionSequence } } : fact
+    this.queueFacts.set(fact.entryId, value); this.queueView = undefined
     if (fact.deliveredAt !== undefined || fact.withdrawnAt !== undefined || fact.retiredAt !== undefined) this.watchedQueueIds.delete(fact.entryId.slice('outbox:'.length))
     if (this.queueFacts.size > 32_000) {
       const terminal = [...this.queueFacts.values()].find(value => value.deliveredAt !== undefined || value.withdrawnAt !== undefined || value.retiredAt !== undefined)
       this.queueFacts.delete(terminal?.entryId ?? fact.entryId)
       this.queueHistoryGap = true
     }
+    return true
   }
 
   /** Cursor 实时桥确认绑定 Composer 已终止；持久化到 presence，重启后仍保持离线。 */
@@ -298,7 +303,7 @@ export class ChannelMessageRelay {
     if (!outboundId) return false
     if (!this.repository.withdrawOutbound(outboundId, this.now())) return false
     const fact = this.queueFacts.get(entryId)
-    if (fact) this.setQueueFact({ ...fact, withdrawnAt: this.now() })
+    if (fact) this.setQueueFact({ ...fact, deliveredAt: undefined, retiredAt: undefined, withdrawnAt: this.now(), unconfirmed: undefined, unconfirmedAt: undefined, missing: undefined }, true)
     const key = String(channelId).trim()
     const entries = this.conversations.get(key)
     if (entries?.some((entry) => entry.id === entryId)) {
@@ -315,7 +320,7 @@ export class ChannelMessageRelay {
     if (!outboundId) return false
     if (!this.repository.releaseOutboundHold(outboundId)) return false
     const fact = this.queueFacts.get(entryId)
-    if (fact) this.setQueueFact({ ...fact, held: false })
+    if (fact) this.setQueueFact({ ...fact, held: false, deliveredAt: undefined, withdrawnAt: undefined, retiredAt: undefined, unconfirmed: undefined, unconfirmedAt: undefined, missing: undefined }, true)
     const key = String(channelId).trim()
     const entries = this.conversations.get(key)
     if (entries) {
@@ -424,7 +429,7 @@ export class ChannelMessageRelay {
     try {
       for (let offset = 0; offset < pendingIds.length; offset += 256) for (const state of this.repository.queueDeliveryStateFor(pendingIds.slice(offset, offset + 256))) {
         const fact = this.queueFacts.get(`outbox:${state.id}`)
-        if (fact) this.setQueueFact({ ...fact, deliveredAt: state.deliveredAt, withdrawnAt: state.withdrawnAt, retiredAt: state.retiredAt })
+        if (fact) this.setQueueFact({ ...fact, deliveredAt: state.deliveredAt, withdrawnAt: state.withdrawnAt, retiredAt: state.retiredAt, unconfirmed: undefined, unconfirmedAt: undefined, missing: undefined }, true)
       }
     } catch {
       this.queueHistoryGap = true
@@ -629,8 +634,16 @@ export class ChannelMessageRelay {
       if (!fact) continue
       const next = { ...fact, deliveredAt: state.deliveredAt, withdrawnAt: state.withdrawnAt, retiredAt: state.retiredAt,
         held: state.held ?? fact.held, runId: state.runId ?? fact.runId, channelId: state.channelId ?? fact.channelId, createdAt: state.createdAt ?? fact.createdAt,
-        unconfirmed: undefined, unconfirmedAt: undefined }
-      if (JSON.stringify(fact) !== JSON.stringify(next)) { this.setQueueFact(next); changed = true }
+        unconfirmed: undefined, unconfirmedAt: undefined, missing: undefined }
+      changed = this.setQueueFact(next, true) || changed
+    }
+    // UNION watched ids are exact, not limited by the timeline page. Absence
+    // therefore supplies a current negative fact using this SAME original read.
+    for (const id of this.watchedQueueIds) {
+      if (outbound.has(`outbox:${id}`)) continue
+      const fact = this.queueFacts.get(`outbox:${id}`)
+      if (fact) changed = this.setQueueFact({ ...fact, deliveredAt: undefined, withdrawnAt: undefined, retiredAt: undefined,
+        missing: true, unconfirmed: true, unconfirmedAt: fact.unconfirmedAt ?? this.now() }, true) || changed
     }
     for (const [channelId, entries] of this.conversations) {
       // 只在首个变化处开始复制：未变通道保持同一引用（渲染层 memo 依赖结构共享）。

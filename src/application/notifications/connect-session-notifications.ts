@@ -20,7 +20,7 @@ export function connectSessionNotifications(input: {
   desktop: { getSnapshot(): DesktopSnapshot; subscribe(listener: (snapshot: DesktopSnapshot) => void): () => void }
   team: { getSnapshot(): TeamControlSnapshot; subscribe(listener: (snapshot: TeamControlSnapshot) => void): () => void }
   power: PowerEvents
-  queue?: () => { facts: readonly ChannelQueueFact[]; historyIncomplete: boolean }
+  queue?: () => { facts: readonly ChannelQueueFact[]; historyIncomplete: boolean; inspectionId?: string }
   watchQueue?: (fact: ChannelQueueFact) => void
   modelCatalog?: { suspend(): void; resume(): void }
   runtimeUsage?: { suspend(): void; resume(): void }

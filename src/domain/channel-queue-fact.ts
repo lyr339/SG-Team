@@ -5,6 +5,10 @@ export interface ChannelQueueFact {
   runId?: string
   createdAt: number
   held: boolean
+  /** Evidence from an already performed original row read/transaction; main-only, no new query. */
+  inspection?: { id: string; sequence: number }
+  /** Exact watched id was absent from that original lightweight result. */
+  missing?: boolean
   deliveredAt?: number
   withdrawnAt?: number
   retiredAt?: number

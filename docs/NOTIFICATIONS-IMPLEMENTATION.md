@@ -687,3 +687,21 @@ source checkpoint v2 每个既有身份仅增加一个 `~` 前缀表示“已检
 保护报告为 `protected-question-terminal-audit.json`；两个原开发树的文件、HEAD、porcelain status、binary diff 和四个既有删除保持。fixtures 精确清理自己的临时目录；没有 production main、用户软件/Cursor 重启、真实模型/账号/退款/删除/付款或 OS 通知，没有 preview tab/server。本批只本地提交，未 push、发布或安装。
 
 **完整目标仍未完成**：真实原库恢复时的问卷重新核对、旧版已失去的身份与混合历史、队列跨 scope/备份回退、未发 usage/MCP 校验前不可归属诊断、全布局/长期容量/正式包及 Windows/macOS 真权限/声音/勿扰/送达仍继续。终态 cache 修复不替代上述完整范围。
+
+## 第三十七批 · 队列来源、历史接收者与原行回退
+
+五个权威失败回归见 `queue-boundary-reproduction.log`：当前 run 的同 CH/同 outbox 引用被用于确认旧 run 交接；未投递撤回/退役行被一个 complete 块改成 replied；只是重绑 CH 就把过去的 taking 回执改给新 Composer；原数据库重新读出 pending 后，通知仍称已取走。本批修复这五条路径，不增加热态复核或执行链等待。
+
+- 沿原 `beginScope`/`listPendingOutbound` 的精确 run_id（含 NULL）关系核对 Native reply。非当前 run 的回声不解决旧父记录，未取走且已经撤回/退役的行也不被模型块覆盖。普通同 run 的明确回复、held→新会话取走→回复仍正常。
+- 原 `ChannelMessageRelay` 的既有 hydrate、轻量 delivery read、scope audit 和已成功的用户事务只为**自己的主进程通知 metadata cache**附加随机 reader 身份及语义变化序号。不改 SQL 业务状态、参数、原调用顺序、轮询频率、互斥或门禁。未变读数保留旧 inspection 和同一 facts 引用；watch 从私有历史补出的 placeholder 不能自称原行已核验。
+- 精确 watched id 的缺席，只从原 lightweight query 的现有 UNION 结果判定，没有另外查询正文/附件或额外数据库探测。原回执与当前原行缺席/pending 矛盾时进入同一个待核对 episode，保留历史，不说再次即将送达，不猜撤回、退役、失败或“还原成功”。普通无新 inspection 的旧 queued 帧仍不回退确认结果。
+- queue checkpoint v2 为每行加可选原 inspection 序号，reader 身份每 source 一份；旧 v1 无凭据不补造。低序号迟到帧不能覆盖新结果。实际 getter 已换 reader 时，未提交旧观察不复制到新来源，明确保存历史缺口。待核对状态跨 observer 重建保持，直到原读数给出新确认；旧 Cursor reply 回声本身不能修复 channel 原行的回退。
+- handoff 只增加原 taking 时间 metadata。单纯新绑定不迁移历史接收者；真正 held 交付或新明确回复仍可更新正确目标。legacy 缺 taking 时间时保守，不把第一次补字段当新的取走。待核对暂不提供错误会话跳转，发现时间使用 observed，不拿几小时前的 createdAt 让新警告过期。清理/已读、未知 ACK、CAS rebase 仍沿原事务保护。
+
+最终 `queue-boundary-review-final.log` 验证五处修复及 late sequence、reader 换代、原行缺席、observer 恢复、实际重新取走、idle 共享引用、ACK/CAS/清理；`queue-boundary-full-regression-final.log` 为 321 files、3067 passed、1 skipped。typecheck/build/dead-code 见同前缀 `*-final.log`。无 renderer/CSS 变更。
+
+`queue-boundary-verification-matrix-final.log` 的 26 类 Node/macOS Electron as-node fixtures 使用当前 compiled worker 通过，另有隔离 quit 和原 MCP/channel smoke。新增 `verify-notification-queue-boundaries.ts` 用真正的原 channel repository/relay 加私有 worker 检验已取走→隔离较旧行状态→待核对→重新取走，单条父记录、历史 receiver 不改给新 Composer、跨 observer 保留、无正文/token/路径复制及 payload 上限；未跑用户生产 main、真实账号/模型/付款/退款/删除或 OS 送达。单位场景额外 spy 证明当前恢复路径仍只有原 lightweight read，未调用 heavy/audit 额外查询；超过 hydration 的缺席使用已有 watched ID 机制。
+
+保护报告 `protected-queue-boundary-audit.json` 比较两原树逐文件/HEAD/porcelain/binary diff，四个既有删除保持；自己的 fixtures finally 精确清理。只本地提交，不 push、发版、安装或重启用户软件/Cursor。
+
+**完整目标仍未完成**：本批不声称能无损恢复被旧版裁切的身份、没被任何原查询观察到的窗口外变化、任意原库重建/换库或全部容量组合；真实 Cursor 原库恢复重核、未发 usage/MCP 校验前归属、全布局/长期容量/正式包与 Windows/macOS 实际权限/声音/勿扰/送达仍按原完整要求继续。
