@@ -46,7 +46,7 @@ export function reduceQuestionNotifications(old: QuestionNotificationState | und
     const previous = old?.rows[captured.identity]
     const evidence = input.sessions?.find(value => value.scope.channelId === captured.scope.channelId && value.scope.sessionId === captured.scope.sessionId && value.scope.generation === captured.scope.generation
       && value.scope.composerId === captured.scope.composerId && value.scope.bindingGeneration === captured.scope.bindingGeneration)
-    const uncertainWait = Boolean(previous?.actionable && evidence?.online && evidence.awaitingUserEvidence !== 'runtime'
+    const uncertainWait = Boolean(previous?.actionable && evidence && !evidence.terminated && !(evidence.awaitingUserEvidence === 'runtime' && evidence.awaitingUser === false)
       && captured.status === 'pending' && !captured.terminated && !input.runCompleted)
     const fact = previous?.status !== undefined && previous.status !== 'pending' && captured.status === 'pending'
       ? previous : { ...captured, actionable: captured.status === 'pending' && (captured.actionable || uncertainWait) && !captured.terminated && !input.runCompleted }
@@ -62,7 +62,8 @@ export function reduceQuestionNotifications(old: QuestionNotificationState | und
       || scope.generation !== fact.scope.generation || scope.bindingGeneration !== fact.scope.bindingGeneration || scope.composerId !== fact.scope.composerId)
     const sameSession = sessions.find(current => current.scope.channelId === fact.scope.channelId && !changedIdentity(current.scope))
     const end = input.runCompleted || sessions.some(current => changedIdentity(current.scope)) || sameSession?.terminated === true
-    const unavailable = end || sameSession && (!sameSession.online || sameSession.awaitingUserEvidence === 'runtime' && sameSession.awaitingUser === false)
+    // A transport outage does not answer, cancel or retire a human decision.
+    const unavailable = end || sameSession && sameSession.awaitingUserEvidence === 'runtime' && sameSession.awaitingUser === false
     if (unavailable && fact.actionable) {
       const inactive = { ...fact, actionable: false, terminated: end }; state.rows[fact.identity] = event(inactive, fact) ? inactive : fact
     } else state.rows[fact.identity] = fact

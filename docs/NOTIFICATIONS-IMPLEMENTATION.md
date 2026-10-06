@@ -622,3 +622,19 @@ source checkpoint v2 每个既有身份仅增加一个 `~` 前缀表示“已检
 纯 CUA 产品组件预览：当前 native JSON 展开后仍 2 未读，中心明确阅读一条后变为 1，“对照工具结果”导航定位确切 `preview-mcp-write-0`，另一条旧摘要仍未读。精简说明不塞内部字段术语；默认实际 984×554 和暗色 320×720 面板无横向溢出、logs=[]。证据 `ui/mcp-legacy-audit.json`、`ui/mcp-legacy-center.jpg`、`ui/mcp-legacy-narrow-dark.jpg`。临时主题/viewport、自己 tab/server 清理，保护树与四个既有删除保持，见 `protected-mcp-legacy-audit.json`。
 
 只本地提交。**完整目标仍未完成**：不支持的历史格式/缺失身份只保留明确阅读，不声称无损恢复过去实体；会话/问卷/回复/队列的历史恢复、未发 usage 载荷和 MCP 校验前未知归属、长期容量/完整布局、正式包及 Windows/macOS 真权限/声音/勿扰/送达仍继续。完整要求和既有业务闸门不缩减，不 push、发布、安装或重启。
+
+## 第三十四批 · 历史来源边界与疑似失联问卷
+
+接续权威 worktree 审查发现真实来源漏洞：问卷从所有历史 entry 的 processBlocks 收集，回复没有校验 source/channel，队列只按 outbox ID 关联回复。恢复/导入记录、用户条目、错通道内容可能变成“待回答/已回答/有新回复/交接已回复”通知。原 `channel-message-relay.ts` 的业务回复投影明确使用 assistant + cursor + 原 channel，而 desktop 是用户出站条目；本批沿这个既有契约，不从正文、相似标题或当前 CH 猜权威。
+
+新增一个纯 `nativeAssistantEntry` 判定，问卷/回复/队列复用；MCP 原已有相同三条件，改为同一 helper，语义不扩展。队列关联按实际 channel＋出站 ID，且时间线 bucket 名称纳入提取 cache 的引用比较，防止只有同一数组换 bucket 时仍沿用旧关联。回复/问卷历史提取不会让 untrusted 终态覆盖真实事项；有效原生 pending/submitted/complete 仍照常。未改原业务库、投递、撤回、重试、权限、Source RPC 或请求次数/顺序。
+
+再次审查发现：问卷将 online=false（包含 suspected）当作不再 actionable，从而移出待处理。现在 pending 的“仍需要用户回答”与传输在线灯不混同：已知问题在疑似失联、历史被裁切、通知 observer 重建时保留；当前原生 pending＋等待证据也可安静恢复。不新增提交权限，回答仍走原业务检查。只有明确回答/取消、确认停止/运行结束/会话身份更换、或可靠 runtime 明确“不再等待”才收口。没有据失联假造 submitted/cancelled，也不让旧问题自动补答。
+
+`notification-native-entry-provenance.test.ts` 覆盖 desktop/recovery/user/foreign-channel 四种伪来源、不能创建假的问卷/回复、不能以导入答案解决真的问卷、不能把另一个通道的显式 replyTo 当成本通道回执；原生正确结果作为正向对照。另验证同数组换 bucket 的 cache 边界。问卷 tests 补了疑似失联、裁切和 observer 重建、确认 stopped 的完整序列。正常可见性/中心已读、队列正向回执、MCP 语义均未缩减。
+
+单位测试与 built-worker 复用纯数据 fixture，移出原 tests helper 的 Vitest 依赖；不复制一套应用逻辑。新 `verify-notification-native-entry.ts` 只启动已编译 private worker，复核原生／不可信来源、跨 bucket/channel、真实 pending/submitted/replied 投影、observer restart＋suspected 保留待处理，通知 JSON 没有原问题/选项/全文。不打开 production main／Cursor、没有模型/账号/OS 送达或业务网络调用。
+
+当前证据：`native-entry-{typecheck,regression,build,dead-code}-final.log`（314 files、3005 passed、1 skipped）、`native-entry-focused-final.log`；二十四类 Node/macOS Electron as-node fixtures 及原 MCP/channel 冒烟全过，见 `native-entry-verification-matrix-final.log` 和 `native-entry-verification-final-native-entry-{node,electron}.log`。保护树/既有四个删除保持，`protected-native-entry-audit.json`。本批没有改 UI/CSS，不用旧截图或无 GUI 的 worker 声称全视觉已通过。
+
+**完整目标仍未完成**：本批解决来源伪权威和疑似失联丢待处理，不是全部历史恢复。复核同时定位后续范围：回复 source 的 2,000 身份/aliases cache 仍需长期去重与关联保障；问卷旧终态和真实原记录恢复的重核、队列跨 scope/备份恢复、未发 usage/MCP 未知归属、全布局与正式包/原生 Windows/macOS 送达继续。普通 old/missing 不假设完成，也不为通知追加业务预检。只本地提交，不 push、发布、安装或重启，原完整要求保留。

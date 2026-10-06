@@ -3,6 +3,7 @@ import type { DesktopSnapshot } from '../../shared/desktop-api'
 import type { TeamControlSnapshot } from '../../domain/team-control'
 import { conversationEntryProcessBlocks, type ProcessBlock } from '../../domain/conversation-entry'
 import { observedMcpWrite } from '../../domain/mcp-write-observation'
+import { nativeAssistantEntry } from '../../domain/native-assistant-entry'
 import {
   readMcpWriteState,
   reduceMcpWriteNotifications,
@@ -85,7 +86,7 @@ export class McpWriteNotifications {
           if (!sealed || sealed.reference !== history) {
             const facts: McpWriteFact[] = []
             for (const entry of history ?? [])
-              if (entry.role === 'assistant' && entry.source === 'cursor' && entry.channelId === session.scope.channelId)
+              if (nativeAssistantEntry(entry, session.scope.channelId!))
                 for (const block of conversationEntryProcessBlocks(entry)) { const fact = read(block, entry.timestamp, entry.id, entry.turn ?? entry.replyToEntryId); if (fact) facts.push(fact) }
             sealed = { reference: history, facts, signature: hash(facts) }
           }

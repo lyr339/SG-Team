@@ -3,6 +3,7 @@ import type { DesktopSnapshot } from '../../shared/desktop-api'
 import type { TeamControlSnapshot } from '../../domain/team-control'
 import type { ProcessBlock } from '../../domain/conversation-entry'
 import { conversationEntryProcessBlocks } from '../../domain/conversation-entry'
+import { nativeAssistantEntry } from '../../domain/native-assistant-entry'
 import { sessionNotificationObservation } from './session-lifecycle-notifications'
 import { readQuestionNotificationState, reduceQuestionNotifications, type NotificationQuestionFact, type QuestionNotificationInput, type QuestionNotificationState } from '../../domain/question-notification'
 import type { NotificationService } from '../notification-service'
@@ -40,17 +41,17 @@ export class QuestionNotifications {
             if (known && known.status !== 'pending' && question.status === 'pending') continue
             into.set(identity, { identity, toolCallId: question.toolCallId, blockId: block.id, ...(entryId ?? known?.entryId ? { entryId: entryId ?? known?.entryId } : {}), name: fact.name,
               scope: { ...fact.scope, groupId: undefined }, status: question.status, count: question.questions.length,
-              actionable: question.status === 'pending' && session.awaitingUser === true && fact.online, terminated: fact.retired || fact.evidence === 'stopped' })
+              actionable: question.status === 'pending' && session.awaitingUser === true, terminated: fact.retired || fact.evidence === 'stopped' })
           }
         }
         const entries = snapshot.conversations[session.channelId]
         let history = this.history.get(fact.identity)
         if (entries && (!history || history.reference !== entries)) {
           const known = new Map<string, NotificationQuestionFact>()
-          for (const entry of entries) collect(conversationEntryProcessBlocks(entry), known, entry.id)
+          for (const entry of entries) if (nativeAssistantEntry(entry, session.channelId)) collect(conversationEntryProcessBlocks(entry), known, entry.id)
           history = { reference: entries, questions: known }; this.history.set(fact.identity, history)
         }
-        for (const old of history?.questions.values() ?? []) questions.set(old.identity, { ...old, actionable: old.status === 'pending' && session.awaitingUser === true && fact.online,
+        for (const old of history?.questions.values() ?? []) questions.set(old.identity, { ...old, actionable: old.status === 'pending' && session.awaitingUser === true,
           terminated: fact.retired || fact.evidence === 'stopped' })
         collect(snapshot.liveProcess?.[session.channelId]?.blocks ?? [], questions)
       }

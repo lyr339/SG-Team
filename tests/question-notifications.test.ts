@@ -10,6 +10,29 @@ const waitingFrame = (status: 'pending' | 'submitted' = 'pending') => notificati
   conversations: { '1': [entry(status)] }, liveProcess: { '1': { startedAt: 1_000, blocks: [block(status)], generating: false, turn: 'turn-1', updatedAt: 1_000 } } })
 
 describe('question source into the real private ledger', () => {
+  it('keeps an unanswered decision across suspected outage, clipped history and restart; only real stop ends availability', async () => {
+    const h = notificationSourceHarness(), source = new QuestionNotifications(h.owner, () => 10000), team = notificationTeam()
+    const suspect = notificationSession({ online: false, connected: false, runtimeEvidence: 'suspected', connectionPhase: 'suspected', awaitingUser: false, awaitingUserEvidence: 'unknown' })
+    let restored: QuestionNotifications | undefined
+    try {
+      source.observe(waitingFrame(), team); await source.flush()
+      const before = h.ledger.page().records[0]!
+      source.observe({ ...waitingFrame(), sessions: [suspect] }, team); await source.flush()
+      expect(h.ledger.page().records[0]).toEqual(before); expect(h.ledger.page().summary.pending).toBe(1)
+      await source.close(); restored = new QuestionNotifications(h.owner, () => 20000)
+      restored.observe(notificationFrame({ sessions: [suspect] }), team); await restored.flush()
+      expect(h.ledger.page().records[0]).toEqual(before); expect(h.ledger.page().summary.pending).toBe(1)
+      restored.observe(notificationFrame({ sessions: [notificationSession({ ...suspect, runtimeEvidence: 'stopped', connectionPhase: 'cursor_stopped' })] }), team); await restored.flush()
+      expect(h.ledger.page().summary.pending).toBe(0); expect(h.ledger.page().records[0]!.subjectState).toBe('pending')
+    } finally { await source.close(); await restored?.close(); await h.owner.close() }
+  })
+  it('hydrates a native pending question quietly while the transport is suspect instead of losing the action', async () => {
+    const h = notificationSourceHarness(), source = new QuestionNotifications(h.owner, () => 10000)
+    try {
+      source.observe({ ...waitingFrame(), sessions: [notificationSession({ online: false, connected: false, runtimeEvidence: 'suspected', connectionPhase: 'suspected', awaitingUser: true, awaitingUserEvidence: 'runtime' })] }, notificationTeam())
+      await source.flush(); expect(h.ledger.page().summary.pending).toBe(1)
+    } finally { await source.close(); await h.owner.close() }
+  })
   it('restores pending quietly, resolves an explicit answer, and does not let stale live pending replace it', async () => {
     const h = notificationSourceHarness(); const source = new QuestionNotifications(h.owner, () => 10_000)
     const pushes: unknown[] = []; h.owner.subscribe(push => { if (push.announcement) pushes.push(push) })

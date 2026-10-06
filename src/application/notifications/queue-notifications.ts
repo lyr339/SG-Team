@@ -11,6 +11,7 @@ import { queueNotificationEvent, readQueueNotificationState, reduceQueueNotifica
 import type { NotificationService } from '../notification-service'
 import { NotificationProjectionSource } from './projection-source'
 import { sessionNotificationObservation } from './session-lifecycle-notifications'
+import { nativeAssistantEntry } from '../../domain/native-assistant-entry'
 
 export const queueNotificationIdentity = (entryId: string) => createHash('sha256').update(entryId).digest('hex').slice(0, 32)
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
@@ -49,10 +50,12 @@ export class QueueNotifications {
       if (queue.historyIncomplete) this.owner.reportHistoryGap()
       const sessions = sessionNotificationObservation(snapshot, team, this.now(), 0).facts
       const scope = hash([team.activeWorkspaceId, team.activeRun?.id, sessions.map(value => value.scope), team.runs.map(run => [run.id, run.workspaceId])])
-      const references = Object.values(snapshot.conversations)
+      const timelines = Object.entries(snapshot.conversations), references = timelines.flatMap(([channelId, entries]) => [channelId, entries])
       if (!this.cache || queue.facts !== this.cache.facts || scope !== this.cache.scope || references.length !== this.cache.references.length || references.some((value, index) => value !== this.cache!.references[index])) {
         const replies = new Map<string, { id: string; at: number }>()
-        for (const entries of references) for (const entry of entries) if (!entry.silent && entry.role === 'assistant' && entry.status === 'complete' && entry.replyToEntryId?.startsWith('outbox:')) replies.set(entry.replyToEntryId, { id: entry.id, at: entry.timestamp })
+        const replyKey = (channelId: string, entryId: string) => JSON.stringify([channelId, entryId])
+        for (const [channelId, entries] of timelines) for (const entry of entries) if (!entry.silent && nativeAssistantEntry(entry, channelId)
+          && entry.status === 'complete' && entry.replyToEntryId?.startsWith('outbox:')) replies.set(replyKey(channelId, entry.replyToEntryId), { id: entry.id, at: entry.timestamp })
         const groups = new Map<string, QueueNotificationInput>()
         if (team.activeRun) groups.set(keyFor(team.activeRun.id), { key: keyFor(team.activeRun.id), runId: team.activeRun.id, workspaceId: team.activeRun.workspaceId, now: this.now(), facts: [], annotations: [] })
         const runWorkspaces = new Map(team.runs.map(run => [run.id, run.workspaceId])), sessionScopes = new Map(sessions.map(value => [value.scope.channelId, value.scope]))
@@ -64,7 +67,7 @@ export class QueueNotifications {
           const current = sessionScopes.get(raw.channelId)
           const scope: NotificationScope = raw.runId ? current?.runId === raw.runId ? { ...current, groupId: undefined } : { runId: raw.runId, workspaceId, channelId: raw.channelId }
             : current ? { sessionId: current.sessionId, channelId: current.channelId, composerId: current.composerId, generation: current.generation, bindingGeneration: current.bindingGeneration } : { channelId: raw.channelId }
-          const reply = replies.get(raw.entryId)
+          const reply = replies.get(replyKey(raw.channelId, raw.entryId))
           const phase = reply ? 'replied' : raw.deliveredAt !== undefined ? 'delivered' : raw.withdrawnAt !== undefined ? 'withdrawn' : raw.retiredAt !== undefined ? 'retired' : raw.unconfirmed ? 'unconfirmed' : raw.held ? 'held' : 'queued'
           group.facts.push({ id: queueNotificationIdentity(raw.entryId), entryId: raw.entryId, channelId: raw.channelId, phase,
             at: reply?.at ?? raw.deliveredAt ?? raw.withdrawnAt ?? raw.retiredAt ?? raw.unconfirmedAt ?? raw.createdAt, scope, ...(reply ? { replyEntryId: reply.id } : {}) })

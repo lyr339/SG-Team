@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import type { DesktopSnapshot } from '../../shared/desktop-api'
 import type { TeamControlSnapshot } from '../../domain/team-control'
 import type { NotificationService } from '../notification-service'
+import { nativeAssistantEntry } from '../../domain/native-assistant-entry'
 import { readReplyNotificationState, reduceReplyNotifications, type NotificationReplyFact, type ReplyNotificationInput, type ReplyNotificationState } from '../../domain/reply-notification'
 import { sessionNotificationObservation } from './session-lifecycle-notifications'
 import { NotificationProjectionSource } from './projection-source'
@@ -27,7 +28,7 @@ export class ReplyNotifications {
         if (!extracted || extracted.reference !== entries) {
           const facts: NotificationReplyFact[] = []
           for (const entry of entries) {
-            if (entry.silent || entry.role !== 'assistant' || entry.status !== 'complete' && entry.status !== 'failed') continue
+            if (entry.silent || !nativeAssistantEntry(entry, session.scope.channelId!) || entry.status !== 'complete' && entry.status !== 'failed') continue
             const logical = entry.replyToEntryId ?? entry.streamId ?? entry.turn ?? entry.id
             const key = hash([session.identity, logical])
             // A stable association, not text identity: equal words in different turns remain different replies.
