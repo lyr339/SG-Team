@@ -46,7 +46,7 @@ export interface ProcessTurnStep {
   /** 图片生成步骤（kind=image）的产出：卡片正文直接内联缩略图，点击看大图。 */
   image?: ProcessImage
   /** Read/duplicate-presentation evidence for the expanded native output only. */
-  mcpWrite?: Pick<McpWriteObservation, 'status' | 'channelId'>
+  mcpWrite?: McpWriteObservation
 }
 
 export interface ProcessShellStep {
@@ -348,7 +348,7 @@ function blockStep(raw: ProcessBlock, id: string): ProcessTurnStep {
     details,
     todos: block.todos,
     question: block.question,
-    ...(write && write.status !== 'returned' ? { mcpWrite: { status: write.status, channelId: write.channelId } } : {}),
+    ...(write && write.status !== 'returned' ? { mcpWrite: write } : {}),
     ...(shell ? { shell } : {}),
     ...(diff ? { diff } : {}),
     ...(image ? { image } : {})

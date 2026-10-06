@@ -17,7 +17,7 @@ export function useMcpWriteNotificationRead(ref: RefObject<HTMLElement | null>, 
         && (!record.scope.workspaceId || record.scope.workspaceId === workspaceId) && (!record.scope.runId || record.scope.runId === runId)
         && (!record.scope.slotId || record.scope.slotId === slotId) && (!record.scope.groupId || record.scope.groupId === groupId),
       () => [...viewport.querySelectorAll<HTMLElement>('[data-notification-mcp-block]')].some(notificationElementVisible),
-      { selector: '[data-notification-mcp-block]', attributes: ['data-notification-mcp-block', 'data-notification-mcp-status'],
+      { selector: '[data-notification-mcp-block]', attributes: ['data-notification-mcp-block', 'data-notification-mcp-status', 'data-notification-mcp-proof'],
         locate: record => mcpWriteResultElement(viewport, record) })
   }, [ref, sessionId, channelId, generation, composerId, bindingGeneration, workspaceId, runId, slotId, groupId])
 }

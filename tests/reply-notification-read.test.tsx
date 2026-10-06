@@ -32,7 +32,7 @@ describe('exact reply-body reading, without per-message store subscriptions', ()
   it('acknowledges the exact visible body and does not change conversation state', async () => {
     await act(async () => root.render(<Workspace />))
     expect(api.onNotificationChanged).toHaveBeenCalledOnce()
-    expect(api.getNotificationPage).toHaveBeenCalledWith({ sessionId: scope.sessionId, entryId: entry.id, category: 'sessions', limit: 5 })
+    expect(api.getNotificationPage).toHaveBeenCalledWith({ sessionId: scope.sessionId, category: 'sessions', filter: 'unread', limit: 100, readCursor: 'start' })
     expect(api.readNotification).toHaveBeenCalledWith({ id: 'n1', revision: 1 })
     expect(entry.status).toBe('complete')
   })

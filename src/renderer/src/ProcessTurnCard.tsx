@@ -11,6 +11,7 @@ import { QuestionCard, type QuestionActions } from './QuestionCard'
 import { tokenizeShellCommand } from './shell-command-tokens'
 import { TodoIndicator, todoTone } from './TodoIndicator'
 import { useStreamingText } from './use-streaming-text'
+import { mcpWriteReadIdentity } from '../../domain/mcp-write-observation'
 
 interface ProcessTurnCardProps {
   id: string
@@ -343,6 +344,7 @@ function StepDetails({ step, questionActions, preview = false }: { step: Process
               data-notification-mcp-block={detail.label === '输出' && step.mcpWrite ? step.blockId : undefined}
               data-notification-mcp-status={detail.label === '输出' ? step.mcpWrite?.status : undefined}
               data-notification-mcp-channel={detail.label === '输出' ? step.mcpWrite?.channelId : undefined}
+              data-notification-mcp-proof={detail.label === '输出' && step.mcpWrite ? mcpWriteReadIdentity(step.mcpWrite) : undefined}
             >{detail.value}</pre> : <code>{detail.value}</code>}</dd></dl>
           ))}
         </>

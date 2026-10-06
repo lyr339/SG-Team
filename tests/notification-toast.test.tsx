@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { NotificationToast } from '../src/renderer/src/notifications/NotificationToast'
 import { NotificationStore, type NotificationApi } from '../src/renderer/src/notifications/notification-store'
 import { DEFAULT_NOTIFICATION_PREFERENCES, type NotificationRecord } from '../src/domain/notification'
+import { mcpWriteReadIdentity, type McpWriteObservation } from '../src/domain/mcp-write-observation'
 
 describe('single calm notification toast', () => {
   let host: HTMLDivElement; let root: Root; let store: NotificationStore; let api: NotificationApi; let release: () => void
@@ -85,14 +86,15 @@ describe('single calm notification toast', () => {
   })
   it('expanded exact native outputs suppress a grouped reminder only when every underlying result is visible; a collapsed header is not reading', async () => {
     const scope = { sessionId: 'session', channelId: '1', generation: '0', composerId: 'composer', bindingGeneration: 'binding' }
+    const proof: McpWriteObservation = { tool: 'team_memory', action: 'propose', channelId: '1', agentSessionId: 'native-agent', status: 'unconfirmed', reason: 'storage' }
     const container = document.createElement('div')
     Object.assign(container.dataset, { notificationMcpScope: '', notificationSession: 'session', notificationChannel: '1', notificationGeneration: '0', notificationComposer: 'composer', notificationBinding: 'binding' })
-    const outputs = [1, 2].map(i => { const e = document.createElement('pre'); Object.assign(e.dataset, { notificationMcpBlock: `block-${i}`, notificationMcpStatus: 'unconfirmed', notificationMcpChannel: '1' }); container.append(e); return e })
+    const outputs = [1, 2].map(i => { const e = document.createElement('pre'); Object.assign(e.dataset, { notificationMcpBlock: `block-${i}`, notificationMcpStatus: 'unconfirmed', notificationMcpChannel: '1', notificationMcpProof: mcpWriteReadIdentity(proof) }); container.append(e); return e })
     document.body.append(container)
     let hidden = false
     outputs.forEach((e, i) => vi.spyOn(e, 'getBoundingClientRect').mockImplementation(() => ({ width: 300, height: 70, top: hidden && i === 0 ? 2000 : 100, bottom: hidden && i === 0 ? 2070 : 170, left: 10, right: 310, x: 10, y: 100, toJSON: () => ({}) })))
     const originals = [1, 2].map(i => ({ ...record(`mcp-${i}`), eventType: 'mcp.write-result', subjectState: 'unconfirmed', scope,
-      origin: { module: 'sessions' as const, sessionId: scope.sessionId }, target: { kind: 'session' as const, scope, blockId: `block-${i}` } }))
+      origin: { module: 'sessions' as const, sessionId: scope.sessionId }, target: { kind: 'session' as const, scope, blockId: `block-${i}`, mcpWrite: proof } }))
     const grouped = async (id: string, revision: number) => {
       await act(async () => originals.forEach(r => store.accept({ health: 'ready', historyIncomplete: false, change: { changed: true, record: r, summary: { revision, total: 2, unread: 2, pending: 0, clearable: 0 } } })))
       await act(async () => store.accept({ health: 'ready', historyIncomplete: false, change: { changed: true, record: originals[1], summary: { revision, total: 2, unread: 2, pending: 0, clearable: 0 } },

@@ -101,6 +101,7 @@ export function reduceMcpWriteNotifications(
         kind: 'session',
         scope: f.scope,
         blockId: f.blockId,
+        mcpWrite: { tool: f.tool, action: f.action, status: f.status, reason: f.reason, channelId: f.channelId, agentSessionId: f.agentSessionId, ...(f.entity ? { entity: { ...f.entity } } : {}) },
         ...(f.entryId ? { entryId: f.entryId } : {})
       },
       origin: { module: 'sessions', sessionId: f.scope.sessionId },

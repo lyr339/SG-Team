@@ -7,12 +7,13 @@ import { useMcpWriteNotificationRead } from '../src/renderer/src/notifications/u
 import { mcpWriteResultElement } from '../src/renderer/src/notifications/mcp-write-result-element'
 import type { NotificationPage, NotificationPush, NotificationRecord, NotificationScope } from '../src/domain/notification'
 import type { ProcessBlockTool } from '../src/domain/conversation-entry'
+import { observedMcpWrite } from '../src/domain/mcp-write-observation'
 
 const scope: NotificationScope = { sessionId: 'desktop-session', channelId: '1', generation: '0', composerId: 'composer-a', bindingGeneration: 'bind-a', workspaceId: 'workspace', runId: 'run', slotId: 'slot' }
 const block: ProcessBlockTool = { kind: 'tool', id: 'cursor:tool', toolKind: 'mcp', toolName: 'mcp-SG Team-team_memory', status: 'done', input: { action: 'review', channel_id: '1', memoryId: 'm' },
   output: JSON.stringify({ ok: false, agentSessionId: 'runtime-agent', code: 'internal_error', sgWriteFailure: { version: 1, reason: 'storage' }, message: 'original native result' }) }
 const record: NotificationRecord = { id: 'n1', key: 'mcp-write:tool', eventId: 'mcp-write:tool', eventType: 'mcp.write-result', subjectState: 'unconfirmed', category: 'team', source: '协作工具', title: '记忆写入结果待核对',
-  scope, target: { kind: 'session', scope, blockId: block.id }, attention: 'notice', state: 'active', tone: 'warning', sourceRevision: 1, occurredAt: 100, createdAt: 100, updatedAt: 100, revision: 1, attentionRevision: 1, readRevision: 0 }
+  scope, target: { kind: 'session', scope, blockId: block.id, mcpWrite: observedMcpWrite(block.toolName, block.input, block.output)! }, attention: 'notice', state: 'active', tone: 'warning', sourceRevision: 1, occurredAt: 100, createdAt: 100, updatedAt: 100, revision: 1, attentionRevision: 1, readRevision: 0 }
 const page = (records = [record]): NotificationPage => ({ records, summary: { revision: 1, total: records.length, pending: 0, unread: records.length, clearable: 0 }, reset: false })
 function Workspace({ current = scope, original = block }: { current?: NotificationScope; original?: ProcessBlockTool }) {
   const ref = useRef<HTMLDivElement>(null)
@@ -47,7 +48,7 @@ describe('one scoped native output read observer, not one subscription per proce
     await expand()
     expect(api.onNotificationChanged).toHaveBeenCalledOnce()
     expect(api.getNotificationPage).toHaveBeenCalledOnce()
-    expect(api.getNotificationPage).toHaveBeenCalledWith({ sessionId: scope.sessionId, eventType: 'mcp.write-result', filter: 'unread', limit: 100 })
+    expect(api.getNotificationPage).toHaveBeenCalledWith({ sessionId: scope.sessionId, eventType: 'mcp.write-result', filter: 'unread', limit: 100, readCursor: 'start' })
     expect(api.readNotification).toHaveBeenCalledWith({ id: 'n1', revision: 1 })
     const element = mcpWriteResultElement(host, record)!
     expect(element.tagName).toBe('PRE'); expect(element.textContent).toContain('original native result')
@@ -92,5 +93,18 @@ describe('one scoped native output read observer, not one subscription per proce
     await act(async () => root.render(<Workspace original={original} />)); await expand()
     expect(mcpWriteResultElement(host, record)?.textContent).toContain('original line two')
     expect(api.readNotification).toHaveBeenCalledWith({ id: 'n1', revision: 1 })
+  })
+  it('same block/status but a different native failure reason, actor or entity is not the visible original receipt', async () => {
+    for (const patch of [{ reason: 'permission' as const }, { agentSessionId: 'another-agent' }, { entity: { kind: 'memory' as const, id: 'different-memory' } }]) {
+      await act(async () => root.render(null)); api.readNotification.mockClear()
+      api.getNotificationPage.mockResolvedValue(page([{ ...record, target: { ...record.target as Extract<NotificationRecord['target'], { kind: 'session' }>, mcpWrite: { ...observedMcpWrite(block.toolName, block.input, block.output)!, ...patch } } }]))
+      await act(async () => root.render(<Workspace />)); await expand()
+      expect(api.readNotification).not.toHaveBeenCalled()
+    }
+  })
+  it('legacy diagnostics without native proof are still readable explicitly in the center, not automatically by a same-status original output', async () => {
+    api.getNotificationPage.mockResolvedValue(page([{ ...record, target: { kind: 'session', scope, blockId: block.id } }]))
+    await act(async () => root.render(<Workspace />)); await expand()
+    expect(api.readNotification).not.toHaveBeenCalled()
   })
 })

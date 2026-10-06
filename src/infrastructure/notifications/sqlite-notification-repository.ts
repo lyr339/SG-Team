@@ -248,6 +248,22 @@ export class SqliteNotificationRepository {
   }
   page(query: NotificationQuery = {}): NotificationPage {
     const summary = this.summary(query)
+    if (query.readCursor !== undefined) {
+      const cursor = query.readCursor
+      if (query.cursor || cursor !== 'start' && (!cursor || typeof cursor !== 'object' || !Number.isSafeInteger(cursor.revision) || cursor.revision < 0
+        || !Number.isSafeInteger(cursor.ceiling) || cursor.ceiling < cursor.revision || typeof cursor.id !== 'string' || !cursor.id || cursor.id.length > 300))
+        throw new NotificationActionError('通知阅读游标无效')
+      const reset = cursor !== 'start' && cursor.ceiling > summary.revision
+      const ceiling = cursor === 'start' || reset ? summary.revision : cursor.ceiling
+      const where = this.where(query), limit = Math.min(100, Math.max(1, Math.floor(query.limit ?? 40)))
+      const after = cursor === 'start' || reset ? undefined : cursor
+      const rows = this.db.prepare(`SELECT payload FROM desktop_notifications WHERE ${where.sql} AND revision<=?
+        ${after ? 'AND (revision<? OR (revision=? AND id<?))' : ''} ORDER BY revision DESC,id DESC LIMIT ?`)
+        .all(...where.params, ceiling, ...(after ? [after.revision, after.revision, after.id] : []), limit + 1) as StoredRow[]
+      const records = rows.slice(0, limit).map(row => decodeRecord(row.payload)), last = records.at(-1)
+      return { records, summary, reset, historyIntegrity: this.historyGap().integrity,
+        ...(rows.length > limit && last ? { nextReadCursor: { revision: last.revision, id: last.id, ceiling } } : {}) }
+    }
     const reset = query.cursor !== undefined && query.cursor.revision !== summary.revision
     const offset = reset ? 0 : Math.max(0, Math.floor(query.cursor?.offset ?? 0))
     const limit = Math.min(100, Math.max(1, Math.floor(query.limit ?? 40)))

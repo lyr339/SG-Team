@@ -49,6 +49,20 @@ function object(value: unknown): Record<string, unknown> | undefined {
 }
 const id = (value: unknown) =>
   typeof value === 'string' && value.length > 0 && value.length <= 300 ? value : undefined
+/** Bounded native receipt metadata only, not prose interpretation or an execution grant. */
+export function validMcpWriteReadProof(value: unknown): value is McpWriteObservation {
+  const proof = object(value)
+  if (!proof || !Object.keys(proof).every(key => ['tool', 'action', 'channelId', 'agentSessionId', 'status', 'reason', 'entity'].includes(key))
+    || typeof proof.tool !== 'string' || !Object.hasOwn(actions, proof.tool) || typeof proof.action !== 'string' || !actions[proof.tool as McpWriteObservation['tool']]!.includes(proof.action)
+    || !id(proof.channelId) || !/^\d+$/.test(proof.channelId as string) || !id(proof.agentSessionId)
+    || typeof proof.status !== 'string' || !['unconfirmed', 'secondary-unconfirmed', 'returned'].includes(proof.status)
+    || typeof proof.reason !== 'string' || !['storage', 'permission', 'timeout', 'unclassified', 'coordination'].includes(proof.reason)) return false
+  const entity = proof.entity === undefined ? undefined : object(proof.entity)
+  return proof.entity === undefined || Boolean(entity && Object.keys(entity).every(key => ['kind', 'id'].includes(key)) && typeof entity.kind === 'string' && ['task', 'memory', 'message'].includes(entity.kind) && id(entity.id))
+}
+export function mcpWriteReadIdentity(proof: McpWriteObservation): string {
+  return JSON.stringify([proof.tool, proof.action, proof.channelId, proof.agentSessionId, proof.status, proof.reason, proof.entity?.kind ?? null, proof.entity?.id ?? null])
+}
 export function observedMcpWrite(
   toolName: string,
   input: Record<string, unknown> | undefined,

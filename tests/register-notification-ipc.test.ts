@@ -52,6 +52,18 @@ describe('notification IPC permissions and data boundaries', () => {
     for (const key of ['sessionId', 'toolCallId', 'entryId', 'contextDomain', 'generation', 'installationId', 'memoryId']) expect(() => invoke(IPC.notificationPage, { [key]: { injected: true } })).toThrow()
     dispose()
   })
+  it('validates the bounded keyset source-read cursor and keeps it separate from center offsets', () => {
+    const { service, invoke, dispose } = harness()
+    try {
+      invoke(IPC.notificationPage, { sessionId: 'session', readCursor: 'start', filter: 'unread', limit: 100 })
+      expect(service.page).toHaveBeenLastCalledWith({ sessionId: 'session', readCursor: 'start', filter: 'unread', limit: 100 })
+      invoke(IPC.notificationPage, { readCursor: { revision: 5, id: 'exact-record', ceiling: 7 } })
+      expect(service.page).toHaveBeenLastCalledWith({ readCursor: { revision: 5, id: 'exact-record', ceiling: 7 } })
+      for (const readCursor of [null, 'restart', { revision: 8, id: 'id', ceiling: 7 }, { revision: 5, id: {}, ceiling: 7 }, { revision: NaN, id: 'id', ceiling: 7 }])
+        expect(() => invoke(IPC.notificationPage, { readCursor })).toThrow()
+      expect(() => invoke(IPC.notificationPage, { readCursor: 'start', cursor: { revision: 1, offset: 0 } })).toThrow()
+    } finally { dispose() }
+  })
   it('authenticates every read and mutation and never exposes a renderer publish endpoint', () => {
     const { service, invoke, dispose } = harness()
     invoke(IPC.notificationPage, { filter: 'pending', workspaceId: 'workspace-a', limit: 40, ignored: 'raw transcript' })

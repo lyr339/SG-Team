@@ -25,6 +25,9 @@ function query(value: unknown): NotificationQuery {
   if (input.category !== undefined && !NOTIFICATION_CATEGORIES.includes(input.category as NotificationCategory)) throw new NotificationActionError('通知分类无效')
   if (input.limit !== undefined && (typeof input.limit !== 'number' || !Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 100)) throw new NotificationActionError('通知分页大小无效')
   const cursor = input.cursor === undefined ? undefined : object(input.cursor)
+  const readCursor = input.readCursor === undefined || input.readCursor === 'start' ? input.readCursor : object(input.readCursor)
+  if (cursor && readCursor !== undefined) throw new NotificationActionError('通知分页方式不能混用')
+  if (readCursor && readCursor !== 'start' && revision(readCursor.revision) > revision(readCursor.ceiling)) throw new NotificationActionError('通知阅读游标无效')
   return {
     ...(input.key !== undefined ? { key: id(input.key) } : {}),
     ...(input.eventType !== undefined ? { eventType: input.eventType as string } : {}),
@@ -41,7 +44,8 @@ function query(value: unknown): NotificationQuery {
     ...(input.category ? { category: input.category as NotificationCategory } : {}),
     ...(input.workspaceId !== undefined ? { workspaceId: id(input.workspaceId) } : {}),
     ...(input.limit !== undefined ? { limit: input.limit as number } : {}),
-    ...(cursor ? { cursor: { revision: revision(cursor.revision), offset: revision(cursor.offset) } } : {})
+    ...(cursor ? { cursor: { revision: revision(cursor.revision), offset: revision(cursor.offset) } } : {}),
+    ...(readCursor !== undefined ? { readCursor: readCursor === 'start' ? 'start' : { revision: revision(readCursor.revision), id: id(readCursor.id), ceiling: revision(readCursor.ceiling) } } : {})
   }
 }
 

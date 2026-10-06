@@ -1,4 +1,5 @@
 import type { NotificationHistoryIntegrity } from './notification-history'
+import { validMcpWriteReadProof, mcpWriteReadIdentity, type McpWriteObservation } from './mcp-write-observation'
 export const NOTIFICATION_CATEGORIES = ['sessions', 'run', 'team', 'accounts', 'automation', 'processing', 'maintenance', 'storage', 'updates', 'usage'] as const
 export const NOTIFICATION_SOURCE_BATCH_LIMIT = 100
 /** Compact, bounded identity checkpoints only; conversation bodies are not source state. */
@@ -39,7 +40,7 @@ export type NotificationTarget =
   | { kind: 'settings'; section: NotificationSettingsSection }
   | { kind: 'run'; runId?: string; groupId?: string }
   | { kind: 'collaboration'; runId: string; groupId: string; messageId?: string }
-  | { kind: 'session'; scope: NotificationScope; entryId?: string; toolCallId?: string; blockId?: string; surface?: 'queue' | 'context' }
+  | { kind: 'session'; scope: NotificationScope; entryId?: string; toolCallId?: string; blockId?: string; surface?: 'queue' | 'context'; mcpWrite?: McpWriteObservation }
 
 export interface NotificationDraft {
   /** Semantic identity (operation, session incident, or source event), never the display title. */
@@ -92,6 +93,8 @@ export interface NotificationSummary {
   clearable: number
 }
 
+/** Private source-read traversal. Human read receipts do not move record.revision; new results are handled by the already subscribed push stream. */
+export interface NotificationReadCursor { revision: number; id: string; ceiling: number }
 export interface NotificationQuery {
   runId?: string
   memoryId?: string
@@ -109,6 +112,7 @@ export interface NotificationQuery {
   entryId?: string
   limit?: number
   cursor?: { revision: number; offset: number }
+  readCursor?: 'start' | NotificationReadCursor
 }
 
 export interface NotificationPage {
@@ -117,6 +121,7 @@ export interface NotificationPage {
   records: NotificationRecord[]
   summary: NotificationSummary
   nextCursor?: { revision: number; offset: number }
+  nextReadCursor?: NotificationReadCursor
   /** Caller must replace previous pages rather than append across different revisions. */
   reset: boolean
   health?: NotificationPush['health']
@@ -257,6 +262,7 @@ export function validateNotificationDraft(input: NotificationDraft): void {
       validateScope(target.scope)
       for (const value of [target.entryId, target.toolCallId, target.blockId]) if (value !== undefined && (typeof value !== 'string' || value.length > 300)) throw new Error('通知目标无效')
       if (target.surface !== undefined && !['queue','context'].includes(target.surface)) throw new Error('通知目标区域无效')
+      if (target.mcpWrite !== undefined && !validMcpWriteReadProof(target.mcpWrite)) throw new Error('原 MCP 阅读证据无效')
     } else if (target.kind === 'run' || target.kind === 'collaboration') {
       for (const value of [target.runId, target.groupId]) if (value !== undefined && (typeof value !== 'string' || value.length > 300)) throw new Error('通知目标无效')
       if (target.kind === 'collaboration' && (!target.runId || !target.groupId || target.messageId !== undefined && (typeof target.messageId !== 'string' || target.messageId.length > 300))) throw new Error('协作通知目标无效')
@@ -290,7 +296,8 @@ export function notificationSafeText(value: string): string {
 export function notificationContentSignature(draft: NotificationDraft): string {
   const scope = (value: NotificationScope): Array<[string, string]> => Object.entries(value).filter((entry): entry is [string, string] => entry[1] !== undefined).sort(([a], [b]) => a.localeCompare(b))
   const reference = draft.target
-  const target = reference?.kind === 'session' ? { kind: reference.kind, scope: scope(reference.scope), entryId: reference.entryId, toolCallId: reference.toolCallId, blockId: reference.blockId, surface: reference.surface }
+  const target = reference?.kind === 'session' ? { kind: reference.kind, scope: scope(reference.scope), entryId: reference.entryId, toolCallId: reference.toolCallId, blockId: reference.blockId, surface: reference.surface,
+    ...(reference.mcpWrite ? { mcpWrite: mcpWriteReadIdentity(reference.mcpWrite) } : {}) }
     : reference?.kind === 'settings' ? { kind: reference.kind, section: reference.section }
       : reference?.kind === 'collaboration' ? { kind: reference.kind, runId: reference.runId, groupId: reference.groupId, messageId: reference.messageId }
         :reference?.kind==='memory'?{kind:reference.kind,workspaceId:reference.workspaceId,runId:reference.runId,groupId:reference.groupId,memoryId:reference.memoryId,version:reference.version}

@@ -1251,7 +1251,7 @@ if (previewParameters.get('notifications') === 'usage-store') {
   if (previewParameters.get('usageStore') === 'recovered') reduceUsageStorageNotifications(write.state, { key, id: 'c'.repeat(64), at: at+2000,
     fact: { kind: 'save', result: 'confirmed' } }, true, 3).drafts.forEach(notificationPreview.offer)
 }
-if (previewParameters.get('notifications') === 'mcp-write' && state.team.activeRun) {
+if (['mcp-write','source-history'].includes(previewParameters.get('notifications') ?? '') && state.team.activeRun) {
   const member = state.team.members.find(member => member.binding && state.desktop.sessions.some(session => session.channelId === member.binding!.channelId && session.composerId)), binding = member?.binding
   const session = state.desktop.sessions.find(session => session.channelId === binding?.channelId)
   if (member && binding && session) {
@@ -1271,6 +1271,16 @@ if (previewParameters.get('notifications') === 'mcp-write' && state.team.activeR
     const facts = examples.map((example, i) => ({ ...observedMcpWrite(`mcp-SG Team-${example.tool}`, example.args, JSON.stringify(example.payload))!,
       identity: String(i + 1).repeat(64), attentionKey: String(i + 1).repeat(64), blockId: blocks[i]!.id, entryId, at: at + i, name: `${session.roleName} · CH-${session.channelId}`, scope }))
     reduceMcpWriteNotifications(undefined, { key: 'preview-mcp-write', facts, signature: 'isolated', now: at, monitorStartedAt: at }, true, 1).drafts.forEach(notificationPreview.offer)
+    if (previewParameters.get('notifications') === 'source-history' && facts[0]) {
+      // Two actual native outputs, behind 230 newer unmounted records. A first-page-only observer cannot find them.
+      const filler = Array.from({ length: 230 }, (_, index) => ({ ...facts[0]!, identity: (index + 1000).toString(16).padStart(64, '0'), attentionKey: (index + 2000).toString(16).padStart(64, '0'),
+        blockId: `preview-unmounted-${index}`, at: at + index + 1 }))
+      let previous: ReturnType<typeof reduceMcpWriteNotifications>['state'] | undefined
+      for (let start = 0; start < filler.length; start += 100) {
+        const value = reduceMcpWriteNotifications(previous, { key: 'preview-mcp-history', now: at, monitorStartedAt: at + 1000, signature: 'history', facts: filler.slice(start, start + 100) }, true, start + 2)
+        previous = value.state; value.drafts.forEach(notificationPreview.offer)
+      }
+    }
   }
 }
 let previewMemoryIssueState: MemoryIssueState | undefined

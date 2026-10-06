@@ -509,6 +509,22 @@ scope catalogue 已加入 `operator-messages:`。完整原 workspace/run 消失�
 
 本批无 UI/CSS 变更、没有启动 production main／当前软件／Cursor、运行真实账号或模型／OS 送达；自己的 fixture finally 精确清理，两个保护树及四个既有删除状态不变。仅本地提交，不 push／发布／安装。**完整目标仍未完成**：会话／问卷／回复／队列等剩余 feed 的历史与未知恢复、准确大历史阅读及整套长期容量／性能、未发 usage 载荷或 MCP 校验前不可归属诊断、正式包和 Windows/macOS 真权限／声音／勿扰／送达仍要继续逐项核验，不拿这一批绿色结果替代完整事件矩阵。
 
+### 第二十九批：稳定的来源阅读分页、有界确认和真实回执匹配
+
+本批修复原 source reader 只查询第一页的实缺口：MCP viewport 只读最多 100 个候选，reply 只读每 entry 的 5 个候选，其他精确来源也没有续页；匹配的当前结果在后页时永远漏读。直接套中心 offset 不成立：每次人类已读会推进全局 revision，并从 unread 集合移除一行，原 offset 会反复 reset／跳过剩余记录。现在仅 private `getNotificationPage` 增加独立的 `readCursor` keyset 模式，以不受阅读回执移动的 record.revision＋id 倒序，第一次读取冻结 revision ceiling；读回执／归档不会倒改 cursor，ceiling 后的新结果仍由先订阅的 push 流处理。两个分页模式互斥、校验严格，普通中心 offset/reset、筛选范围、全部已读／清理及原业务请求不被重写。私有计数回退返回 reset，不能把旧代次阅读缓存接进新的历史。
+
+来源 helper 仍只在前台、实物元素可见、原身份与结果 predicate 匹配时确认单条；不是进入整个 route／会话就标全读。跨 page 检索没有任意 first-N 截断；只有 DOM 中已经展示的精确结果能读，候选、确认、attempt cache 有界，单 viewport 最多 4 个 read RPC、128 个排队项，并在下一最多 100-record 页之前留足空间，避免挤爆现有 worker 的 64-request 容量。空间等待仅在 private 异步 transport，未要求原操作／读取／布局等通知落盘，不加业务 timer／poll／balance／CDP 或预检。新可见 marker／focus／resize／scroll／真实 push 可触发再核对，未变的可见结果不在每个滚动事件重查 IPC；失败的阅读仍未读，不用自动重试回路假造已确认。旧 page、旧回执、historyReload、scope cleanup、隐藏／modal 覆盖都有 epoch／可见性围栏；同正文 revision 的读版本／归档只合并单调回执，不让迟到 pull 复活旧未读。reply 复用这一 viewport transport，去掉了重复的一套分页／pending／订阅实现，没有改原 conversation entries 或 Agent 回执。
+
+审查还发现“相同 block＋相同 unconfirmed status”不够证明同一原 MCP 错误。当前新诊断带有 bounded、白名单的原结构化 receipt proof（tool/action/channel/原 actor/status/reason/entity），原 ProcessTurnView 只从已有原 JSON 生成同样的 DOM 身份，不从格式化后文案猜故障。不同 reason、actor、entity 即使 status 相同也不能消费旧提醒；已返回成功不作为过去未确认失败的阅读证明。没有拷贝完整工具原文、发模型或改原 MCP 结果。分组 toast 的原页抑制同样核对这个身份，抑制本身不是人类／Agent 已读回执。旧 persisted MCP 诊断没有 proof 时**不猜测自动补证／阅读**；用户仍可在中心显式阅读旧摘要，后续可靠的旧 proof 迁移／原结果恢复关联仍需继续。这不是已经把所有 legacy feed 收口。
+
+证据：`full-regression-source-read-final.log`（310 files，2940 passed，1 skipped）、`typecheck-source-read-final.log`、`build-source-read-final.log`、`dead-code-source-read-final.log`。`tests/notification-read-keyset.test.ts` 核对 431 条在 unread 收缩／全局 read revision 增加时 12 页无 reset/漏行、冻结 ceiling、新 attention 不被旧读消费、counter rewind／非法 cursor，以及中心原 offset 契约保持。`tests/source-read-history.test.ts` 在真实私有 SQLite＋独立 DOM fixture 中核对后于第 100 条的唯一可见结果只读一条、431 个确实匹配结果完整确认且峰值 4 RPC、modal 覆盖、迟到旧读跨低 counter 历史恢复、卸载、无进度 cursor 停止。真实 reply／native MCP／原结果 hook 的 React tests 加上更细原 proof、旧诊断不可猜读；旧 toast fixture 先前只写 block/status，没有原 proof，现加准确同 proof，保留“全部结果实际可见才抑制且不写 read”的原断言，不放宽为仅 header 即通过。
+
+`scripts/verify-notification-source-reading.ts` 在 Node／macOS Electron (`ELECTRON_RUN_AS_NODE=1`) 用当前编译 private worker：431 个私有 fixture 诊断经真实 RPC 分 12 页准确读回、读字段跨事务单调、proof 持久、不重放 announcement、不用 backend script 冒充看到了 renderer。二十一类 worker／shutdown／recovery／history／context／native-rebase／team-observations／group-effects／mcp-writes／usage-storage／model-catalog／runtime-usage／context-source／usage-binding／source-epoch／native-content／task-context／team-cache／native-scope／operator-reads／source-reading 在两 runtime 均复跑，见 `source-read-verification-final-matrix.log`，原 `mcp-smoke-source-read-final.log`／`channel-smoke-source-read-final.log`。
+
+真实 CUA 只打开本地纯 browser `notifications=source-history` fixture，用产品 ProcessTurnCard 和 reader：两个原输出排在 230 个较新未展示诊断之后。只展开过程 header 时仍 232 未读；实际展开原 memory 输出后为 231，中心仍明确列出其余 231 未读，另一个 task 输出未展开，没有全页误清。`ui/source-history-native-read.jpg`／`ui/source-history-231-unread.jpg` 和 `ui/source-history-audit.json` 保存实际 `<pre>` 身份／计数证据，console warning/error 为 []。工具请求的临时 viewport 为 1440×860，UI 审计实际 CSS viewport 是 1107×661，不能把请求值当成实测值。初始 IAB 约 548 CSS 宽时 main 高度为 0，原结果未显示，reader 没有假标已读；本批不声称这种窄布局或全响应式已验收，留待真实窗口范围审查。自己的 tab 已关闭、viewport override reset、预览主题请求恢复跟随系统、sidebar 恢复，preview server 已停止。无新 UI/CSS 风格或左彩边改动，不拿 fixture 视觉当实际 OS 送达。
+
+`protected-source-read-audit.json` 核对两保护树 HEAD/status/binary diff／逐文件与四个既有删除状态保持。没有开 production main／当前软件／Cursor、跑真实账号／模型／OS 通知；worker fixtures finally 仅清理自己的目录。**完整目标仍未完成**：中心多页 summary/read receipt 竞态和更长保留／性能、legacy 原 proof 与其余会话／问卷／队列／回复历史恢复、未发 usage 载荷及 MCP 校验前未知归属、完整响应式与正式包／Windows/macOS 真权限／声音／勿扰／送达继续逐项实施验收，不把这个 reader 修复替换完整目标。仅本地提交，不 push、发布、安装或结束目标。
+
 下面保留完整要求，不因分批已有成果缩小。已实现部分仍需匹配该项范围验收；未实现部分继续开工。
 
 1. 通知中心、轻量顶栏入口、单张提醒和独立 renderer store。支持待处理／未读／全部、查询范围、分页、详情、关闭、阅读、归档、确认清理和适当偏好；减少动画、长内容、键盘与窄窗需验收。

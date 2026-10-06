@@ -27,7 +27,7 @@ describe('exact visible source result acknowledgements', () => {
   afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); delete (window as unknown as { sgDesktop?: unknown }).sgDesktop })
   it('reads only the known record after the exact result is visible, not an entire route', async () => {
     await act(async () => root.render(<Result />))
-    expect(api.getNotificationPage).toHaveBeenCalledWith({ key: 'update:1', limit: 1 })
+    expect(api.getNotificationPage).toHaveBeenCalledWith({ key: 'update:1', filter: 'unread', limit: 1, readCursor: 'start' })
     expect(api.readNotification).toHaveBeenCalledWith({ id: 'n1', revision: 1 })
   })
   it('does not acknowledge hidden, unfocused or mismatched results', async () => {

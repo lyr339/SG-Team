@@ -48,6 +48,14 @@ export function createNotificationPreview() {
   const page = async (query: NotificationQuery = {}): Promise<NotificationPage> => {
     const rows = filtered(query).filter(record => query.filter === 'unread' ? notificationIsUnread(record) : query.filter === 'pending' ? notificationIsPending(record) : true)
       .sort((a, b) => Number(notificationIsPending(b)) - Number(notificationIsPending(a)) || Number(a.attention === 'activity') - Number(b.attention === 'activity') || b.revision - a.revision)
+    if (query.readCursor !== undefined) {
+      const cursor = query.readCursor, reset = cursor !== 'start' && cursor.ceiling > revision
+      const ceiling = cursor === 'start' || reset ? revision : cursor.ceiling, after = cursor === 'start' || reset ? undefined : cursor
+      const values = rows.filter(record => record.revision <= ceiling && (!after || record.revision < after.revision || record.revision === after.revision && record.id < after.id))
+        .sort((a, b) => b.revision - a.revision || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0)), limit = Math.min(100, query.limit ?? 30), entries = values.slice(0, limit), last = entries.at(-1)
+      return { records: structuredClone(entries), summary: summary(query), reset, health: 'ready', historyIncomplete: history.revision > 0, historyIntegrity: structuredClone(history), historyGapUnconfirmed: false,
+        ...(values.length > limit && last ? { nextReadCursor: { revision: last.revision, id: last.id, ceiling } } : {}) }
+    }
     const reset = query.cursor !== undefined && query.cursor.revision !== revision
     const offset = reset ? 0 : query.cursor?.offset ?? 0; const limit = query.limit ?? 30
     return { records: structuredClone(rows.slice(offset, offset + limit)), summary: summary(query), reset, health: 'ready', historyIncomplete: history.revision > 0, historyIntegrity: structuredClone(history), historyGapUnconfirmed: false,
@@ -95,7 +103,7 @@ export function createNotificationPreview() {
     },
     onNotificationChanged: callback => { listeners.add(callback); return () => { listeners.delete(callback) } }
   }
-  if (scenario && !['empty','human','context','memory','restore','compatibility','operator-memory','group-effects','mcp-write','usage-store','model-catalog','usage-runtime','context-source','usage-binding','native-content'].includes(scenario)) {
+  if (scenario && !['empty','human','context','memory','restore','compatibility','operator-memory','group-effects','mcp-write','source-history','usage-store','model-catalog','usage-runtime','context-source','usage-binding','native-content'].includes(scenario)) {
     const templates = [
       { key: 'preview:automation', category: 'automation' as const, source: '自动化', title: '主要步骤已完成，浏览器清场未完成', detail: '处理和加固已经完成；浏览器清场未结束。请查看本轮详情，不要重复执行已完成的步骤。', tone: 'warning' as const, attention: 'action' as const, state: 'active' as const, target: { kind: 'settings' as const, section: 'automation' as const } },
       { key: 'preview:batch', category: 'run' as const, source: '运行 · 接口重构', title: '6 个会话已就绪，2 个尚未接入', detail: '批量发起已结束。未接入成员的结果可在运行页逐项查看；已就绪会话保持可用。', tone: 'warning' as const, attention: 'notice' as const, state: 'resolved' as const, target: { kind: 'run' as const } },
