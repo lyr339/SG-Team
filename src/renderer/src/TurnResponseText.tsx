@@ -5,6 +5,8 @@ import type { LiveAgentResponseState } from '../../shared/desktop-api'
 import { ClampedMessage } from './ClampedMessage'
 import { MessageContent } from './MessageContent'
 import { useStreamingText } from './use-streaming-text'
+import type { NotificationScope } from '../../domain/notification'
+import { useReplyBodyDigest } from './notifications/use-reply-body-digest'
 
 /**
  * 直播正文与落库正文进入播放器前走同一条规范化管线：两者本来经不同净化路径
@@ -22,6 +24,7 @@ export interface TurnResponseTextProps {
   live?: LiveAgentResponseState
   /** 已落库回复（sealed 阶段）。 */
   reply?: ConversationEntry
+  notificationScope?: NotificationScope
 }
 
 /**
@@ -33,7 +36,7 @@ export interface TurnResponseTextProps {
  * - 挂载时正文已经流出一部分（切换会话进入正在生成的回合）：已有部分直接落位，
  *   只对之后到达的增量打字——打字机表达「正在发生」，不重放已经发生过的内容。
  */
-export function TurnResponseText({ turnKey, live, reply }: TurnResponseTextProps): React.JSX.Element | null {
+export function TurnResponseText({ turnKey, live, reply, notificationScope }: TurnResponseTextProps): React.JSX.Element | null {
   const historical = useRef(reply !== undefined && live === undefined)
   const text = reply ? responseFeedText(reply.text) : live ? responseFeedText(live.text) : ''
   const done = reply !== undefined || live?.status === 'complete'
@@ -45,17 +48,20 @@ export function TurnResponseText({ turnKey, live, reply }: TurnResponseTextProps
     { id: turnKey, text, done },
     { immediate: historical.current, firstFrameDoneFull: true, hydrate: hydrate.current }
   )
-  if (historical.current) {
-    return reply?.text ? <ClampedMessage text={reply.text} /> : null
-  }
-  if (!text) return null
   const streaming = live?.status === 'streaming' && reply === undefined
   const playing = streaming || visible.length < text.length
+  const attributes = useReplyBodyDigest(reply, notificationScope, Boolean(historical.current || !playing && reply && normalizeEscapedNewlines(reply.text).trim() === text))
+  if (historical.current) {
+    return reply?.text ? <ClampedMessage text={reply.text} notificationAttributes={attributes} />
+      : reply ? <span {...attributes}>{reply.status === 'streaming' ? '正在生成…' : '（空）'}</span> : null
+  }
+  if (!text) return reply ? <span {...attributes}>{reply.status === 'streaming' ? '正在生成…' : '（空）'}</span> : null
   return (
     <div
       className={`live-agent-response${playing ? ' is-playing' : ''}${reply ? ' is-sealed' : ''}`}
       aria-live="polite"
       aria-label={playing ? 'Cursor Agent 正在实时生成' : undefined}
+      {...attributes}
     >
       {visible ? <MessageContent text={visible} className="live-agent-response__text" /> : null}
       {playing ? <span className="live-agent-response__caret" aria-hidden="true" /> : null}

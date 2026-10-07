@@ -1,5 +1,6 @@
 import { memo, useLayoutEffect, useRef, useState } from 'react'
 import { MessageContent } from './MessageContent'
+import type { ReplyBodyAttributes } from './notifications/use-reply-body-digest'
 
 /** 长回复气泡限高（超出折叠为渐变遮罩 + 「展开全文」），避免单条回复撑满会话窗。 */
 export const MESSAGE_CLAMP_PX = 384
@@ -9,7 +10,7 @@ export const MESSAGE_CLAMP_PX = 384
  * 测量在 useLayoutEffect 中按 text 重测；折叠态 scrollHeight 仍是全文高度，不受 max-height 影响。
  * 只用于历史水合的回复：本会话内看着流出来的正文不再事后折叠（折叠会让刚播完的内容突然收缩）。
  */
-export const ClampedMessage = memo(function ClampedMessage({ text }: { text: string }): React.JSX.Element {
+export const ClampedMessage = memo(function ClampedMessage({ text, notificationAttributes }: { text: string; notificationAttributes?: ReplyBodyAttributes }): React.JSX.Element {
   const contentRef = useRef<HTMLDivElement>(null)
   const [overflowing, setOverflowing] = useState(false)
   const [expanded, setExpanded] = useState(false)
@@ -19,7 +20,7 @@ export const ClampedMessage = memo(function ClampedMessage({ text }: { text: str
     setOverflowing(element.scrollHeight > MESSAGE_CLAMP_PX)
   }, [text])
   return (
-    <div className={`clamped-message${overflowing && !expanded ? ' is-clamped' : ''}`}>
+    <div className={`clamped-message${overflowing && !expanded ? ' is-clamped' : ''}`} {...notificationAttributes}>
       <div ref={contentRef}>
         <MessageContent text={text} />
       </div>

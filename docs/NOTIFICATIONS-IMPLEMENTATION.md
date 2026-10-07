@@ -787,3 +787,21 @@ hook v38 只读取已知 envelope 的 typed `isError`：最多八层 wrapper、J
 纯 preview 的 `notifications=question-original` 使用产品 draft/组件，没有 SDK/模型/真实账号。CUA 实际默认 984×554 与 320×600 暗色检查了完整范围标签、差异说明、原问卷定位、已读后仍一条待处理；未选择/跳过/提交答案。原问卷已经显示时差异仍未读，中心明确阅读才消费自己的 human receipt。截图与实际 DOM/交互证据在 `ui/question-original-*.png`、`ui/question-original-audit.json`；无 CSS 或装饰语言改动，不新增彩色左轨/胶囊。自己的 tab、viewport/media 和纯 preview server 清理。保护审计 `protected-question-original-audit.json` 核对两树逐文件/HEAD/porcelain/binary diff 与四个既有删除。只本地提交，不 push/发布/安装或重启用户软件/Cursor，不运行真实模型、账号、退款/删除/付款或 OS 通知。
 
 **完整目标仍 active，未完成**：本批覆盖有当前原 channel SQL/成功持久化凭据的問卷差异，不证明任意 Cursor 原库/WAL、旧版本已丢身份、缺原帧或不可观测的窗口外变化能无损恢复。回复原记录回退/更换、队列剩余原库组合、完整布局/长期容量/正式包、Windows/macOS 真权限/声音/勿扰/送达仍继续；不把问卷重新核对替代原完整范围。
+
+## 第四十二批 · 回复正文版本与精确阅读/定位
+
+`reply-body-reproduction.log` 复现两处漏检：同一 native ID/status 的另一段正文会自动消掉旧未读；已读回复的原位置提供不同文本，source signature 却没有正文信息，更新没有进入中心。现增加有界、会话范围内的正文 digest；它不是 Agent/业务回执、association key 或执行许可。逻辑归属仍取原 entry/anchor/stream/turn aliases，文字相同的不同回复不被合并。校验材料对齐原转义换行、保留代码内部空白，并包含工作区/run/slot/session/channel/generation/Composer/binding 的已知范围，不读取附件文件、外部 URL 或额外源数据。Node 在原数组/条目引用上缓存，renderer 仅用 WebCrypto；正文不进通知/私有索引，只保留 hash 和有界 metadata。
+
+回复 checkpoint v4、私有 schema 8 扩展原 JSON identity row，不新增表、第二个 projection/sourceState 请求或业务读取。原 2,000 working cache、100-row/800-alias 私有核对和 2MiB 上限保持。旧 v2/v3 backfill 只含当时存在的字段，不能带新正文证据冒充旧格式；旧 index 没有 digest 时，当前正文只能成为明确的 legacy-comparison，不补造旧内容或自动消费旧 human receipt。旧 backfill 也不能删掉已有的新 proof。schema 7 原地到 8 只更新格式声明，不批量改写/哈希历史；未来格式拒绝测试为 9，问卷表和 unrelated/user_version 原规则保持。改动不碰模型、账号、批量启动或发送/重试权限。
+
+同一**已通知**回复位置的不同正文是新的观察版本，不叫新任务完成或已回滚，也不重发：同一逻辑记录更新为“原回复正文已更新”，新的 digest 只更新一次 meaningful attention，quiet baseline 不补播。同内容/alias refinement、已读/归档/清理与 worker 重启不重复未读；真正新正文仍能提醒。原失败/完成状态的正常类别更新继续原口径，正文提示不盖过首次失败。`reply-body-refinement-reproduction.log` 第二轮发现 canonical ref 后会丢失 body-changed 分类、把观察时间退回旧 createdAt；现保留有界 `bodyUpdatedAt`，安静更新精确目标时不改观察时间或 human attention/read。
+
+每个真正完成的正文实例带同源 digest/状态/范围 marker；未播完的 suffix、生成中、import/recovery、错误范围、同 ID 不同文本、旧 comparison 都不能消费原阅读凭据。保持现有正文/Markdown/播放器路径，不增加 DOM 布局层或 CSS；历史摘要属性 memo，notification API 不在时不做 hash/额外 re-render，SSR 不暴露 raw runtime ID。缺 Crypto 或校验无法确认时只保留未读，不发业务 fallback。一次 workspace 读取观察器仍是一份，不为历史条目逐个订阅/查询；原队列“replied”附带实际 outbox reference，另按当前 native replyToEntryId 核对，不把复用 reply ID 当作原投递/交接结果。
+
+真实 CUA 正向验收抓到单测遗漏：Crypto 完成后 marker 才出现，而观察器冻结了初始化时的空 DOM list，因此正向匹配也不已读。现按真实当前 DOM 检查，仍走原 MutationObserver→下一 paint 的观察边界，没有轮询；新增实际 TurnResponseText＋workspace observer 回归显式等待此 rAF，不按任意短 timeout 假判完成。App 在 hash 前后与原两帧 reveal 时复核当前 native 条目、正文和范围，reveal 也只能定位匹配 marker；旧 digest 不能跳到新正文。队列目标同样复核原 outbox association。遇到无法定位仅回通知中心解释，不能为了“跳转成功”去刷新源、悄悄换工作区或发送消息。
+
+`reply-body-focused-final.log`、`reply-body-full-regression-final.log`（328 files、3132 passed、1 skipped）、`reply-body-build-final.log`、`reply-body-typecheck-final.log`、`reply-body-dead-code-final.log` 为本次当前证据。原会话渲染/输入隔离断言保留，没有用改计数/删 assertion 掩盖 hash 造成的 re-render/SSR 问题。最终另补 foreign-channel 同 ID/text 不得盖当前 viewport 身份的 fence；renderer-only 补动后重建/全套/typecheck/dead-code 复跑，compiled main/worker hashes 仍与矩阵完全一致。新增 actual channel SQLite backup/restore verifier 将同 ID/createdAt 的较旧正文恢复，通过原 relay＋current compiled worker 验证 one logical update、原 human read 不移借、新 digest/阅读跨 restart、清理后相同内容不复活、二百 idle 零 worker commands、零额外原 SQL 或消息重放、无原正文/路径复制。31 类 Node/macOS Electron as-node 的 `reply-body-verification-matrix-final.log` 在完成 build 后顺序复跑，并核对所有 compiled main hashes 不变；另有隔离 Electron quit 与原 MCP/channel smoke。不是用户当前完整 Cursor 原库或实际 Windows/OS 权限/送达证明。
+
+纯 preview `notifications=reply-body`/`bodyCase=stale` 使用产品 reducer/组件，无真实账号、模型或 OS 通知。CUA 在实际 984×554 确认旧同 ID 正文不被误读且旧定位被拒；匹配新正文才确认，准确定位后中心关闭。在实际 548px 的列表模式中，DOM 存在不等于正文可见，未读正确保持；切回实际桌面可见范围后才消费。320×600 浅色详情和桌面暗色排版、完整范围文字也核对，无横向溢出；截图/实际 DOM/交互在 `ui/reply-body-*.png`、`ui/reply-body-audit.json`。没有增加彩色左轨/胶囊或修改视觉语言，不把一张图当全布局通过。自建 tab、media/viewport 与纯 preview server 清理；`protected-reply-body-audit.json` 核对两个保护树逐文件/HEAD/porcelain/binary diff 和四个既有删除。只本地提交，不 push/发版/安装或重启用户软件/Cursor。
+
+**完整目标仍 active，未完成**：本批明确覆盖有已捕获正文版本/当前位置的回复恢复与阅读，不证明附件文件字节、缺原帧/丢失旧身份、任意损坏/WAL 或无法观察的回复缺席可无损重建。Legacy 只有当前对照，不能承诺旧内容被找回。队列其余原库恢复组合、全布局/长期容量/正式包及 Windows/macOS 真权限、声音、勿扰和系统送达仍继续，原完整要求不缩减。

@@ -66,7 +66,7 @@ export class SqliteNotificationRepository {
           if (!columns.some(column => column.name === 'content_signature')) this.db.exec('ALTER TABLE desktop_notification_tombstones ADD COLUMN content_signature TEXT')
           this.db.exec('UPDATE desktop_notification_meta SET schema_version=2 WHERE id=1')
         })
-      } else if (![2, 3, 4, 5, 6, 7].includes(version)) throw new Error('通知历史格式暂不支持，原有数据未修改')
+      } else if (![2, 3, 4, 5, 6, 7, 8].includes(version)) throw new Error('通知历史格式暂不支持，原有数据未修改')
       if (version >= 4) {
         for (const table of ['desktop_notification_sources', 'desktop_notification_integrity', 'desktop_notification_gap_keys'])
           if (!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) throw Error('通知历史结构异常，原数据保留')
@@ -112,6 +112,9 @@ export class SqliteNotificationRepository {
         this.validateQuestionTerminalsStructure()
         this.db.exec('UPDATE desktop_notification_meta SET schema_version=7 WHERE id=1')
       })
+      // v8 extends existing reply JSON metadata. Preserve old rows without
+      // inventing a historical body digest; adapters refine them as comparisons.
+      if (version < 8) this.transaction(() => this.db.exec('UPDATE desktop_notification_meta SET schema_version=8 WHERE id=1'))
       this.historyGap() // Invalid v4 integrity never silently becomes a fresh, clean ledger.
     } catch (error) { this.db.close(); throw error }
   }

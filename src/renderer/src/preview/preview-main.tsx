@@ -54,6 +54,8 @@ import { App } from '../App'
 import { applyAppearancePreferences, readAppearancePreferences } from '../appearance-preferences'
 import { reduceUnattributedMcpCalls } from '../../../domain/mcp-unattributed-call'
 import { questionOriginalRecheckDraft } from '../../../domain/question-original-recheck'
+import { reduceReplyNotifications } from '../../../domain/reply-notification'
+import { replyBodyDigest } from '../notifications/reply-body-digest'
 import {
   collaborationSnapshot,
   desktopSnapshot,
@@ -1322,6 +1324,28 @@ if (previewParameters.get('notifications') === 'question-original' && state.team
           options: [{ id: 'a', label: '保留当前行为，先核对原会话记录' }, { id: 'b', label: '重新分析边界后由用户确认' }] }] } }] }]
     notificationPreview.offer(questionOriginalRecheckDraft({ identity: 'a'.repeat(64), toolCallId, blockId, entryId, name: `${session.roleName} · CH-${session.channelId}`,
       scope, count: 1, status: 'submitted', actionable: false, terminated: false, recheck: { originalStatus: 'pending', phase: 'unconfirmed', actionable: true } }, undefined, true, at, 1))
+  }
+}
+if (previewParameters.get('notifications') === 'reply-body' && state.team.activeRun) {
+  const member = state.team.members.find(member => member.binding && state.desktop.sessions.some(session => session.channelId === member.binding!.channelId && session.composerId)), binding = member?.binding
+  const session = state.desktop.sessions.find(session => session.channelId === binding?.channelId)
+  if (member && binding && session) {
+    binding.composerId = session.composerId // Explicit isolated fixture binding only.
+    const at = Date.now() - 30000, entryId = 'preview-reply-body-entry'
+    const scope = { workspaceId: binding.workspaceId, runId: binding.runId, slotId: member.slot.id, bindingGeneration: binding.generation,
+      sessionId: session.id, channelId: session.channelId, generation: String(session.generation), composerId: session.composerId }
+    const oldText = '较早保存的回复正文：保留原实现，尚未分析缓存与来源恢复的边界。'
+    const newText = '### 当前的原回复正文\n\n这段内容与先前版本不同。旧通知不能仅凭相同 ID 被标为已读，查看当前版本不等于确认所有后续任务结束。\n\n```ts\nfunction currentResult() {\n  return { source: "native", confirmed: true }\n}\n```\n\n正文校验不改变原会话、队列、答题或业务回执。'
+    state.desktop.conversations[session.channelId] = [{ id: entryId, channelId: session.channelId, role: 'assistant', source: 'cursor', status: 'complete', timestamp: at,
+      text: newText, replyToEntryId: 'outbox:preview-body' }]
+    void Promise.all([replyBodyDigest(oldText, scope), replyBodyDigest(newText, scope)]).then(([oldDigest, newDigest]) => {
+      if (!oldDigest || !newDigest) return
+      const fact = { key: 'a'.repeat(64), aliases: ['b'.repeat(64)], entryId, at, name: session.roleName, scope, failed: false, bodyDigest: oldDigest }
+      const first = reduceReplyNotifications(undefined, { key: 'preview-body-source', facts: [fact], now: at, monitorStartedAt: at, signature: 'old' }, false, 1)
+      const selected = previewParameters.get('bodyCase') === 'stale' ? first : reduceReplyNotifications(first.state,
+        { key: 'preview-body-source', facts: [{ ...fact, bodyDigest: newDigest }], now: at + 1000, monitorStartedAt: at, signature: 'new' }, true, 2)
+      selected.drafts.forEach(notificationPreview.offer)
+    })
   }
 }
 let previewMemoryIssueState: MemoryIssueState | undefined

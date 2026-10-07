@@ -1,5 +1,6 @@
 import type { NotificationHistoryIntegrity } from './notification-history'
 import { validMcpWriteReadProof, mcpWriteReadIdentity, type McpWriteObservation } from './mcp-write-observation'
+import { validReplyBodyProof, type ReplyBodyProof } from './reply-body-proof'
 export const NOTIFICATION_CATEGORIES = ['sessions', 'run', 'team', 'accounts', 'automation', 'processing', 'maintenance', 'storage', 'updates', 'usage'] as const
 export const NOTIFICATION_SOURCE_BATCH_LIMIT = 100
 /** Compact, bounded identity checkpoints only; conversation bodies are not source state. */
@@ -40,7 +41,7 @@ export type NotificationTarget =
   | { kind: 'settings'; section: NotificationSettingsSection }
   | { kind: 'run'; runId?: string; groupId?: string }
   | { kind: 'collaboration'; runId: string; groupId: string; messageId?: string }
-  | { kind: 'session'; scope: NotificationScope; entryId?: string; toolCallId?: string; blockId?: string; surface?: 'queue' | 'context'; mcpWrite?: McpWriteObservation }
+  | { kind: 'session'; scope: NotificationScope; entryId?: string; toolCallId?: string; blockId?: string; surface?: 'queue' | 'context'; mcpWrite?: McpWriteObservation; replyBody?: ReplyBodyProof; queueEntryId?: string }
 
 export interface NotificationDraft {
   /** Semantic identity (operation, session incident, or source event), never the display title. */
@@ -266,8 +267,10 @@ export function validateNotificationDraft(input: NotificationDraft): void {
     } else if (target.kind === 'session') {
       validateScope(target.scope)
       for (const value of [target.entryId, target.toolCallId, target.blockId]) if (value !== undefined && (typeof value !== 'string' || value.length > 300)) throw new Error('通知目标无效')
+      if (target.queueEntryId !== undefined && (typeof target.queueEntryId !== 'string' || !target.queueEntryId.startsWith('outbox:') || target.queueEntryId.length > 300 || !target.entryId)) throw new Error('原队列回复关联无效')
       if (target.surface !== undefined && !['queue','context'].includes(target.surface)) throw new Error('通知目标区域无效')
       if (target.mcpWrite !== undefined && !validMcpWriteReadProof(target.mcpWrite)) throw new Error('原 MCP 阅读证据无效')
+      if (target.replyBody !== undefined && (!target.entryId || !validReplyBodyProof(target.replyBody))) throw new Error('原回复正文阅读证据无效')
     } else if (target.kind === 'run' || target.kind === 'collaboration') {
       for (const value of [target.runId, target.groupId]) if (value !== undefined && (typeof value !== 'string' || value.length > 300)) throw new Error('通知目标无效')
       if (target.kind === 'collaboration' && (!target.runId || !target.groupId || target.messageId !== undefined && (typeof target.messageId !== 'string' || target.messageId.length > 300))) throw new Error('协作通知目标无效')
@@ -302,7 +305,7 @@ export function notificationContentSignature(draft: NotificationDraft): string {
   const scope = (value: NotificationScope): Array<[string, string]> => Object.entries(value).filter((entry): entry is [string, string] => entry[1] !== undefined).sort(([a], [b]) => a.localeCompare(b))
   const reference = draft.target
   const target = reference?.kind === 'session' ? { kind: reference.kind, scope: scope(reference.scope), entryId: reference.entryId, toolCallId: reference.toolCallId, blockId: reference.blockId, surface: reference.surface,
-    ...(reference.mcpWrite ? { mcpWrite: mcpWriteReadIdentity(reference.mcpWrite) } : {}) }
+    ...(reference.mcpWrite ? { mcpWrite: mcpWriteReadIdentity(reference.mcpWrite) } : {}), ...(reference.replyBody ? { replyBody: reference.replyBody } : {}), ...(reference.queueEntryId ? { queueEntryId: reference.queueEntryId } : {}) }
     : reference?.kind === 'settings' ? { kind: reference.kind, section: reference.section }
       : reference?.kind === 'collaboration' ? { kind: reference.kind, runId: reference.runId, groupId: reference.groupId, messageId: reference.messageId }
         :reference?.kind==='memory'?{kind:reference.kind,workspaceId:reference.workspaceId,runId:reference.runId,groupId:reference.groupId,memoryId:reference.memoryId,version:reference.version}

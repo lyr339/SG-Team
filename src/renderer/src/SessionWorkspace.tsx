@@ -274,8 +274,9 @@ export function SessionWorkspace({
     `${session.id}:${session.composerId ?? ''}`,
     `${timelineEntries.length}:${lastEntryKey}:${liveProcessKey}:${liveResponseKey}:${timelineItems.length}`
   )
-  useReplyNotificationRead(follow.viewportRef, { sessionId: session.id, channelId: session.channelId, generation: String(session.generation),
-    composerId: session.composerId, bindingGeneration: questionActions?.notificationScope?.bindingGeneration }, timelineEntries)
+  const replyReadScope = { ...questionActions?.notificationScope, sessionId: session.id, channelId: session.channelId, generation: String(session.generation),
+    composerId: session.composerId }
+  useReplyNotificationRead(follow.viewportRef, replyReadScope, timelineEntries)
   useMcpWriteNotificationRead(follow.viewportRef, { ...questionActions?.notificationScope, sessionId: session.id, channelId: session.channelId,
     generation: String(session.generation), composerId: session.composerId })
   const mcpReadScopeReady = Boolean(session.composerId && questionActions?.notificationScope?.bindingGeneration)
@@ -569,9 +570,8 @@ export function SessionWorkspace({
                 questionActions={questionActions}
               />
             ) : null}
-            <div data-notification-reply={reply?.id}>
-              <TurnResponseText turnKey={continuation ? `${turnKey}:continuation` : turnKey} live={response} reply={reply} />
-              {reply && !reply.text ? (reply.status === 'streaming' ? '正在生成…' : '（空）') : null}
+            <div>
+              <TurnResponseText turnKey={continuation ? `${turnKey}:continuation` : turnKey} live={response} reply={reply} notificationScope={replyReadScope} />
             </div>
             {reply ? renderAttachments(reply) : null}
             {reply?.status === 'streaming' ? (

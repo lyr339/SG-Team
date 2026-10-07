@@ -29,12 +29,17 @@ export class SqliteReplyIdentityIndex {
       ON CONFLICT(source_key,logical_key) DO UPDATE SET payload=excluded.payload`)
     const alias = this.db.prepare('INSERT OR IGNORE INTO desktop_notification_reply_aliases VALUES(?,?,?)')
     for (const row of batch.rows) {
+      let value = row
       const stored = this.db.prepare('SELECT payload FROM desktop_notification_reply_keys WHERE source_key=? AND logical_key=?').get(batch.sourceKey, row.key) as { payload: string } | undefined
       if (stored) {
         const previous: unknown = JSON.parse(stored.payload)
         if (!validReplyIdentityRow(previous) || previous.recorded && !row.recorded) throw Error('私有回复已发布身份不能回退')
+        // A genuine old backfill has no body proof. It cannot erase a newer
+        // captured proof merely because its association metadata is retained.
+        if (previous.bodyDigest && !row.bodyDigest) value = { ...row, bodyDigest: previous.bodyDigest,
+          ...(previous.legacyComparison ? { legacyComparison: true } : {}), ...(previous.bodyUpdatedAt !== undefined ? { bodyUpdatedAt: previous.bodyUpdatedAt } : {}) }
       }
-      put.run(batch.sourceKey, row.key, JSON.stringify(row))
+      put.run(batch.sourceKey, row.key, JSON.stringify(value))
       for (const value of new Set([row.key, ...row.aliases])) alias.run(batch.sourceKey, value, row.key)
     }
     for (const link of batch.links ?? []) alias.run(batch.sourceKey, link.alias, link.key)

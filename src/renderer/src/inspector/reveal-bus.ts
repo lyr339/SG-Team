@@ -7,6 +7,8 @@
  * 反馈，而不是静默无事发生。
  */
 import type { NotificationScope } from '../../../domain/notification'
+import type { ReplyBodyProof } from '../../../domain/reply-body-proof'
+import { replyBodyTargetElement } from '../notifications/reply-body-result-element'
 export interface RevealTarget {
   /** 过程块 id（ProcessTurnCard 渲染为 data-step-id="block:<id>"）。 */
   blockId?: string
@@ -14,6 +16,7 @@ export interface RevealTarget {
   entryId?: string
   surface?: 'queue' | 'context'
   sessionScope?: NotificationScope
+  replyBody?: ReplyBodyProof
 }
 
 /** 返回 true 表示已定位到目标；准备方（只展开、不定位）返回 undefined。 */
@@ -58,6 +61,15 @@ const REVEAL_MS = 1_400
  */
 export function revealInViewport(viewport: HTMLElement | null, target: RevealTarget): boolean {
   const root: ParentNode = viewport ?? document
+  if (target.replyBody) {
+    if (!target.entryId || !target.sessionScope) return false
+    const body = replyBodyTargetElement(root, { kind: 'session', scope: target.sessionScope, entryId: target.entryId, replyBody: target.replyBody })
+    if (!body) return false
+    body.scrollIntoView({ block: 'center', behavior: prefersReducedMotion() ? 'auto' : 'smooth' })
+    body.classList.add(REVEAL_CLASS)
+    window.setTimeout(() => body.classList.remove(REVEAL_CLASS), REVEAL_MS)
+    return true
+  }
   const selectors: string[] = []
   if (target.blockId) selectors.push(`[data-step-id="${cssEscape(stepDomId(target.blockId))}"]`)
   if (target.entryId) selectors.push(`[data-entry-id="${cssEscape(target.entryId)}"]`)

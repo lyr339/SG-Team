@@ -5,6 +5,11 @@ export interface ReplyIdentityRow {
   entryId: string
   failed: boolean
   recorded: boolean
+  bodyDigest?: string
+  /** Current comparison is not retroactive evidence for a notification created without a body digest. */
+  legacyComparison?: true
+  /** An observed body update remains that update through passive canonical refinement. */
+  bodyUpdatedAt?: number
 }
 export interface ReplyIdentityBatch {
   sourceKey: string
@@ -22,11 +27,14 @@ const digest = (value: unknown) => typeof value === 'string' && /^[a-f0-9]{64}$/
 export function validReplyIdentityRow(value: unknown): value is ReplyIdentityRow {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   const row = value as ReplyIdentityRow
-  return Object.keys(row).every(key => ['key', 'aliases', 'entryId', 'failed', 'recorded'].includes(key))
+  return Object.keys(row).every(key => ['key', 'aliases', 'entryId', 'failed', 'recorded', 'bodyDigest', 'legacyComparison', 'bodyUpdatedAt'].includes(key))
     && digest(row.key) && Array.isArray(row.aliases) && row.aliases.length <= 8
     && row.aliases.every(digest) && new Set(row.aliases).size === row.aliases.length
     && typeof row.entryId === 'string' && row.entryId.length > 0 && row.entryId.length <= 300
     && typeof row.failed === 'boolean' && typeof row.recorded === 'boolean'
+    && (row.bodyDigest === undefined || digest(row.bodyDigest)) && (row.legacyComparison === undefined || row.legacyComparison === true && row.recorded && digest(row.bodyDigest))
+    && (row.bodyUpdatedAt === undefined || row.recorded && digest(row.bodyDigest) && row.legacyComparison === undefined
+      && Number.isSafeInteger(row.bodyUpdatedAt) && row.bodyUpdatedAt >= 0 && row.bodyUpdatedAt <= 8_640_000_000_000_000)
 }
 export function validateReplyIdentityBatch(value: ReplyIdentityBatch): void {
   if (!value || Object.keys(value).some(key => !['sourceKey', 'rows', 'links', 'merges'].includes(key))

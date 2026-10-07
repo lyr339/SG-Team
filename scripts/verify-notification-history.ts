@@ -46,7 +46,7 @@ try {
   assert.match(inspection.prepare('SELECT content_signature FROM desktop_notification_tombstones WHERE semantic_key=?').get('ordinary:read')!.content_signature as string, /^sha256:[a-f0-9]{64}$/)
   assert.equal(inspection.prepare('SELECT value FROM unrelated').get()!.value, 'preserve')
   assert.equal(inspection.prepare('PRAGMA user_version').get()!.user_version, 23)
-  assert.equal(inspection.prepare('SELECT schema_version FROM desktop_notification_meta').get()!.schema_version, 7)
+  assert.equal(inspection.prepare('SELECT schema_version FROM desktop_notification_meta').get()!.schema_version, 8)
   inspection.close(); inspection = undefined; await port.close()
   console.log(JSON.stringify({ runtime: process.versions.electron ? 'Electron' : 'Node', privateSchema: 6, realBuiltWorker: true, boundedPruning: true,
     unreadPendingDiagnosticsPreserved: true, noBodyInTombstones: true, sameContentNotResurrected: true, gapAcknowledgementRestored: true,

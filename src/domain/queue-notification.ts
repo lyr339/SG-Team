@@ -94,6 +94,7 @@ export function reduceQueueNotifications(old: QueueNotificationState | undefined
     drafts.push({ key, eventId: queueNotificationEvent(fact.id, phase), eventType: 'queue.state', subjectState: phase, category: 'sessions', source: handoff?.transfer ? '成员迁移与上下文' : handoff ? '上下文交接' : `会话队列 · CH-${fact.channelId}`,
       title: effectProblem?`${title} · 组后续事项待核对`:phase === 'unconfirmed' && handoff ? '原上下文消息结果待核对' : title, detail: `CH-${fact.channelId} · ${stage}${document}${identity}`, scope, ...(scope.sessionId && phase !== 'retired' && phase !== 'withdrawn' && phase !== 'unconfirmed'
         ? { target: { kind: 'session' as const, scope, entryId: phase === 'replied' ? fact.replyEntryId ?? handoff?.replyEntryId ?? fact.entryId : fact.entryId,
+          ...(phase === 'replied' ? { queueEntryId: fact.entryId } : {}),
           ...(phase === 'queued' || phase === 'held' ? { surface: 'queue' as const } : {}) } } : {}),
       origin: { module: handoff?.transfer ? 'run' : 'sessions', sessionId: scope.sessionId },
       attention: meaningful ? 'notice' : 'activity', tone: effectProblem||meaningful && (phase === 'retired' || phase === 'withdrawn' || phase === 'unconfirmed' || !handoff!.recordWritten || handoff!.transcript !== 'present') ? 'warning' : 'info',

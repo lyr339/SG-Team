@@ -34,7 +34,7 @@ try {
   const stored = inspect.prepare('SELECT source_key FROM desktop_notification_question_terminals LIMIT 1').get()!.source_key as string
   const cached = JSON.parse(inspect.prepare('SELECT payload FROM desktop_notification_sources WHERE source_key=?').get(stored)!.payload as string)
   assert.equal(Object.keys(cached.rows).length, 512); assert.equal(cached.rows[clear.key.slice(9)], undefined)
-  assert.equal(inspect.prepare('SELECT schema_version FROM desktop_notification_meta').get()!.schema_version, 7)
+  assert.equal(inspect.prepare('SELECT schema_version FROM desktop_notification_meta').get()!.schema_version, 8)
   inspect.close()
   owner = createOwner(); source = new QuestionNotifications(owner, () => 1000)
   let announcements = 0; owner.subscribe(event => { if (event.announcement) ++announcements })

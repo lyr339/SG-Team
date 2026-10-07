@@ -10,6 +10,9 @@ import type {
 import { emptyTaskPoolSnapshot, newestTaskPoolSnapshot } from '../../domain/task-pool'
 import type { NotificationScope, NotificationTarget } from '../../domain/notification'
 import { notificationTargetAvailable } from './notifications/notification-navigation'
+import { replyBodyDigest } from './notifications/reply-body-digest'
+import { replyBodyMaterial } from '../../domain/reply-body-proof'
+import { nativeAssistantEntry } from '../../domain/native-assistant-entry'
 import { cssEscape, requestReveal } from './inspector/reveal-bus'
 import { groupContextView } from './team/group-context-view'
 import { submitGroupTask } from './team/group-task-submit'
@@ -1065,8 +1068,8 @@ export function App(): React.JSX.Element {
     if (module !== 'run') setFocusGroupId(undefined)
   }, [])
 
-  const notificationContext = useRef({ sessions: visibleSnapshot.sessions, team: teamControl, accounts: cursorAccounts, providerId: accountAutomationSettings.processingProvider,installationId:switchPumpStatus?.installationId,activeModule,selectedChannelId })
-  notificationContext.current = { sessions: visibleSnapshot.sessions, team: teamControl, accounts: cursorAccounts, providerId: accountAutomationSettings.processingProvider,installationId:switchPumpStatus?.installationId,activeModule,selectedChannelId }
+  const notificationContext = useRef({ sessions: visibleSnapshot.sessions, conversations: visibleSnapshot.conversations, team: teamControl, accounts: cursorAccounts, providerId: accountAutomationSettings.processingProvider,installationId:switchPumpStatus?.installationId,activeModule,selectedChannelId })
+  notificationContext.current = { sessions: visibleSnapshot.sessions, conversations: visibleSnapshot.conversations, team: teamControl, accounts: cursorAccounts, providerId: accountAutomationSettings.processingProvider,installationId:switchPumpStatus?.installationId,activeModule,selectedChannelId }
   const [memoryInspection,setMemoryInspection] = useState<{request:TeamMemoryInspectionRequest;value:TeamMemoryInspection}>()
   const openNotificationTarget = useCallback(async (target: NotificationTarget, scope?: NotificationScope,stillRelevant?:()=>boolean): Promise<boolean> => {
     const context = notificationContext.current
@@ -1107,12 +1110,36 @@ export function App(): React.JSX.Element {
       acceptCollaboration(snapshot)
       setCollaborationTarget({ runId: target.runId, groupId: target.groupId, messageId: target.messageId }); return true
     }
+    let replyMaterial: string | undefined
+    if (target.queueEntryId) {
+      const entry = context.conversations[target.scope.channelId!]?.find(entry => entry.id === target.entryId)
+      if (!entry || !nativeAssistantEntry(entry, target.scope.channelId!) || entry.status !== 'complete' || entry.replyToEntryId !== target.queueEntryId) return false
+    }
+    if (target.replyBody) {
+      const entry = context.conversations[target.scope.channelId!]?.find(entry => entry.id === target.entryId)
+      if (!entry || !nativeAssistantEntry(entry, target.scope.channelId!) || entry.status !== target.replyBody.status) return false
+      replyMaterial = replyBodyMaterial(entry.text, target.scope)
+      const digest = await replyBodyDigest(entry.text, target.scope)
+      if (!digest || digest !== target.replyBody.digest || stillRelevant && !stillRelevant()) return false
+      const latest = notificationContext.current, current = latest.conversations[target.scope.channelId!]?.find(entry => entry.id === target.entryId)
+      if (!current || current.status !== target.replyBody.status || !nativeAssistantEntry(current, target.scope.channelId!)
+        || !notificationTargetAvailable(target, latest.sessions, latest.team) || replyBodyMaterial(current.text, target.scope) !== replyMaterial) return false
+    }
     changeModule('sessions'); selectSession(target.scope.channelId!)
     if (target.entryId || target.blockId || target.surface) {
       await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
       const latest = notificationContext.current
       if (!notificationTargetAvailable(target, latest.sessions, latest.team)) return false
-      return requestReveal({ ...(target.entryId ? { entryId: target.entryId } : {}), ...(target.blockId ? { blockId: target.blockId } : {}), ...(target.surface ? { surface: target.surface } : {}), ...(target.surface === 'context' ? { sessionScope: target.scope } : {}) })
+      if (target.queueEntryId) {
+        const entry = latest.conversations[target.scope.channelId!]?.find(entry => entry.id === target.entryId)
+        if (!entry || !nativeAssistantEntry(entry, target.scope.channelId!) || entry.status !== 'complete' || entry.replyToEntryId !== target.queueEntryId) return false
+      }
+      if (target.replyBody) {
+        const entry = latest.conversations[target.scope.channelId!]?.find(entry => entry.id === target.entryId)
+        if (!entry || !nativeAssistantEntry(entry, target.scope.channelId!) || entry.status !== target.replyBody.status || replyBodyMaterial(entry.text, target.scope) !== replyMaterial) return false
+      }
+      return requestReveal({ ...(target.entryId ? { entryId: target.entryId } : {}), ...(target.blockId ? { blockId: target.blockId } : {}), ...(target.surface ? { surface: target.surface } : {}),
+        ...(target.surface === 'context' || target.replyBody ? { sessionScope: target.scope } : {}), ...(target.replyBody ? { replyBody: target.replyBody } : {}) })
     }
     return true
   }, [changeModule, selectSession, openCollaboration, acceptCollaboration])

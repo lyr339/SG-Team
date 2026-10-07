@@ -44,7 +44,7 @@ try {
   await source.close(); await owner.close()
   const inspection = new DatabaseSync(path)
   inspection.exec("CREATE TABLE preserve(value TEXT); INSERT INTO preserve VALUES('original'); PRAGMA user_version=77;")
-  assert.equal(inspection.prepare('SELECT schema_version FROM desktop_notification_meta').get()!.schema_version, 7)
+  assert.equal(inspection.prepare('SELECT schema_version FROM desktop_notification_meta').get()!.schema_version, 8)
   assert.equal(inspection.prepare('SELECT COUNT(*) AS n FROM desktop_notification_reply_keys').get()!.n, 2103)
   assert.equal(inspection.prepare("SELECT COUNT(*) AS n FROM desktop_notification_reply_keys WHERE payload LIKE '%PRIVATE%'").get()!.n, 0)
   inspection.close()

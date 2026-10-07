@@ -6,12 +6,15 @@ import { nativeAssistantEntry } from '../../domain/native-assistant-entry'
 import { readReplyNotificationState, reduceReplyNotifications, replyNotificationSlice, groupReplyNotificationFacts, type NotificationReplyFact, type ReplyNotificationInput, type ReplyNotificationState } from '../../domain/reply-notification'
 import { sessionNotificationObservation } from './session-lifecycle-notifications'
 import { NotificationProjectionSource } from './projection-source'
+import { replyBodyMaterial, replyBodyScope } from '../../domain/reply-body-proof'
+import type { ConversationEntry } from '../../domain/conversation-entry'
 
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 export class ReplyNotifications {
   private readonly source: NotificationProjectionSource<ReplyNotificationInput, ReplyNotificationState>
   private readonly extracted = new Map<string, { reference: unknown; facts: NotificationReplyFact[]; signature: string }>()
   private stopped = false
+  private readonly bodyCache = new WeakMap<ConversationEntry, { text: string; scope: string; digest?: string }>()
   private readonly startedAt: number
   constructor(private readonly owner: NotificationService, private readonly now: () => number = Date.now) {
     this.startedAt = now()
@@ -41,6 +44,7 @@ export class ReplyNotifications {
         let extracted = this.extracted.get(session.identity)
         if (!extracted || extracted.reference !== entries) {
           const facts: NotificationReplyFact[] = []
+          const scopeKey = JSON.stringify(replyBodyScope(session.scope))
           for (const entry of entries) {
             if (entry.silent || !nativeAssistantEntry(entry, session.scope.channelId!) || entry.status !== 'complete' && entry.status !== 'failed') continue
             const logical = entry.replyToEntryId ?? entry.streamId ?? entry.turn ?? entry.id
@@ -48,7 +52,14 @@ export class ReplyNotifications {
             // A stable association, not text identity: equal words in different turns remain different replies.
             const aliases = [['entry', entry.id], ['anchor', entry.replyToEntryId], ['stream', entry.streamId], ['turn', entry.turn]]
               .filter(([, value]) => value).map(([kind, value]) => hash([session.identity, kind, value]))
-            facts.push({ key, aliases, entryId: entry.id, at: entry.timestamp, name: session.name, scope: { ...session.scope, groupId: undefined }, failed: entry.status === 'failed' })
+            let body = this.bodyCache.get(entry)
+            if (!body || body.text !== entry.text || body.scope !== scopeKey) {
+              const material = replyBodyMaterial(entry.text, session.scope)
+              body = { text: entry.text, scope: scopeKey, digest: material ? createHash('sha256').update(material).digest('hex') : undefined }
+              this.bodyCache.set(entry, body)
+            }
+            facts.push({ key, aliases, entryId: entry.id, at: entry.timestamp, name: session.name, scope: { ...session.scope, groupId: undefined }, failed: entry.status === 'failed',
+              ...(body.digest ? { bodyDigest: body.digest } : {}) })
           }
           const grouped = groupReplyNotificationFacts(facts)
           extracted = { reference: entries, facts: grouped, signature: hash(grouped) }; this.extracted.set(session.identity, extracted)

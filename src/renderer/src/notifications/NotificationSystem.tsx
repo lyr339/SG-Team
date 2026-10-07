@@ -103,7 +103,7 @@ function NotificationEntry({ store, workspaceId, onNavigate, onAvailable, onSnoo
           if (epoch === toastEpoch.current) close(false)
         } else if (epoch === toastEpoch.current) {
           setFocusRecord(groupedToast.current ? undefined : toastRecord)
-          if (toastRecord.target) setNavigationError('来源对象或执行范围已变化。原结果保留，可在此阅读详情。')
+          if (toastRecord.target) setNavigationError('来源内容或执行范围已变化，或原正文尚未准备好。通知记录保留，可在此阅读详情。')
         }
       } catch { if (epoch === toastEpoch.current) setNavigationError('暂时无法打开来源，记录仍保留。') }
     })()
@@ -127,7 +127,7 @@ function NotificationEntry({ store, workspaceId, onNavigate, onAvailable, onSnoo
       const available=await onNavigate(record.target, record.scope,()=>epoch===toastEpoch.current)
       if(epoch!==toastEpoch.current)return // A user close/new navigation cancels presentation, not the original read.
       if (available) close(false)
-      else { setOpen(true); setFocusRecord(record); setNavigationError('来源对象或执行范围已变化。原结果保留，可在此阅读详情。') }
+      else { setOpen(true); setFocusRecord(record); setNavigationError('来源内容或执行范围已变化，或原正文尚未准备好。通知记录保留，可在此阅读详情。') }
     } catch { if(epoch===toastEpoch.current){setOpen(true);setNavigationError('暂时无法打开来源，记录仍保留。')} }
   }
   const unread = snapshot.summary.unread

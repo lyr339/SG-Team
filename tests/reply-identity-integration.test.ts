@@ -171,7 +171,11 @@ describe('old reply checkpoints migrate without invented history', () => {
       const key = sourceKey(h), saved = h.ledger.sourceState(key).data as any
       await source.close(); await h.owner.close()
       const db = new DatabaseSync(path)
-      db.prepare('UPDATE desktop_notification_sources SET payload=? WHERE source_key=?').run(JSON.stringify({ version: 2, key, seen: saved.seen, rows: saved.rows }), key)
+      const legacyRows = Object.fromEntries(Object.entries(saved.rows).map(([id, value]) => {
+        const { bodyDigest: _newProof, legacyComparison: _comparison, ...old } = value as Record<string, unknown>
+        return [id, old]
+      }))
+      db.prepare('UPDATE desktop_notification_sources SET payload=? WHERE source_key=?').run(JSON.stringify({ version: 2, key, seen: saved.seen, rows: legacyRows }), key)
       db.exec(`UPDATE desktop_notification_meta SET schema_version=4; DROP TABLE desktop_notification_reply_keys; DROP TABLE desktop_notification_reply_aliases;
         CREATE TABLE preserve(value TEXT); INSERT INTO preserve VALUES('original'); PRAGMA user_version=77;`); db.close()
       h = notificationSourceHarness(path); source = new ReplyNotifications(h.owner, () => 10000)
@@ -182,7 +186,7 @@ describe('old reply checkpoints migrate without invented history', () => {
       expect(writes.slice(0, 2).map(call => call[5]?.rows.length)).toEqual([100, 20])
       expect(h.ledger.replyIdentities(key, [saved.seen[0]])[0]?.row.entryId).toBe(canonical().id)
       const inspect = new DatabaseSync(path)
-      try { expect(inspect.prepare('SELECT schema_version FROM desktop_notification_meta').get()!.schema_version).toBe(7); expect(inspect.prepare('PRAGMA user_version').get()!.user_version).toBe(77); expect(inspect.prepare('SELECT value FROM preserve').get()!.value).toBe('original') }
+      try { expect(inspect.prepare('SELECT schema_version FROM desktop_notification_meta').get()!.schema_version).toBe(8); expect(inspect.prepare('PRAGMA user_version').get()!.user_version).toBe(77); expect(inspect.prepare('SELECT value FROM preserve').get()!.value).toBe('original') }
       finally { inspect.close() }
     } finally { await source.close(); await h.owner.close(); rmSync(directory, { recursive: true, force: true }) }
   })

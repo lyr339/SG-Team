@@ -62,7 +62,7 @@ try {
   await source.close(); await owner.close()
   const inspect = new DatabaseSync(path)
   try {
-    assert.equal(inspect.prepare('SELECT schema_version FROM desktop_notification_meta').get()!.schema_version, 7)
+    assert.equal(inspect.prepare('SELECT schema_version FROM desktop_notification_meta').get()!.schema_version, 8)
     const row = inspect.prepare('SELECT * FROM desktop_notification_question_terminals WHERE source_key=? AND identity=?').get(sourceKey, identity)!
     assert.equal(row.status, 'submitted'); assert.match(row.original_stamp as string, /^[a-f0-9]{64}$/)
     const state = JSON.parse(inspect.prepare('SELECT payload FROM desktop_notification_sources WHERE source_key=?').get(sourceKey)!.payload as string)
