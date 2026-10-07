@@ -5,6 +5,7 @@ import type { OperatorMessageRecordMetadata } from '../domain/team-message-notif
 import type { McpWriteRecordMetadata } from '../domain/mcp-write-notification'
 import type { ReplyIdentityBatch, ReplyIdentityMatch } from '../domain/reply-identity-index'
 import type { QuestionTerminalBatch, QuestionTerminalReceipt } from '../domain/question-terminal-receipt'
+import type { NotificationDeliveryClaim } from '../domain/notification-delivery-claim'
 
 /** Storage lifecycle, not a business event or proof that an interrupted write rolled back. */
 export interface NotificationRepositoryLifecycle { state: 'unavailable' | 'recovered'; generation: number }
@@ -22,6 +23,7 @@ export interface NotificationRepository {
   mcpWriteRecords?(keys: string[]): Promise<McpWriteRecordMetadata[]>
   replyIdentities?(sourceKey: string, aliases: string[]): Promise<ReplyIdentityMatch[]>
   questionTerminals?(sourceKey: string, identities: string[]): Promise<QuestionTerminalReceipt[]>
+  claimDelivery?(claim: NotificationDeliveryClaim, now: number): Promise<boolean>
   commitSource(key: string, expectedRevision: number, data: unknown, drafts: NotificationDraft[], now: number, replyIdentities?: ReplyIdentityBatch, questionTerminals?: QuestionTerminalBatch): Promise<NotificationSourceResult>
   put(draft: NotificationDraft, now: number): Promise<NotificationChange>
   page(query?: NotificationQuery): Promise<NotificationPage>

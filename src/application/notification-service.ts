@@ -9,6 +9,7 @@ import type { OperatorMessageRecordMetadata } from '../domain/team-message-notif
 import type { McpWriteRecordMetadata } from '../domain/mcp-write-notification'
 import type { ReplyIdentityBatch, ReplyIdentityMatch } from '../domain/reply-identity-index'
 import type { QuestionTerminalBatch, QuestionTerminalReceipt } from '../domain/question-terminal-receipt'
+import type { NotificationDeliveryClaim } from '../domain/notification-delivery-claim'
 
 /** One asynchronous owner, independent from business transaction locks or renderer route lifetimes. */
 export class NotificationService {
@@ -140,6 +141,18 @@ export class NotificationService {
       return { id: `${record.id}:${record.revision}:${draft.liveSignal}`, expiresAt: draft.occurredAt + 60_000, signal: draft.liveSignal }
     }
     return undefined
+  }
+  /** One atomic private claim; never a source/business read or a retry of an unknown ack. */
+  claimDelivery(claim: NotificationDeliveryClaim, now = this.now()): Promise<boolean> {
+    if (this.closed || this.closing || this.shuttingDown) return Promise.reject(Error('提醒送达已停止'))
+    const epoch = this.sourceEpoch
+    return this.tracked((async () => {
+      if (!this.repository.claimDelivery) throw Error('私有提醒送达标记不可用')
+      const result = await this.repository.claimDelivery(claim, now)
+      if (epoch !== this.sourceEpoch) throw Error('提醒送达回执跨越私有存储代次')
+      if (typeof result !== 'boolean') throw Error('提醒送达回执格式未确认')
+      return result
+    })())
   }
   sourceState(key: string): Promise<NotificationSourceState> {
     const epoch = this.sourceEpoch

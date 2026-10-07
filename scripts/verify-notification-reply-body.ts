@@ -60,7 +60,7 @@ try {
     assert.equal(/PRIVATE|body already observed/.test(JSON.stringify(rows)), false)
     const state = JSON.parse(inspect.prepare('SELECT payload FROM desktop_notification_sources LIMIT 1').get()!.payload as string)
     assert.equal(state.version, 4); assert.ok(Buffer.byteLength(JSON.stringify(state)) <= 2 * 1024 * 1024)
-    assert.equal(inspect.prepare('SELECT schema_version FROM desktop_notification_meta').get()!.schema_version, 8)
+    assert.equal(inspect.prepare('SELECT schema_version FROM desktop_notification_meta').get()!.schema_version, 9)
   } finally { inspect.close() }
   console.log(JSON.stringify({ runtime: process.versions.electron ? 'Electron' : 'Node', realBuiltPrivateWorker: true, actualOriginalSqliteReplyBackupRestore: true,
     sameIdDifferentBodyIsOneNewObservedVersion: true, historicalReadNotUsedForReplacementBody: true, digestAndReadSurviveWorkerRestart: true,

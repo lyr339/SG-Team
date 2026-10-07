@@ -116,7 +116,7 @@ describe('notification ledger', () => {
     expect(repository.marker(draft().key).sourceRevision).toBe(1)
     const inspect = new DatabaseSync(path)
     try {
-      expect(inspect.prepare('SELECT schema_version FROM desktop_notification_meta').get()).toMatchObject({ schema_version: 8 })
+      expect(inspect.prepare('SELECT schema_version FROM desktop_notification_meta').get()).toMatchObject({ schema_version: 9 })
       expect(inspect.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 9 })
       expect(inspect.prepare('SELECT value FROM preserved_business_state').get()).toMatchObject({ value: 'preserve' })
     } finally { inspect.close() }

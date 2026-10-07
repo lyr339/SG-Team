@@ -117,7 +117,7 @@ describe('question terminal transport preserves facts, not a larger cache', () =
       expect(h.ledger.page().summary.pending).toBe(1)
       expect(vi.mocked(h.port.commitSource).mock.calls.slice(0, 3).map(call => call[6]?.rows.length)).toEqual([100, 100, 20])
       const inspect = new DatabaseSync(path)
-      try { expect(inspect.prepare('SELECT schema_version FROM desktop_notification_meta').get()!.schema_version).toBe(8); expect(inspect.prepare('PRAGMA user_version').get()!.user_version).toBe(87); expect(inspect.prepare('SELECT value FROM preserve').get()!.value).toBe('original') }
+      try { expect(inspect.prepare('SELECT schema_version FROM desktop_notification_meta').get()!.schema_version).toBe(9); expect(inspect.prepare('PRAGMA user_version').get()!.user_version).toBe(87); expect(inspect.prepare('SELECT value FROM preserve').get()!.value).toBe('original') }
       finally { inspect.close() }
     } finally { await source.close(); await h.owner.close(); rmSync(directory, { recursive: true, force: true }) }
   })

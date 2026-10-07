@@ -8,17 +8,18 @@ const draft = (patch: Partial<NotificationDraft> = {}): NotificationDraft => ({ 
   scope: {}, attention: 'notice', state: 'resolved', tone: 'success', occurredAt: at, sourceRevision: 1, announce: true, ...patch })
 async function harness(preferences: Record<string, unknown> = {}) {
   const h = notificationSourceHarness(); await h.owner.savePreferences(preferences)
-  let foreground = false
+  let foreground = false, now = at
   const sources = new Set<(event: NotificationPush) => void>(), observed: NotificationPush[] = []
   const stop = h.owner.subscribe(event => { observed.push(event); for (const listener of sources) listener(event) })
   const source = { subscribe: (listener: (event: NotificationPush) => void) => { sources.add(listener); return () => { sources.delete(listener) } },
-    preferences: h.owner.preferences.bind(h.owner), page: h.owner.page.bind(h.owner), sourceState: h.owner.sourceState.bind(h.owner), commitSource: h.owner.commitSource.bind(h.owner), status: h.owner.status.bind(h.owner) }
+    preferences: h.owner.preferences.bind(h.owner), page: h.owner.page.bind(h.owner), claimDelivery: h.owner.claimDelivery.bind(h.owner), status: h.owner.status.bind(h.owner) }
   const native = { supported: vi.fn(() => true), show: vi.fn((_content: Parameters<NotificationNativePort['show']>[0], _callbacks: Parameters<NotificationNativePort['show']>[1]) => ({ close: vi.fn() })) }
   const openWindow = vi.fn(), outputs: NotificationPush[] = []
-  const options = { native, foreground: () => foreground, openWindow, now: () => at }
+  const options = { native, foreground: () => foreground, openWindow, now: () => now }
   let delivery = new NotificationDeliveryService(source, options); delivery.subscribe(event => outputs.push(event)); await delivery.flush()
   return { ...h, native, outputs, observed, source, options, openWindow, delivery,
     setForeground: (value: boolean) => { foreground = value },
+    setNow: (value: number) => { now = value },
     offer: async (value = draft()) => { h.owner.offer(value); await h.owner.flush(); await delivery.flush() },
     replay: (event: NotificationPush) => { for (const listener of sources) listener(event) },
     restart: async () => { delivery.dispose(); delivery = new NotificationDeliveryService(source, options); delivery.subscribe(event => outputs.push(event)); await delivery.flush(); return delivery },
@@ -143,6 +144,51 @@ describe('native versus in-app election backed by real private ledger', () => {
       expect(h.native.show).toHaveBeenCalledOnce(); expect(h.ledger.page().summary.total).toBe(1)
     } finally { await h.close() }
   })
+  it('does not forget a still-valid claimed opportunity beyond the 1024-entry memory window, including owner recreation', async () => {
+    const h = await harness({ nativeEnabled: true })
+    try {
+      await h.offer(); const original = h.observed.find(event => event.announcement)!
+      for (let index = 0; index < 1_030; index++) await h.offer(draft({ key: `capacity:${index}` }))
+      expect(h.native.show).toHaveBeenCalledTimes(1_031)
+      h.replay(original); await h.delivery.flush()
+      expect(h.native.show).toHaveBeenCalledTimes(1_031)
+      const restored = await h.restart(); h.replay(original); await restored.flush()
+      expect(h.native.show).toHaveBeenCalledTimes(1_031)
+      expect(h.ledger.page().summary.unread).toBe(1_031)
+    } finally { await h.close() }
+  })
+  it('does not confuse a proven replacement result with a previously seen raw signal id/revision', async () => {
+    const h = await harness({ nativeEnabled: true })
+    try {
+      await h.offer(); const original = h.observed.find(event => event.announcement)!
+      const replacement = { ...original.change!.record!, title: '恢复后确认的另一结果', detail: '不同的原始结果，不借用旧正文', storageEpoch: 1 }
+      // Isolated owner-frame boundary simulation. The compiled-worker verifier
+      // separately exercises an actual private backup rollback and fresh write.
+      vi.spyOn(h.source, 'page').mockResolvedValue({ ...h.ledger.page(), records: [replacement], storageEpoch: 1 })
+      h.replay({ health: 'ready', historyIncomplete: true, historyReload: true, storageEpoch: 1, preferences: await h.owner.preferences() })
+      h.replay({ ...original, storageEpoch: 1, change: { ...original.change!, record: replacement, storageEpoch: 1 } })
+      await h.delivery.flush()
+      expect(h.native.show).toHaveBeenCalledTimes(2)
+    } finally { await h.close() }
+  })
+  it('expired candidates do not return after window eviction or owner recreation', async () => {
+    const h = await harness({ nativeEnabled: true })
+    try {
+      await h.offer(); const original = h.observed.find(event => event.announcement)!
+      h.setNow(original.announcement!.expiresAt)
+      const restored = await h.restart(); h.replay(original); await restored.flush()
+      expect(h.native.show).toHaveBeenCalledOnce()
+    } finally { await h.close() }
+  })
+  it('passive canonical target refinement cannot change the identity of a captured opportunity replay', async () => {
+    const h = await harness({ nativeEnabled: true })
+    try {
+      await h.offer(); const original = h.observed.find(event => event.announcement)!
+      await h.offer(draft({ sourceRevision: 2, announce: false, target: { kind: 'settings', section: 'automation' } }))
+      const restored = await h.restart(); h.replay(original); await restored.flush()
+      expect(h.native.show).toHaveBeenCalledOnce()
+    } finally { await h.close() }
+  })
   it('native click references stay unique if the delivery owner is rebuilt while the renderer remains alive', async () => {
     const h = await harness({ nativeEnabled: true })
     try {
@@ -156,8 +202,8 @@ describe('native versus in-app election backed by real private ledger', () => {
   it('rechecks foreground and reading while the durable claim is in flight', async () => {
     const h = await harness({ nativeEnabled: true }); let started!: () => void, release!: () => void
     const entered = new Promise<void>(done => { started = done }), gate = new Promise<void>(done => { release = done })
-    const original = vi.mocked(h.port.commitSource).getMockImplementation()!
-    vi.mocked(h.port.commitSource).mockImplementation(async (...args) => { if (args[0] === 'notification-delivery:v1') { started(); await gate }; return original(...args) })
+    const original = vi.mocked(h.port.claimDelivery!).getMockImplementation()!
+    vi.mocked(h.port.claimDelivery!).mockImplementation(async (...args) => { started(); await gate; return original(...args) })
     try {
       h.owner.offer(draft()); await h.owner.flush(); await entered
       h.setForeground(true); const record = h.ledger.page().records[0]!; await h.owner.read(record.id, record.revision)
@@ -167,13 +213,19 @@ describe('native versus in-app election backed by real private ledger', () => {
     } finally { release(); await h.close() }
   })
   it('unknown commit outcome cannot send or resend; original business record remains available', async () => {
-    const h = await harness({ nativeEnabled: true }), original = vi.mocked(h.port.commitSource).getMockImplementation()!
-    vi.mocked(h.port.commitSource).mockImplementationOnce(async (...args) => { await original(...args); throw Error('response lost after commit') })
+    const h = await harness({ nativeEnabled: true }), original = vi.mocked(h.port.claimDelivery!).getMockImplementation()!
+    vi.mocked(h.port.claimDelivery!).mockImplementationOnce(async (...args) => { await original(...args); throw Error('response lost after commit') })
     try {
       await h.offer(); expect(h.native.show).not.toHaveBeenCalled(); expect(h.ledger.page().summary.total).toBe(1); expect(h.delivery.status().state).toBe('failed')
       const restored = await h.restart(); h.replay(h.observed.find(event => event.announcement)!); await restored.flush()
       expect(h.native.show).not.toHaveBeenCalled(); expect(h.ledger.page().summary.total).toBe(1)
     } finally { await h.close() }
+  })
+  it('an invalid private claim acknowledgement cannot become truthy permission to show a native notification', async () => {
+    const h = await harness({ nativeEnabled: true })
+    vi.mocked(h.port.claimDelivery!).mockResolvedValueOnce({ unexpected: true } as unknown as boolean)
+    try { await h.offer(); expect(h.native.show).not.toHaveBeenCalled(); expect(h.delivery.status().state).toBe('failed'); expect(h.ledger.page().summary.unread).toBe(1) }
+    finally { await h.close() }
   })
   it('explicit opt-in connects activity to native only without artificial unread, and never after source read/expiry', async () => {
     const h = await harness({ nativeEnabled: true, connectionUpdates: true })
@@ -239,8 +291,8 @@ describe('native versus in-app election backed by real private ledger', () => {
 
 describe('delivery across storage recovery', () => {
   it('a lost claim is not resent after recovery; fresh results can use the recovered ledger', async () => {
-    const h = await harness({ nativeEnabled: true }), original = vi.mocked(h.port.commitSource).getMockImplementation()!
-    vi.mocked(h.port.commitSource).mockImplementationOnce(async (...args) => { await original(...args); throw Error('reply lost') })
+    const h = await harness({ nativeEnabled: true }), original = vi.mocked(h.port.claimDelivery!).getMockImplementation()!
+    vi.mocked(h.port.claimDelivery!).mockImplementationOnce(async (...args) => { await original(...args); throw Error('reply lost') })
     try {
       await h.offer(); expect(h.delivery.status().state).toBe('failed'); expect(h.native.show).not.toHaveBeenCalled()
       await h.owner.page()
@@ -252,10 +304,10 @@ describe('delivery across storage recovery', () => {
     } finally { await h.close() }
   })
   it('an in-flight pre-exit claim cannot turn into a late OS alert after history was reopened', async () => {
-    const h = await harness({ nativeEnabled: true }), original = vi.mocked(h.port.commitSource).getMockImplementation()!
+    const h = await harness({ nativeEnabled: true }), original = vi.mocked(h.port.claimDelivery!).getMockImplementation()!
     let committed!: () => void, release!: () => void
     const reachedCommit = new Promise<void>(done => { committed = done }), acknowledgement = new Promise<void>(done => { release = done })
-    vi.mocked(h.port.commitSource).mockImplementationOnce(async (...args) => { const result = await original(...args); committed(); await acknowledgement; return result })
+    vi.mocked(h.port.claimDelivery!).mockImplementationOnce(async (...args) => { const result = await original(...args); committed(); await acknowledgement; return result })
     try {
       h.owner.offer(draft()); await h.owner.flush(); await reachedCommit
       h.replay({ health: 'degraded', historyIncomplete: true }); h.replay({ health: 'ready', historyIncomplete: true, historyReload: true })
@@ -264,10 +316,10 @@ describe('delivery across storage recovery', () => {
     } finally { release(); await h.close() }
   })
   it('late recovery history synchronization does not discard a genuinely new post-recovery result', async () => {
-    const h = await harness({ nativeEnabled: true }), original = vi.mocked(h.port.commitSource).getMockImplementation()!
+    const h = await harness({ nativeEnabled: true }), original = vi.mocked(h.port.claimDelivery!).getMockImplementation()!
     let committed!: () => void, release!: () => void
     const reachedCommit = new Promise<void>(done => { committed = done }), acknowledgement = new Promise<void>(done => { release = done })
-    vi.mocked(h.port.commitSource).mockImplementationOnce(async (...args) => { const result = await original(...args); committed(); await acknowledgement; return result })
+    vi.mocked(h.port.claimDelivery!).mockImplementationOnce(async (...args) => { const result = await original(...args); committed(); await acknowledgement; return result })
     try {
       h.replay({ health: 'degraded', historyIncomplete: true }); h.replay({ health: 'ready', historyIncomplete: true })
       h.owner.offer(draft({ key: 'fresh:before:late:history:reload' })); await h.owner.flush(); await reachedCommit

@@ -44,7 +44,7 @@ describe('private question terminal metadata joins the existing source transacti
     db.close(); ledger = new SqliteNotificationRepository(path)
     expect(ledger.questionTerminals(sourceKey, [identity])).toEqual(batch.rows)
     const inspect = new DatabaseSync(path)
-    try { expect(inspect.prepare('PRAGMA user_version').get()!.user_version).toBe(87); expect(inspect.prepare('SELECT schema_version FROM desktop_notification_meta').get()!.schema_version).toBe(8) }
+    try { expect(inspect.prepare('PRAGMA user_version').get()!.user_version).toBe(87); expect(inspect.prepare('SELECT schema_version FROM desktop_notification_meta').get()!.schema_version).toBe(9) }
     finally { inspect.close() }
   })
   it('stores only a typed bounded original inspection hash, preserves it on legacy refinement, and rolls it back on CAS/failure', () => {
@@ -64,7 +64,7 @@ describe('private question terminal metadata joins the existing source transacti
     if (fault === 'malformed') db.exec('CREATE TABLE desktop_notification_question_terminals(source_key TEXT,identity TEXT,status TEXT)')
     db.close(); expect(() => new SqliteNotificationRepository(path)).toThrow('终态结构异常')
     const inspect = new DatabaseSync(path)
-    try { expect(inspect.prepare('SELECT COUNT(*) AS n FROM desktop_notifications').get()!.n).toBe(1); expect(inspect.prepare('SELECT schema_version FROM desktop_notification_meta').get()!.schema_version).toBe(8) }
+    try { expect(inspect.prepare('SELECT COUNT(*) AS n FROM desktop_notifications').get()!.n).toBe(1); expect(inspect.prepare('SELECT schema_version FROM desktop_notification_meta').get()!.schema_version).toBe(9) }
     finally { inspect.close() }
   })
 })

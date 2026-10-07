@@ -4,6 +4,7 @@ import type { NotificationDraft, NotificationPreferences, NotificationQuery } fr
 import type { NotificationSourceListQuery } from '../domain/native-scope-availability'
 import type { ReplyIdentityBatch } from '../domain/reply-identity-index'
 import type { QuestionTerminalBatch } from '../domain/question-terminal-receipt'
+import type { NotificationDeliveryClaim } from '../domain/notification-delivery-claim'
 
 export type NotificationWorkerCommand =
   | { kind: 'historyGap'; id?: string }
@@ -11,6 +12,7 @@ export type NotificationWorkerCommand =
   | { kind: 'acknowledgeHistoryGap'; revision: number; now: number }
   | { kind: 'pruneRoutine'; now: number }
   | { kind: 'sourceState'; key: string }
+  | { kind: 'claimDelivery'; claim: NotificationDeliveryClaim; now: number }
   | { kind: 'listNativeSources'; query: NotificationSourceListQuery }
   | { kind: 'operatorMessageRecords'; keys: string[] }
   | { kind: 'mcpWriteRecords'; keys: string[] }
@@ -44,6 +46,7 @@ if (parentPort) {
           case 'acknowledgeHistoryGap': result = repository.acknowledgeHistoryGap(command.revision, command.now); break
           case 'pruneRoutine': result = repository.pruneRoutine(command.now); break
           case 'sourceState': result = repository.sourceState(command.key); break
+          case 'claimDelivery': result = repository.claimDelivery(command.claim, command.now); break
           case 'listNativeSources': result = repository.listNativeSources(command.query); break
           case 'operatorMessageRecords': result = repository.operatorMessageRecords(command.keys); break
           case 'mcpWriteRecords': result = repository.mcpWriteRecords(command.keys); break

@@ -117,7 +117,7 @@ try {
 
   // A durable delivery claim is not proof the OS alert was shown. Lose its ack,
   // kill the worker, then allow only a later genuinely new event to be delivered.
-  worker = workers.at(-1)!; hidden = worker.hideNext(command => command.kind === 'commitSource' && command.key === 'notification-delivery:v1')
+  worker = workers.at(-1)!; hidden = worker.hideNext(command => command.kind === 'claimDelivery')
   owner.offer(draft('fixture:unknown-claim')); await owner.flush(); await bounded(hidden)
   const recoveredDelivery = nextRecovery(4); await worker.terminate(); await recoveredDelivery; await owner.flush(); await delivery.flush()
   assert.equal(nativeCount, 1)

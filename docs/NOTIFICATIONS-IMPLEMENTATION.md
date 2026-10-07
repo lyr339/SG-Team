@@ -1,6 +1,6 @@
 # 拾光通知系统实施进度
 
-当前状态：实施中，完整目标未完成，未发布、未安装或重启用户软件。
+当前状态：按用户要求，两轮收尾审查后暂停持续实施；完整目标未完成，未发布、未安装或重启用户软件。最新收尾与剩余验收门禁见第四十四批。
 
 实现工作树为 `/Users/lyr/Downloads/SG-Team-notifications`，分支 `feat/notification-system`，基于 v0.5.15 主线 `5a371f7`。原主目录和原 UI 开发工作树不作为本目标的修改范围，已有基线漂移原样保留并记在各批保护报告中。完整需求以 `docs/NOTIFICATIONS-DESIGN.md` 为准，不能把底座或空通知列表作为系统完成。
 
@@ -824,3 +824,28 @@ hook v38 只读取已知 envelope 的 typed `isError`：最多八层 wrapper、J
 纯 preview `nativeFeedback=unconfirmed|reported` 只捎带模拟回报字段。真实 CUA 在 984×554 浅色与实际 320×600 暗色检查设置说明、长文换行与 scroll bounds，没有触碰系统开关/声音/权限；截图/DOM/logs 在 `ui/native-lifecycle-*.png`、`ui/native-lifecycle-audit.json`。没有 CSS 或布局结构改动，不能称全页面/双平台实机已通过。自建 tab、viewport/media、纯 preview 服务清理；`protected-native-lifecycle-audit.json` 核对两保护树逐文件/HEAD/porcelain/binary diff 与四个已有删除。fixture finally 只清理自己目录、线程和连接。仅本地提交，未 push、发布、安装、重启用户软件/Cursor或运行真实模型/账号/OS 通知。
 
 **完整目标仍 active，未完成**：契约和隔离回调证明不等于 Windows/macOS 正式签名包的实际权限、横幅、声音、勿扰和启动身份验收。原生长期 claim 容量/旧格式混合身份、任意原库/队列恢复组合、完整布局/长期容量与正式包仍继续。没有可观测回报不能按超时或沉默猜 permission denied；不得把本批 native contract 修复当整套完成。
+
+## 第四十四批 · 长期送达去重与两轮收尾
+
+按用户要求，本批完成两轮审查后停工，不再扩展来源或另建通知引擎。开工时 HEAD 为 `de3ed2e`；截图中的范围文字修复已在 `b29c1bc`，本轮另做实际渲染复核，没有重复堆 CSS，也没有将开发分支冒充已安装版本。
+
+第一轮先保留失败复现：在候选仍有效的固定观察时间里发送超过 1024 条后，重放最初事件出现第二次 native 调用；私有存储代次更新且 ID/attention revision 相同时，不同原结果被 raw-ID seen 吞掉。对应 `delivery-claims-red.log`，不是靠增加数组上限掩盖问题。
+
+沿既有 delivery owner 改为一次 private worker `claimDelivery` 原子事务，替代读取/重写整段 v1 JSON 和 source CAS。仍使用发送前后的原私有 page 核对；没有新增原业务库查询、网络请求、轮询或业务等待。原始捕获事件的摘要、作用域、事件时间和聚合身份形成不透明 digest，不能用 `current()` 被动细化后的 target、全局未读数、人类阅读标记或 TTL 延长制造新 claim。内存 seen 仍只有 1024 条，是热缓存而非长期去重权威；等待队列 32、record cache 512、native handles 8 保持。
+
+私有 schema 为 **9**。新增复合主键的轻量送达标记，只有 signal/content hash 与 claim 时间，没有消息正文或业务凭据。保留标记的语义与原清理墓碑一致，不因数量窗口、到期、历史清理或系统时钟回退遗忘已占用机会。原 v1 ID-only 记录在首个有效 claim 的同一事务中有限迁移：旧正文和时间未知，保留 ID-only 禁重放标记，不伪造当年 digest/deadline/claimedAt，也不改写旧检查点；损坏旧格式回滚本次 claim，原通知历史仍可读。已经是 v9 却丢失标记结构时拒绝初始化，不重建空索引冒充没有送达过。未来 schema 拒绝用例推进到 v10，旧格式迁移 fixture 仍保留 v8；不改其他数据库或全局 user_version。
+
+未知/非法回执、存储代次改变、前台/已读/静音改变或退出都不成为重新发 OS 通知的许可。原生显示、用户已读与占用送达机会继续分开；本批没有变化原 native fallback、Windows Action Center 点击或精确来源阅读规则。
+
+第二轮的 `verify-notification-delivery-claims.ts` 使用 actual compiled worker 和实际 VACUUM backup rollback，再写不同正文，证实同 ID/修订号的新结果能送达而旧代次帧不能转向；超过热缓存后重建 delivery owner 仍不重弹。两个实际 worker 同库竞争只产生一个 claim winner，v8 迁移保留旧证据与无关表。native 端口全部 synthetic，不运行业务、物理 OS 通知或权限操作。原 32 类加本 fixture 的 Node/macOS Electron as-node 顺序矩阵通过，compiled main hashes 前后相同。
+
+最终证据：`delivery-claims-round1-final-full.log`（329 files，3158 passed，1 skipped）、`delivery-claims-round1-final-build.log`、`delivery-claims-round1-typecheck.log`；`delivery-claims-round2-matrix.log`、`delivery-claims-round2-matrix-status.json`、`delivery-claims-round2-build-hashes.json`；退出、dead-code 和原 MCP/channel smoke 记录在同前缀日志。保护目录逐文件/HEAD/porcelain/binary diff 与四个原删除复核在 `protected-delivery-claims-audit.json`。fixture 的连接、线程和临时目录只清理自身资源，没有启动生产 main、用户软件/Cursor 或重新写全局 MCP 配置。
+
+### 停工与后续验收门禁
+
+- 本批仅本地提交；未 push、发布、打包安装或重启用户软件。完整目标暂停，不标 complete。
+- 发布前仍需 Windows/macOS 正式包的真实后台送达、权限拒绝、声音、勿扰、冷启动及通知点击恢复验收；契约和 synthetic callbacks 不代替物理送达。
+- 仍需正式包下全页面关联布局/200% 缩放及长期容量验收，不能用范围选择框截图或一千条 worker fixture 支持全界面/长期压力结论。
+- 旧版已丢原身份、缺原帧以及原库/队列组合恢复，需按实际可获得证据补最后的范围审计；无证据保持未知，不补造历史、不补答或重放业务。此次真实私有库回退只证明已覆盖的具体序列，不承诺所有组合。
+
+接手时从干净的本分支与本段证据继续，不在两个受保护目录动工，不把任何剩余项悄悄改成已完成。

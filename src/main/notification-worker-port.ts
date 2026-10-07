@@ -1,4 +1,5 @@
 import type { NotificationSourceListPage, NotificationSourceListQuery } from '../domain/native-scope-availability'
+import type { NotificationDeliveryClaim } from '../domain/notification-delivery-claim'
 import type { Worker } from 'node:worker_threads'
 import type { NotificationRepository, NotificationRepositoryLifecycle } from '../application/notification-repository'
 import type { NotificationChange, NotificationDraft, NotificationMarker, NotificationPage, NotificationPreferences, NotificationQuery, NotificationSourceResult, NotificationSourceState } from '../domain/notification'
@@ -167,6 +168,7 @@ export class NotificationWorkerPort implements NotificationRepository {
   pruneRoutine(now: number): Promise<NotificationChange & { removed: number; more: boolean }> { return this.call({ kind: 'pruneRoutine', now }) }
   marker(key: string): Promise<NotificationMarker> { return this.call({ kind: 'marker', key }) }
   sourceState(key: string): Promise<NotificationSourceState> { return this.call({ kind: 'sourceState', key }) }
+  claimDelivery(claim: NotificationDeliveryClaim, now: number): Promise<boolean> { return this.call({ kind: 'claimDelivery', claim, now }) }
   listNativeSources(query: NotificationSourceListQuery): Promise<NotificationSourceListPage> { return this.call({ kind: 'listNativeSources', query }) }
   operatorMessageRecords(keys: string[]): Promise<OperatorMessageRecordMetadata[]> { return this.call({ kind: 'operatorMessageRecords', keys }) }
   mcpWriteRecords(keys: string[]): Promise<McpWriteRecordMetadata[]> { return this.call({ kind: 'mcpWriteRecords', keys }) }

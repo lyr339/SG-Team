@@ -2,6 +2,8 @@ import type { NotificationService } from './notification-service'
 import { randomUUID } from 'node:crypto'
 import { notificationDeliveryRoute, notificationNativeContent, notificationQuietBoundary } from '../domain/notification-delivery-policy'
 import { DEFAULT_NOTIFICATION_PREFERENCES, type NotificationDeliveryStatus, type NotificationOpenRequest, type NotificationPreferences, type NotificationPush, type NotificationRecord, type NotificationSummary } from '../domain/notification'
+import { validateNotificationDeliveryClaim, type NotificationDeliveryClaim } from '../domain/notification-delivery-claim'
+import { notificationDeliveryIdentity } from './notification-delivery-identity'
 
 export type NativeNoticeCloseReason = 'dismissed' | 'programmatic' | 'timed-out' | 'unknown'
 interface NativeCallbacks { clicked(): void; failed(): void; closed(reason?: NativeNoticeCloseReason): void; shown(): void }
@@ -9,7 +11,6 @@ export interface NotificationNativePort {
   supported(): boolean
   show(content: { title: string; body: string; silent: boolean }, callbacks: NativeCallbacks): { close(): void }
 }
-interface DeliveryLedger { version: 1; ids: string[] }
 
 /** Delivery only: source facts are already durable. No business calls, polling or delivery-as-human-read shortcuts. */
 export class NotificationDeliveryService {
@@ -21,6 +22,7 @@ export class NotificationDeliveryService {
   private readonly seen = new Set<string>()
   private readonly records = new Map<string, NotificationRecord>()
   private readonly groupVersions = new WeakMap<NotificationPush, Map<string, number>>()
+  private readonly claims = new WeakMap<NotificationPush, NotificationDeliveryClaim>()
   private summary?: NotificationSummary
   private readonly shown = new Map<string, { handle: { close(): void }; event: NotificationPush }>()
   private nativeState: NotificationDeliveryStatus['state'] = 'ready'
@@ -32,7 +34,6 @@ export class NotificationDeliveryService {
   private message?: string
   private processing?: Promise<void>
   private readonly initializing: Promise<void>
-  private ledger?: { revision: number; data: DeliveryLedger }
   private stopped = false
   private lastHealth: NotificationPush['health'] = 'ready'
   private incomplete = false
@@ -42,7 +43,7 @@ export class NotificationDeliveryService {
   private quietTimer?: ReturnType<typeof setTimeout>
   private readonly unsubscribeResume?: () => void
   private readonly unsubscribe: () => void
-  constructor(private readonly owner: Pick<NotificationService, 'subscribe' | 'preferences' | 'page' | 'sourceState' | 'commitSource' | 'status'> & Partial<Pick<NotificationService, 'sourceStorageEpoch'>>, private readonly ports: {
+  constructor(private readonly owner: Pick<NotificationService, 'subscribe' | 'preferences' | 'page' | 'claimDelivery' | 'status'> & Partial<Pick<NotificationService, 'sourceStorageEpoch'>>, private readonly ports: {
     native: NotificationNativePort
     foreground(): boolean
     openWindow(): void
@@ -89,19 +90,18 @@ export class NotificationDeliveryService {
     if (epoch !== undefined) {
       if (!Number.isSafeInteger(epoch) || epoch < 0 || this.receivedStorageEpoch !== undefined && epoch < this.receivedStorageEpoch) return
       if (epoch !== this.receivedStorageEpoch && (this.receivedStorageEpoch !== undefined || epoch > 0)) {
-        ++this.storageEpoch; this.ledger = undefined; this.pending.length = 0; this.records.clear(); this.summary = undefined; this.openRequest = undefined
+        ++this.storageEpoch; this.pending.length = 0; this.records.clear(); this.summary = undefined; this.openRequest = undefined
         this.preferencesReady = false; ++this.preferencesVersion; this.closeAllNative()
       }
       this.receivedStorageEpoch = epoch
     }
     const previousHealth = this.lastHealth
     if (event.health === 'degraded' && previousHealth !== 'degraded') {
-      ++this.storageEpoch; this.ledger = undefined; this.pending.length = 0
+      ++this.storageEpoch; this.pending.length = 0
       this.closeAllNative()
     }
     // The exit already invalidated old opportunities. A delayed history refresh
     // must not discard a genuinely new result committed by the recovered worker.
-    if (event.historyReload) this.ledger = undefined
     if ((event.historyReload || previousHealth === 'degraded' && event.health === 'ready') && this.failureKind === 'storage') {
       this.nativeState = 'ready'; this.message = undefined; this.failureKind = undefined
     }
@@ -129,10 +129,18 @@ export class NotificationDeliveryService {
     // History/preferences/read state is always forwarded, but only this owner elects a delivery channel.
     this.emit({ ...event, announcement: undefined })
     const signal = event.announcement
-    if (!signal || !record || this.seen.has(signal.id)) { this.start(); return }
-    this.seen.add(signal.id); while (this.seen.size > 1_024) this.seen.delete(this.seen.values().next().value!)
+    if (!signal || !record) { this.start(); return }
+    let claim: NotificationDeliveryClaim
+    try {
+      claim = notificationDeliveryIdentity(event)!
+      validateNotificationDeliveryClaim(claim, this.now())
+    } catch { this.fail('部分提醒身份未确认；原结果仍在通知中心。', 'storage'); return }
+    const identity = `${claim.signalHash}:${claim.contentHash}`
+    if (this.seen.has(identity)) { this.start(); return }
+    this.seen.add(identity); while (this.seen.size > 1_024) this.seen.delete(this.seen.values().next().value!)
     if (this.pending.length >= 32) { this.fail('提醒较多，部分短暂提醒未送达；原记录仍在通知中心。'); return }
     if (signal.group) this.groupVersions.set(event, new Map(signal.group.recordIds.map(id => [id, this.records.get(id)?.revision ?? -1])))
+    this.claims.set(event, claim)
     this.pending.push(event); this.start()
   }
   private closeMutedNative(): void {
@@ -182,21 +190,6 @@ export class NotificationDeliveryService {
     const versions = this.groupVersions.get(event); if (versions) this.groupVersions.set(refreshed, versions)
     return refreshed
   }
-  private async claim(id: string): Promise<boolean> {
-    for (let attempt = 0; attempt < 3; attempt++) {
-      if (!this.ledger) {
-        const stored = await this.owner.sourceState('notification-delivery:v1'), value = stored.data as DeliveryLedger | undefined
-        if (value && (value.version !== 1 || !Array.isArray(value.ids) || value.ids.length > 1_024 || value.ids.some(id => typeof id !== 'string' || id.length > 700))) throw Error('送达去重记录异常')
-        this.ledger = { revision: stored.revision, data: value ?? { version: 1, ids: [] } }
-      }
-      if (this.ledger.data.ids.includes(id)) return false
-      const data: DeliveryLedger = { version: 1, ids: [...this.ledger.data.ids, id].slice(-1_024) }
-      const result = await this.owner.commitSource('notification-delivery:v1', this.ledger.revision, data, [])
-      if (result.applied) { this.ledger = { revision: result.source.revision, data }; return true }
-      this.ledger = undefined
-    }
-    throw Error('送达去重记录未能确认，不重放未知提醒')
-  }
   private route(event: NotificationPush): 'none' | 'in-app' | 'native' {
     if (this.stopped || !event.change?.record || !event.announcement || this.owner.status().health !== 'ready') return 'none'
     return notificationDeliveryRoute(event.change.record, event.announcement, this.preferences,
@@ -209,7 +202,8 @@ export class NotificationDeliveryService {
       try {
         let event = await this.current(captured)
         if (!event || storageEpoch !== this.storageEpoch || this.route(event) === 'none') continue
-        if (!await this.claim(event.announcement!.id) || this.stopped) continue
+        const claim = this.claims.get(captured)
+        if (!claim || !await this.owner.claimDelivery(claim, this.now()) || this.stopped) continue
         if (storageEpoch !== this.storageEpoch) continue
         // Settings/focus/reading can change during the private commit. Recheck, do not use the stale elected route.
         event = await this.current(event)
@@ -218,7 +212,6 @@ export class NotificationDeliveryService {
         if (route === 'in-app') this.emit(event)
         else if (route === 'native') this.showNative(event)
       } catch {
-        this.ledger = undefined
         // An unknown durable claim is not permission to resend. Keep the original result, disclose delivery locally.
         if (storageEpoch === this.storageEpoch || this.lastHealth === 'degraded') this.fail('部分提醒送达未确认。原结果仍保留，不会自动重发系统通知。', 'storage')
       }

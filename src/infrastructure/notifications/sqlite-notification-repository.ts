@@ -12,6 +12,8 @@ import type { McpWriteRecordMetadata } from '../../domain/mcp-write-notification
 import { validateReplyIdentityBatch, type ReplyIdentityBatch, type ReplyIdentityMatch } from '../../domain/reply-identity-index'
 import { SqliteReplyIdentityIndex } from './sqlite-reply-identity-index'
 import { validateQuestionTerminalLookup, validateQuestionTerminalBatch, type QuestionTerminalBatch, type QuestionTerminalReceipt } from '../../domain/question-terminal-receipt'
+import { validateNotificationDeliveryClaim, type NotificationDeliveryClaim } from '../../domain/notification-delivery-claim'
+import { deliveryHash } from '../../application/notification-delivery-identity'
 
 type StoredRow = { payload: string }
 const knownNegativeTransactions = new WeakSet<object>()
@@ -66,7 +68,7 @@ export class SqliteNotificationRepository {
           if (!columns.some(column => column.name === 'content_signature')) this.db.exec('ALTER TABLE desktop_notification_tombstones ADD COLUMN content_signature TEXT')
           this.db.exec('UPDATE desktop_notification_meta SET schema_version=2 WHERE id=1')
         })
-      } else if (![2, 3, 4, 5, 6, 7, 8].includes(version)) throw new Error('通知历史格式暂不支持，原有数据未修改')
+      } else if (![2, 3, 4, 5, 6, 7, 8, 9].includes(version)) throw new Error('通知历史格式暂不支持，原有数据未修改')
       if (version >= 4) {
         for (const table of ['desktop_notification_sources', 'desktop_notification_integrity', 'desktop_notification_gap_keys'])
           if (!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) throw Error('通知历史结构异常，原数据保留')
@@ -115,10 +117,53 @@ export class SqliteNotificationRepository {
       // v8 extends existing reply JSON metadata. Preserve old rows without
       // inventing a historical body digest; adapters refine them as comparisons.
       if (version < 8) this.transaction(() => this.db.exec('UPDATE desktop_notification_meta SET schema_version=8 WHERE id=1'))
+      if (version < 9) this.transaction(() => {
+        this.db.exec(`CREATE TABLE IF NOT EXISTS desktop_notification_delivery_claims (
+          signal_hash TEXT NOT NULL, content_hash TEXT NOT NULL, claimed_at INTEGER,
+          PRIMARY KEY(signal_hash,content_hash)) WITHOUT ROWID;`)
+        if (!this.db.prepare('PRAGMA table_info(desktop_notification_meta)').all().some(row => row.name === 'legacy_delivery_imported'))
+          this.db.exec('ALTER TABLE desktop_notification_meta ADD COLUMN legacy_delivery_imported INTEGER NOT NULL DEFAULT 0')
+        this.validateDeliveryClaimsStructure()
+        this.db.exec('UPDATE desktop_notification_meta SET schema_version=9 WHERE id=1')
+      })
+      else this.validateDeliveryClaimsStructure()
       this.historyGap() // Invalid v4 integrity never silently becomes a fresh, clean ledger.
     } catch (error) { this.db.close(); throw error }
   }
 
+  private validateDeliveryClaimsStructure(): void {
+    const columns = this.db.prepare('PRAGMA table_info(desktop_notification_delivery_claims)').all()
+    const expected = [['signal_hash', 'TEXT', 1, 1], ['content_hash', 'TEXT', 2, 1], ['claimed_at', 'INTEGER', 0, 0]] as const
+    const flag = this.db.prepare('PRAGMA table_info(desktop_notification_meta)').all().find(row => row.name === 'legacy_delivery_imported')
+    if (columns.length !== expected.length || expected.some(([name, type, pk, required], index) => {
+      const column = columns[index]; return column?.name !== name || column.type !== type || column.pk !== pk || column.notnull !== required
+    }) || flag?.type !== 'INTEGER' || flag.notnull !== 1) throw Error('私有提醒送达结构异常，原数据保留')
+    const row = this.db.prepare('SELECT legacy_delivery_imported AS imported FROM desktop_notification_meta WHERE id=1').get()
+    if (!row || ![0, 1].includes(Number(row.imported))) throw Error('旧提醒送达迁移证据无效，原数据保留')
+  }
+  /** Durable opaque tombstones, not a growing in-memory JSON window. Keep them
+   * after expiry/clearing: clock rollback or ID reuse is not permission to replay.
+   * v1 only proves a raw ID was claimed; never manufacture its historical body. */
+  claimDelivery(claim: NotificationDeliveryClaim, now: number): boolean {
+    validateNotificationDeliveryClaim(claim, now)
+    if (claim.expiresAt <= now) return false
+    return this.transaction(() => {
+      const meta = this.db.prepare('SELECT legacy_delivery_imported AS imported FROM desktop_notification_meta WHERE id=1').get()
+      if (!meta || ![0, 1].includes(Number(meta.imported))) throw Error('旧提醒送达迁移证据无效')
+      if (meta.imported === 0) {
+        const legacy = this.sourceState('notification-delivery:v1').data as { version?: unknown; ids?: unknown } | undefined
+        if (legacy !== undefined) {
+          if (!legacy || typeof legacy !== 'object' || legacy.version !== 1 || !Array.isArray(legacy.ids) || legacy.ids.length > 1_024
+            || legacy.ids.some(id => typeof id !== 'string' || !id || id.length > 700)) throw Error('旧提醒送达记录异常，原历史保留')
+          const insert = this.db.prepare('INSERT OR IGNORE INTO desktop_notification_delivery_claims VALUES(?,?,NULL)')
+          for (const id of legacy.ids) insert.run(deliveryHash(id), '')
+        }
+        this.db.exec('UPDATE desktop_notification_meta SET legacy_delivery_imported=1 WHERE id=1')
+      }
+      if (this.db.prepare("SELECT 1 FROM desktop_notification_delivery_claims WHERE signal_hash=? AND content_hash IN ('',?)").get(claim.signalHash, claim.contentHash)) return false
+      return Number(this.db.prepare('INSERT INTO desktop_notification_delivery_claims VALUES(?,?,?)').run(claim.signalHash, claim.contentHash, now).changes) === 1
+    })
+  }
   private validateQuestionTerminalsStructure(withStamp = true): void {
     const columns = this.db.prepare('PRAGMA table_info(desktop_notification_question_terminals)').all() as Array<{ name: string; type: string; pk: number; notnull: number }>
     const expected = [['source_key', 1], ['identity', 2], ['status', 0]] as const
