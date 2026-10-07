@@ -2,7 +2,16 @@ import { vi } from 'vitest'
 import { NotificationService } from '../src/application/notification-service'
 import type { NotificationRepository, NotificationRepositoryLifecycle } from '../src/application/notification-repository'
 import { SqliteNotificationRepository } from '../src/infrastructure/notifications/sqlite-notification-repository'
+import type { DatabaseSync } from 'node:sqlite'
 export { notificationTeam, notificationSession, notificationFrame } from '../scripts/fixtures/notification-session-data'
+
+/** Test-only bulk setup: run the real repository transitions, then persist an
+ * actual SQLite snapshot before disk reopening. Crash/unknown-ACK fixtures still
+ * use the normal durable worker; no production PRAGMA or timeout is weakened. */
+export function persistNotificationFixture(ledger: SqliteNotificationRepository, path: string): void {
+  const database = (ledger as unknown as { db: DatabaseSync }).db
+  database.prepare('VACUUM INTO ?').run(path)
+}
 
 export function notificationSourceHarness(path = ':memory:', subscribeLifecycle?: (listener: (event: NotificationRepositoryLifecycle) => void) => () => void) {
   const ledger = new SqliteNotificationRepository(path)

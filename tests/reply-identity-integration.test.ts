@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { ReplyNotifications } from '../src/application/notifications/reply-notifications'
 import { NOTIFICATION_SOURCE_PAYLOAD_LIMIT } from '../src/domain/notification'
 import type { ConversationEntry } from '../src/domain/conversation-entry'
-import { notificationFrame, notificationSession, notificationSourceHarness, notificationTeam } from './notification-source-fixtures'
+import { notificationFrame, notificationSession, notificationSourceHarness, notificationTeam, persistNotificationFixture } from './notification-source-fixtures'
 const reply = (patch: Partial<ConversationEntry> = {}): ConversationEntry => ({ id: 'native:old', channelId: '1', role: 'assistant', source: 'cursor', status: 'complete', text: 'PRIVATE reply body never copied',
   timestamp: 2000, streamId: 'stream:old', turn: 'turn:old', ...patch })
 const later = (count = 2100) => Array.from({ length: count }, (_, i) => reply({ id: `native:later-${i}`, streamId: `stream:later-${i}`, turn: `turn:later-${i}`, timestamp: 3000 + i }))
@@ -19,7 +19,7 @@ const sourceKey = (h: ReturnType<typeof notificationSourceHarness>) => vi.mocked
 describe('durable reply identity projection, not a larger JSON window', () => {
   it.each(['read', 'archived', 'cleared'] as const)('preserves %s after window eviction, observer and private SQLite restart, and later canonical metadata', async action => {
     const directory = mkdtempSync(join(tmpdir(), 'sg-reply-restart-')), path = join(directory, 'private.sqlite')
-    let h = notificationSourceHarness(path), source = new ReplyNotifications(h.owner, () => 1000)
+    let h = notificationSourceHarness(), source = new ReplyNotifications(h.owner, () => 1000)
     try {
       await observe(source, []); await observe(source, [reply()])
       const first = h.ledger.page().records[0]!, key = sourceKey(h)
@@ -27,6 +27,7 @@ describe('durable reply identity projection, not a larger JSON window', () => {
       if (action === 'archived') await h.owner.archive(first.id)
       if (action === 'cleared') await h.owner.clearRead({})
       await observe(source, later()); expect((h.ledger.sourceState(key).data as any).seen).not.toContain(first.key.slice(6))
+      persistNotificationFixture(h.ledger, path)
       await source.close(); await h.owner.close()
       h = notificationSourceHarness(path); source = new ReplyNotifications(h.owner, () => 10000)
       await observe(source, [canonical()])

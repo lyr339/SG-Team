@@ -49,12 +49,20 @@ describe('actual Cursor file restoration without a source restart', () => {
       expect(fresh.composers[0]?.changes?.additions).toBe(22)
     } finally { f.close() }
   })
-  it('closes the previous read-only connection on atomic inode replacement, not merely the outer snapshot cache', () => {
+  it('closes the previous read-only connection on OS-supported file replacement, not merely the outer snapshot cache', () => {
     const f = cursorRestoredFiles('table')
     try {
       expect(f.read().composers[0]?.contextUsage?.used).toBe(8000)
       const old = (f.reader as unknown as { sharedDatabase: { handle: DatabaseSync } }).sharedDatabase.handle
-      const replacement = join(f.directory, 'replacement.sqlite'); copyFileSync(f.old, replacement); renameSync(replacement, f.path)
+      const replacement = join(f.directory, 'replacement.sqlite'); copyFileSync(f.old, replacement)
+      if (process.platform === 'win32') {
+        // Win32 does not permit replacing an open SQLite handle via rename.
+        // Assert that actual platform boundary and use supported in-place
+        // restoration; the old connection must still be invalidated below.
+        expect(() => renameSync(replacement, f.path)).toThrowError(expect.objectContaining({ code: 'EPERM' }))
+        expect(f.read().composers[0]?.contextUsage?.used).toBe(8000)
+        f.restore(f.old)
+      } else renameSync(replacement, f.path)
       const snapshot = f.read()
       expect(snapshot.composers[0]?.contextUsage?.used).toBe(7000)
       expect((f.reader as unknown as { sharedDatabase: { handle: DatabaseSync } }).sharedDatabase.handle !== old).toBe(true)

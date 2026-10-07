@@ -7,6 +7,7 @@ import { SqliteNotificationRepository } from '../src/infrastructure/notification
 import { deliveryHash, notificationDeliveryIdentity } from '../src/application/notification-delivery-identity'
 import type { NotificationDeliveryClaim } from '../src/domain/notification-delivery-claim'
 import type { NotificationPush } from '../src/domain/notification'
+import { persistNotificationFixture } from './notification-source-fixtures'
 
 const roots: string[] = [], at = 1_000_000
 const setup = () => { const root = mkdtempSync(join(tmpdir(), 'sg-delivery-claims-')); roots.push(root); return join(root, 'private.sqlite') }
@@ -15,7 +16,7 @@ afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: 
 
 describe('private indexed delivery tombstones', () => {
   it('keeps exact claims after many events, reopening, clearing and clock rollback; a genuinely different captured result can use a reused signal', () => {
-    const path = setup(); let repository = new SqliteNotificationRepository(path)
+    const path = setup(); let repository = new SqliteNotificationRepository(':memory:')
     try {
       const first = candidate(); expect(repository.claimDelivery(first, at)).toBe(true)
       for (let index = 0; index < 2_048; index++) expect(repository.claimDelivery(candidate(`other:${index}`), at)).toBe(true)
@@ -23,6 +24,7 @@ describe('private indexed delivery tombstones', () => {
       expect(repository.claimDelivery({ ...first, expiresAt: at + 120_000 }, at)).toBe(false)
       repository.pruneRoutine(at + 60 * 24 * 60 * 60_000)
       repository.clearRead({}, at + 60 * 24 * 60 * 60_000)
+      persistNotificationFixture(repository, path)
       repository.close(); repository = new SqliteNotificationRepository(path)
       expect(repository.claimDelivery(first, at - 1)).toBe(false)
       expect(repository.claimDelivery(candidate('signal:1', 'different native body'), at)).toBe(true)
