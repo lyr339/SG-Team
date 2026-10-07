@@ -751,3 +751,21 @@ hook v38 只读取已知 envelope 的 typed `isError`：最多八层 wrapper、J
 纯 preview 的新场景使用产品 reducer/组件，不连接 SDK、账户、Cursor 或系统通知。真实 CUA 在默认 984×554 与实际 320×600 暗色验收完整提示、没有新增左彩轨/胶囊、完整范围标签与换行；`查看原工具` 实际揭示精确原条目和块，不止修改按钮文案。只展开原未知工具正文仍保留未读；显式在中心阅读才消费此通知，不能冒充已验证业务结果。截图/DOM/交互证据在 `ui/mcp-unattributed-*.png`、`ui/mcp-unattributed-audit.json`，日志为空。自己的 tab、viewport/media 覆盖和纯 preview server 清理；`protected-mcp-unattributed-audit.json` 核对两保护树逐文件/HEAD/porcelain/binary diff 与四个既有删除。只本地提交，没有 push、发版、安装、用户软件/Cursor 重启或真实模型/账号/OS 通知。
 
 **完整目标仍 active，未完成**：本批只接入有合法原生 flag/观察来源的结果；没有原生工具/过程帧、只剩静默或已丢身份时，不得推测业务失败或修造调用主体。真实 Cursor 原库恢复重核、旧格式失去的身份与混合历史、完整布局/长期容量/正式包及 Windows/macOS 真权限、声音、勿扰和系统送达仍继续，上文完整要求不缩减。
+
+## 第四十批 · 原 Cursor 文件恢复时的读取缓存
+
+本轮延续原库恢复的完整要求，先发现并修复实际读取层的障碍，不拿复制 private ledger 代替原事实核验。`cursor-restored-files-reproduction.log` 的五个失败来自真正的隔离 SQLite/JSONL：3.6 JSON 与 3.21 table 两种格式，在同 inode/mtime/size/SQLite change counter 的兄弟备份覆盖后继续读旧上下文；3.21 版本 sentinel 不变的外部或同连接表更新被旧 table snapshot 吞掉；等长转录保留 mtime 时仍出现旧通道。`cursor-restored-forward-stamp-reproduction.log` 进一步证明只按时间回退重开连接不够：备份替换也可有更**新**时间但同 SQLite counter，旧页缓存仍保留 8000 而不是恢复库的 7000。
+
+沿原读取入口修复，不新建恢复引擎/来源库：
+
+- 原文件 stat 指纹加 dev/inode/birthtime/ctime，数据库、WAL、转录依赖、通道转录与项目目录缓存都复用已有 stat 结果；不增加转录枚举频率或轮询。旧 mtime/size 仍用于真实时间与窗选取，ctime 只用来判断缓存能否复用，不把它伪造为消息时间或生命证据。
+- 只读 SQLite 连接除了 inode 更换，也在确切文件替换/回退信号下重开。因为复制恢复可以保留 SQLite change counter，**主库 stat 改变时**才从 offset 24 读四字节 counter；稳定主库、普通 WAL 帧不增加该读取，不扫描大库，不读取额外正文/账号内容。普通向前提交且 counter 改变继续用原连接；同 counter 的改文件不能认证旧页缓存新鲜。atomic replacement 明确关闭旧连接。打开后的 query_only/超时与原错误路径保持。
+- 原索引 sentinel 查询同一 prepared statement 捎带 data_version/total_changes；两个原 key 查询数量保持。sentinel 相同不再掩盖实际表内容变化；稳定命中不枚举表行。total_changes 在 ROLLBACK 后不回退，因此活动事务内读出的表视图不保存为下一次已提交缓存，保留存储清理事务与空表/legacy 原规则。
+
+没有改批量启动、账号、授权、模型、业务互斥、原统计算法、网络请求或重试，通知不等待此新链。修复会让原读者看到恢复后的数据，但不把恢复数据自动叫作新回复、不由文件变化认定任务失败/问卷未答，也不据此承诺旧业务回执可无损重建。
+
+新增 `verify-notification-cursor-restoration.ts` 使用真正原 Cursor reader、DesktopSessionService 和当前 compiled private worker；所有数据库和转录均是隔离 fixtures，不是用户安装库。legacy/table 两类原 SQL 读数经现有 binding/sample 边界进入上下文通知：真实 95% 后恢复到 7000/10000 正确收口；同工作区原通道内容更新不被旧缓存保活；worker 重启后原已读不复活、没有补播。每次原读取前后 hash 验证主库和转录字节未被 reader 修改，原业务发送为零。idle 两百帧不产生新 worker commands；单位测试一百次原缓存命中为零额外 SQL，正常 WAL 更新复用同一原连接，inode 替换会关闭旧连接，清理事务 rollback 视图不逃逸。
+
+最终 `cursor-restored-files-focused-final.log`、`cursor-restored-full-regression-final.log`（324 files、3104 passed、1 skipped）、`cursor-restored-build-final.log`、`cursor-restored-dead-code-final.log`；29 类 Node/macOS Electron as-node 的当前 worker 矩阵为 `cursor-restored-verification-matrix-final.log`，另有隔离 Electron quit 与原 MCP/channel smoke。没有 renderer/CSS 变更，不把编译绿色当新增视觉验收；没有 preview/server。`protected-cursor-restored-audit.json` 核对两个保护树逐文件/HEAD/porcelain/binary diff 与四个原有删除保持。自身 fixture 在 finally 关闭 worker/连接并精确移除自己的目录。只本地提交，不 push、发版、安装、重启软件/Cursor、真实模型/账号或 OS 通知。
+
+**完整目标仍 active，未完成**：这批证明了支持格式的隔离原 SQLite/转录恢复经过实际读取与上下文通知入口，不代表用户当前完整 Cursor 原库、任意损坏/WAL/混合历史或 Windows 真机通过。问卷/回复/队列对原库恢复的逐身份重新核对、旧版已丢失身份的边界、完整布局/长期容量/正式包，以及 Windows/macOS 权限/声音/勿扰/系统送达仍按原完整范围继续；不以读取缓存修复代替其余验收。

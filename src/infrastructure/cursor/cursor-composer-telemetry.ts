@@ -8,6 +8,7 @@ import {
   realpathSync,
   statSync
 } from 'node:fs'
+import type { Stats } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, normalize, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -95,9 +96,23 @@ interface TranscriptSignals {
 
 interface CachedTranscriptSignals extends TranscriptSignals {
   path: string
-  size: number
+  fileVersion: string
   modifiedAt: number
 }
+
+/** Existing stat only: restored/copied files may preserve mtime and size. */
+function fileVersion(stat: Pick<Stats, 'dev' | 'ino' | 'birthtimeMs' | 'ctimeMs' | 'mtimeMs' | 'size'>): string {
+  return `${stat.dev}:${stat.ino}:${stat.birthtimeMs}:${stat.ctimeMs}:${stat.mtimeMs}:${stat.size}`
+}
+/** Four SQLite header bytes only after a changed main-file stat, never a scan of the user database. */
+function sqliteFileChangeCounter(path: string): number | undefined {
+  const fd = openSync(path, 'r')
+  try {
+    const bytes = Buffer.allocUnsafe(4)
+    return readSync(fd, bytes, 0, 4, 24) === 4 ? bytes.readUInt32BE(0) : undefined
+  } finally { closeSync(fd) }
+}
+interface TranscriptFile { path: string; modifiedAt: number; composerId: string; fileVersion: string }
 
 
 export interface CursorComposerTelemetryPaths {
@@ -1042,7 +1057,7 @@ function transcriptMarkerWindow(path: string): string {
 }
 
 /** 项目目录清单缓存：目录 mtime 在增删条目时变化，以此作缓存键（无 TTL 陈旧问题）。 */
-let projectsDirCache: { root: string; mtimeMs: number; names: string[] } | undefined
+let projectsDirCache: { root: string; fileVersion: string; names: string[] } | undefined
 
 function projectDirectoryNames(projectsRoot: string): string[] {
   try {
@@ -1050,12 +1065,12 @@ function projectDirectoryNames(projectsRoot: string): string[] {
     if (
       projectsDirCache &&
       projectsDirCache.root === projectsRoot &&
-      projectsDirCache.mtimeMs === stat.mtimeMs
+      projectsDirCache.fileVersion === fileVersion(stat)
     ) return projectsDirCache.names
     const names = readdirSync(projectsRoot)
       .filter((name) => !name.startsWith('.'))
       .slice(0, MAX_PROJECT_DIRS)
-    projectsDirCache = { root: projectsRoot, mtimeMs: stat.mtimeMs, names }
+    projectsDirCache = { root: projectsRoot, fileVersion: fileVersion(stat), names }
     return names
   } catch {
     return []
@@ -1190,8 +1205,8 @@ function composerActivity(
  * 跨全部项目目录枚举转录文件（新→旧，全量）。通道级证据扫描取前
  * CHANNEL_SCAN_MAX_FILES 份；转录定位索引需要全量（老 composer 也要能定位）。
  */
-function listTranscriptFiles(projectsRoot: string): { path: string; modifiedAt: number; composerId: string }[] {
-  const files: { path: string; modifiedAt: number; composerId: string }[] = []
+function listTranscriptFiles(projectsRoot: string): TranscriptFile[] {
+  const files: TranscriptFile[] = []
   for (const directoryName of projectDirectoryNames(projectsRoot)) {
     const transcriptsRoot = join(projectsRoot, directoryName, 'agent-transcripts')
     let composerDirs: string[]
@@ -1205,7 +1220,7 @@ function listTranscriptFiles(projectsRoot: string): { path: string; modifiedAt: 
       const candidate = join(transcriptsRoot, composerDir, `${composerDir}.jsonl`)
       try {
         const stat = statSync(candidate, { throwIfNoEntry: false })
-        if (stat?.isFile()) files.push({ path: candidate, modifiedAt: stat.mtimeMs, composerId: composerDir })
+        if (stat?.isFile()) files.push({ path: candidate, modifiedAt: stat.mtimeMs, composerId: composerDir, fileVersion: fileVersion(stat) })
       } catch {
         // 转录在扫描期间被清理——跳过
       }
@@ -1383,7 +1398,7 @@ export class CursorComposerTelemetryReader implements CursorComposerTelemetrySou
   private readonly paths: CursorComposerTelemetryPaths
   private readonly now: () => number
   private readonly transcriptSignalCache = new Map<string, CachedTranscriptSignals>()
-  private readonly channelSignalCache = new Map<string, TranscriptSignals & { path: string }>()
+  private readonly channelSignalCache = new Map<string, TranscriptSignals & { path: string; fileVersion: string }>()
   private readonly channelActivityPollMs: number
   private readonly transcriptIndexTtlMs: number
   private channelActivityRun?: {
@@ -1394,7 +1409,7 @@ export class CursorComposerTelemetryReader implements CursorComposerTelemetrySou
   private transcriptFileIndex?: {
     at: number
     /** 最新的 CHANNEL_SCAN_MAX_FILES 份（通道级证据扫描的读窗上限）。 */
-    files: { path: string; modifiedAt: number; composerId: string }[]
+    files: TranscriptFile[]
     /** 全量：composerId → 最新一份转录（同 composer 多目录取 mtime 最新）。 */
     byComposer: Map<string, { path: string; modifiedAt: number }>
   }
@@ -1410,8 +1425,8 @@ export class CursorComposerTelemetryReader implements CursorComposerTelemetrySou
     parsed: ParsedComposer[]
   }
   /**
-   * 快照级缓存：state.vscdb+wal 指纹（mtime/size/ino）、bindings、通道活性与上轮触及的
-   * 转录文件（mtime/size）任一变化即失效。主进程遥测轮询（750ms-1s）此前每轮对 20GB 库
+   * 快照级缓存：state.vscdb+wal 和转录的文件身份/mtime/ctime/size、bindings、通道活性
+   * 任一变化即失效。主进程遥测轮询（750ms-1s）此前每轮对 20GB 库
    * 新开同步 DatabaseSync 并全量解析，空闲期占住主进程；vscdb 由 Cursor 在会话活跃时
    * 高频写回，活跃期缓存自然失效。转录依赖必须纳入判定：转录追加不经过 vscdb，
    * 漏掉会冻结工作过程/上下文信号（有既有测试钉死该语义）。
@@ -1421,13 +1436,13 @@ export class CursorComposerTelemetryReader implements CursorComposerTelemetrySou
     workspaceKey: string
     bindingsKey: string
     activitiesKey: string
-    transcriptDeps: Array<{ path: string; mtimeMs: number; size: number }>
+    transcriptDeps: Array<{ path: string; fileVersion: string }>
     result: CursorTelemetrySnapshot
   }
   /** 本轮计算触及的转录文件收集器（仅正常计算路径非空）。 */
-  private transcriptDepsCollector?: Array<{ path: string; mtimeMs: number; size: number }>
-  /** 复用的只读连接：WAL 模式下读事务可见其他进程新提交；inode 变更才重开。 */
-  private sharedDatabase?: { handle: DatabaseSync; path: string; ino: number }
+  private transcriptDepsCollector?: Array<{ path: string; fileVersion: string }>
+  /** Shared read-only connection; file replacement/rollback signals also retire stale SQLite page caches. */
+  private sharedDatabase?: { handle: DatabaseSync; path: string; identity: string; fileVersion: string; changeCounter?: number; modifiedAt: number; changedAt: number; size: number }
 
   constructor(options: CursorComposerTelemetryReaderOptions = {}) {
     const {
@@ -1531,7 +1546,7 @@ export class CursorComposerTelemetryReader implements CursorComposerTelemetrySou
     return channelActivities ? { ...snapshot, channelActivities } : snapshot
   }
 
-  private transcriptFiles(now: number): { path: string; modifiedAt: number; composerId: string }[] {
+  private transcriptFiles(now: number): TranscriptFile[] {
     return this.refreshTranscriptIndex(now).files
   }
 
@@ -1573,18 +1588,18 @@ export class CursorComposerTelemetryReader implements CursorComposerTelemetrySou
     return this.transcriptLocations(now).get(composerId)?.path
   }
 
-  /** vscdb+wal 的 mtime/size/ino 指纹；库不存在返回 undefined（不缓存，走原错误路径）。 */
+  /** Existing vscdb/WAL stat includes file identity and change time, not just preserved copy timestamps. */
   private databaseFingerprint(): string | undefined {
     try {
       const database = statSync(this.paths.globalStateDatabase)
       let wal = 'none'
       try {
         const walStat = statSync(`${this.paths.globalStateDatabase}-wal`)
-        wal = `${walStat.mtimeMs}:${walStat.size}:${walStat.ino}`
+        wal = fileVersion(walStat)
       } catch {
         // WAL 不存在（检查点合并后）是正常状态
       }
-      return `${database.mtimeMs}:${database.size}:${database.ino}:${wal}`
+      return `${fileVersion(database)}:${wal}`
     } catch {
       return undefined
     }
@@ -1592,9 +1607,20 @@ export class CursorComposerTelemetryReader implements CursorComposerTelemetrySou
 
   private acquireDatabase(): DatabaseSync {
     const path = this.paths.globalStateDatabase
-    const ino = statSync(path).ino
+    const stat = statSync(path), identity = `${stat.dev}:${stat.ino}:${stat.birthtimeMs}`
     const existing = this.sharedDatabase
-    if (existing && existing.path === path && existing.ino === ino) {
+    // Copying a sibling backup may advance mtime while preserving inode AND
+    // SQLite change counter. Stat changes with an unchanged counter cannot
+    // certify that SQLite's existing page cache is fresh. Read only 4 bytes,
+    // only when the main file changed; ordinary WAL frames add no header read.
+    const version = fileVersion(stat), changed = existing?.fileVersion !== version
+    const counter = changed ? sqliteFileChangeCounter(path) : existing?.changeCounter
+    const discontinuity = existing && changed && (stat.size < existing.size || stat.mtimeMs < existing.modifiedAt
+      || stat.mtimeMs === existing.modifiedAt && stat.ctimeMs !== existing.changedAt
+      || counter === undefined || counter === existing.changeCounter)
+    if (existing && existing.path === path && existing.identity === identity && !discontinuity) {
+      existing.modifiedAt = stat.mtimeMs; existing.changedAt = stat.ctimeMs; existing.size = stat.size
+      existing.fileVersion = version; existing.changeCounter = counter
       return existing.handle
     }
     if (existing) {
@@ -1611,7 +1637,7 @@ export class CursorComposerTelemetryReader implements CursorComposerTelemetrySou
     })
     handle.exec('PRAGMA query_only = ON')
     handle.exec('PRAGMA busy_timeout = 300')
-    this.sharedDatabase = { handle, path, ino }
+    this.sharedDatabase = { handle, path, identity, fileVersion: version, changeCounter: counter, modifiedAt: stat.mtimeMs, changedAt: stat.ctimeMs, size: stat.size }
     return handle
   }
 
@@ -1632,7 +1658,7 @@ export class CursorComposerTelemetryReader implements CursorComposerTelemetrySou
     const result: Record<string, CursorChannelActivity> = {}
     for (const channelId of channelIds) {
       for (const file of files) {
-        const signals = this.channelTranscriptSignals(file.path, file.modifiedAt)
+        const signals = this.channelTranscriptSignals(file)
         if (!signals.channelIds.has(channelId)) continue
         result[channelId] = {
           ...channelActivityFromSignals(channelId, signals, now),
@@ -1644,13 +1670,14 @@ export class CursorComposerTelemetryReader implements CursorComposerTelemetrySou
     return Object.keys(result).length ? result : undefined
   }
 
-  private channelTranscriptSignals(path: string, modifiedAt: number): TranscriptSignals {
+  private channelTranscriptSignals(file: TranscriptFile): TranscriptSignals {
+    const { path, modifiedAt } = file
     const cached = this.channelSignalCache.get(path)
-    if (cached && cached.modifiedAt === modifiedAt) return cached
+    if (cached && cached.fileVersion === file.fileVersion) return cached
     const signals = extractTranscriptSignals(transcriptMarkerWindow(path))
     signals.modifiedAt = modifiedAt
     if (this.channelSignalCache.size >= MAX_TRANSCRIPT_SIGNAL_CACHE) this.channelSignalCache.clear()
-    this.channelSignalCache.set(path, { ...signals, path })
+    this.channelSignalCache.set(path, { ...signals, path, fileVersion: file.fileVersion })
     return signals
   }
 
@@ -1677,7 +1704,7 @@ export class CursorComposerTelemetryReader implements CursorComposerTelemetrySou
     const markerToComposers = new Map<string, Set<string>>()
     const composerToMarkers = new Map<string, Set<string>>()
     for (const file of this.transcriptFiles(this.now())) {
-      const signals = this.channelTranscriptSignals(file.path, file.modifiedAt)
+      const signals = this.channelTranscriptSignals(file)
       for (const marker of signals.bindingMarkers) {
         if (!wanted.has(marker)) continue
         const composers = markerToComposers.get(marker) ?? new Set<string>()
@@ -1929,12 +1956,12 @@ export class CursorComposerTelemetryReader implements CursorComposerTelemetrySou
     return result
   }
 
-  /** 上轮触及的转录文件全部未变（mtime+size）才允许复用缓存。 */
-  private transcriptDepsFresh(deps: Array<{ path: string; mtimeMs: number; size: number }>): boolean {
+  /** Existing transcript dependency stat also rejects restored equal-length files. */
+  private transcriptDepsFresh(deps: Array<{ path: string; fileVersion: string }>): boolean {
     for (const dep of deps) {
       try {
         const stat = statSync(dep.path)
-        if (stat.mtimeMs !== dep.mtimeMs || stat.size !== dep.size) return false
+        if (fileVersion(stat) !== dep.fileVersion) return false
       } catch {
         return false
       }
@@ -1943,8 +1970,8 @@ export class CursorComposerTelemetryReader implements CursorComposerTelemetrySou
   }
 
   /** 记录本轮计算实际读取的转录文件（供下轮缓存判定；与调用处已有的 statSync 共享结果）。 */
-  private noteTranscriptDep(path: string, stat: { mtimeMs: number; size: number }): void {
-    this.transcriptDepsCollector?.push({ path, mtimeMs: stat.mtimeMs, size: stat.size })
+  private noteTranscriptDep(path: string, stat: Stats): void {
+    this.transcriptDepsCollector?.push({ path, fileVersion: fileVersion(stat) })
   }
 
   private readTranscriptSignals(workspacePaths: string[], composer: ParsedComposer, now: number): TranscriptSignals {
@@ -1957,8 +1984,7 @@ export class CursorComposerTelemetryReader implements CursorComposerTelemetrySou
       if (
         cached &&
         cached.path === path &&
-        cached.size === stat.size &&
-        cached.modifiedAt === stat.mtimeMs
+        cached.fileVersion === fileVersion(stat)
       ) return cached
 
       const signals = extractTranscriptSignals(transcriptMarkerWindow(path))
@@ -1969,7 +1995,7 @@ export class CursorComposerTelemetryReader implements CursorComposerTelemetrySou
       this.transcriptSignalCache.set(composer.telemetry.composerId, {
         ...signals,
         path,
-        size: stat.size,
+        fileVersion: fileVersion(stat),
         modifiedAt: stat.mtimeMs
       })
       return signals

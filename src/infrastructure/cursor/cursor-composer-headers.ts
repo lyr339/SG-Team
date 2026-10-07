@@ -4,7 +4,7 @@ import type { DatabaseSync } from 'node:sqlite'
 export const CURSOR_COMPOSER_HEADERS_KEY = 'composer.composerHeaders'
 const HEADER_VERSION_KEY = 'composer.composerHeaders.version'
 const MAX_HEADER_BYTES = 32 * 1024 * 1024
-const tableSnapshots = new WeakMap<DatabaseSync, { version: string; json: string }>()
+const tableSnapshots = new WeakMap<DatabaseSync, { version: string; readVersion: string; json: string }>()
 
 function text(value: unknown): string | undefined {
   return typeof value === 'string' ? value : value instanceof Uint8Array ? Buffer.from(value).toString('utf8') : undefined
@@ -19,12 +19,19 @@ function hasHeaderTable(database: DatabaseSync): boolean {
 
 /** 3.6.31 JSON index / 3.21.12 migrated table, shared by telemetry and storage maintenance. */
 export function readCursorComposerHeadersJson(database: DatabaseSync): string | undefined {
-  const read = database.prepare('SELECT value FROM ItemTable WHERE key = ?')
+  const read = database.prepare(`SELECT value, (SELECT data_version FROM pragma_data_version) AS external_version,
+    total_changes() AS local_changes FROM ItemTable WHERE key = ?`)
   const legacy = text(read.get(CURSOR_COMPOSER_HEADERS_KEY)?.value)
   if (!hasHeaderTable(database)) return legacy
-  const version = text(read.get(HEADER_VERSION_KEY)?.value)
+  // Same original sentinel query, with connection counters attached. Native
+  // version strings can survive a restore or a row update; they alone are not
+  // authority for reusing a whole table snapshot. No additional SQL round trip.
+  const metadata = read.get(HEADER_VERSION_KEY)
+  const version = text(metadata?.value)
+  const external = Number(metadata?.external_version), local = Number(metadata?.local_changes)
+  const readVersion = [external, local].every(value => Number.isSafeInteger(value) && value >= 0) ? `${external}:${local}` : undefined
   const cached = tableSnapshots.get(database)
-  if (version && cached?.version === version) return cached.json
+  if (!database.isTransaction && version && readVersion !== undefined && cached?.version === version && cached.readVersion === readVersion) return cached.json
   const rows = database.prepare('SELECT composerId, value FROM composerHeaders').iterate()
   const values: string[] = []
   let bytes = 0
@@ -40,7 +47,9 @@ export function readCursorComposerHeadersJson(database: DatabaseSync): string | 
   // A version sentinel makes an EMPTY migrated table authoritative; don't resurrect stale legacy chats.
   if (!values.length && !version && legacy) return legacy
   const json = `{"allComposers":[${values.join(',')}]}`
-  if (version) tableSnapshots.set(database, { version, json })
+  // total_changes does not decrease on ROLLBACK. Never retain a transactional
+  // view under that token or it could escape into the next committed read.
+  if (!database.isTransaction && version && readVersion !== undefined) tableSnapshots.set(database, { version, readVersion, json })
   return json
 }
 
