@@ -721,3 +721,15 @@ source checkpoint v2 每个既有身份仅增加一个 `~` 前缀表示“已检
 `protected-usage-emission-audit.json` 保存两原树逐文件/HEAD/porcelain/binary diff 与四个既有删除核对；自身 fixture 目录精确清理，没有 preview tabs/server。仅本地提交，未 push、发布、安装、重启用户软件/Cursor 或运行真实模型/账号/OS 通知。
 
 **完整目标仍未完成**：MCP runtime/校验前无可信主体的诊断仍待接入，本批没有把普通拒绝改成写失败或猜 Agent；整条过程帧也无法产生/传输时的未知来源、旧格式丢失身份和真实 Cursor 原库恢复重核、全布局/长期容量/正式包及 Windows/macOS 真权限/声音/勿扰/送达仍按原完整范围继续，不把此 producer 补口当整套完成。
+
+## 视觉复核 · 原生筛选文字容错与关联窄窗
+
+再次以用户的“所有工作区”截图优先复核实际控件，不继续扩展通知来源。开工前已有 `2ff7e83` 移除 120px 上限；本机当前预览没有再次复现旧截图的严重裁字，但原生自动宽度约 126px，减去共享箭头/内边距的 56px 后只有约 70px，恰好等于五字的实测宽度。之前的自动宽度修复没有额外字体/DPI容错，不能只凭外框没有溢出就判文字安全。
+
+本批只修改通知 CSS 与回归契约：范围选择框下限为五字加一字留白和原共享内边距，继续保留原生选择语义、共享箭头和现有字号。空间不足时工具栏整体换行，不压缩字段、不新建自定义下拉或读取引擎。实际两种范围标签均为 70px，修复后的文字区约 84px。关联的会话偏好同样留足“重点关注”字宽与边框；实物检查发现加宽后旧 grid 会把“此会话的提醒”最后一字挤到下一行，随即改为可整组换行的 flex。在实际 320px 视口标题恢复为一行，246px 极窄视口选择框独立换行，说明完整保留。没有修改查询、已读、归档、偏好保存或任何业务顺序。
+
+CUA 纯 preview 验收默认 984×554、实际 320×480/600、480×360、246px 极窄、深浅主题、长正文、时间设置和关联偏好。截图与实际 DOM/Canvas 字形测量在 `ui/scope-text-safety-*.png`、`ui/scope-text-safety-audit.json`；记录的是实际 CSS 视口和 DPR，不把请求尺寸误报为实物尺寸。三档 Chromium 设备像素模拟下标签和文字余量保持，不能代替 Windows 真机验收。原生键盘的第一下 ArrowDown 是展开菜单，需要继续 Down/Return 才提交选项；完成选择后 Escape 正常关闭中心并回到铃铛焦点，没有把菜单的一次 Escape 误判成中心失败。
+
+最终 `scope-text-safety-focused-final.log`、`scope-text-safety-regression-final.log`（323 files、3082 passed、1 skipped）、`scope-text-safety-build-final.log` 及 `scope-text-safety-dead-code.log` 为当前证据。CSS 契约测试区分共享内边距、字宽留白和关联换行，不冒充浏览器字形验收。临时 viewport、媒体和设备像素覆盖已清理，自建标签与纯 preview 服务已关闭；没有启动生产 main、用户软件/Cursor、真实账号/模型/OS 通知。`protected-scope-text-safety-audit.json` 确认两保护树逐文件/HEAD/porcelain/binary diff 与四个既有删除保持。
+
+仅本地提交本视觉修复、对应 test 和本段进度，不 push、发布或安装。MCP 不可归属诊断的未提交文件原样保留；虽参与当前工作树回归通过，尚欠原生 compiled-worker 等验收，不混入本次提交。**完整通知目标仍 active，未完成**；本点不替代上文完整范围与后续实机验收。

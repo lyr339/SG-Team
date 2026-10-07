@@ -17,9 +17,10 @@
 .notification-tabs button { display: inline-flex; align-items: center; justify-content: center; min-height: 40px; padding: 8px 0; color: var(--muted); background: transparent; border: 0; border-bottom: 2px solid transparent; font-size: var(--fs-13); line-height: 1.4; white-space: nowrap; cursor: pointer; }
 .notification-tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent-deep); font-weight: 600; }
 .notification-tabs button:hover { color: var(--text); }
-/* controls.css reserves 56px for the native select's padding/arrow. Keep its
-   intrinsic label width; wrap the toolbar instead of shrinking or clipping it. */
-.notification-panel__toolbar select { flex: none; width: auto; max-width: 100%; min-height: 32px; margin-left: auto; padding: 4px 0; border: 0; border-radius: 6px; color: var(--text-soft); background: var(--surface-solid); font-size: var(--fs-12); line-height: 1.4; cursor: pointer; }
+/* The five-character labels need 5em plus the 56px padding/arrow from controls.css.
+   Keep an extra em for native font/DPI rounding; intrinsic width alone can fit
+   the text exactly, with no tolerance. Wrap the toolbar, never shrink the field. */
+.notification-panel__toolbar select { flex: none; width: auto; min-inline-size: calc(6em + 56px); max-width: 100%; box-sizing: border-box; min-height: 32px; margin-left: auto; padding: 4px 0; border: 0; border-radius: 6px; color: var(--text-soft); background: var(--surface-solid); font-size: var(--fs-12); line-height: 1.4; white-space: nowrap; cursor: pointer; }
 .notification-panel__toolbar select:hover { color: var(--text); background-color: var(--surface-soft); }
 .notification-panel__body { min-height: 0; flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
 .notification-list { margin: 0; padding: 0 18px; list-style: none; }
@@ -95,9 +96,11 @@
 .notification-category-table td label { display: flex; align-items: center; justify-content: center; min-height: 39px; cursor: pointer; }
 .notification-category-table input { width: 15px; height: 15px; margin: 0; accent-color: var(--accent-deep); }
 .notification-preferences__save { margin: 15px 0 0; color: var(--muted); font-size: var(--fs-12); line-height: 1.5; }
-.notification-session-preference { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px 12px; margin: 13px 0 3px; padding-top: 12px; border-top: 1px solid var(--line-faint); color: var(--muted); font-size: var(--fs-12); }
-.notification-session-preference select { padding: 4px 7px; min-height: 32px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); background: var(--surface-solid); font-size: var(--fs-12); line-height: 1.4; }
-.notification-session-preference small { grid-column: 1 / -1; color: var(--muted); line-height: 1.6; }
+.notification-session-preference { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 13px 0 3px; padding-top: 12px; border-top: 1px solid var(--line-faint); color: var(--muted); font-size: var(--fs-12); }
+.notification-session-preference > span { flex: 1 0 auto; }
+/* Same native text tolerance for the four-character "重点关注" option, plus borders. */
+.notification-session-preference select { flex: none; min-inline-size: calc(5em + 58px); max-width: 100%; box-sizing: border-box; margin-left: auto; padding: 4px 7px; min-height: 32px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); background: var(--surface-solid); font-size: var(--fs-12); line-height: 1.4; white-space: nowrap; }
+.notification-session-preference small { flex: 1 0 100%; min-width: 0; color: var(--muted); line-height: 1.6; overflow-wrap: anywhere; }
 .notification-toast { position: fixed; z-index: 145; right: max(16px, env(safe-area-inset-right)); bottom: max(16px, env(safe-area-inset-bottom)); display: grid; grid-template-columns: 18px minmax(0, 1fr) 28px; align-items: start; gap: 10px; width: min(420px, calc(100vw - 32px)); box-sizing: border-box; padding: 14px 12px 12px 16px; color: var(--text); background: var(--surface-solid); border: 1px solid var(--color-border-secondary); border-radius: 11px; box-shadow: var(--shadow-lg); animation: notification-enter 170ms ease-out; }
 .notification-toast > .notification-status-icon { margin-top: 20px; }
 .notification-toast__copy { min-width: 0; }
