@@ -5,6 +5,7 @@ import {
   type NotificationScope,
   type NotificationRecord
 } from './notification'
+import type { UnattributedMcpFact } from './mcp-unattributed-call'
 import type { McpWriteObservation } from './mcp-write-observation'
 export interface McpWriteFact extends McpWriteObservation {
   identity: string
@@ -18,6 +19,7 @@ export interface McpWriteFact extends McpWriteObservation {
 export interface McpWriteInput {
   key: string
   facts: McpWriteFact[]
+  calls?: UnattributedMcpFact[]
   now: number
   monitorStartedAt: number
   signature: string
@@ -27,6 +29,8 @@ export interface McpWriteState {
   key: string
   seen: string[]
   attentionFamilies?: string[]
+  /** First activation's cold-stock boundary for native calls without a business receipt. */
+  unattributedBaselineAt?: number
 }
 export function readMcpWriteState(value: unknown, key: string): McpWriteState | undefined {
   if (value === undefined) return
@@ -40,7 +44,8 @@ export function readMcpWriteState(value: unknown, key: string): McpWriteState | 
     s.seen.some((id) => typeof id !== 'string' || !(s.version === 1 ? /^[a-f0-9]{64}$/ : /^~?[a-f0-9]{64}$/).test(id)) ||
     new Set(s.seen.map(id => id.replace(/^~/, ''))).size !== s.seen.length ||
     (s.attentionFamilies !== undefined && (!Array.isArray(s.attentionFamilies) || s.attentionFamilies.length > 10000 ||
-      s.attentionFamilies.some(value => typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value))))
+      s.attentionFamilies.some(value => typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value)))) ||
+    (s.unattributedBaselineAt !== undefined && (!Number.isSafeInteger(s.unattributedBaselineAt) || s.unattributedBaselineAt < 0))
   )
     throw Error('MCP 写观察检查点无效')
   return s

@@ -4,6 +4,7 @@ import type { TeamControlSnapshot } from '../../domain/team-control'
 import { conversationEntryProcessBlocks, type ProcessBlock } from '../../domain/conversation-entry'
 import { observedMcpWrite } from '../../domain/mcp-write-observation'
 import { nativeAssistantEntry } from '../../domain/native-assistant-entry'
+import { unattributedMcpTool, reduceUnattributedMcpCalls, type UnattributedMcpFact } from '../../domain/mcp-unattributed-call'
 import {
   readMcpWriteState,
   reduceMcpWriteNotifications,
@@ -15,8 +16,9 @@ import {
 import { sessionNotificationObservation } from './session-lifecycle-notifications'
 import { NotificationProjectionSource } from './projection-source'
 import type { NotificationService } from '../notification-service'
+import { NOTIFICATION_SOURCE_BATCH_LIMIT } from '../../domain/notification'
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
-interface ExtractedWrites { reference: unknown; facts: McpWriteFact[]; signature: string; turn?: string }
+interface ExtractedWrites { reference: unknown; facts: McpWriteFact[]; calls: UnattributedMcpFact[]; signature: string; turn?: string }
 /** Existing sealed/live native process facts only. No service call, poll, reply or retry. */
 export class McpWriteNotifications {
   readonly source: NotificationProjectionSource<McpWriteInput, McpWriteState>
@@ -24,7 +26,7 @@ export class McpWriteNotifications {
   private stopped = false
   private readonly cached = new Map<
     string,
-    { history: ExtractedWrites; live: ExtractedWrites; authority: string; facts: McpWriteFact[]; signature: string }
+    { history: ExtractedWrites; live: ExtractedWrites; authority: string; facts: McpWriteFact[]; calls: UnattributedMcpFact[]; signature: string }
   >()
   constructor(
     private readonly owner: NotificationService,
@@ -35,10 +37,15 @@ export class McpWriteNotifications {
       owner,
       readMcpWriteState,
       (previous, input, baseline, revision) => {
+        const reduce = (rows?: Parameters<typeof reduceMcpWriteNotifications>[4]) => {
+          const writes = reduceMcpWriteNotifications(previous, input, baseline, revision, rows)
+          const calls = reduceUnattributedMcpCalls({ version: 1, key: input.key, seen: writes.state.seen, families: writes.state.attentionFamilies ?? [], baselineAt: previous?.unattributedBaselineAt },
+            { key: input.key, facts: input.calls ?? [], signature: input.signature, monitorStartedAt: input.monitorStartedAt }, baseline, revision, NOTIFICATION_SOURCE_BATCH_LIMIT - writes.drafts.length)
+          return { ...writes, state: { ...writes.state, seen: calls.state.seen, attentionFamilies: calls.state.families, unattributedBaselineAt: calls.state.baselineAt }, drafts: [...writes.drafts, ...calls.drafts], complete: writes.complete !== false && calls.complete !== false }
+        }
         const candidates = legacyMcpWriteCandidates(previous, input)
-        if (!candidates.length) return reduceMcpWriteNotifications(previous, input, baseline, revision)
-        return owner.mcpWriteRecords(candidates.map(f => `mcp-write:${f.identity}`))
-          .then(rows => reduceMcpWriteNotifications(previous, input, baseline, revision, rows))
+        if (!candidates.length) return reduce()
+        return owner.mcpWriteRecords(candidates.map(f => `mcp-write:${f.identity}`)).then(reduce)
       },
       (input) => input.signature,
       undefined,
@@ -67,11 +74,20 @@ export class McpWriteNotifications {
         let cache = this.cached.get(session.identity)
         const prior = cache?.authority === authority ? cache : undefined
         if (!prior || prior.history.reference !== history || prior.live.reference !== live || prior.live.turn !== liveProcess?.turn) {
-          const read = (block: ProcessBlock, at: number, entryId?: string, turnId?: string): McpWriteFact | undefined => {
+          const read = (block: ProcessBlock, at: number, entryId?: string, turnId?: string, calls?: UnattributedMcpFact[]): McpWriteFact | undefined => {
             if (block.kind !== 'tool' || block.status === 'running' || block.toolKind && block.toolKind !== 'mcp') return
+            if (typeof block.startedAt === 'number' && block.startedAt < (member.binding?.installedAt ?? 0)) return
+            const observedAt = block.completedAt ?? block.startedAt ?? at
+            // A late process block from the previous Composer is not evidence
+            // observed in its replacement merely because CH/generation now match.
+            const unknown = block.mcpObservationComposerId === session.scope.composerId
+              ? unattributedMcpTool(block.toolName, block.mcpResultError, block.output, block.input) : undefined
+            if (unknown && calls && Number.isSafeInteger(observedAt) && observedAt >= Math.max(member.binding?.installedAt ?? 0, member.binding?.composerBoundAt ?? 0)) {
+              calls.push({ identity: hash([session.identity, block.id, unknown]), family: hash([session.identity, turnId ?? entryId ?? block.id, unknown]),
+                tool: unknown, scope: { ...session.scope, groupId: undefined }, blockId: block.id, ...(entryId ? { entryId } : {}), at: observedAt })
+            }
             const fact = observedMcpWrite(block.toolName, block.input, block.output)
             if (!fact || fact.status === 'returned' || fact.agentSessionId !== agent || fact.channelId !== session.scope.channelId) return
-            const observedAt = block.completedAt ?? block.startedAt ?? at
             // Native blocks carry no installation generation. Old results must
             // not be attached to a later installation using the same channel ID.
             if (!Number.isSafeInteger(observedAt) || observedAt < Math.max(member.binding?.installedAt ?? 0, member.binding?.composerBoundAt ?? 0)) return
@@ -84,22 +100,24 @@ export class McpWriteNotifications {
           }
           let sealed = prior?.history
           if (!sealed || sealed.reference !== history) {
-            const facts: McpWriteFact[] = []
+            const facts: McpWriteFact[] = [], calls: UnattributedMcpFact[] = []
             for (const entry of history ?? [])
               if (nativeAssistantEntry(entry, session.scope.channelId!))
-                for (const block of conversationEntryProcessBlocks(entry)) { const fact = read(block, entry.timestamp, entry.id, entry.turn ?? entry.replyToEntryId); if (fact) facts.push(fact) }
-            sealed = { reference: history, facts, signature: hash(facts) }
+                for (const block of conversationEntryProcessBlocks(entry)) { const fact = read(block, entry.timestamp, entry.id, entry.turn ?? entry.replyToEntryId, calls); if (fact) facts.push(fact) }
+            sealed = { reference: history, facts, calls, signature: hash([facts, calls]) }
           }
           let current = prior?.live
           if (!current || current.reference !== live || current.turn !== liveProcess?.turn) {
-            const facts = (live ?? []).flatMap(block => { const fact = read(block, liveProcess?.startedAt ?? this.now(), undefined, liveProcess?.turn); return fact ? [fact] : [] })
-            current = { reference: live, facts, signature: hash(facts), turn: liveProcess?.turn }
+            const calls: UnattributedMcpFact[] = []
+            const facts = (live ?? []).flatMap(block => { const fact = read(block, liveProcess?.startedAt ?? this.now(), undefined, liveProcess?.turn, calls); return fact ? [fact] : [] })
+            current = { reference: live, facts, calls, signature: hash([facts, calls]), turn: liveProcess?.turn }
           }
           const signature = hash([sealed.signature, current.signature])
           // Do not rescan or stringify sealed history on each new live token.
           const facts = prior?.signature === signature ? prior.facts
             : [...new Map([...sealed.facts, ...current.facts].map(fact => [fact.identity, fact])).values()]
-          cache = { history: sealed, live: current, authority, facts, signature }
+          const calls = prior?.signature === signature ? prior.calls : [...new Map([...sealed.calls, ...current.calls].map(fact => [fact.identity, fact])).values()]
+          cache = { history: sealed, live: current, authority, facts, calls, signature }
           this.cached.set(session.identity, cache)
         }
         if (!cache) throw Error('MCP 写观察缺少提取结果')
@@ -107,6 +125,7 @@ export class McpWriteNotifications {
         this.source.observe(key, {
           key,
           facts: cache.facts,
+          calls: cache.calls,
           signature: cache.signature,
           now: this.now(),
           monitorStartedAt: this.startedAt

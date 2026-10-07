@@ -27,12 +27,35 @@ import { createHash } from 'node:crypto'
 import type { NotificationDraft } from '../../src/domain/notification'
 import { createUnifiedChannelServer } from '../../src/mcp/unified-channel-server'
 import type { TeamChannelRuntime } from '../../src/mcp/team-tools'
+import { parseProcessStream } from '../../src/infrastructure/cursor/cursor-cdp-session-creator'
+
+/** Original hook only, with a mutable native bubble for cache/wrapper tests. */
+export function nativeMcpHook(toolFormerData: Record<string, unknown>, bubbleId: string, at: number, generating = false, turnId = 'user') {
+  const frames: Array<{ composerId: string; observedAt: number; isGenerating: boolean; process?: unknown }> = []
+  class Manager { loadedComposers = { ids: ['fixture-composer'] }; markDirty() {} }
+  const context = { Promise, queueMicrotask, setTimeout, globalThis: {
+    __sgComposerService: { composerDataService: { composerDataHandleManager: new Manager(), getComposerDataIfLoaded: () => ({
+      status: generating ? 'generating' : 'completed',
+      fullConversationHeadersOnly: [{ type: 1, bubbleId: turnId }, { type: 2, bubbleId }],
+      conversationMap: { [bubbleId]: { createdAt: at, toolFormerData } }, generatingBubbleIds: []
+    }) } },
+    __sgTeamProcessThrottleMs: 0, sgTeamStream: () => {}, sgTeamProcess: (text: string) => frames.push(JSON.parse(text))
+  } }
+  runInNewContext(CURSOR_STREAM_HOOK_EXPRESSION, context)
+  return { next: async () => {
+    frames.length = 0
+    ;(context.globalThis as unknown as { __sgTeamProcessSchedule: (id: string) => void }).__sgTeamProcessSchedule('fixture-composer')
+    await Promise.resolve()
+    const frame = frames.at(-1); assert.ok(frame?.process)
+    return frame
+  } }
+}
 
 /** Actual installed hook, in an isolated VM; no Cursor, CDP or browser connection. */
-export async function nativeMcpResultBlock(
+export async function nativeMcpResultFrame(
   tool: string, args: Record<string, unknown>, result: Awaited<ReturnType<Client['callTool']>>,
-  bubbleId: string, at: number, shape: 'modern' | 'legacy'
-): Promise<ProcessBlockTool> {
+  bubbleId: string, at: number, shape: 'modern' | 'legacy', turnId = 'user'
+) {
   const content = result.content ?? []
   const legacy = { name: `mcp-SG Team-${tool}`, status: 'completed', params: args,
     result: JSON.stringify({ result: JSON.stringify({ content, isError: result.isError }) }) }
@@ -43,26 +66,33 @@ export async function nativeMcpResultBlock(
         content: content.map(item => ({ content: { case: item.type, value: item } })) } } }
     }
   } } }
-  const frames: Array<{ process?: { items?: ProcessBlockTool[] } }> = []
-  class Manager { loadedComposers = { ids: ['fixture-composer'] }; markDirty() {} }
-  const context = { Promise, queueMicrotask, setTimeout, globalThis: {
-    __sgComposerService: { composerDataService: { composerDataHandleManager: new Manager(), getComposerDataIfLoaded: () => ({
-      fullConversationHeadersOnly: [{ type: 1, bubbleId: 'user' }, { type: 2, bubbleId }],
-      conversationMap: { [bubbleId]: { createdAt: at, toolFormerData } }, generatingBubbleIds: []
-    }) } },
-    __sgTeamProcessThrottleMs: 0, sgTeamStream: () => {},
-    sgTeamProcess: (text: string) => frames.push(JSON.parse(text))
-  } }
-  runInNewContext(CURSOR_STREAM_HOOK_EXPRESSION, context)
-  const schedule = (context.globalThis as unknown as { __sgTeamProcessSchedule: (id: string) => void }).__sgTeamProcessSchedule
-  frames.length = 0; schedule('fixture-composer'); await Promise.resolve()
-  const block = frames[0]?.process?.items?.find(item => item.id === `cursor:${bubbleId}`)
+  const frame = await nativeMcpHook(toolFormerData, bubbleId, at, false, turnId).next(), process = parseProcessStream(frame.process)
+  assert.ok(process)
+  const block = process.items.find(item => item.id === `cursor:${bubbleId}`)
+  assert.ok(block?.kind === 'tool')
   assert.equal(block?.toolName, `mcp-SG Team-${tool}`)
   assert.equal(block?.toolKind, 'mcp')
   assert.equal(block?.status, 'done')
-  assert.ok(block?.output)
   // The real hook's clipping/redaction must leave the machine outcome intact.
-  assert.deepEqual(JSON.parse(block.output), JSON.parse(JSON.stringify(result.structuredContent)))
+  if (result.structuredContent !== undefined) {
+    assert.ok(block.output)
+    assert.deepEqual(JSON.parse(block.output), JSON.parse(JSON.stringify(result.structuredContent)))
+  } else if (content.length) assert.equal(block.output ?? '', content.flatMap(item => item.type === 'text' ? [item.text] : []).join('\n'))
+  else {
+    // The original presenter falls back to the complete wrapper when no text
+    // exists. Check that exact envelope rather than assuming an empty string.
+    const envelope = 'toolCall' in toolFormerData ? toolFormerData.toolCall.tool.value.result : JSON.parse(legacy.result)
+    assert.deepEqual(JSON.parse(block.output!), envelope)
+  }
+  return { ...frame, process }
+}
+export async function nativeMcpResultBlock(
+  tool: string, args: Record<string, unknown>, result: Awaited<ReturnType<Client['callTool']>>,
+  bubbleId: string, at: number, shape: 'modern' | 'legacy'
+): Promise<ProcessBlockTool> {
+  const frame = await nativeMcpResultFrame(tool, args, result, bubbleId, at, shape)
+  const block = frame.process.items.find(item => item.id === `cursor:${bubbleId}`)
+  assert.ok(block?.kind === 'tool')
   return block
 }
 

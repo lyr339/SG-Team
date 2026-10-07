@@ -1814,6 +1814,7 @@ export class DesktopSessionService implements DesktopSessionBridge {
       upsert({
         kind: 'tool', id: item.id, toolName: item.toolName, toolKind: item.toolKind,
         toolCase: item.toolCase,
+        ...(item.mcpResultError === true ? { mcpResultError: true, mcpObservationComposerId: evidence.composerId } : {}),
         title: item.title,
         summary: item.summary || undefined,
         hint: item.hint,

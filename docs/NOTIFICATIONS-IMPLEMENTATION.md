@@ -733,3 +733,21 @@ CUA 纯 preview 验收默认 984×554、实际 320×480/600、480×360、246px �
 最终 `scope-text-safety-focused-final.log`、`scope-text-safety-regression-final.log`（323 files、3082 passed、1 skipped）、`scope-text-safety-build-final.log` 及 `scope-text-safety-dead-code.log` 为当前证据。CSS 契约测试区分共享内边距、字宽留白和关联换行，不冒充浏览器字形验收。临时 viewport、媒体和设备像素覆盖已清理，自建标签与纯 preview 服务已关闭；没有启动生产 main、用户软件/Cursor、真实账号/模型/OS 通知。`protected-scope-text-safety-audit.json` 确认两保护树逐文件/HEAD/porcelain/binary diff 与四个既有删除保持。
 
 仅本地提交本视觉修复、对应 test 和本段进度，不 push、发布或安装。MCP 不可归属诊断的未提交文件原样保留；虽参与当前工作树回归通过，尚欠原生 compiled-worker 等验收，不混入本次提交。**完整通知目标仍 active，未完成**；本点不替代上文完整范围与后续实机验收。
+
+## 第三十九批 · MCP 原生错误标志与未确认主体
+
+继续完成上一批留下的 MCP 未归属诊断，不从 SDK 文案猜错误阶段。真实 installed SDK＋InMemoryTransport 证明非法数值 `channel_id` 在 runtimeFor 之前被拒绝，runtimeFor EIO 也被 SDK 包成普通 text＋`isError:true`，两者都没有 SG machine receipt。原服务、响应、权限、业务参数和重试规则不改。fixture 现保留实际调用的原参数，非法请求不会被测试擅自改成合法字符串通道；现代/legacy 原生形态都通过真正的 embedded hook、原 parser 与 DesktopSessionService 投影。
+
+hook v38 只读取已知 envelope 的 typed `isError`：最多八层 wrapper、JSON 字符串最多 2M，不进正文/参数找布尔，不按“Error”或 EIO 文案分类。指纹复用同一 wrapper 读取器的**不解析字符串**分支，原地 direct/case/value/deeper wrapper 标志翻转能失效缓存，避免长回合 completed bubble 的旧缓存吞掉错误。verified hook＋仍存活的主世界 context 才允许新标志；旧/未知 context 的原过程 callback 继续，只剥去这条新增诊断凭据。Desktop 额外盖原观察 Composer，不借当前 CH 的新绑定补造它；旧 Composer 的晚结果、安装前已开始但安装后才完成的调用都不能挂到新安装。正常首次绑定较晚而调用始于本次安装之后，仍接受。
+
+有完整 boolean `ok`＋bounded `agentSessionId` 的原 SG outcomes（含普通拒绝）继续原路径。真正没有可验证主体/回执而带错误标志的原工具生成 `mcp.call-unattributed`，只说明原结果需核对：不能证明发生在校验前、没有执行、已回滚或任务失败。不复制参数、正文、异常、路径、推测实体或调用方。record scope 的工作区/run 是**观察位置**，不是业务主体；target 仅为验证过的原生会话/块/条目，没有伪造 `target.mcpWrite`。空 content 的确切错误 envelope 也能作为标志证据；矛盾的 native server/tool metadata、不匹配的观察 Composer、无原生出处或旧安装不能被强接入。后来成功不自动解决过去的未知业务结果。
+
+没有第二个 projection、持久 source 表或多一次 sourceState 查询。known writes 与 unknown calls 共用原 `mcp-write-source` 的 checkpoint/CAS、seen 和 attentionFamilies；unknown 只能用原 100 draft 预算的剩余额度，旧 bare/inspected 标记不擅自转换。总 seen≤20k、families≤10k、原 2MiB 上限不扩大。有界 working cache 仍是原引用/签名记忆化，idle observer 不写增长、通知不等待业务链。
+
+两轮新增失败证据分别在 `mcp-unattributed-boundary-reproduction.log`、`mcp-unattributed-cache-family-reproduction.log`、`mcp-unattributed-wrapper-cache-reproduction.log`、`mcp-unattributed-origin-reproduction.log`：混合分批原先把 50 个旧错误造为新未读；被忽略的 cold stock 原先会消费同一长 turn 后续首次真实错误的提醒；已完成气泡原地翻转标志会被缓存吞掉；旧 Composer/旧安装的晚结果会被借给新观察身份。这些不是通过放宽断言处理。共用 v2 checkpoint 增加一个可选的首启 `unattributedBaselineAt`，旧检查点在首次激活时建立、跨批/CAS/未知 ACK/重启保持；重启不能吞掉首启之后的真正漏收调用。stock 只记去重，不占提醒 family；同 native turn/tool 重复错误只有首条 notice，其余 activity，新真实 turn 不被旧 family 吞掉。清理/归档/重启不复活旧记录。
+
+最终 `mcp-unattributed-focused-final.log`（包含 desktop、原 MCP、renderer read、center/toast 回归）、`mcp-unattributed-full-regression-final.log`（323 files、3094 passed、1 skipped）、`mcp-unattributed-typecheck-final.log`、`mcp-unattributed-build-final.log`、`mcp-unattributed-dead-code-final.log`。新增 verifier 的实际 compiled private worker 验收加入 28 类 Node/macOS Electron as-node 矩阵，见 `mcp-unattributed-verification-matrix-final.log`；另外隔离 Electron quit、原 MCP/channel smoke 通过。原 API 调用/reader/CDP command 数不增加，只有一个原 source，实际 worker 重启后已清理/归档不复活，漏收新调用仍可恢复，240 新＋50 stock 的事务预算保持，原 user_version 与无关数据保留。不是实际 Cursor 原库恢复或 Windows/OS 送达验收。
+
+纯 preview 的新场景使用产品 reducer/组件，不连接 SDK、账户、Cursor 或系统通知。真实 CUA 在默认 984×554 与实际 320×600 暗色验收完整提示、没有新增左彩轨/胶囊、完整范围标签与换行；`查看原工具` 实际揭示精确原条目和块，不止修改按钮文案。只展开原未知工具正文仍保留未读；显式在中心阅读才消费此通知，不能冒充已验证业务结果。截图/DOM/交互证据在 `ui/mcp-unattributed-*.png`、`ui/mcp-unattributed-audit.json`，日志为空。自己的 tab、viewport/media 覆盖和纯 preview server 清理；`protected-mcp-unattributed-audit.json` 核对两保护树逐文件/HEAD/porcelain/binary diff 与四个既有删除。只本地提交，没有 push、发版、安装、用户软件/Cursor 重启或真实模型/账号/OS 通知。
+
+**完整目标仍 active，未完成**：本批只接入有合法原生 flag/观察来源的结果；没有原生工具/过程帧、只剩静默或已丢身份时，不得推测业务失败或修造调用主体。真实 Cursor 原库恢复重核、旧格式失去的身份与混合历史、完整布局/长期容量/正式包及 Windows/macOS 真权限、声音、勿扰和系统送达仍继续，上文完整要求不缩减。

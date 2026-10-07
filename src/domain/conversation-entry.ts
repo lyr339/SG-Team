@@ -88,6 +88,10 @@ export interface ProcessBlockTool extends ProcessBlockTiming {
    * read 与 ls、grep 与 glob（toolKind 粒度不够）。旧持久化块与旧 hook 帧缺失，投影层按 toolKind 回退。
    */
   toolCase?: string
+  /** Native MCP envelope flag only, never an authorisation or mutation receipt. */
+  mcpResultError?: boolean
+  /** Native observer's Composer, stamped by desktop projection; never the MCP business caller. */
+  mcpObservationComposerId?: string
   /** 模型为本次调用给出的意图说明（如 Shell 的 description、子任务描述）；有则作为主标题。 */
   title?: string
   /** 工具调用摘要（如文件路径、命令行） */

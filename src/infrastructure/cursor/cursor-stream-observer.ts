@@ -90,7 +90,7 @@ export const CURSOR_PROCESS_BINDING_NAME = 'sgTeamProcess'
  * v36：兼容 3.21.12 InteractionQuery 产生的不带 toolCall 的 ask_question 气泡，以及 createPlanToolCall。
  * base64 与 Cursor 落盘行为一致地不携带；文件是持久事实源。
  */
-export const CURSOR_STREAM_HOOK_VERSION = 37
+export const CURSOR_STREAM_HOOK_VERSION = 38
 const RETRY_BASE_MS = 5_000
 const RETRY_MAX_MS = 60_000
 const ATTACH_TIMEOUT_MS = 8_000
@@ -177,7 +177,7 @@ export const CURSOR_STREAM_HOOK_EXPRESSION = `(() => {
       status = resultCase === 'error' || resultCase === 'failure' ? 'failed' : 'done'
     }
     const error = td?.error || result?.error || (resultCase === 'error' || resultCase === 'failure' ? result : undefined)
-    return { name, args, result, status, error, mcpPending, toolCase }
+    return { name, args, result, status, error, mcpPending, toolCase, mcpResultError: /^mcp-SG Team-/.test(name) ? mcpResultError(result) : undefined }
   }
   // ---- 工具呈现（与 Cursor 自身聊天面板同口径）----
   // Cursor 3.6 的现代 args 是 protobuf JSON：数字/布尔/嵌套 JSON 常以字符串到达
@@ -532,6 +532,24 @@ export const CURSOR_STREAM_HOOK_EXPRESSION = `(() => {
     }
     return current
   }
+  // Exact MCP envelope flag only. Never recurse into result text/arguments to
+  // find an attractive boolean, and never infer validation/storage from prose.
+  function mcpResultError(result, parseStrings = true) {
+    let current = result
+    for (let depth = 0; depth < 8; depth++) {
+      if (typeof current === 'string') {
+        if (!parseStrings) return undefined
+        if (current.length > 2000000) return undefined
+        try { current = JSON.parse(current) } catch (e) { return undefined }
+        continue
+      }
+      if (!current || typeof current !== 'object' || Array.isArray(current)) return undefined
+      if (typeof current.isError === 'boolean') return current.isError
+      if (current.result !== undefined) { current = current.result; continue }
+      if (typeof current.case === 'string' && current.value !== undefined) { current = current.value; continue }
+      return undefined
+    }
+  }
   // 判别联合形态的内容块 {content:{case:'text'|'image', value:{…}}} → {type, …value}；其它形态原样返回。
   function normalizeContentBlock(item) {
     const union = item && typeof item === 'object' && !Array.isArray(item) ? item.content : undefined
@@ -624,12 +642,16 @@ export const CURSOR_STREAM_HOOK_EXPRESSION = `(() => {
   function resultFingerprint(result) {
     if (result === undefined || result === null) return '0'
     if (typeof result === 'string') return 's' + result.length
+    // Native envelopes may mutate in place without changing their content.
+    // Inspect only shallow typed flags; do not parse body text for a cache key.
+    const resultError = mcpResultError(result, false)
+    const errorFlag = resultError === true ? 'e1' : resultError === false ? 'e0' : 'e?'
     const inner = result.result
-    if (typeof inner === 'string') return 'r' + inner.length
+    if (typeof inner === 'string') return 'r' + inner.length + ':' + errorFlag
     if (inner && typeof inner === 'object') {
       const content = inner.value && Array.isArray(inner.value.content) ? inner.value.content : undefined
       if (content) {
-        let sig = 'c:' + String(inner.case || '') + ':' + content.length
+        let sig = 'c:' + String(inner.case || '') + ':' + errorFlag + ':' + content.length
         const limit = Math.min(content.length, 8)
         for (let i = 0; i < limit; i++) {
           const block = content[i]
@@ -640,9 +662,9 @@ export const CURSOR_STREAM_HOOK_EXPRESSION = `(() => {
         }
         return sig
       }
-      return 'c:' + String(inner.case || 'obj')
+      return 'c:' + String(inner.case || 'obj') + ':' + errorFlag
     }
-    return 'o'
+    return 'o:' + errorFlag
   }
   function toolPayloadVersion(td) {
     const modern = td && td.toolCall && td.toolCall.tool && td.toolCall.tool.value
@@ -964,6 +986,7 @@ export const CURSOR_STREAM_HOOK_EXPRESSION = `(() => {
           kind: 'tool', id: 'cursor:' + h.bubbleId,
           toolName: String(tool.name).slice(0, 120), toolKind: shown.kind,
           toolCase: tool.toolCase || undefined,
+          ...(tool.mcpResultError === true ? { mcpResultError: true } : {}),
           title: shown.title || undefined,
           summary: shown.summary,
           hint: shown.hint || undefined,
@@ -1734,7 +1757,8 @@ export class CursorStreamObserver {
           const raw = JSON.parse(params.payload) as Record<string, unknown>
           const composerId = typeof raw.composerId === 'string' ? raw.composerId.trim().slice(0, 120) : ''
           if (composerId) {
-            if (this.hookVerified && typeof params.executionContextId === 'number' && this.usageContexts.has(params.executionContextId)) {
+            const trustedNativeContext = this.hookVerified && typeof params.executionContextId === 'number' && this.usageContexts.has(params.executionContextId)
+            if (trustedNativeContext) {
               const emission = raw.usageEmission
               if (emission && typeof emission === 'object' && !Array.isArray(emission)) {
                 const hint = emission as Record<string, unknown>
@@ -1750,6 +1774,11 @@ export class CursorStreamObserver {
               ? raw.composerStatus.slice(0, 40)
               : undefined
             const bubbleCount = parseBubbleCount(raw.bubbleCount)
+            const process = parseProcessStream(raw.process)
+            // Preserve the original process callback even for legacy/unknown
+            // contexts, but do not grant new diagnostic evidence to those frames.
+            if (!trustedNativeContext)
+              for (const item of process?.items ?? []) if (item.kind === 'tool') delete item.mcpResultError
             this.onProcessEvent({
               composerId,
               observedAt: typeof raw.observedAt === 'number' ? raw.observedAt : Date.now(),
@@ -1758,7 +1787,7 @@ export class CursorStreamObserver {
               ...(composerStatus ? { composerStatus } : {}),
               ...(statusLine ? { statusLine } : {}),
               ...(bubbleCount === undefined ? {} : { bubbleCount }),
-              process: parseProcessStream(raw.process),
+              process,
               response: parseNativeResponse(raw.response)
             })
           }

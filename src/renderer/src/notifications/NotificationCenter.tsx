@@ -137,7 +137,7 @@ export function NotificationCenter({ store, workspaceId, onClose, onNavigate, fo
       {open ? <div ref={detail} className="notification-row__detail">
         {displayed.detail ? <p>{displayed.detail}</p> : <p>此结果已记录，可返回原功能查看。</p>}
         <div className="notification-row__actions">
-          {displayed.target ? <button type="button" className="notification-text-button" onClick={() => void onNavigate(displayed)}>{notificationTargetLabel(displayed.target, displayed.eventType === 'mcp.write-result' ? displayed.subjectState : undefined)}</button> : null}
+          {displayed.target ? <button type="button" className="notification-text-button" onClick={() => void onNavigate(displayed)}>{notificationTargetLabel(displayed.target, ['mcp.write-result', 'mcp.call-unattributed'].includes(displayed.eventType ?? '') ? displayed.subjectState : undefined)}</button> : null}
           {!notificationIsPending(record) ? <button type="button" className="notification-text-button is-muted" disabled={loading || !currentPage} onClick={() => void perform(async () => {
             const change = await store.api.archiveNotification(record.id, record.storageEpoch)
             store.accept({ change, ...(change.storageEpoch !== undefined ? { storageEpoch: change.storageEpoch } : {}), health: 'ready', historyIncomplete: store.snapshot().historyIncomplete })

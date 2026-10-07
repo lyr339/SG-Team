@@ -52,6 +52,7 @@ import {
 import { formatFileSize } from '../../../shared/format-file-size'
 import { App } from '../App'
 import { applyAppearancePreferences, readAppearancePreferences } from '../appearance-preferences'
+import { reduceUnattributedMcpCalls } from '../../../domain/mcp-unattributed-call'
 import {
   collaborationSnapshot,
   desktopSnapshot,
@@ -1290,6 +1291,21 @@ if (['mcp-write','mcp-legacy','source-history'].includes(previewParameters.get('
         previous = value.state; value.drafts.forEach(notificationPreview.offer)
       }
     }
+  }
+}
+if (previewParameters.get('notifications') === 'mcp-unattributed' && state.team.activeRun) {
+  const member = state.team.members.find(member => member.binding && state.desktop.sessions.some(session => session.channelId === member.binding!.channelId && session.composerId)), binding = member?.binding
+  const session = state.desktop.sessions.find(session => session.channelId === binding?.channelId)
+  if (member && binding && session) {
+    const at = Date.now() - 30000, entryId = 'preview-unattributed-entry', blockId = 'preview-unattributed-tool'
+    const scope = { workspaceId: binding.workspaceId, runId: binding.runId, slotId: member.slot.id, bindingGeneration: binding.generation,
+      sessionId: session.id, channelId: session.channelId, generation: String(session.generation), composerId: session.composerId }
+    state.desktop.conversations[session.channelId] = [{ id: entryId, channelId: session.channelId, role: 'assistant', source: 'cursor', status: 'complete', timestamp: at,
+      text: '隔离预览：这个工具结果没有业务主体回执，不能据此判断操作是否执行。', processBlocks: [{ kind: 'tool', toolName: 'mcp-SG Team-team_task', toolKind: 'mcp',
+        id: blockId, status: 'done', mcpResultError: true, mcpObservationComposerId: session.composerId, input: { channel_id: 99, action: 'claim' }, output: '隔离预览：原生 MCP 结果带有错误标志。', completedAt: at }] }]
+    const result = reduceUnattributedMcpCalls(undefined, { key: 'preview-unattributed', signature: 'isolated', monitorStartedAt: at,
+      facts: [{ identity: 'a'.repeat(64), family: 'b'.repeat(64), tool: 'team_task', scope, entryId, blockId, at }] }, true, 1)
+    result.drafts.forEach(notificationPreview.offer)
   }
 }
 let previewMemoryIssueState: MemoryIssueState | undefined

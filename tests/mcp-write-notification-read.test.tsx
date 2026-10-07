@@ -114,4 +114,11 @@ describe('one scoped native output read observer, not one subscription per proce
     await act(async () => root.render(<Workspace />)); await expand()
     expect(api.readNotification).not.toHaveBeenCalled()
   })
+  it('an unattributed native error is not auto-read as a verified business result, even at the same block and observed session', async () => {
+    const unknown: NotificationRecord = { ...record, eventType: 'mcp.call-unattributed', subjectState: 'call-error-unattributed', scope: { workspaceId: scope.workspaceId, runId: scope.runId },
+      target: { kind: 'session', scope, blockId: block.id } }
+    api.getNotificationPage.mockResolvedValue(page([unknown]))
+    await act(async () => root.render(<Workspace />)); await expand()
+    expect(api.readNotification).not.toHaveBeenCalled(); expect(mcpWriteResultElement(host, unknown)).toBeUndefined()
+  })
 })

@@ -87,6 +87,8 @@ export interface CursorStreamToolBlock {
   toolKind: ProcessToolKind
   /** Cursor 原生工具 case 名（分组算法的精确依据）；旧 hook 帧缺失。 */
   toolCase?: string
+  /** Exact original MCP result envelope isError flag; not a business outcome. */
+  mcpResultError?: boolean
   /** 模型给出的调用意图（Shell description / 子任务描述）。 */
   title?: string
   summary: string
@@ -986,6 +988,7 @@ export function parseProcessStream(value: unknown): CursorProcessStream | undefi
         toolName,
         toolKind,
         ...(toolCase ? { toolCase } : {}),
+        ...(toolKind === 'mcp' && /^mcp-SG Team-/.test(toolName) && item.mcpResultError === true ? { mcpResultError: true } : {}),
         ...(title ? { title } : {}),
         summary: typeof item.summary === 'string' ? item.summary.slice(0, 160) : '',
         ...(hint ? { hint } : {}),
