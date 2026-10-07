@@ -140,7 +140,7 @@ export function NotificationToast({ store, blocked, onOpen, onSnoozeUpdate }: Pr
     onFocusCapture={() => setWithin(true)} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setWithin(false) }}>
     <NoticeIcon tone={active.record.tone} />
     <div className="notification-toast__copy"><span>{active.record.source}</span><strong>{active.record.title}</strong>{active.record.detail ? <p>{active.record.detail}</p> : null}
-      <div className="notification-toast__actions"><button type="button" onClick={() => { onOpen(active.record, active.grouped); finish() }}>{notificationTargetLabel(active.record.target, ['mcp.write-result', 'mcp.call-unattributed'].includes(active.record.eventType ?? '') ? active.record.subjectState : undefined)}</button>
+      <div className="notification-toast__actions"><button type="button" onClick={() => { onOpen(active.record, active.grouped); finish() }}>{notificationTargetLabel(active.record.target, ['mcp.write-result', 'mcp.call-unattributed', 'question.original-recheck'].includes(active.record.eventType ?? '') ? active.record.subjectState : undefined)}</button>
         {active.record.category === 'updates' && (active.record.eventId?.startsWith('update:available:') || active.record.eventId?.startsWith('update:downloaded:')) && onSnoozeUpdate ? <button type="button" onClick={() => { void onSnoozeUpdate(active.record).then(finish).catch(() => setError('更新状态可能已变化；未延后其他版本，请到软件更新查看。')) }}>稍后</button> : null}</div>
       {error ? <p className="notification-toast__error" role="alert">{error}</p> : null}
     </div>

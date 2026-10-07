@@ -769,3 +769,21 @@ hook v38 只读取已知 envelope 的 typed `isError`：最多八层 wrapper、J
 最终 `cursor-restored-files-focused-final.log`、`cursor-restored-full-regression-final.log`（324 files、3104 passed、1 skipped）、`cursor-restored-build-final.log`、`cursor-restored-dead-code-final.log`；29 类 Node/macOS Electron as-node 的当前 worker 矩阵为 `cursor-restored-verification-matrix-final.log`，另有隔离 Electron quit 与原 MCP/channel smoke。没有 renderer/CSS 变更，不把编译绿色当新增视觉验收；没有 preview/server。`protected-cursor-restored-audit.json` 核对两个保护树逐文件/HEAD/porcelain/binary diff 与四个原有删除保持。自身 fixture 在 finally 关闭 worker/连接并精确移除自己的目录。只本地提交，不 push、发版、安装、重启软件/Cursor、真实模型/账号或 OS 通知。
 
 **完整目标仍 active，未完成**：这批证明了支持格式的隔离原 SQLite/转录恢复经过实际读取与上下文通知入口，不代表用户当前完整 Cursor 原库、任意损坏/WAL/混合历史或 Windows 真机通过。问卷/回复/队列对原库恢复的逐身份重新核对、旧版已丢失身份的边界、完整布局/长期容量/正式包，以及 Windows/macOS 权限/声音/勿扰/系统送达仍按原完整范围继续；不以读取缓存修复代替其余验收。
+
+## 第四十一批 · 原问卷记录与历史终态的重新核对
+
+继续核对原记录恢复，而非只恢复 private ledger。`question-original-recheck-reproduction.log` 使用真正的 channel repository/relay、SQLite VACUUM 备份与原库恢复：原行恢复为 pending，但 private terminal 仍是 submitted，之前没有任何“状态不同”的提示。旧终态不能被自动抹掉，恢复库也不能被通知自动补答；单纯把所有 pending 重开又会破坏第三十六批的陈旧 live/裁切帧守门。
+
+本批在既有 SQL 水合/读取和已成功持久化结果上附加 main-only 问卷观察凭据。原条目以 WeakMap 和 O(1) block/tool 索引记忆原状态；当前原数组引用、原 run、原块/tool/status 必须匹配，克隆数组、错误 run 或已经过时的读取不能取得凭据。它不进公开 snapshot/renderer IPC，不扫描题目/答案/正文，不新增 SQL、轮询、MCP、原业务重试。getter 只是原内存引用核对，原持久化失败不能盖观察章，metadata 失败不能阻断原业务。
+
+为了区分“原库新读回 pending”与“当前 native 提交前已经读过的 pending”，原 terminal 表的私有 schema 7 只增加可选 `original_stamp` 64 字符十六进制观察 hash。它表示旧原读取次序，不是调用方、回答许可或原内容 hash。v6 三列真实表原地迁移，旧行不造 stamp；终态 status 仍不允许改为相反终态，缺失/结构异常的当前格式和未来格式仍拒绝，不建空表伪恢复。hash 更新与原 source CAS、通知、terminal 同一事务；保留原 payload 2MiB、lookup/batch 100、全局 user_version 与无关数据。现有 schema 断言更新到 7，并另加真实 v6 升级、stamp 更新失败/陈旧 CAS/非法字段回归；未来格式拒绝测试改为 8，不放宽这道门禁。
+
+问卷 checkpoint v3 在同一原 rows 内保留有限 `recheck`，没有第二个 projection/source 查询。新的当前原读数与保留的 terminal 不同，生成单条 `question.original-recheck`，明确“历史回执不会被覆盖”，定位原问卷。原 pending 且运行仍等待时才算待处理；另一明确终态不同则是核对提醒，不谎称再次待答。同一次差异不会每帧新增，疑似失联/裁切保持；可靠 runtime 明确不再等待时撤去待处理，但不称差异已解决；真实停止/运行结束才标为当前不可核对。只有同原读取/已成功持久化的新匹配状态才收口，旧 live、克隆/迟到快照、中心阅读都不证明业务解决。原 native 提交前的那个存储读数保留在 stamp 中，后续老 pending 回声不会制造假差异。
+
+第二轮 `question-original-mixed-budget-reproduction.log` 又复现：110 个真正新 pending 先占用了预算，原代码把尚未保存的 100 个 terminal 差异从 scan 跳过，最后只剩 20 个。已修复游标只有实际处理完成才推进，与原问卷通知共享每次 100 draft 的预算，单个事实的普通结果/差异摘要一起推进或一起回退。650 个 terminal 超过 512 cache 后的原重新读数仍依靠持久凭据核对；未处理的差异不能为 passive history 被淘汰。精确的新原块引用可安静更新目标，不更新 human attention/read。缺失或已丢失原凭据不伪造；原页问卷读取只处理 `question.state`，不会把原 pending 内容当作读懂这条差异解释。
+
+`question-original-focused-final.log`、`question-original-full-regression-final.log`（326 files、3117 passed、1 skipped）、`question-original-build-final.log`、`question-original-typecheck-final.log`、`question-original-dead-code-final.log` 为当前回归/编译证据。新增原库恢复 verifier 加入 30 类 Node/macOS Electron as-node 的当前 worker 矩阵 `question-original-verification-matrix-final.log`，另有隔离 Electron quit 和原 MCP/channel smoke。真正备份恢复＋worker 重启确认旧 terminal/已清理原记录不重写、新差异一条、已读和待处理独立、原匹配写入才收口、零额外原 SQL 查询/答题/业务重放，两百 idle 帧零新增 worker commands，私有状态无 prompt/answers/正文/路径。不是用户当前 Cursor 原库或 Windows 真系统通知验收。
+
+纯 preview 的 `notifications=question-original` 使用产品 draft/组件，没有 SDK/模型/真实账号。CUA 实际默认 984×554 与 320×600 暗色检查了完整范围标签、差异说明、原问卷定位、已读后仍一条待处理；未选择/跳过/提交答案。原问卷已经显示时差异仍未读，中心明确阅读才消费自己的 human receipt。截图与实际 DOM/交互证据在 `ui/question-original-*.png`、`ui/question-original-audit.json`；无 CSS 或装饰语言改动，不新增彩色左轨/胶囊。自己的 tab、viewport/media 和纯 preview server 清理。保护审计 `protected-question-original-audit.json` 核对两树逐文件/HEAD/porcelain/binary diff 与四个既有删除。只本地提交，不 push/发布/安装或重启用户软件/Cursor，不运行真实模型、账号、退款/删除/付款或 OS 通知。
+
+**完整目标仍 active，未完成**：本批覆盖有当前原 channel SQL/成功持久化凭据的問卷差异，不证明任意 Cursor 原库/WAL、旧版本已丢身份、缺原帧或不可观测的窗口外变化能无损恢复。回复原记录回退/更换、队列剩余原库组合、完整布局/长期容量/正式包、Windows/macOS 真权限/声音/勿扰/送达仍继续；不把问卷重新核对替代原完整范围。

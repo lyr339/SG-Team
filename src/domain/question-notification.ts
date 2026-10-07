@@ -1,5 +1,6 @@
 import { NOTIFICATION_SOURCE_BATCH_LIMIT, validateNotificationDraft, type NotificationDraft, type NotificationScope } from './notification'
 import { QUESTION_TERMINAL_BATCH_LIMIT, type QuestionTerminalReceipt } from './question-terminal-receipt'
+import { questionOriginalRecheck, questionOriginalRecheckDraft, validQuestionOriginalRecheck, type QuestionOriginalRecheck } from './question-original-recheck'
 
 export interface NotificationQuestionFact {
   identity: string
@@ -12,24 +13,30 @@ export interface NotificationQuestionFact {
   count: number
   actionable: boolean
   terminated: boolean
+  /** Ephemeral grant only; stripped before this fact enters a durable checkpoint. */
+  originalRead?: boolean
+  historyStamp?: string
+  recheck?: QuestionOriginalRecheck
 }
 export interface QuestionSessionEvidence { scope: NotificationScope; online: boolean; awaitingUser?: boolean; awaitingUserEvidence?: 'runtime' | 'process' | 'unknown'; terminated: boolean }
-export interface QuestionNotificationInput { scopeKey: string; runCompleted: boolean; now: number; facts: NotificationQuestionFact[]; sessions?: QuestionSessionEvidence[]; signature: string }
+export interface QuestionNotificationInput { scopeKey: string; runCompleted: boolean; now: number; facts: NotificationQuestionFact[]; sessions?: QuestionSessionEvidence[]; signature: string; originalStillCurrent?: (identity: string) => boolean }
 export interface QuestionNotificationState {
-  version: 2; scopeKey: string; rows: Record<string, NotificationQuestionFact>; indexed: boolean; indexOffset?: number
+  version: 2 | 3; scopeKey: string; rows: Record<string, NotificationQuestionFact>; indexed: boolean; indexOffset?: number
   terminalScan?: { signature: string; offset: number }
 }
 export function readQuestionNotificationState(value: unknown, key: string): QuestionNotificationState | undefined {
   if (value === undefined) return undefined
   const state = value as QuestionNotificationState
   const version = (value as { version?: number })?.version
-  if (!state || ![1, 2].includes(version!) || state.scopeKey !== key || !state.rows || Array.isArray(state.rows) || Object.keys(state.rows).length > 512) throw Error('问卷通知检查点格式异常')
+  if (!state || ![1, 2, 3].includes(version!) || state.scopeKey !== key || !state.rows || Array.isArray(state.rows) || Object.keys(state.rows).length > 512) throw Error('问卷通知检查点格式异常')
   for (const [id, row] of Object.entries(state.rows)) {
-    if (!row || Object.keys(row).some(key => !['identity', 'toolCallId', 'blockId', 'entryId', 'name', 'scope', 'status', 'count', 'actionable', 'terminated'].includes(key))
+    if (!row || Object.keys(row).some(key => !['identity', 'toolCallId', 'blockId', 'entryId', 'name', 'scope', 'status', 'count', 'actionable', 'terminated', ...(version === 3 ? ['recheck'] : [])].includes(key))
       || row.identity !== id || !/^[a-f0-9]{64}$/.test(id) || !['pending', 'submitted', 'cancelled'].includes(row.status)
       || typeof row.toolCallId !== 'string' || !row.toolCallId || row.toolCallId.length > 200 || typeof row.blockId !== 'string' || !row.blockId || row.blockId.length > 300
       || row.entryId !== undefined && (typeof row.entryId !== 'string' || !row.entryId || row.entryId.length > 300) || typeof row.name !== 'string' || row.name.length > 150
-      || !Number.isSafeInteger(row.count) || row.count < 0 || typeof row.actionable !== 'boolean' || typeof row.terminated !== 'boolean') throw Error('问卷通知检查点格式异常')
+      || !Number.isSafeInteger(row.count) || row.count < 0 || typeof row.actionable !== 'boolean' || typeof row.terminated !== 'boolean'
+      || row.recheck !== undefined && (!validQuestionOriginalRecheck(row.recheck) || row.status === 'pending'
+        || row.recheck.phase === 'confirmed' && row.recheck.originalStatus !== row.status || row.recheck.phase !== 'confirmed' && row.recheck.originalStatus === row.status)) throw Error('问卷通知检查点格式异常')
     validateNotificationDraft({ key: `question:${id}`, category: 'sessions', source: '问卷检查点', title: '范围校验', tone: 'info', attention: 'activity', state: 'resolved', scope: row.scope, occurredAt: 0, sourceRevision: 0 })
   }
   if (version === 1) return { version: 2, scopeKey: key, rows: state.rows, indexed: false }
@@ -51,8 +58,11 @@ export function reduceQuestionNotifications(old: QuestionNotificationState | und
     return { state: { ...old, indexed: end === facts.length, indexOffset: end < facts.length ? end : undefined }, drafts: [] as NotificationDraft[], complete: false,
       ...(rows.length ? { questionTerminals: { sourceKey: old.scopeKey, rows } } : {}) }
   }
-  const state: QuestionNotificationState = { version: 2, scopeKey: input.scopeKey, rows: {}, indexed: true }; const drafts: NotificationDraft[] = []
-  const slice = questionTerminalSlice(old, input), allowed = new Set(slice.facts.map(fact => fact.identity)), known = new Map(receipts.map(row => [row.identity, row.status])), accepted = new Set<string>()
+  const state: QuestionNotificationState = { version: 3, scopeKey: input.scopeKey, rows: {}, indexed: true }; const drafts: NotificationDraft[] = []
+  const slice = questionTerminalSlice(old, input), allowed = new Set(slice.facts.map(fact => fact.identity)), known = new Map(receipts.map(row => [row.identity, row.status])),
+    originals = new Map(receipts.map(row => [row.identity, row.originalStamp])), accepted = new Set<string>()
+  const historicalStatuses = new Map(Object.values(old?.rows ?? {}).filter(fact => fact.status !== 'pending').map(fact => [fact.identity, fact.status]))
+  for (const [identity, status] of known) historicalStatuses.set(identity, status)
   let complete = true
   const event = (fact: NotificationQuestionFact, previous?: NotificationQuestionFact): boolean => {
     const active = fact.status === 'pending' && fact.actionable && !fact.terminated && !input.runCompleted
@@ -70,21 +80,36 @@ export function reduceQuestionNotifications(old: QuestionNotificationState | und
       renewAttention: active && !previous?.actionable, respectCleared: !active, announce: !baseline && active && (!previous || !previous.actionable || previous.status !== 'pending') })
     return true
   }
+  const recheckEvent = (fact: NotificationQuestionFact, previous?: NotificationQuestionFact, originalReference = false): boolean => {
+    if (!fact.recheck || JSON.stringify(fact.recheck) === JSON.stringify(previous?.recheck)
+      && (!originalReference || fact.entryId === previous?.entryId && fact.blockId === previous?.blockId)) return true
+    if (drafts.length >= NOTIFICATION_SOURCE_BATCH_LIMIT) { complete = false; return false }
+    drafts.push(questionOriginalRecheckDraft(fact, previous?.recheck, baseline, input.now, revision)); return true
+  }
   for (const captured of input.facts) {
     const previous = old?.rows[captured.identity], terminal = known.get(captured.identity)
-    if (captured.status !== 'pending' && (terminal && terminal !== captured.status || previous && previous.status !== 'pending' && previous.status !== captured.status)) throw Error('原问卷终态冲突，不猜测覆盖')
+    const historical = terminal ?? (previous?.status !== 'pending' ? previous?.status : undefined)
+    if (!captured.originalRead && captured.status !== 'pending' && historical && historical !== captured.status) throw Error('原问卷终态冲突，不猜测覆盖')
     // Uncommitted passive facts cannot enter a prunable cache ahead of their receipt.
     if (captured.status !== 'pending' && !allowed.has(captured.identity) && !terminal && previous?.status !== captured.status) continue
     const evidence = input.sessions?.find(value => value.scope.channelId === captured.scope.channelId && value.scope.sessionId === captured.scope.sessionId && value.scope.generation === captured.scope.generation
       && value.scope.composerId === captured.scope.composerId && value.scope.bindingGeneration === captured.scope.bindingGeneration)
     const uncertainWait = Boolean(previous?.actionable && evidence && !evidence.terminated && !(evidence.awaitingUserEvidence === 'runtime' && evidence.awaitingUser === false)
       && captured.status === 'pending' && !captured.terminated && !input.runCompleted)
-    const fact = terminal ? { ...captured, status: terminal, actionable: false } : previous?.status !== undefined && previous.status !== 'pending' && captured.status === 'pending'
-      ? previous : { ...captured, actionable: captured.status === 'pending' && (captured.actionable || uncertainWait) && !captured.terminated && !input.runCompleted }
+    const { originalRead: _grant, historyStamp: _stamp, recheck: _suppliedCheck, ...original } = captured
+    const fact: NotificationQuestionFact = { ...original, status: historical ?? captured.status,
+      actionable: !historical && captured.status === 'pending' && (captured.actionable || uncertainWait) && !captured.terminated && !input.runCompleted }
+    const ended = input.runCompleted || captured.terminated || evidence?.terminated === true
+    const currentOriginal = captured.originalRead && (captured.status === historical || !captured.historyStamp || captured.historyStamp !== originals.get(captured.identity))
+    if (historical) fact.recheck = questionOriginalRecheck(previous?.recheck, { ...captured, originalRead: Boolean(currentOriginal) }, historical, ended,
+      Boolean(evidence && !ended && !(evidence.awaitingUserEvidence === 'runtime' && evidence.awaitingUser === false)))
     // Passive sealing/refinement is neither a new attention class nor a human read.
     const changed = !previous || previous.status !== fact.status || fact.status === 'pending' && (previous.actionable !== fact.actionable || previous.terminated !== fact.terminated
       || fact.actionable && (previous.entryId !== fact.entryId || previous.blockId !== fact.blockId || previous.count !== fact.count || previous.name !== fact.name))
-    if (changed && !event(fact, previous)) { if (previous) state.rows[fact.identity] = previous; continue }
+    const before = drafts.length
+    if (changed && !event(fact, previous) || !recheckEvent(fact, previous, captured.originalRead)) {
+      drafts.splice(before); if (previous) state.rows[fact.identity] = previous; continue
+    }
     state.rows[fact.identity] = fact
     if (captured.status !== 'pending') accepted.add(captured.identity)
   }
@@ -98,18 +123,25 @@ export function reduceQuestionNotifications(old: QuestionNotificationState | und
     const end = input.runCompleted || sessions.some(current => changedIdentity(current.scope)) || sameSession?.terminated === true
     // A transport outage does not answer, cancel or retire a human decision.
     const unavailable = end || sameSession && sameSession.awaitingUserEvidence === 'runtime' && sameSession.awaitingUser === false
+    if (fact.recheck?.phase === 'unconfirmed' && unavailable) {
+      const inactive = { ...fact, recheck: { ...fact.recheck, phase: end ? 'unavailable' as const : 'unconfirmed' as const, actionable: false } }
+      state.rows[fact.identity] = recheckEvent(inactive, fact) ? inactive : fact
+      continue
+    }
     if (unavailable && fact.actionable) {
       const inactive = { ...fact, actionable: false, terminated: end }; state.rows[fact.identity] = event(inactive, fact) ? inactive : fact
     } else state.rows[fact.identity] = fact
   }
-  const active = Object.values(state.rows).filter(fact => fact.status === 'pending' && fact.actionable)
+  const active = Object.values(state.rows).filter(fact => fact.status === 'pending' && fact.actionable || fact.recheck?.phase === 'unconfirmed')
   if (active.length > 512) throw Error('活动问卷数量超出通知检查点容量')
   // Never evict an unresolved human action to make room for passive history.
-  const passive = Object.values(state.rows).filter(fact => fact.status !== 'pending' || !fact.actionable).slice(-(512 - active.length))
+  const passive = Object.values(state.rows).filter(fact => !(fact.status === 'pending' && fact.actionable || fact.recheck?.phase === 'unconfirmed')).slice(-(512 - active.length))
   state.rows = Object.fromEntries([...active, ...(active.length < 512 ? passive : [])].map(fact => [fact.identity, fact]))
   let end = slice.start
   for (const fact of slice.facts) { if (!accepted.has(fact.identity)) break; ++end }
   if (end < slice.total) state.terminalScan = { signature: input.signature, offset: end }
-  const terminalRows = slice.facts.filter(fact => accepted.has(fact.identity) && !known.has(fact.identity)).map(fact => ({ identity: fact.identity, status: fact.status as QuestionTerminalReceipt['status'] }))
+  const terminalRows = slice.facts.filter(fact => accepted.has(fact.identity) && (!historicalStatuses.has(fact.identity) || historicalStatuses.get(fact.identity) === fact.status)
+    && (!known.has(fact.identity) || fact.historyStamp !== undefined && originals.get(fact.identity) !== fact.historyStamp))
+    .map(fact => ({ identity: fact.identity, status: fact.status as QuestionTerminalReceipt['status'], ...(fact.historyStamp ? { originalStamp: fact.historyStamp } : {}) }))
   return { state, drafts, complete: complete && end === slice.total, ...(terminalRows.length ? { questionTerminals: { sourceKey: input.scopeKey, rows: terminalRows } } : {}) }
 }

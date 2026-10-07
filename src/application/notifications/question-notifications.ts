@@ -9,6 +9,7 @@ import { sessionNotificationObservation } from './session-lifecycle-notification
 import { readQuestionNotificationState, reduceQuestionNotifications, questionTerminalSlice, type NotificationQuestionFact, type QuestionNotificationInput, type QuestionNotificationState } from '../../domain/question-notification'
 import type { NotificationService } from '../notification-service'
 import { NotificationProjectionSource } from './projection-source'
+import type { OriginalQuestionHistoryReader } from '../../domain/original-question-reading'
 
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 export class QuestionNotifications {
@@ -16,7 +17,7 @@ export class QuestionNotifications {
   private readonly history = new Map<string, { reference: unknown; questions: Map<string, NotificationQuestionFact> }>()
   private activeScope?: { key: string; runId?: string }
   private stopped = false
-  constructor(private readonly owner: NotificationService, private readonly now: () => number = Date.now) {
+  constructor(private readonly owner: NotificationService, private readonly now: () => number = Date.now, private readonly originalHistory?: OriginalQuestionHistoryReader) {
     this.source = new NotificationProjectionSource(owner, readQuestionNotificationState, async (old, input, baseline, revision) => {
       if (old && !old.indexed) return reduceQuestionNotifications(old, input, baseline, revision)
       const pending = input.facts.filter(fact => fact.status === 'pending').map(fact => fact.identity)
@@ -26,7 +27,9 @@ export class QuestionNotifications {
       for (let batch = 0; batch < 1024; batch++) {
         const slice = questionTerminalSlice(working, input)
         const receipts = slice.facts.length ? await owner.questionTerminals(input.scopeKey, slice.facts.map(fact => fact.identity)) : []
-        const projection = reduceQuestionNotifications(working, input, baseline, revision, [...pendingReceipts, ...receipts])
+        const verified = input.originalStillCurrent ? { ...input, facts: input.facts.map(fact => input.originalStillCurrent!(fact.identity)
+          ? fact : { ...fact, originalRead: false, historyStamp: undefined }) } : input
+        const projection = reduceQuestionNotifications(working, verified, baseline, revision, [...pendingReceipts, ...receipts])
         if (projection.drafts.length || projection.questionTerminals || projection.complete !== false) return projection
         working = projection.state // Known receipt pages need no temporary-offset SQLite writes.
       }
@@ -39,12 +42,16 @@ export class QuestionNotifications {
       const observed = sessionNotificationObservation(snapshot, team, this.now(), 0)
       const questions = new Map<string, NotificationQuestionFact>()
       const sessions: NonNullable<QuestionNotificationInput['sessions']> = []
+      const grants = new Map<string, () => boolean>()
       for (const fact of observed.facts) {
         const session = snapshot.sessions.find(session => session.channelId === fact.scope.channelId)!
         sessions.push({ scope: fact.scope, online: fact.online, ...(session.awaitingUser !== undefined ? { awaitingUser: session.awaitingUser } : {}),
           awaitingUserEvidence: session.awaitingUserEvidence ?? 'unknown',
           terminated: fact.retired || fact.evidence === 'stopped' })
-        const collect = (blocks: ProcessBlock[], into: Map<string, NotificationQuestionFact>, entryId?: string) => {
+        const entries = snapshot.conversations[session.channelId]
+        const reading = entries ? this.originalHistory?.(session.channelId, entries, observed.runId) : undefined
+        const originalCurrent = reading ? () => this.originalHistory?.(session.channelId, entries!, observed.runId)?.current() === true : undefined
+        const collect = (blocks: ProcessBlock[], into: Map<string, NotificationQuestionFact>, entryId?: string, entry?: NonNullable<typeof entries>[number]) => {
           for (const block of blocks) {
             if (block.kind !== 'tool' || !block.question) continue
             const question = block.question
@@ -56,22 +63,29 @@ export class QuestionNotifications {
             into.set(identity, { identity, toolCallId: question.toolCallId, blockId: block.id, ...(entryId ?? known?.entryId ? { entryId: entryId ?? known?.entryId } : {}), name: fact.name,
               scope: { ...fact.scope, groupId: undefined }, status: question.status, count: question.questions.length,
               actionable: question.status === 'pending' && session.awaitingUser === true, terminated: fact.retired || fact.evidence === 'stopped' })
+            const value = into.get(identity)!
+            if (entry && reading?.contains(entry, block)) { value.originalRead = true; value.historyStamp = reading.stamp(entry, question.toolCallId, block.id) }
+            else if (known?.historyStamp) value.historyStamp = known.historyStamp
           }
         }
-        const entries = snapshot.conversations[session.channelId]
         let history = this.history.get(fact.identity)
         if (entries && (!history || history.reference !== entries)) {
           const known = new Map<string, NotificationQuestionFact>()
-          for (const entry of entries) if (nativeAssistantEntry(entry, session.channelId)) collect(conversationEntryProcessBlocks(entry), known, entry.id)
+          for (const entry of entries) if (nativeAssistantEntry(entry, session.channelId)) collect(conversationEntryProcessBlocks(entry), known, entry.id, entry)
           history = { reference: entries, questions: known }; this.history.set(fact.identity, history)
         }
-        for (const old of history?.questions.values() ?? []) questions.set(old.identity, { ...old, actionable: old.status === 'pending' && session.awaitingUser === true,
-          terminated: fact.retired || fact.evidence === 'stopped' })
+        for (const old of history?.questions.values() ?? []) {
+          questions.set(old.identity, { ...old, originalRead: Boolean(reading?.current() && old.originalRead),
+            historyStamp: reading?.current() ? old.historyStamp : undefined, actionable: old.status === 'pending' && session.awaitingUser === true,
+            terminated: fact.retired || fact.evidence === 'stopped' })
+          if (originalCurrent) grants.set(old.identity, originalCurrent)
+        }
         collect(snapshot.liveProcess?.[session.channelId]?.blocks ?? [], questions)
       }
       if (this.history.size > 256) this.history.delete(this.history.keys().next().value!)
       const input: QuestionNotificationInput = { signature: '', scopeKey: `questions:${hash([observed.workspaceId, observed.runId])}`, runCompleted: observed.runCompleted, now: this.now(), facts: [...questions.values()], sessions }
       input.signature = hash([input.scopeKey, input.runCompleted, input.facts, input.sessions])
+      if (grants.size) input.originalStillCurrent = identity => grants.get(identity)?.() === true
       if (this.activeScope && this.activeScope.key !== input.scopeKey && this.activeScope.runId
         && team.runs.some(run => run.id === this.activeScope!.runId && run.status === 'completed')) {
         this.source.observe(this.activeScope.key, { scopeKey: this.activeScope.key, runCompleted: true, now: input.now, facts: [], sessions: [], signature: hash([this.activeScope.key, 'completed']) })

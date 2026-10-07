@@ -66,7 +66,7 @@ export class SqliteNotificationRepository {
           if (!columns.some(column => column.name === 'content_signature')) this.db.exec('ALTER TABLE desktop_notification_tombstones ADD COLUMN content_signature TEXT')
           this.db.exec('UPDATE desktop_notification_meta SET schema_version=2 WHERE id=1')
         })
-      } else if (![2, 3, 4, 5, 6].includes(version)) throw new Error('通知历史格式暂不支持，原有数据未修改')
+      } else if (![2, 3, 4, 5, 6, 7].includes(version)) throw new Error('通知历史格式暂不支持，原有数据未修改')
       if (version >= 4) {
         for (const table of ['desktop_notification_sources', 'desktop_notification_integrity', 'desktop_notification_gap_keys'])
           if (!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) throw Error('通知历史结构异常，原数据保留')
@@ -98,35 +98,45 @@ export class SqliteNotificationRepository {
         this.db.exec('UPDATE desktop_notification_meta SET schema_version=5 WHERE id=1')
       })
       else this.replyIndex.validateStructure()
+      let questionStampReady = version >= 7
       if (version < 6) this.transaction(() => {
         this.db.exec(`CREATE TABLE IF NOT EXISTS desktop_notification_question_terminals (
           source_key TEXT NOT NULL, identity TEXT NOT NULL, status TEXT NOT NULL, PRIMARY KEY(source_key,identity));`)
-        this.validateQuestionTerminalsStructure()
+        questionStampReady = this.db.prepare('PRAGMA table_info(desktop_notification_question_terminals)').all().some(row => row.name === 'original_stamp')
+        this.validateQuestionTerminalsStructure(questionStampReady)
         this.db.exec('UPDATE desktop_notification_meta SET schema_version=6 WHERE id=1')
       })
-      else this.validateQuestionTerminalsStructure()
+      else this.validateQuestionTerminalsStructure(version >= 7)
+      if (version < 7) this.transaction(() => {
+        if (!questionStampReady) this.db.exec('ALTER TABLE desktop_notification_question_terminals ADD COLUMN original_stamp TEXT')
+        this.validateQuestionTerminalsStructure()
+        this.db.exec('UPDATE desktop_notification_meta SET schema_version=7 WHERE id=1')
+      })
       this.historyGap() // Invalid v4 integrity never silently becomes a fresh, clean ledger.
     } catch (error) { this.db.close(); throw error }
   }
 
-  private validateQuestionTerminalsStructure(): void {
+  private validateQuestionTerminalsStructure(withStamp = true): void {
     const columns = this.db.prepare('PRAGMA table_info(desktop_notification_question_terminals)').all() as Array<{ name: string; type: string; pk: number; notnull: number }>
     const expected = [['source_key', 1], ['identity', 2], ['status', 0]] as const
-    if (columns.length !== 3 || expected.some(([name, pk], index) => columns[index]?.name !== name || columns[index]?.type !== 'TEXT' || columns[index]?.pk !== pk || columns[index]?.notnull !== 1)) throw Error('私有问卷终态结构异常，原数据保留')
+    if (columns.length !== (withStamp ? 4 : 3) || expected.some(([name, pk], index) => columns[index]?.name !== name || columns[index]?.type !== 'TEXT' || columns[index]?.pk !== pk || columns[index]?.notnull !== 1)
+      || withStamp && (columns[3]?.name !== 'original_stamp' || columns[3]?.type !== 'TEXT' || columns[3]?.pk !== 0 || columns[3]?.notnull !== 0)) throw Error('私有问卷终态结构异常，原数据保留')
   }
   questionTerminals(sourceKey: string, identities: string[]): QuestionTerminalReceipt[] {
     validateQuestionTerminalLookup(sourceKey, identities)
     if (!identities.length) return []
-    const rows = this.db.prepare(`SELECT identity,status FROM desktop_notification_question_terminals WHERE source_key=? AND identity IN (${identities.map(() => '?').join(',')})`).all(sourceKey, ...identities) as unknown as QuestionTerminalReceipt[]
-    validateQuestionTerminalBatch({ sourceKey, rows }); return rows
+    const rows = this.db.prepare(`SELECT identity,status,original_stamp FROM desktop_notification_question_terminals WHERE source_key=? AND identity IN (${identities.map(() => '?').join(',')})`).all(sourceKey, ...identities) as unknown as Array<QuestionTerminalReceipt & { original_stamp: string | null }>
+    const values = rows.map(row => ({ identity: row.identity, status: row.status, ...(row.original_stamp === null ? {} : { originalStamp: row.original_stamp }) }))
+    validateQuestionTerminalBatch({ sourceKey, rows: values }); return values
   }
   private writeQuestionTerminals(batch: QuestionTerminalBatch): void {
     const get = this.db.prepare('SELECT status FROM desktop_notification_question_terminals WHERE source_key=? AND identity=?')
-    const put = this.db.prepare('INSERT OR IGNORE INTO desktop_notification_question_terminals VALUES(?,?,?)')
+    const put = this.db.prepare(`INSERT INTO desktop_notification_question_terminals VALUES(?,?,?,?)
+      ON CONFLICT(source_key,identity) DO UPDATE SET original_stamp=COALESCE(excluded.original_stamp,desktop_notification_question_terminals.original_stamp)`)
     for (const row of batch.rows) {
       const previous = get.get(batch.sourceKey, row.identity) as { status: string } | undefined
       if (previous && previous.status !== row.status) throw Error('原问卷终态凭据冲突，不猜测覆盖')
-      put.run(batch.sourceKey, row.identity, row.status)
+      put.run(batch.sourceKey, row.identity, row.status, row.originalStamp ?? null)
     }
   }
   private revision(): number {

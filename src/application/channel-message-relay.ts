@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { randomUUID, createHash } from 'node:crypto'
 import type { ChannelQueueFact } from '../domain/channel-queue-fact'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -19,6 +19,7 @@ import {
 import {
   sortConversationEntries,
   conversationTextIdentity,
+  conversationEntryProcessBlocks,
   normalizeEscapedNewlines,
   sniffedAttachmentMimeType,
   type ConversationChangesBaseline,
@@ -37,6 +38,7 @@ import type {
   SendMessageInput
 } from '../shared/desktop-api'
 import { imageExtensionForMime, imageMimeForPath, isLocalImagePath, localImageUrl } from '../shared/local-image'
+import type { OriginalQuestionHistory } from '../domain/original-question-reading'
 
 const MAX_ENTRIES_PER_CHANNEL = 500
 const MAX_MESSAGE_CHARS = 100_000
@@ -136,6 +138,8 @@ function isRecentDuplicateEntry(left: ConversationEntry, right: ConversationEntr
 export class ChannelMessageRelay {
   private readonly listeners = new Set<RelayListener>()
   private readonly conversations = new Map<string, ConversationEntry[]>()
+  private readonly originalQuestions = new WeakMap<ConversationEntry, ReadonlyMap<string, { status: string; stamp: string }>>()
+  private questionInspectionSequence = 0
   private readonly queueFacts = new Map<string, ChannelQueueFact>()
   private queueView?: readonly ChannelQueueFact[]
   private queueHistoryGap = false
@@ -171,6 +175,27 @@ export class ChannelMessageRelay {
   /** 读取通道当前会话时间线（只读引用；封口扫描等主进程旁路只读消费，不得改写）。 */
   conversationsOf(channelId: string): readonly ConversationEntry[] | undefined {
     return this.conversations.get(String(channelId).trim())
+  }
+  /** Exact current original timeline only; this getter performs no SQL or polling. */
+  notificationQuestionHistory(channelId: string, entries: readonly ConversationEntry[], runId: string | undefined): OriginalQuestionHistory | undefined {
+    const current = () => Boolean(runId && this.scopeRunId === runId && this.conversations.get(channelId) === entries)
+    if (!current()) return
+    const key = (id: string, tool: string) => JSON.stringify([id, tool])
+    return { current, contains: (entry, block) => current() && entry.channelId === channelId && Boolean(block.question)
+      && this.originalQuestions.get(entry)?.get(key(block.id, block.question!.toolCallId))?.status === block.question!.status,
+      stamp: (entry, tool, id) => current() && entry.channelId === channelId ? this.originalQuestions.get(entry)?.get(key(id, tool))?.stamp : undefined }
+  }
+  private captureOriginalQuestions(entry: ConversationEntry): void {
+    try {
+      const stamp = createHash('sha256').update(JSON.stringify([this.queueInspectionId, ++this.questionInspectionSequence, entry.id])).digest('hex')
+      const rows = new Map<string, { status: string; stamp: string }>()
+      for (const block of conversationEntryProcessBlocks(entry)) if (block.kind === 'tool' && block.question) {
+        const key = JSON.stringify([block.id, block.question.toolCallId]), known = rows.get(key)
+        if (known && known.status !== 'pending' && block.question.status === 'pending') continue
+        rows.set(key, Object.freeze({ status: block.question.status, stamp }))
+      }
+      this.originalQuestions.set(entry, rows)
+    } catch { /* Optional observation metadata can never fail original persistence or hydration. */ }
   }
   /** Existing hydrate/delivery reads feed this view; observing it performs no database read or poll. */
   notificationQueueSnapshot(): { facts: readonly ChannelQueueFact[]; historyIncomplete: boolean; inspectionId: string } {
@@ -527,7 +552,7 @@ export class ChannelMessageRelay {
 
   private entryFromReply(reply: ChannelInboundReply): ConversationEntry | undefined {
     if (reply.visible === false) return undefined
-    return {
+    const entry: ConversationEntry = {
       id: `reply:${reply.id}`,
       channelId: reply.channelId,
       role: 'assistant',
@@ -541,6 +566,8 @@ export class ChannelMessageRelay {
       turn: reply.processTurn,
       continuationBlocks: reply.continuationBlocks
     }
+    this.captureOriginalQuestions(entry)
+    return entry
   }
 
   /**
@@ -571,6 +598,7 @@ export class ChannelMessageRelay {
         turn: process.turn,
         replyToEntryId: replyToEntryId ?? next[index]!.replyToEntryId
       }
+      this.captureOriginalQuestions(next[index]!)
       this.conversations.set(channelId, next)
       return true
     }
@@ -590,6 +618,7 @@ export class ChannelMessageRelay {
       if (index < 0) continue
       const next = [...entries]
       next[index] = { ...next[index]!, continuationBlocks: blocks }
+      this.captureOriginalQuestions(next[index]!)
       this.conversations.set(channelId, next)
       return true
     }

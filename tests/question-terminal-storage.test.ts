@@ -37,13 +37,34 @@ describe('private question terminal metadata joins the existing source transacti
       { sourceKey: `reply-source:${'1'.repeat(64)}`, rows: batch.rows }, { sourceKey, rows: Array.from({ length: 101 }, (_, i) => ({ identity: i.toString(16).padStart(64, '0'), status: 'submitted' })) }]) expect(() => validateQuestionTerminalBatch(changed as QuestionTerminalBatch)).toThrow()
     expect(() => ledger.questionTerminals(sourceKey, [identity, identity])).toThrow('查询无效')
   })
+  it('migrates a real v6 three-column receipt table without inventing an original read stamp or changing a terminal', () => {
+    ledger.commitSource(sourceKey, 0, {}, [draft], 1, undefined, batch); ledger.close()
+    const db = new DatabaseSync(path)
+    db.exec('ALTER TABLE desktop_notification_question_terminals DROP COLUMN original_stamp; UPDATE desktop_notification_meta SET schema_version=6; PRAGMA user_version=87;')
+    db.close(); ledger = new SqliteNotificationRepository(path)
+    expect(ledger.questionTerminals(sourceKey, [identity])).toEqual(batch.rows)
+    const inspect = new DatabaseSync(path)
+    try { expect(inspect.prepare('PRAGMA user_version').get()!.user_version).toBe(87); expect(inspect.prepare('SELECT schema_version FROM desktop_notification_meta').get()!.schema_version).toBe(7) }
+    finally { inspect.close() }
+  })
+  it('stores only a typed bounded original inspection hash, preserves it on legacy refinement, and rolls it back on CAS/failure', () => {
+    const originalStamp = 'a'.repeat(64), changedStamp = 'b'.repeat(64)
+    ledger.commitSource(sourceKey, 0, {}, [], 1, undefined, { sourceKey, rows: [{ ...batch.rows[0]!, originalStamp }] })
+    ledger.commitSource(sourceKey, 1, {}, [], 2, undefined, batch)
+    expect(ledger.questionTerminals(sourceKey, [identity])[0]?.originalStamp).toBe(originalStamp)
+    expect(ledger.commitSource(sourceKey, 1, {}, [], 3, undefined, { sourceKey, rows: [{ ...batch.rows[0]!, originalStamp: changedStamp }] }).applied).toBe(false)
+    const db = new DatabaseSync(path); db.exec("CREATE TRIGGER deny_stamp BEFORE UPDATE OF original_stamp ON desktop_notification_question_terminals BEGIN SELECT RAISE(ABORT,'stamp rejected'); END"); db.close()
+    expect(() => ledger.commitSource(sourceKey, 2, { changed: true }, [draft], 3, undefined, { sourceKey, rows: [{ ...batch.rows[0]!, originalStamp: changedStamp }] })).toThrow('stamp rejected')
+    expect(ledger.questionTerminals(sourceKey, [identity])[0]?.originalStamp).toBe(originalStamp); expect(ledger.sourceState(sourceKey).revision).toBe(2)
+    for (const stamp of ['PRIVATE', '', 'a'.repeat(65), 1, null]) expect(() => validateQuestionTerminalBatch({ sourceKey, rows: [{ ...batch.rows[0]!, originalStamp: stamp as string }] })).toThrow()
+  })
   it.each(['missing', 'malformed'])('fails closed for %s current-schema structures without reconstructing an empty history', fault => {
     ledger.commitSource(sourceKey, 0, {}, [draft], 1, undefined, batch); ledger.close()
     const db = new DatabaseSync(path); db.exec('DROP TABLE desktop_notification_question_terminals')
     if (fault === 'malformed') db.exec('CREATE TABLE desktop_notification_question_terminals(source_key TEXT,identity TEXT,status TEXT)')
     db.close(); expect(() => new SqliteNotificationRepository(path)).toThrow('终态结构异常')
     const inspect = new DatabaseSync(path)
-    try { expect(inspect.prepare('SELECT COUNT(*) AS n FROM desktop_notifications').get()!.n).toBe(1); expect(inspect.prepare('SELECT schema_version FROM desktop_notification_meta').get()!.schema_version).toBe(6) }
+    try { expect(inspect.prepare('SELECT COUNT(*) AS n FROM desktop_notifications').get()!.n).toBe(1); expect(inspect.prepare('SELECT schema_version FROM desktop_notification_meta').get()!.schema_version).toBe(7) }
     finally { inspect.close() }
   })
 })

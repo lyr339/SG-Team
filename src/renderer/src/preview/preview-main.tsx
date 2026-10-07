@@ -53,6 +53,7 @@ import { formatFileSize } from '../../../shared/format-file-size'
 import { App } from '../App'
 import { applyAppearancePreferences, readAppearancePreferences } from '../appearance-preferences'
 import { reduceUnattributedMcpCalls } from '../../../domain/mcp-unattributed-call'
+import { questionOriginalRecheckDraft } from '../../../domain/question-original-recheck'
 import {
   collaborationSnapshot,
   desktopSnapshot,
@@ -1306,6 +1307,21 @@ if (previewParameters.get('notifications') === 'mcp-unattributed' && state.team.
     const result = reduceUnattributedMcpCalls(undefined, { key: 'preview-unattributed', signature: 'isolated', monitorStartedAt: at,
       facts: [{ identity: 'a'.repeat(64), family: 'b'.repeat(64), tool: 'team_task', scope, entryId, blockId, at }] }, true, 1)
     result.drafts.forEach(notificationPreview.offer)
+  }
+}
+if (previewParameters.get('notifications') === 'question-original' && state.team.activeRun) {
+  const member = state.team.members.find(member => member.binding && state.desktop.sessions.some(session => session.channelId === member.binding!.channelId && session.composerId)), binding = member?.binding
+  const session = state.desktop.sessions.find(session => session.channelId === binding?.channelId)
+  if (member && binding && session) {
+    const entryId = 'preview-original-question-entry', blockId = 'preview-original-question-block', toolCallId = 'preview-original-question', at = Date.now() - 30000
+    const scope = { workspaceId: binding.workspaceId, runId: binding.runId, slotId: member.slot.id, bindingGeneration: binding.generation,
+      sessionId: session.id, channelId: session.channelId, generation: String(session.generation), composerId: session.composerId }
+    state.desktop.conversations[session.channelId] = [{ id: entryId, channelId: session.channelId, role: 'assistant', source: 'cursor', status: 'complete', timestamp: at,
+      text: '隔离预览：原问卷当前为待回答，之前的通知回执保留；需要核对，不会自动补答。', processBlocks: [{ kind: 'tool', id: blockId, toolName: 'ask_question', toolKind: 'question', status: 'running',
+        question: { toolCallId, status: 'pending', questions: [{ id: 'q', prompt: '这次恢复后的目标接口应采用哪一种校验策略？', allowMultiple: false,
+          options: [{ id: 'a', label: '保留当前行为，先核对原会话记录' }, { id: 'b', label: '重新分析边界后由用户确认' }] }] } }] }]
+    notificationPreview.offer(questionOriginalRecheckDraft({ identity: 'a'.repeat(64), toolCallId, blockId, entryId, name: `${session.roleName} · CH-${session.channelId}`,
+      scope, count: 1, status: 'submitted', actionable: false, terminated: false, recheck: { originalStatus: 'pending', phase: 'unconfirmed', actionable: true } }, undefined, true, at, 1))
   }
 }
 let previewMemoryIssueState: MemoryIssueState | undefined

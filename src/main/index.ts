@@ -482,7 +482,8 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
       runtimeUsage: { suspend: () => runtimeUsageNotifications?.suspend(), resume: () => runtimeUsageNotifications?.resume() },
       composerContext: { suspend: () => composerContextNotifications?.suspend(), resume: () => composerContextNotifications?.resume() },
       usageBinding: { suspend: () => usageBindingNotifications?.suspend(), resume: () => usageBindingNotifications?.resume() },
-      queue: () => channelMessageRelay!.notificationQueueSnapshot(), watchQueue: fact => channelMessageRelay!.watchNotificationQueueFact(fact) }) }
+      queue: () => channelMessageRelay!.notificationQueueSnapshot(), watchQueue: fact => channelMessageRelay!.watchNotificationQueueFact(fact),
+      originalQuestions: (channelId, entries, runId) => channelMessageRelay!.notificationQuestionHistory(channelId, entries, runId) }) }
     catch { notificationService.reportHistoryGap() }
   }
   // 过程流事件驱动层：Cursor 模型写入即时推送（写信号触发 inspect），

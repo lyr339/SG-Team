@@ -10,6 +10,7 @@ import type { ChannelQueueFact } from '../../domain/channel-queue-fact'
 import { conversationEntryProcessBlocks } from '../../domain/conversation-entry'
 import { sessionNotificationObservation } from './session-lifecycle-notifications'
 import { ContextThresholdNotifications } from './context-threshold-notifications'
+import type { OriginalQuestionHistoryReader } from '../../domain/original-question-reading'
 
 interface PowerEvents {
   on(name: 'suspend' | 'resume', listener: () => void): unknown
@@ -26,9 +27,10 @@ export function connectSessionNotifications(input: {
   runtimeUsage?: { suspend(): void; resume(): void }
   composerContext?: { suspend(): void; resume(): void }
   usageBinding?: { suspend(): void; resume(): void }
+  originalQuestions?: OriginalQuestionHistoryReader
 }) {
   const lifecycle = new SessionLifecycleNotifications(input.notifications)
-  const questions = new QuestionNotifications(input.notifications)
+  const questions = new QuestionNotifications(input.notifications, Date.now, input.originalQuestions)
   const replies = new ReplyNotifications(input.notifications)
   const context = new ContextThresholdNotifications(input.notifications)
   const mcp = new McpWriteNotifications(input.notifications)

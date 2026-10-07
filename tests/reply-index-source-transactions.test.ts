@@ -46,10 +46,10 @@ describe('reply metadata is atomic with ledger and source CAS', () => {
   })
   it('rejects a future private schema rather than downgrading or modifying its saved data', () => {
     ledger.commitSource(key, 0, {}, [event], 1, batch); ledger.close()
-    const db = new DatabaseSync(path); db.exec('UPDATE desktop_notification_meta SET schema_version=7'); db.close()
+    const db = new DatabaseSync(path); db.exec('UPDATE desktop_notification_meta SET schema_version=8'); db.close()
     expect(() => new SqliteNotificationRepository(path)).toThrow('暂不支持')
     const inspect = new DatabaseSync(path)
-    try { expect(inspect.prepare('SELECT schema_version FROM desktop_notification_meta').get()!.schema_version).toBe(7); expect(inspect.prepare('SELECT payload FROM desktop_notification_reply_keys').get()!.payload).toBe(JSON.stringify(row)) }
+    try { expect(inspect.prepare('SELECT schema_version FROM desktop_notification_meta').get()!.schema_version).toBe(8); expect(inspect.prepare('SELECT payload FROM desktop_notification_reply_keys').get()!.payload).toBe(JSON.stringify(row)) }
     finally { inspect.close() }
   })
 })
