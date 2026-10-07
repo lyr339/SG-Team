@@ -1,6 +1,6 @@
 # 拾光通知系统实施进度
 
-当前状态：按用户要求，两轮收尾审查后暂停持续实施；完整目标未完成，未发布、未安装或重启用户软件。最新收尾与剩余验收门禁见第四十四批。
+当前状态：实现与本地工程交付审查已收口，不再追加编号批次；最新结果与验证边界以 `NOTIFICATIONS-ACCEPTANCE.md` 为准。此前把“两轮收尾”理解成“暂停”是助手误读，不是用户要求。未推送/发版、未覆盖已安装软件或重启 Cursor；不能把工程验收通过写成双平台物理送达均已验证。
 
 实现工作树为 `/Users/lyr/Downloads/SG-Team-notifications`，分支 `feat/notification-system`，基于 v0.5.15 主线 `5a371f7`。原主目录和原 UI 开发工作树不作为本目标的修改范围，已有基线漂移原样保留并记在各批保护报告中。完整需求以 `docs/NOTIFICATIONS-DESIGN.md` 为准，不能把底座或空通知列表作为系统完成。
 
@@ -842,6 +842,8 @@ hook v38 只读取已知 envelope 的 typed `isError`：最多八层 wrapper、J
 最终证据：`delivery-claims-round1-final-full.log`（329 files，3158 passed，1 skipped）、`delivery-claims-round1-final-build.log`、`delivery-claims-round1-typecheck.log`；`delivery-claims-round2-matrix.log`、`delivery-claims-round2-matrix-status.json`、`delivery-claims-round2-build-hashes.json`；退出、dead-code 和原 MCP/channel smoke 记录在同前缀日志。保护目录逐文件/HEAD/porcelain/binary diff 与四个原删除复核在 `protected-delivery-claims-audit.json`。fixture 的连接、线程和临时目录只清理自身资源，没有启动生产 main、用户软件/Cursor 或重新写全局 MCP 配置。
 
 ### 停工与后续验收门禁
+
+此处记录的是 `f6a0ca0` 收尾时的状态。用户随后澄清并要求继续完成，恢复最后的需求对照、正式包与实机验收；不再延长为新的功能开发批次。
 
 - 本批仅本地提交；未 push、发布、打包安装或重启用户软件。完整目标暂停，不标 complete。
 - 发布前仍需 Windows/macOS 正式包的真实后台送达、权限拒绝、声音、勿扰、冷启动及通知点击恢复验收；契约和 synthetic callbacks 不代替物理送达。

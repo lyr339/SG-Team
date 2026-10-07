@@ -19,8 +19,8 @@
     "measure:mcp": "tsx scripts/measure-mcp-surface.ts",
     "pack:mac": "npm run build && electron-builder --dir --mac --arm64 --publish never --config.electronDist=node_modules/electron/dist",
     "dist:mac": "npm run pack:mac && node scripts/dist-mac.mjs",
-    "pack:win": "npm run build && electron-builder --win --x64 --publish never --config.electronDist=node_modules/electron/dist",
-    "pack:win:dir": "npm run build && electron-builder --dir --win --x64 --publish never --config.electronDist=node_modules/electron/dist",
+    "pack:win": "npm run build && electron-builder --win --x64 --publish never",
+    "pack:win:dir": "npm run build && electron-builder --dir --win --x64 --publish never",
     "smoke:mcp:packaged": "tsx scripts/verify-built-mcp.ts --packaged",
     "verify:mac": "npm run pack:mac && npm run smoke:mcp:packaged",
     "verify:win": "npm run pack:win && npm run smoke:mcp:packaged",
@@ -35,6 +35,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@electron/asar": "3.4.1",
     "@modelcontextprotocol/client": "^2.0.0",
     "@modelcontextprotocol/server": "^2.0.0",
     "@types/node": "^26.2.0",
