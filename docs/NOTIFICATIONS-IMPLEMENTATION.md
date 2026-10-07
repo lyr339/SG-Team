@@ -805,3 +805,22 @@ hook v38 只读取已知 envelope 的 typed `isError`：最多八层 wrapper、J
 纯 preview `notifications=reply-body`/`bodyCase=stale` 使用产品 reducer/组件，无真实账号、模型或 OS 通知。CUA 在实际 984×554 确认旧同 ID 正文不被误读且旧定位被拒；匹配新正文才确认，准确定位后中心关闭。在实际 548px 的列表模式中，DOM 存在不等于正文可见，未读正确保持；切回实际桌面可见范围后才消费。320×600 浅色详情和桌面暗色排版、完整范围文字也核对，无横向溢出；截图/实际 DOM/交互在 `ui/reply-body-*.png`、`ui/reply-body-audit.json`。没有增加彩色左轨/胶囊或修改视觉语言，不把一张图当全布局通过。自建 tab、media/viewport 与纯 preview server 清理；`protected-reply-body-audit.json` 核对两个保护树逐文件/HEAD/porcelain/binary diff 和四个既有删除。只本地提交，不 push/发版/安装或重启用户软件/Cursor。
 
 **完整目标仍 active，未完成**：本批明确覆盖有已捕获正文版本/当前位置的回复恢复与阅读，不证明附件文件字节、缺原帧/丢失旧身份、任意损坏/WAL 或无法观察的回复缺席可无损重建。Legacy 只有当前对照，不能承诺旧内容被找回。队列其余原库恢复组合、全布局/长期容量/正式包及 Windows/macOS 真权限、声音、勿扰和系统送达仍继续，原完整要求不缩减。
+
+## 第四十三批 · 原生通知生命周期与历史代次
+
+本批回到整套系统送达要求，核对 installed Electron 43.4.1 类型与 [Electron Notification 官方事件契约](https://www.electronjs.org/docs/latest/api/notification)。`native-lifecycle-reproduction.log` 复现 Windows banner timed-out 之后，点击仍留在 Action Center 的原提示不再打开拾光：原适配器丢弃 close reason，delivery 把横幅消失直接当作对象移除。官方契约区分 timedOut/userCanceled/applicationHidden，并明确 close 不保证每次移除都回报；不能按 macOS 单一关闭行为推断 Windows。没有调用物理 show/getHistory、查询真实权限或发试音。
+
+沿既有 native port 和唯一 delivery owner 修复，没有第二个通知路由/引擎：
+
+- adapter 只转发白名单 close reason 和 `show` 回执，不复制原 error/details。Windows timed-out 和未知 reason 不当作中心记录已删除，保留 click；明确 dismissed/programmatic 才释放。close listener 保留后续明确事件，自己 close 时先移除 listeners。构造/show 抛错清理自己的对象，不重试。Capability 支持仍只是只读能力，不是权限、勿扰、音量或用户已读。
+- 原调用前先注册自己的 handle/token，处理可能同步到来的 click/show/failed/close；回调只能作用于同一仍被 owner 持有的对象，不能凭 record ID 重新命中替代者。同步 close/failure 在返回 handle 后继续清理，read/quiet/退出、8-handle 原容量释放与新代次都撤销旧回调。原送达 claim 和每次只选 native/in-app 的规则保留；只有未报告显示的失败才可能沿原路径回退，一次已报告显示的迟到错误不再双弹。
+- `nativeFeedback` 区分 unconfirmed 与 reported。只从确切 owned `show` 回调报告，不从 `show()` 返回、isSupported、恢复 SQLite 或关闭卡片推权限成功。最新 attempt 的显示说明不被较旧回报覆盖；本地准备反馈期间若焦点/偏好变化，重新核对选择、不发过期原生提醒，撤销准备信息。设置页一处简短说明，native failure 原入口继续“检查系统设置、只试新提醒”，不加常驻大条/胶囊，不自动发送测试。
+- 显式 private storageEpoch 更换直接清理旧 record/summary/native handles/open request，等待原 owner 已有的 recovery preferences push，未添加读取/轮询。低代次/未归属 legacy 帧不寻址替代库；新 owner 用现有内存 epoch getter建立基线，不因首个合法新代次帧吞掉初始偏好。native open request 带确切代次；renderer storage 更换清掉 deferred request，native lookup 前后均核对。恢复后同 ID/revision 的记录不能借旧 OS 点击自动打开/已读，原 modal defer 和显式关闭语义保持。
+
+单位边界覆盖 timed-out→点击、unknown→后续明确 close、同步 click/show/close/failure、旧 attempt 的回报、已报显示后不双弹、prepare 时 focus 改变、health 与显式 storage 代次、更换期间旧点击/旧 show/旧 failed、modal-deferred request 与低代次/frame、静音/退出、原 human unread 独立。metadata 即使准备被取消也不假称“已提交”；UI 不显示“权限已获准”。业务不等通知，原模型/账号/发送/批量链不变。
+
+最终 `native-lifecycle-focused-review.log`、`native-lifecycle-full-regression-final.log`（328 files、3147 passed、1 skipped）、`native-lifecycle-build-final.log`、`native-lifecycle-typecheck-final.log`、`native-lifecycle-dead-code-final.log`。新增 verifier 使用 actual compiled private worker、真实 worker exit/VACUUM backup restore与 renderer store，但 native 是明确的 synthetic callbacks，不冒充系统：旧 Windows retained callback/open request 被撤销，新数据原恢复偏好允许 fresh delivery，click/close/show 不自动已读或跑业务。32 类 Node/macOS Electron as-node 的 `native-lifecycle-verification-matrix-final.log` 在本次 build 后顺序跑完，所有 compiled main hashes 前后不变；另有隔离 Electron quit 和原 MCP/channel smoke。没有真 OS permission/DND/sound/display 验收。
+
+纯 preview `nativeFeedback=unconfirmed|reported` 只捎带模拟回报字段。真实 CUA 在 984×554 浅色与实际 320×600 暗色检查设置说明、长文换行与 scroll bounds，没有触碰系统开关/声音/权限；截图/DOM/logs 在 `ui/native-lifecycle-*.png`、`ui/native-lifecycle-audit.json`。没有 CSS 或布局结构改动，不能称全页面/双平台实机已通过。自建 tab、viewport/media、纯 preview 服务清理；`protected-native-lifecycle-audit.json` 核对两保护树逐文件/HEAD/porcelain/binary diff 与四个已有删除。fixture finally 只清理自己目录、线程和连接。仅本地提交，未 push、发布、安装、重启用户软件/Cursor或运行真实模型/账号/OS 通知。
+
+**完整目标仍 active，未完成**：契约和隔离回调证明不等于 Windows/macOS 正式签名包的实际权限、横幅、声音、勿扰和启动身份验收。原生长期 claim 容量/旧格式混合身份、任意原库/队列恢复组合、完整布局/长期容量与正式包仍继续。没有可观测回报不能按超时或沉默猜 permission denied；不得把本批 native contract 修复当整套完成。

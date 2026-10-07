@@ -93,4 +93,22 @@ describe('explicit native click opens exact ledger content, never a saved busine
     expect(document.querySelector('.notification-panel')?.textContent).toContain('这条通知已归档或清理')
     expect(api.readNotification).not.toHaveBeenCalled(); expect(navigate).not.toHaveBeenCalled(); expect(ledger.page().summary.unread).toBe(1)
   })
+  it('a native click from an older private ledger cannot open an equal-ID/revision replacement', async () => {
+    vi.mocked(api.getNotificationPage).mockImplementation(async query => ({ ...ledger.page(query), storageEpoch: 1 }))
+    await act(async () => push({ health: 'ready', historyIncomplete: true, storageEpoch: 1, historyReload: true }))
+    await act(async () => push({ health: 'ready', historyIncomplete: true, storageEpoch: 1,
+      openRequested: { token: 'old-ledger-native', key: record.key, recordId: record.id, revision: record.revision, storageEpoch: 0 } }))
+    expect(document.querySelector('.notification-panel')).toBeNull(); expect(api.readNotification).not.toHaveBeenCalled(); expect(navigate).not.toHaveBeenCalled()
+  })
+  it('a modal-deferred native request is cleared when storage changes rather than opening current data after the modal closes', async () => {
+    const modal = document.createElement('section'); modal.setAttribute('role', 'dialog'); modal.setAttribute('aria-modal', 'true'); document.body.append(modal)
+    try {
+      await act(async () => { window.dispatchEvent(new Event('focus')); await vi.advanceTimersByTimeAsync(0) })
+      await open('deferred-before-epoch')
+      vi.mocked(api.getNotificationPage).mockImplementation(async query => ({ ...ledger.page(query), storageEpoch: 1 }))
+      await act(async () => push({ health: 'ready', historyIncomplete: true, storageEpoch: 1, historyReload: true }))
+      modal.remove(); await act(async () => { window.dispatchEvent(new Event('focus')); await vi.advanceTimersByTimeAsync(0) })
+      expect(document.querySelector('.notification-panel')).toBeNull(); expect(api.readNotification).not.toHaveBeenCalled()
+    } finally { modal.remove() }
+  })
 })

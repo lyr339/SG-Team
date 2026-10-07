@@ -43,7 +43,11 @@ export function NotificationPreferencesPanel({ store }: { store: NotificationSto
     </section>
     <section aria-labelledby="notification-native-heading"><h3 id="notification-native-heading">离开拾光时</h3>
       {flag('nativeEnabled', '系统通知', '仅在拾光不处于前台时使用，不与应用内提醒重复。', !preferences.enabled || snapshot.delivery?.nativeSupported === false)}
-      <p className="notification-preferences__note">{snapshot.delivery?.nativeSupported === false ? '当前运行环境不支持系统通知。' : '是否显示还取决于系统权限和勿扰设置；开启不会立即发送测试通知。'}</p>
+      <p className="notification-preferences__note">{snapshot.delivery?.nativeSupported === false ? '当前运行环境不支持系统通知。'
+        : snapshot.delivery?.state === 'failed' ? '是否显示还取决于系统权限和勿扰设置；通知记录仍会保留。'
+          : snapshot.delivery?.nativeFeedback === 'unconfirmed' ? '最近一条系统提醒的显示尚未确认；通知记录仍在中心。'
+            : snapshot.delivery?.nativeFeedback === 'reported' ? '最近一次显示已收到系统回执；横幅和声音仍遵循系统设置。'
+              : '是否显示还取决于系统权限和勿扰设置；开启不会立即发送测试通知。'}</p>
       {snapshot.delivery?.message ? <p className="notification-preferences__feedback" role="status">{snapshot.delivery.message}</p> : null}
       {snapshot.delivery?.state === 'failed' ? <p className="notification-preferences__note">排除问题后，可关闭再开启系统通知；只尝试新的提醒，不重发旧结果。</p> : null}
       {flag('sound', '系统通知声音', '默认静音；仍遵循系统声音和勿扰设置。', !preferences.enabled || !preferences.nativeEnabled)}

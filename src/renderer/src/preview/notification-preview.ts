@@ -9,6 +9,7 @@ import { DEFAULT_NOTIFICATION_PREFERENCES, normalizeNotificationPreferences, not
 export function createNotificationPreview() {
   const records = new Map<string, NotificationRecord>(); const listeners = new Set<(event: NotificationPush) => void>()
   const scenario = new URLSearchParams(window.location.search).get('notifications')
+  const nativeFeedback = new URLSearchParams(window.location.search).get('nativeFeedback')
   let history: NotificationHistoryIntegrity = scenario?.startsWith('history') ? { revision: 1, acknowledgedRevision: 0, latestGapId: '11111111-1111-4111-8111-111111111111', observedAt: Date.now() - 120_000 } : { revision: 0, acknowledgedRevision: 0 }
   let revision = 0; let preferences = structuredClone(DEFAULT_NOTIFICATION_PREFERENCES)
   let delayedPage: (() => void) | undefined, heldSecondPage = false
@@ -60,7 +61,7 @@ export function createNotificationPreview() {
     const reset = query.cursor !== undefined && query.cursor.revision !== revision
     const offset = reset ? 0 : query.cursor?.offset ?? 0; const limit = query.limit ?? 30
     const result: NotificationPage = { records: structuredClone(rows.slice(offset, offset + limit)), summary: summary(query), reset, health: 'ready', historyIncomplete: history.revision > 0, historyIntegrity: structuredClone(history), historyGapUnconfirmed: false,
-      delivery: { nativeSupported: true, state: 'ready' }, // Pure preview capability; never calls Electron or system settings.
+      delivery: { nativeSupported: true, state: 'ready', ...(nativeFeedback === 'reported' || nativeFeedback === 'unconfirmed' ? { nativeFeedback } : {}) }, // Pure preview capability/fixture event, never Electron or OS settings.
       ...(rows.length > offset + limit ? { nextCursor: { revision, offset: offset + limit } } : {}) }
     if (scenario === 'center-race' && query.cursor && !heldSecondPage) {
       heldSecondPage = true

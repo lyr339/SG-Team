@@ -54,4 +54,11 @@ describe('precise notification settings with real persistent preferences', () =>
     expect(control('系统通知').disabled).toBe(true); expect(host.textContent).toContain('当前运行环境不支持系统通知')
     expect(api.saveNotificationPreferences).not.toHaveBeenCalled()
   })
+  it('separates native submission from its display callback without asserting permission or playing a test sound', async () => {
+    await act(async () => store.accept({ health: 'ready', historyIncomplete: false, delivery: { nativeSupported: true, state: 'ready', nativeFeedback: 'unconfirmed' } }))
+    expect(host.textContent).toContain('显示尚未确认')
+    await act(async () => store.accept({ health: 'ready', historyIncomplete: false, delivery: { nativeSupported: true, state: 'ready', nativeFeedback: 'reported' } }))
+    expect(host.textContent).toContain('显示已收到系统回执'); expect(host.textContent).not.toContain('权限已获准')
+    expect(api.saveNotificationPreferences).not.toHaveBeenCalled()
+  })
 })

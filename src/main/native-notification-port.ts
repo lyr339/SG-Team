@@ -9,8 +9,14 @@ export function createNativeNotificationPort(platform: NodeJS.Platform = process
       const notification = new Notification({ ...content, timeoutType: 'default' })
       notification.once('click', callbacks.clicked)
       notification.once('failed', callbacks.failed)
-      notification.once('close', callbacks.closed)
-      notification.show()
+      notification.once('show', callbacks.shown)
+      notification.on('close', details => {
+        if (platform !== 'win32') { callbacks.closed('dismissed'); return }
+        const reason = details && typeof details === 'object' ? details.reason : undefined
+        callbacks.closed(reason === 'timedOut' ? 'timed-out' : reason === 'userCanceled' ? 'dismissed' : reason === 'applicationHidden' ? 'programmatic' : 'unknown')
+      })
+      try { notification.show() }
+      catch (error) { notification.removeAllListeners(); try { notification.close() } catch {}; throw error }
       return { close: () => { notification.removeAllListeners(); notification.close() } }
     }
   }

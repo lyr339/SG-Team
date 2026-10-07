@@ -54,6 +54,76 @@ describe('native versus in-app election backed by real private ledger', () => {
       h.native.show.mock.calls[0]![1].closed(); expect(h.ledger.page().summary.unread).toBe(1)
     } finally { await h.close() }
   })
+  it('a Windows banner timing out leaves its Action Center click actionable, rather than equating banner close to removal', async () => {
+    const h = await harness({ nativeEnabled: true })
+    try {
+      await h.offer()
+      const callbacks = h.native.show.mock.calls[0]![1]
+      ;(callbacks.closed as (reason: string) => void)('timed-out')
+      callbacks.clicked()
+      expect(h.openWindow).toHaveBeenCalledOnce()
+      expect(h.ledger.page().summary.unread).toBe(1)
+    } finally { await h.close() }
+  })
+  it('a show() return is not an OS display receipt or human reading; only the latest owned show callback reports display', async () => {
+    const h = await harness({ nativeEnabled: true })
+    try {
+      await h.offer(); expect(h.delivery.status()).toMatchObject({ nativeSupported: true, state: 'ready', nativeFeedback: 'unconfirmed' })
+      await h.offer(draft({ key: 'latest:native' }))
+      h.native.show.mock.calls[0]![1].shown(); expect(h.delivery.status().nativeFeedback).toBe('unconfirmed')
+      h.native.show.mock.calls[1]![1].shown(); expect(h.delivery.status().nativeFeedback).toBe('reported')
+      expect(h.ledger.page().summary.unread).toBe(2)
+    } finally { await h.close() }
+  })
+  it('synchronous click/show are owned before the adapter returns, and a synchronous definite close prevents later callbacks', async () => {
+    const h = await harness({ nativeEnabled: true }), closed = vi.fn()
+    try {
+      h.native.show.mockImplementationOnce((_content, callbacks) => { callbacks.shown(); callbacks.clicked(); return { close: closed } })
+      await h.offer(); expect(h.openWindow).toHaveBeenCalledOnce(); expect(h.delivery.status().nativeFeedback).toBe('reported')
+      h.native.show.mockImplementationOnce((_content, callbacks) => { callbacks.closed('dismissed'); return { close: closed } })
+      await h.offer(draft({ key: 'sync:closed' })); h.native.show.mock.calls[1]![1].clicked(); h.native.show.mock.calls[1]![1].failed()
+      expect(closed).toHaveBeenCalledOnce(); expect(h.openWindow).toHaveBeenCalledOnce(); expect(h.delivery.status().state).toBe('ready')
+    } finally { await h.close() }
+  })
+  it('read/quiet/disposal and private storage recovery invalidate retained Windows callbacks without changing human unread', async () => {
+    const h = await harness({ nativeEnabled: true }), closed = vi.fn()
+    h.native.show.mockImplementation((_content, _callbacks) => ({ close: closed }))
+    try {
+      await h.offer(); const old = h.native.show.mock.calls[0]![1]
+      old.closed('timed-out'); h.replay({ health: 'degraded', historyIncomplete: true }); old.clicked(); old.shown(); old.failed()
+      expect(h.openWindow).not.toHaveBeenCalled(); expect(closed).toHaveBeenCalledOnce(); expect(h.ledger.page().summary.unread).toBe(1)
+      h.replay({ health: 'ready', historyIncomplete: true, historyReload: true }); await h.offer(draft({ key: 'new:after:storage' }))
+      const current = h.native.show.mock.calls[1]![1]; await h.owner.savePreferences({ quiet: true }); current.clicked(); current.failed()
+      expect(h.openWindow).not.toHaveBeenCalled(); expect(h.delivery.status().state).toBe('ready')
+    } finally { await h.close() }
+  })
+  it('a real preference/focus change during local feedback cannot leak a native send from the previous election', async () => {
+    const h = await harness({ nativeEnabled: true })
+    const stop = h.delivery.subscribe(event => { if (event.delivery?.nativeFeedback === 'unconfirmed') h.setForeground(true) })
+    try {
+      await h.offer(); expect(h.native.show).not.toHaveBeenCalled(); expect(h.outputs.filter(event => event.announcement)).toHaveLength(1)
+      expect(h.delivery.status().nativeFeedback).toBeUndefined()
+    } finally { stop(); await h.close() }
+  })
+  it('a higher explicit private epoch invalidates Action Center callbacks even without a health failure; late lower frames cannot undo it', async () => {
+    const h = await harness({ nativeEnabled: true })
+    try {
+      await h.offer(); const old = h.native.show.mock.calls[0]![1]
+      old.closed('timed-out')
+      h.replay({ health: 'ready', historyIncomplete: true, historyReload: true, storageEpoch: 1, preferences: await h.owner.preferences() })
+      old.clicked(); old.shown(); old.failed(); expect(h.openWindow).not.toHaveBeenCalled(); expect(h.delivery.status().nativeFeedback).toBeUndefined()
+      h.replay({ health: 'ready', historyIncomplete: true, storageEpoch: 0 }); old.clicked(); expect(h.openWindow).not.toHaveBeenCalled()
+    } finally { await h.close() }
+  })
+  it('a late failure after a genuine display callback is disclosed but cannot duplicate it as an in-app toast', async () => {
+    const h = await harness({ nativeEnabled: true })
+    try {
+      await h.offer(); const callback = h.native.show.mock.calls[0]![1]
+      callback.shown(); callback.failed(); await h.delivery.flush(); await Promise.resolve()
+      expect(h.outputs.filter(event => event.announcement)).toHaveLength(0)
+      expect(h.delivery.status().state).toBe('failed'); expect(h.ledger.page().summary.unread).toBe(1)
+    } finally { await h.close() }
+  })
   it('foreground wins even with native on, and delayed signal forwarding never replaces a global 3-record badge with a key-filtered count', async () => {
     const h = await harness({ nativeEnabled: true })
     try {

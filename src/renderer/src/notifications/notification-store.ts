@@ -51,7 +51,7 @@ export class NotificationStore {
     if (!Number.isSafeInteger(epoch) || epoch < 0 || this.state.storageEpoch !== undefined && epoch < this.state.storageEpoch) return false
     if (epoch !== this.state.storageEpoch) {
       if (this.state.storageEpoch !== undefined || epoch > 0) { ++this.storageVersion; ++this.preferencesEpoch }
-      this.state = { ...this.state, storageEpoch: epoch, toasts: [], ...(this.state.storageEpoch !== undefined || epoch > 0 ? { historyIntegrity: undefined, historyGapUnconfirmed: true, preferencesReady: false } : {}) }
+      this.state = { ...this.state, storageEpoch: epoch, toasts: [], ...(this.state.storageEpoch !== undefined || epoch > 0 ? { historyIntegrity: undefined, historyGapUnconfirmed: true, preferencesReady: false, openRequested: undefined } : {}) }
       this.recentRecords.clear(); this.announced.clear()
     }
     return true

@@ -164,8 +164,10 @@ export interface NotificationPush {
   openRequested?: NotificationOpenRequest
   announcement?: { id: string; expiresAt: number; signal?: 'connection' | 'reply'; group?: { source: string; title: string; detail: string; tone?: NotificationTone; target?: NotificationTarget; recordIds: string[] } }
 }
-export interface NotificationDeliveryStatus { nativeSupported: boolean; state: 'ready' | 'unsupported' | 'failed'; message?: string }
-export interface NotificationOpenRequest { token: string; key: string; recordId: string; revision: number; grouped?: boolean }
+export interface NotificationDeliveryStatus { nativeSupported: boolean; state: 'ready' | 'unsupported' | 'failed'; message?: string;
+  /** Toolkit callback evidence only, not OS permission/DND, sound or human reading. */
+  nativeFeedback?: 'unconfirmed' | 'reported' }
+export interface NotificationOpenRequest { token: string; key: string; recordId: string; revision: number; grouped?: boolean; storageEpoch?: number }
 export interface NotificationSessionPreference { scope: NotificationScope; mode: 'focus' | 'quiet' }
 export interface NotificationGroupPresentation {
   keys: string[]

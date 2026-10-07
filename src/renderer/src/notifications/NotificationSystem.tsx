@@ -57,12 +57,14 @@ function NotificationEntry({ store, workspaceId, onNavigate, onAvailable, onSnoo
   useEffect(() => {
     const request = snapshot.openRequested
     if (!request || consumedNativeOpen.current === request.token || blockingDialog || document.querySelector('[role="dialog"][aria-modal="true"]')) return
+    if ((request.storageEpoch ?? 0) !== (snapshot.storageEpoch ?? 0)) { consumedNativeOpen.current = request.token; return }
     consumedNativeOpen.current = request.token
     const epoch = ++toastEpoch.current
     let active = true, applied = false
     setOpen(true); setFocusRecord(undefined); setNavigationError(''); setNativeOpenToken(request.token)
     void store.api.getNotificationPage({ key: request.key, limit: 1 }).then(page => {
       if (!active || toastEpoch.current !== epoch) return
+      if ((page.storageEpoch ?? 0) !== (request.storageEpoch ?? 0) || (store.snapshot().storageEpoch ?? 0) !== (request.storageEpoch ?? 0)) { applied = true; setNavigationError('通知历史已换代。这条系统提示对应旧记录，请在中心查看当前结果。'); return }
       applied = true
       const record = page.records.find(record => record.id === request.recordId)
       if (!record) { setNavigationError('这条通知已归档或清理。其他保存记录仍可查看。'); return }
@@ -75,7 +77,7 @@ function NotificationEntry({ store, workspaceId, onNavigate, onAvailable, onSnoo
       // An explicit user close increments the epoch and intentionally consumes it.
       if (!applied && toastEpoch.current === epoch && consumedNativeOpen.current === request.token) consumedNativeOpen.current = ''
     }
-  }, [snapshot.openRequested, blockingDialog, store])
+  }, [snapshot.openRequested, snapshot.storageEpoch, blockingDialog, store])
   useLayoutEffect(() => {
     if (!open) return
     const place = (): void => {
