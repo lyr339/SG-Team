@@ -9,6 +9,7 @@ describe('target-specific distribution contract', () => {
       expect(pkg.scripts[key]).not.toContain('electronDist=node_modules/electron/dist')
     }
     expect(pkg.scripts['pack:mac']).toContain('--mac --arm64')
+    expect(pkg.scripts['pack:mac']).not.toContain('electronDist=node_modules/electron/dist')
   })
   it('keeps the Windows shortcut/application identity consistent and includes the actual notification worker, preload and renderer', () => {
     expect(pkg.build.appId).toBe('app.shiguang.team')
