@@ -90,7 +90,7 @@ export const CURSOR_PROCESS_BINDING_NAME = 'sgTeamProcess'
  * v36：兼容 3.21.12 InteractionQuery 产生的不带 toolCall 的 ask_question 气泡，以及 createPlanToolCall。
  * base64 与 Cursor 落盘行为一致地不携带；文件是持久事实源。
  */
-export const CURSOR_STREAM_HOOK_VERSION = 36
+export const CURSOR_STREAM_HOOK_VERSION = 37
 const RETRY_BASE_MS = 5_000
 const RETRY_MAX_MS = 60_000
 const ATTACH_TIMEOUT_MS = 8_000
@@ -1114,12 +1114,21 @@ export const CURSOR_STREAM_HOOK_EXPRESSION = `(() => {
         try {
           const data = service?.getComposerDataIfLoaded?.(id)
           // 独立 usage binding：过程块裁剪/过滤不会吞掉计数。
+          let usageEmission
+          let usageStage = 'extract'
           try {
             const usage = (${nativeUsagePayload.toString()})(data, id)
-            if (usage && globalThis.${CURSOR_USAGE_BINDING_NAME}) globalThis.${CURSOR_USAGE_BINDING_NAME}(JSON.stringify(usage))
-          } catch (usageError) { /* 计数链路异常不阻断过程流 */ }
+            if (usage) {
+              usageStage = 'emit'
+              if (typeof globalThis.${CURSOR_USAGE_BINDING_NAME} === 'function') globalThis.${CURSOR_USAGE_BINDING_NAME}(JSON.stringify(usage))
+              else usageEmission = { version: 1, reason: 'emit' }
+            }
+          } catch (usageError) { usageEmission = { version: 1, reason: usageStage } }
           const snapshot = processSnapshot(data, id)
           if (!snapshot) continue
+          // Only whitelist metadata, carried by the SAME original process frame.
+          // No retry, extra binding or callback; payload absence alone is normal waiting.
+          if (usageEmission) snapshot.usageEmission = usageEmission
           const now = Date.now()
           // 终结/等待帧永远全量：回合边界语义与逐帧全量逐位一致。
           const terminal = snapshot.isGenerating !== true
@@ -1725,6 +1734,17 @@ export class CursorStreamObserver {
           const raw = JSON.parse(params.payload) as Record<string, unknown>
           const composerId = typeof raw.composerId === 'string' ? raw.composerId.trim().slice(0, 120) : ''
           if (composerId) {
+            if (this.hookVerified && typeof params.executionContextId === 'number' && this.usageContexts.has(params.executionContextId)) {
+              const emission = raw.usageEmission
+              if (emission && typeof emission === 'object' && !Array.isArray(emission)) {
+                const hint = emission as Record<string, unknown>
+                if (hint.version === 1 && Object.keys(hint).every(key => ['version', 'reason'].includes(key)) && (hint.reason === 'extract' || hint.reason === 'emit')) {
+                  let receipt: UsageBindingReceipt | undefined
+                  try { receipt = this.usageObserver?.begin(composerId); receipt?.complete({ state: 'failed', reason: hint.reason }) }
+                  catch { try { if (receipt) receipt.unavailable(); else this.usageObserver?.unavailable() } catch { /* Never fail the original process callback. */ } }
+                }
+              }
+            }
             const statusLine = parseCursorStatusLine(raw.statusLine)
             const composerStatus = typeof raw.composerStatus === 'string' && raw.composerStatus
               ? raw.composerStatus.slice(0, 40)

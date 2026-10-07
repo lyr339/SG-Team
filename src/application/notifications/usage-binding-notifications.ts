@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { TeamControlSnapshot } from '../../domain/team-control'
-import type { UsageBindingObserver, UsageBindingReceipt } from '../../domain/usage-binding-observation'
+import type { UsageBindingObserver, UsageBindingReceipt, UsageBindingFailureReason } from '../../domain/usage-binding-observation'
 import { readUsageBindingState, reduceUsageBindingNotifications, type UsageBindingInput, type UsageBindingState } from '../../domain/usage-binding-notification'
 import type { NotificationService } from '../notification-service'
 import { NotificationProjectionSource } from './projection-source'
@@ -23,7 +23,7 @@ export class UsageBindingNotifications implements UsageBindingObserver {
   private teamScope?: string
   private scopeRef: UsageBindingInput['scopeRef'] = {}
   private bindings = new Map<string, { identity: string; channel: string }>()
-  private readonly candidates = new Map<string, { reason: 'record' | 'callback'; firstAt: number; lastAt: number; id: string }>()
+  private readonly candidates = new Map<string, { reason: UsageBindingFailureReason; firstAt: number; lastAt: number; id: string }>()
   private readonly affected = new Map<string, string>()
   constructor(private readonly owner: NotificationService, private readonly now: () => number = Date.now) {
     this.source = new NotificationProjectionSource(owner, readUsageBindingState, reduceUsageBindingNotifications, input => JSON.stringify([
@@ -78,7 +78,7 @@ export class UsageBindingNotifications implements UsageBindingObserver {
       try {
         const at = this.now()
         if (!Number.isSafeInteger(at) || at < 0 || at > 8_640_000_000_000_000) { this.unavailable(); return }
-        if (!['ready', 'waiting', 'failed'].includes(result.state) || result.state === 'failed' && !['record', 'callback'].includes(result.reason)) { this.unavailable(); return }
+        if (!['ready', 'waiting', 'failed'].includes(result.state) || result.state === 'failed' && !['record', 'callback', 'extract', 'emit'].includes(result.reason)) { this.unavailable(); return }
         if (this.baselinePending) { this.source.quietNextObservation(); this.baselinePending = false }
         if (result.state === 'failed') {
           const old = this.candidates.get(binding.identity)

@@ -705,3 +705,19 @@ source checkpoint v2 每个既有身份仅增加一个 `~` 前缀表示“已检
 保护报告 `protected-queue-boundary-audit.json` 比较两原树逐文件/HEAD/porcelain/binary diff，四个既有删除保持；自己的 fixtures finally 精确清理。只本地提交，不 push、发版、安装或重启用户软件/Cursor。
 
 **完整目标仍未完成**：本批不声称能无损恢复被旧版裁切的身份、没被任何原查询观察到的窗口外变化、任意原库重建/换库或全部容量组合；真实 Cursor 原库恢复重核、未发 usage/MCP 校验前归属、全布局/长期容量/正式包与 Windows/macOS 实际权限/声音/勿扰/送达仍按原完整要求继续。
+
+## 第三十八批 · 用量载荷发出前的白名单诊断
+
+实际 embedded hook 的 VM 复现见 `usage-emission-reproduction.log`：原 `nativeUsagePayload` 的 getter 抛错、原 usage binding 缺失/不可调用或原 emitter 抛错时，没有 usage payload，原 receiver observer 因此无法知道。三条失败回归保留；正常没有正计数/generation 的等待作为正向对照，不被误报源失败。
+
+本批只扩展原过程帧：hook v37 在自己的原 usage try 内记录 `extract | emit` 两种白名单原因，只有原 `processSnapshot` 仍可生成时才捎带 `{version:1,reason}`。没有额外 binding、CDP evaluate/探测、model 请求、timer、载荷重发、读取或计数回调；原写后顺序与原过程节流/裁切继续。没有复制异常文本、路径、模型、generation、计数、参数或答案。没有过程帧/没有合法字段本身仍不是失败证据，不据静默推测额度或账单。
+
+桌面只在当前已验证 hook、仍存活的主世界 executionContext 和既有真实 Composer 绑定一致时接入。额外字段/未知 version/reason、旧 context、无绑定 Composer 不被强挂当前账号或席位。原 `onProcessEvent` 参数和原 usage parser/callback 保持；metadata observer 失败不阻断原 process consumer。新增原因进入原 UsageBindingNotifications 的五秒、两次同类异常候选和一条绑定范围 episode，没有另造一套故障引擎/存储表。提示区分“未能提取”“未确认发出”和既有“接收验证/回调未返回”。新 wording 描述整条链的未确认步骤，不把未发送假称为接收器抛错。
+
+正常 process 帧、空/零/legacy 用量帧、另一成员或新文档不能关闭旧问题；只有同绑定/同文档可验证的原 usage payload 且原回调返回，才沿原确认机制安静收束。计数可能仍是估算，这条只确认本机入口，不补账、不保证落盘或官方账单。Scope/wake/storageEpoch/CAS/失去 ACK 和退出静音继续使用既有边界。
+
+最终证据：`usage-emission-typecheck-final.log`、`usage-emission-build-final.log`、`usage-emission-dead-code-final.log` 和 `usage-emission-full-regression-final.log`（322 files、3075 passed、1 skipped）；focused receiver/hook 回归另与原 cursor-stream tests 一起通过。`usage-emission-verification-matrix-final.log` 为 27 类 Node/macOS Electron as-node fixtures 使用当前 compiled private worker、隔离 quit 和原 MCP/channel smoke。新 verifier 执行真正的 embedded JS hook 于 isolated VM，并把原 process/usage 帧送入原 CursorStreamObserver，再经真实 worker 检验诊断/恢复、原 callback/计数不改变、CDP 命令不增、无 raw 内容复制。不是实际 Cursor 页面、生产 main、Windows OS 权限或系统送达验收。
+
+`protected-usage-emission-audit.json` 保存两原树逐文件/HEAD/porcelain/binary diff 与四个既有删除核对；自身 fixture 目录精确清理，没有 preview tabs/server。仅本地提交，未 push、发布、安装、重启用户软件/Cursor 或运行真实模型/账号/OS 通知。
+
+**完整目标仍未完成**：MCP runtime/校验前无可信主体的诊断仍待接入，本批没有把普通拒绝改成写失败或猜 Agent；整条过程帧也无法产生/传输时的未知来源、旧格式丢失身份和真实 Cursor 原库恢复重核、全布局/长期容量/正式包及 Windows/macOS 真权限/声音/勿扰/送达仍按原完整范围继续，不把此 producer 补口当整套完成。

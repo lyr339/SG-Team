@@ -1,7 +1,7 @@
 import { validateNotificationDraft, type NotificationDraft, type NotificationScope } from './notification'
-import type { UsageBindingResult } from './usage-binding-observation'
+import type { UsageBindingResult, UsageBindingFailureReason } from './usage-binding-observation'
 
-type Cause = { identity: string; channel: string; reason: 'record' | 'callback' }
+type Cause = { identity: string; channel: string; reason: UsageBindingFailureReason }
 export interface UsageBindingInput {
   key: string; scope?: string; scopeRef: Pick<NotificationScope, 'workspaceId' | 'runId'>; id: string; at: number
   fact: { state: 'scope' } | UsageBindingResult & { identity: string; channel: string; confirmationFor?: string }
@@ -21,7 +21,7 @@ export function readUsageBindingState(value: unknown, key: string): UsageBinding
       || !/^usage-binding:[a-f0-9]{64}$/.test(episode.key) || !hash(episode.scope) || !scopeRef(episode.scopeRef)
       || typeof episode.monitoring !== 'boolean' || episode.monitoring && episode.scope !== state.scope
       || !Array.isArray(episode.causes) || episode.causes.length > 128 || new Set(episode.causes.map(c => c?.identity)).size !== episode.causes.length
-      || episode.causes.some(c => !c || !hash(c.identity) || !/^\d{1,12}$/.test(c.channel) || !['record', 'callback'].includes(c.reason)))) throw Error('写后用量通知检查点无效')
+      || episode.causes.some(c => !c || !hash(c.identity) || !/^\d{1,12}$/.test(c.channel) || !['record', 'callback', 'extract', 'emit'].includes(c.reason)))) throw Error('写后用量通知检查点无效')
   return state
 }
 export function reduceUsageBindingNotifications(previous: UsageBindingState | undefined, input: UsageBindingInput, baseline: boolean, revision: number) {
@@ -29,7 +29,7 @@ export function reduceUsageBindingNotifications(previous: UsageBindingState | un
   if (!hash(input.id) || input.scope !== undefined && !hash(input.scope) || !scopeRef(input.scopeRef) || !Number.isSafeInteger(input.at) || input.at < 0
     || !['scope', 'ready', 'waiting', 'failed'].includes(fact.state) || fact.state !== 'scope' && (!hash(fact.identity) || !/^\d{1,12}$/.test(fact.channel))
     || fact.state !== 'scope' && fact.confirmationFor !== undefined && !hash(fact.confirmationFor)
-    || fact.state === 'failed' && !['record', 'callback'].includes(fact.reason)) throw Error('写后用量来源无效')
+    || fact.state === 'failed' && !['record', 'callback', 'extract', 'emit'].includes(fact.reason)) throw Error('写后用量来源无效')
   const state: UsageBindingState = { ...(previous ?? { version: 1, key: input.key }) }, drafts: NotificationDraft[] = []
   const draft = (phase: 'failed' | 'ready' | 'unmonitored', fresh: boolean): NotificationDraft => {
     const episode = state.episode!, causes = [...episode.causes].sort((a, b) => Number(a.channel) - Number(b.channel))
@@ -39,8 +39,8 @@ export function reduceUsageBindingNotifications(previous: UsageBindingState | un
       subjectState: phase === 'failed' ? 'receive-unconfirmed' : phase === 'ready' ? 'receive-confirmed' : 'monitor-unconfirmed',
       title: phase === 'failed' ? '写后用量接收尚未确认' : phase === 'ready' ? '写后用量接收已返回确认'
         : input.scope ? '原写后用量监测已变化' : '暂未确认原写后用量监测',
-      detail: phase === 'failed' ? `${causes.length} 个绑定来源的原接收流程曾连续报告异常：\n`
-        + causes.slice(0, 64).map(cause => `CH-${cause.channel} · ${cause.reason === 'record' ? '载荷无法验证' : '原计数回调没有正常返回'}`).join('\n')
+      detail: phase === 'failed' ? `${causes.length} 个绑定来源的原写后用量链路曾连续出现未确认步骤：\n`
+        + causes.slice(0, 64).map(cause => `CH-${cause.channel} · ${({ record: '载荷无法验证', callback: '原计数回调没有正常返回', extract: '页面未能提取原用量载荷', emit: '页面未确认原 binding 发出载荷' })[cause.reason]}`).join('\n')
         + (causes.length > 64 ? `\n另有 ${causes.length - 64} 个来源，请在原会话逐项核对。` : '')
         + '\n其他正常读数保持原流程；通知不会重放载荷、重试回调或更改统计。'
         : phase === 'ready' ? '此前受影响的绑定来源已重新收到可验证载荷，原回调也已返回。\n这只确认接收入口，不保证载荷已入账或落盘，不补回之前未确认的读数，也不证明官方账单。'
