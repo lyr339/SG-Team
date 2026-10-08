@@ -64,6 +64,11 @@ import { CursorUsageTracker, type BoundComposer } from '../application/cursor-us
 import type { TeamControlSnapshot } from '../domain/team-control'
 import { CursorUsageStore } from '../infrastructure/cursor/cursor-usage-store'
 import { registerCursorUsageIpc } from './register-cursor-usage-ipc'
+import { registerCursorProtocolIpc } from './register-cursor-protocol-ipc'
+import { CursorProtocolStore } from '../infrastructure/cursor/cursor-protocol-store'
+import { ProtocolExperimentService } from '../application/protocol-experiment-service'
+import { ProtocolExperimentCredentialResolver } from '../application/protocol-experiment-credential'
+import { registerProtocolExperimentIpc } from './register-protocol-experiment-ipc'
 import { CursorUpdatePreferencesStore } from '../infrastructure/cursor/cursor-update-preferences'
 import { registerCursorUpdateIpc } from './register-cursor-update-ipc'
 import { registerCursorStorageIpc } from './register-cursor-storage-ipc'
@@ -149,6 +154,7 @@ let disposeSessionWarmupIpc: (() => void) | undefined
 let disposeAccountAutomationIpc: (() => void) | undefined
 let disposeCdpKeeperIpc: (() => void) | undefined
 let disposeCursorUsageIpc: (() => void) | undefined
+let disposeCursorProtocolIpc: (() => void) | undefined
 let disposeCursorUpdateIpc: (() => void) | undefined
 let disposeCursorStorageIpc: (() => void) | undefined
 let disposeWindowChromeIpc: (() => void) | undefined
@@ -201,6 +207,7 @@ let taskNotificationSource: ReturnType<typeof connectTaskNotifications> | undefi
 let operatorMessageNotificationSource: ReturnType<typeof connectOperatorMessageNotifications> | undefined
 let teamOrchestrator: TeamOrchestrator | undefined
 let desktopDisposed = false
+let disposeProtocolExperimentIpc: (() => void) | undefined
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
 if (!hasSingleInstanceLock) app.quit()
@@ -931,6 +938,12 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   disposeSessionWarmupIpc = registerSessionWarmupIpc(sessionWarmupService, () => mainWindow)
   disposeCdpKeeperIpc = registerCdpKeeperIpc(cursorCdpKeeper, cursorCdpSettingsStore, () => mainWindow)
   disposeCursorUsageIpc = registerCursorUsageIpc(cursorUsageTracker, () => mainWindow)
+  disposeCursorProtocolIpc = registerCursorProtocolIpc(new CursorProtocolStore(join(app.getPath('userData'), 'cursor-protocol.json')), () => mainWindow)
+  const experimentDirectory = join(app.getPath('userData'), 'protocol-experiments')
+  const experimentCredentials = new ProtocolExperimentCredentialResolver(cursorAccountVault, new CursorDesktopTokenExchanger(), join(experimentDirectory, 'unused-endpoints.vscdb'))
+  const experimentService = new ProtocolExperimentService(experimentDirectory, { resolveCredential: accountId => experimentCredentials.resolve(accountId) })
+  const stopExperiment = registerProtocolExperimentIpc(experimentService, () => mainWindow)
+  disposeProtocolExperimentIpc = () => { stopExperiment(); experimentCredentials.clear() }
   disposeWorkspaceReviewIpc = registerWorkspaceReviewIpc(workspaceReviewReader, () => mainWindow, {
     // 工作区文件系统监听推送刷新信号；活动工作区切换时重绑。
     watchWorkspace: {
@@ -1161,6 +1174,8 @@ function disposeDesktopOnce(): void {
   disposeAccountAutomationIpc?.()
   disposeCdpKeeperIpc?.()
   disposeCursorUsageIpc?.()
+  disposeCursorProtocolIpc?.()
+  disposeProtocolExperimentIpc?.()
   disposeCursorUpdateIpc?.()
   disposeCursorStorageIpc?.()
   disposeWindowChromeIpc?.()

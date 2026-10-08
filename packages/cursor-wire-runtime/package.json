@@ -1,0 +1,25 @@
+{
+  "name": "@shiguang/cursor-wire-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "wire-client.mjs",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./wire-client.mjs"
+    },
+    "./store": {
+      "types": "./store.d.ts",
+      "import": "./wire-store.mjs"
+    },
+    "./types": {
+      "types": "./types.d.ts",
+      "import": "./wire-types.mjs"
+    }
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "1.10.0"
+  }
+}

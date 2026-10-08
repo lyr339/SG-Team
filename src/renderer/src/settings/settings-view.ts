@@ -150,6 +150,7 @@ interface ProcessingFeedback extends StatusFeedback {
 }
 
 export interface SettingsPageProps {
+  onOpenNativeWorkspace?: () => void
   accounts: CursorAccountMetadata[]
   busy: boolean
   notice?: SettingsNoticeMessage

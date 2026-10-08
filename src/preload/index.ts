@@ -155,6 +155,18 @@ const api: SgDesktopApi = {
     return () => ipcRenderer.removeListener(IPC.snapshot, handler)
   },
   getCursorUsageSnapshot: () => ipcRenderer.invoke(IPC.cursorUsageGet),
+  getCursorProtocolSnapshot: () => ipcRenderer.invoke(IPC.cursorProtocolGet),
+  importCursorProtocolCapture: () => ipcRenderer.invoke(IPC.cursorProtocolImport),
+  checkCursorProtocolQuota: () => ipcRenderer.invoke(IPC.cursorProtocolQuota),
+  getProtocolExperiments: () => ipcRenderer.invoke(IPC.protocolExperimentGet),
+  createProtocolExperiment: () => ipcRenderer.invoke(IPC.protocolExperimentCreate),
+  sendProtocolExperiment: input => ipcRenderer.invoke(IPC.protocolExperimentSend, input),
+  cancelProtocolExperiment: id => ipcRenderer.invoke(IPC.protocolExperimentCancel, id),
+  onProtocolExperiments: listener => {
+    const handler = (_event: Electron.IpcRendererEvent, snapshot: Parameters<typeof listener>[0]): void => listener(snapshot)
+    ipcRenderer.on(IPC.protocolExperimentSnapshot, handler)
+    return () => ipcRenderer.removeListener(IPC.protocolExperimentSnapshot, handler)
+  },
   getWorkspaceReview: (input) => ipcRenderer.invoke(IPC.workspaceReviewGet, input),
   getWorkspaceReviewFile: (input) => ipcRenderer.invoke(IPC.workspaceReviewFile, input),
   applyWorkspaceReviewAction: (input) => ipcRenderer.invoke(IPC.workspaceReviewApply, input),

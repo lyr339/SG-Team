@@ -10,6 +10,7 @@ import { SettingsMaintenance } from './SettingsMaintenance'
 import { SettingsCleanup } from './SettingsCleanup'
 import { SettingsStats } from './SettingsStats'
 import { SettingsUpdate } from './SettingsUpdate'
+import { SettingsProtocol } from './SettingsProtocol'
 import { useAppUpdateStatus } from '../UpdateReminder'
 import {
   SettingsAccountsIcon,
@@ -19,10 +20,11 @@ import {
   SettingsImportIcon,
   SettingsMaintenanceIcon,
   SettingsStatsIcon,
+  SettingsProtocolIcon,
   SettingsUpdateIcon
 } from './icons'
 
-export type SettingsGroupId = 'stats' | 'accounts' | 'import' | 'automation' | 'aozai' | 'maintenance' | 'cleanup' | 'update'
+export type SettingsGroupId = 'stats' | 'protocol' | 'accounts' | 'import' | 'automation' | 'aozai' | 'maintenance' | 'cleanup' | 'update'
 
 interface SettingsGroupDef {
   id: SettingsGroupId
@@ -33,6 +35,7 @@ interface SettingsGroupDef {
 
 const GROUPS = [
   { id: 'stats', label: '统计', description: '用量、成本与会话产出的全景', icon: SettingsStatsIcon },
+  { id: 'protocol', label: '协议', description: 'Cursor 的真实请求、模型参数与额度记账证据', icon: SettingsProtocolIcon },
   { id: 'accounts', label: '账号', description: '已保存的 Cursor 账号与当前活跃选择', icon: SettingsAccountsIcon },
   { id: 'import', label: '导入来源', description: 'Token 的获取方式与执行浏览器', icon: SettingsImportIcon },
   { id: 'automation', label: '自动化', description: '会话创建后的账号自动处理流程', icon: SettingsAutomationIcon },
@@ -79,7 +82,7 @@ export function SettingsPage(props: SettingsPageProps): React.JSX.Element {
   const active = GROUPS.find((def) => def.id === group) ?? GROUPS[0]
 
   return (
-    <div className="settings-page" role="region" aria-label="账号与 Cursor 配置">
+    <div className={`settings-page${group === 'protocol' ? ' settings-page--protocol' : ''}`} role="region" aria-label="账号与 Cursor 配置">
       <nav className="settings-nav" aria-label="设置分组">
         <p className="settings-nav__caption">设置</p>
         {GROUPS.map((def) => {
@@ -120,6 +123,7 @@ export function SettingsPage(props: SettingsPageProps): React.JSX.Element {
         {props.notice && group === (props.notice.section ?? 'accounts') ? <SettingsNotice message={props.notice} onDismiss={props.onDismissNotice} /> : null}
         <div className="settings-groups">
           <div hidden={group !== 'stats'}><SettingsStats {...props} active={group === 'stats'} /></div>
+          <div hidden={group !== 'protocol'}><SettingsProtocol active={group === 'protocol'} onAccounts={() => selectGroup('accounts')} onNative={props.onOpenNativeWorkspace} /></div>
           <div hidden={group !== 'accounts'} data-notification-page="account:accounts"><SettingsAccounts {...props} active={group === 'accounts'} onNavigateToImport={() => selectGroup('import')} /></div>
           <div hidden={group !== 'import'}><SettingsImportSource {...props} phase={phase} /></div>
           <div hidden={group !== 'automation'} data-notification-page="account:automation"><SettingsAutomation {...props} /></div>

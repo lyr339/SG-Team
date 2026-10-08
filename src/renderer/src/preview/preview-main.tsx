@@ -1,4 +1,5 @@
 import { FeedbackReview } from './feedback-review'
+import type { ProtocolExperimentSnapshot } from '../../../domain/protocol-experiment'
 import { reduceGroupEffects } from '../../../domain/group-effects-notification'
 import { observedMcpWrite } from '../../../domain/mcp-write-observation'
 import { reduceMcpWriteNotifications } from '../../../domain/mcp-write-notification'
@@ -18,6 +19,8 @@ import { reduceContextThresholdNotifications } from '../../../domain/context-thr
  * 仅供 preview.html 使用，不进入生产构建，不连接任何端口。
  */
 import { StrictMode } from 'react'
+import { parseProtocolCapture, type ProtocolSnapshot } from '../../../domain/cursor-protocol'
+import observedProtocolFixture from '../../../../tests/fixtures/cursor-protocol/observed-free.json'
 import { createNotificationPreview } from './notification-preview'
 import { reduceOperatorMessages } from '../../../domain/team-message-notification'
 import { operatorMessageNativeFields } from '../../../domain/operator-message-read'
@@ -77,6 +80,7 @@ import '../workspace-inspector.css'
 type Listener<T> = (snapshot: T) => void
 
 const previewParameters = new URLSearchParams(window.location.search)
+
 const pumpScene = previewParameters.get('pump')
 const setupMode = previewParameters.get('setup') === '1'
 const detectedWorkspaceMode = previewParameters.get('detectedWorkspace') === '1'
@@ -1458,7 +1462,35 @@ if (automationSceneRun?.operationId) {
   const draft = automationNotification(automationSceneRun, false, previewNow)
   if (draft) notificationPreview.offer(draft)
 }
+// Explicit preview data only: imports and quota checks here do not touch files,
+// credentials, Cursor or any network endpoint. These are actual research rows.
+const observedProtocol = parseProtocolCapture(observedProtocolFixture)
+let protocolPreview: ProtocolSnapshot = new URLSearchParams(window.location.search).get('protocol') === 'observed' ? { capture: observedProtocol } : {}
+let wirePreview: ProtocolExperimentSnapshot = { revision: 0, sessions: [] }
+const wirePreviewListeners = new Set<(value: ProtocolExperimentSnapshot) => void>()
+const wirePreviewPush = (): ProtocolExperimentSnapshot => { wirePreview.revision++; const value = structuredClone(wirePreview); for (const listener of wirePreviewListeners) listener(value); return value }
 const api: SgDesktopApi = {
+  getProtocolExperiments: async () => structuredClone(wirePreview),
+  onProtocolExperiments: listener => { wirePreviewListeners.add(listener); return () => wirePreviewListeners.delete(listener) },
+  createProtocolExperiment: async () => {
+    const time = Date.now()
+    wirePreview.sessions.push({ id: crypto.randomUUID(), backend: 'wire', accountId: 'preview-only', accountScope: 'a'.repeat(64), accountLabel: '界面预览 · 不连接账号', createdAt: time, updatedAt: time, modelId: 'default', state: 'ready', turns: 0, attempts: [] })
+    return wirePreviewPush()
+  },
+  sendProtocolExperiment: async input => {
+    const row = wirePreview.sessions.find(value => value.id === input.sessionId)!
+    if (row.attempts.length >= 3) throw new Error('该会话已达到 3 次发送上限。')
+    row.attempts.push({ id: crypto.randomUUID(), prompt: input.text, startedAt: Date.now(), endedAt: Date.now(), state: 'completed', text: '这是界面预览，没有发送模型请求。', thinking: '', ledgerNote: '预览不连接额度接口，也不模拟真实记账。', checkpointCount: 0, kvGets: 0, kvSets: 0 })
+    row.state = 'completed'; row.turns++; return wirePreviewPush()
+  },
+  cancelProtocolExperiment: async () => structuredClone(wirePreview),
+  getCursorProtocolSnapshot: async () => structuredClone(protocolPreview),
+  importCursorProtocolCapture: async () => { protocolPreview = { ...protocolPreview, capture: observedProtocol }; return structuredClone(protocolPreview) },
+  checkCursorProtocolQuota: async () => {
+    protocolPreview = { ...protocolPreview, quota: { checkedAt: Date.now(), accountScope: observedProtocol.records.at(-1)!.accountScope, source:'formal-profile', planName:'Free（预览读数，不连接账号）',
+      percentages:{auto:4,api:0,total:2}, receipts:observedProtocol.records.flatMap(row=>row.ledger?[row.ledger]:[]) } }
+    return structuredClone(protocolPreview)
+  },
   ...notificationPreview.api,
   listCursorAccounts: async () => structuredClone(previewCursorAccounts),
   saveCursorAccount: async ({ label, token }) => {

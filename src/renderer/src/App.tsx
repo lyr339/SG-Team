@@ -1191,6 +1191,7 @@ export function App(): React.JSX.Element {
   }, [acceptCollaboration, acceptSnapshot, acceptTaskPool, acceptTeamControl, handoffOptions])
 
   const accountPanel: SettingsPageProps = {
+    onOpenNativeWorkspace: () => changeModule('run'),
     accounts: cursorAccounts,
     busy: cursorAccountBusy,
     notice: cursorAccountNotice,

@@ -18,6 +18,10 @@ const stroke = {
   strokeLinejoin: 'round' as const
 }
 
+export function SettingsProtocolIcon(props: IconProps): React.JSX.Element {
+  return <Icon {...props}><path d="M7 4.5H4.5v15H7M17 4.5h2.5v15H17M8.5 8h7M8.5 12h7M8.5 16h4" {...stroke}/></Icon>
+}
+
 /** 设置页导航图标：与 UiIcons 同一笔画语言（24 视窗、圆角端点、currentColor）。 */
 
 export function SettingsAccountsIcon(props: IconProps): React.JSX.Element {

@@ -25,6 +25,8 @@ import type { CursorSwitchPumpOutcome, CursorSwitchPumpStatus } from '../domain/
 import type { NotificationOperationRequest } from '../domain/notification-reference'
 import type { CursorUpdatePreferences, CursorUpdateWriteResult } from '../domain/cursor-update'
 import type { CursorUsageSnapshot } from '../domain/cursor-usage'
+import type { ProtocolSnapshot } from '../domain/cursor-protocol'
+import type { ProtocolExperimentSnapshot, ProtocolExperimentSend } from '../domain/protocol-experiment'
 import type {
   CursorStorageCleanupRequest,
   CursorStorageCleanupResult,
@@ -505,6 +507,16 @@ export interface SgDesktopApi {
   onSnapshot(listener: (snapshot: DesktopSnapshot) => void): () => void
   /** 当前 TeamRun 的 Cursor 会话用量快照；结束冻结，下轮启动清零。 */
   getCursorUsageSnapshot(): Promise<CursorUsageSnapshot>
+  /** Read-only protocol diagnostics; no MCP, model request, switch or billing mutation. */
+  getCursorProtocolSnapshot?(): Promise<ProtocolSnapshot>
+  importCursorProtocolCapture?(): Promise<ProtocolSnapshot | undefined>
+  checkCursorProtocolQuota?(): Promise<ProtocolSnapshot>
+  /** Isolated experiments: only explicit send consumes normal quota; never replaces MCP/IDE sessions. */
+  getProtocolExperiments?(): Promise<ProtocolExperimentSnapshot>
+  createProtocolExperiment?(): Promise<ProtocolExperimentSnapshot>
+  sendProtocolExperiment?(input: ProtocolExperimentSend): Promise<ProtocolExperimentSnapshot>
+  cancelProtocolExperiment?(sessionId: string): Promise<ProtocolExperimentSnapshot>
+  onProtocolExperiments?(listener: (snapshot: ProtocolExperimentSnapshot) => void): () => void
   onCursorUsageSnapshot(listener: (snapshot: CursorUsageSnapshot) => void): () => void
   /** 当前活动工作区的真实 Git 工作树审查摘要；右栏打开时按需读取。 */
   getWorkspaceReview(input?: { scope?: WorkspaceReviewScope }): Promise<WorkspaceReviewSummary>
@@ -593,6 +605,14 @@ export const IPC = {
   appUpdateOpenReleasePage: 'app-update:open-release-page',
   appUpdateStatus: 'app-update:status',
   cursorUsageGet: 'cursor-usage:get',
+  cursorProtocolGet: 'cursor-protocol:get',
+  cursorProtocolImport: 'cursor-protocol:import',
+  cursorProtocolQuota: 'cursor-protocol:quota',
+  protocolExperimentGet: 'protocol-experiment:get',
+  protocolExperimentCreate: 'protocol-experiment:create',
+  protocolExperimentSend: 'protocol-experiment:send',
+  protocolExperimentCancel: 'protocol-experiment:cancel',
+  protocolExperimentSnapshot: 'protocol-experiment:snapshot',
   cursorUsageSnapshot: 'cursor-usage:snapshot',
   workspaceReviewGet: 'workspace-review:get',
   workspaceReviewFile: 'workspace-review:file',

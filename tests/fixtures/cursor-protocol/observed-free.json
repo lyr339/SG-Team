@@ -1,0 +1,2304 @@
+{
+  "format": "shiguang.cursor-protocol.v1",
+  "capturedAt": 1791377660483,
+  "cursorVersion": "3.21.12",
+  "records": [
+    {
+      "id": "1791376372654-turn-1",
+      "accountScope": "762206001162629c79cb5e764775e89f4766ca88e6141b93412f3a4f97e72db6",
+      "capturedAt": 1791376372654,
+      "conversationRef": "4a2bfbaf4291679d63226db3f73bd13c8ca8808ea5ae1fe318e9515b6a79a0c4",
+      "cursorVersion": "3.21.12",
+      "model": "grok-4.6",
+      "mode": "AGENT_MODE_ASK",
+      "parameters": [
+        {
+          "id": "effort",
+          "value": "medium"
+        },
+        {
+          "id": "fast",
+          "value": "false"
+        }
+      ],
+      "endpoint": "/agent.v1.AgentService/Run",
+      "transport": "HTTP/2 · Connect/protobuf",
+      "inputBasis": "unknown",
+      "outcome": "rejected",
+      "errorCode": "resource_exhausted",
+      "limitType": "included_usage",
+      "requestFrames": 1,
+      "responseFrames": 2,
+      "frames": [
+        {
+          "index": 0,
+          "kind": "message",
+          "flags": 0,
+          "bytes": 4,
+          "fields": [
+            "heartbeat"
+          ]
+        },
+        {
+          "index": 1,
+          "kind": "end",
+          "flags": 3,
+          "bytes": 1082,
+          "fields": []
+        }
+      ]
+    },
+    {
+      "id": "1791377501206-turn-2",
+      "accountScope": "9955f8d80e8e4a6c9dda68a1c6b400c4b823e4f86f08306c7d1ca33d020f8f3a",
+      "capturedAt": 1791377501206,
+      "conversationRef": "94929312e6eeedd598749794bd47263a76b84a98db9e146667a3642555b7026a",
+      "cursorVersion": "3.21.12",
+      "model": "grok-4.6",
+      "mode": "AGENT_MODE_ASK",
+      "parameters": [
+        {
+          "id": "effort",
+          "value": "medium"
+        },
+        {
+          "id": "fast",
+          "value": "false"
+        }
+      ],
+      "endpoint": "/agent.v1.AgentService/Run",
+      "transport": "HTTP/2 · Connect/protobuf",
+      "inputBasis": "total-including-cache",
+      "outcome": "success",
+      "requestFrames": 11,
+      "responseFrames": 25,
+      "usage": {
+        "input": 17886,
+        "output": 29,
+        "cacheRead": 512,
+        "cacheWrite": 0,
+        "reasoning": 28
+      },
+      "contextTokens": 17915,
+      "maxContextTokens": 256000,
+      "frames": [
+        {
+          "index": 0,
+          "kind": "message",
+          "flags": 0,
+          "bytes": 4,
+          "fields": [
+            "heartbeat"
+          ]
+        },
+        {
+          "index": 1,
+          "kind": "message",
+          "flags": 1,
+          "bytes": 2341,
+          "fields": [
+            "kv_server_message"
+          ]
+        },
+        {
+          "index": 2,
+          "kind": "message",
+          "flags": 1,
+          "bytes": 10894,
+          "fields": [
+            "kv_server_message"
+          ]
+        },
+        {
+          "index": 3,
+          "kind": "message",
+          "flags": 0,
+          "bytes": 203,
+          "fields": [
+            "kv_server_message"
+          ]
+        },
+        {
+          "index": 4,
+          "kind": "message",
+          "flags": 0,
+          "bytes": 569,
+          "fields": [
+            "kv_server_message"
+          ]
+        },
+        {
+          "index": 5,
+          "kind": "message",
+          "flags": 0,
+          "bytes": 74,
+          "fields": [
+            "thinking_delta",
+            "message_started_at_ms"
+          ]
+        },
+        {
+          "index": 6,
+          "kind": "message",
+          "flags": 0,
+          "bytes": 6,
+          "fields": [
+            "token_delta"
+          ]
+        },
+        {
+          "index": 7,
+          "kind": "message",
+          "flags": 0,
+          "bytes": 36,
+          "fields": [
+            "thinking_delta",
+            "message_started_at_ms"
+          ]
+        },
+        {
+          "index": 8,
+          "kind": "message",
+          "flags": 0,
+          "bytes": 6,
+          "fields": [
+            "token_delta"
+          ]
+        },
+        {
+          "index": 9,
+          "kind": "message",
+          "flags": 0,
+          "bytes": 34,
+          "fields": [
+            "thinking_delta",
+            "message_started_at_ms"
+          ]
+        },
+        {
+          "index": 10,
+          "kind": "message",
+          "flags": 0,
+          "bytes": 6,
+          "fields": [
+            "token_delta"
+          ]
+        },
+        {
+          "index": 11,
+          "kind": "message",
+          "flags": 0,
+          "bytes": 14,
+          "fields": [
+            "thinking_completed",
+            "message_started_at_ms"
+          ]
+        },
+        {
+          "index": 12,
+          "kind": "message",
+          "flags": 0,
+          "bytes": 16,
+          "fields": [
+            "text_delta",
+            "message_started_at_ms"
+          ]
+        },
+        {
+          "index": 13,
+          "kind": "message",
+          "flags": 0,
+          "bytes": 6,
+          "fields": [
+            "token_delta"
+          ]
+        },
+        {
+          "index": 14,
+          "kind": "message",
+          "flags": 0,
+          "bytes": 10,
+          "fields": [
+            "step_completed"
+          ]
+        },
+        {
+          "index": 15,
+          "kind": "message",
+          "flags": 1,
+          "bytes": 1367,
+          "fields": [
+            "kv_server_message"
+          ]
+        },
+        {
+          "index": 16,
+          "kind": "message",
+          "flags": 0,
+          "bytes": 177,
+          "fields": [
+            "kv_server_message"
+          ]
+        },
+        {
+          "index": 17,
+          "kind": "message",
+          "flags": 0,
+          "bytes": 111,
+          "fields": [
+            "kv_server_message"
+          ]
+        },
+        {
+          "index": 18,
+          "kind": "message",
+          "flags": 0,
+          "bytes": 469,
+          "fields": [
+            "kv_server_message"
+          ]
+        },
+        {
+          "index": 19,
+          "kind": "message",
+          "flags": 1,
+          "bytes": 885,
+          "fields": [
+            "kv_server_message"
+          ]
+        },
+        {
+          "index": 20,
+          "kind": "message",
+          "flags": 0,
+          "bytes": 24,
+          "fields": [
+            "turn_ended"
+          ]
+        },
+        {
+          "index": 21,
+          "kind": "message",
+          "flags": 1,
+          "bytes": 1416,
+          "fields": [
+            "conversation_checkpoint_update"
+          ]
+        },
+        {
+          "index": 22,
+          "kind": "message",
+          "flags": 0,
+          "bytes": 778,
+          "fields": [
+            "conversation_checkpoint_update"
+          ]
+        },
+        {
+          "index": 23,
+          "kind": "message",
+          "flags": 0,
+          "bytes": 778,
+          "fields": [
+            "conversation_checkpoint_update"
+          ]
+        },
+        {
+          "index": 24,
+          "kind": "end",
+          "flags": 2,
+          "bytes": 2,
+          "fields": []
+        }
+      ],
+      "ledger": {
+        "timestamp": 1791377502229,
+        "conversationRef": "94929312e6eeedd598749794bd47263a76b84a98db9e146667a3642555b7026a",
+        "model": "cursor-grok-4.6-medium",
+        "kind": "usage_kind_7",
+        "productId": "free",
+        "subscriptionName": "free",
+        "input": 17374,
+        "output": 29,
+        "cacheRead": 512,
+        "cacheWrite": 0,
+        "chargedCents": 3.5178000926971436
+      }
+    },
+    {
+      "id": "1791377660483-turn-3",
+      "accountScope": "9955f8d80e8e4a6c9dda68a1c6b400c4b823e4f86f08306c7d1ca33d020f8f3a",
+      "capturedAt": 1791377660483,
+      "conversationRef": "94929312e6eeedd598749794bd47263a76b84a98db9e146667a3642555b7026a",
+      "cursorVersion": "3.21.12",
+      "model": "grok-4.6",
+      "mode": "AGENT_MODE_ASK",
+      "parameters": [
+        {
+          "id": "effort",
+          "value": "medium"
+        },
+        {
+          "id": "fast",
+          "value": "false"
+        }
+      ],
+      "endpoint": "/agent.v1.AgentService/Run",
+      "transport": "HTTP/2 · Connect/protobuf",
+      "inputBasis": "total-including-cache",
+      "outcome": "success",
+      "requestFrames": 8,
+      "responseFrames": 20,
+      "usage": {
+        "input": 18147,
+        "output": 16,
+        "cacheRead": 17792,
+        "cacheWrite": 0,
+        "reasoning": 15
+      },
+      "contextTokens": 18163,
+      "maxContextTokens": 256000,
+      "frames": [
+        {
+          "index": 0,
+          "kind": "message",
+          "flags": 0,
+          "bytes": 4,
+          "fields": [
+            "heartbeat"
+          ]
+        },
+        {
+          "index": 1,
+          "kind": "message",
+          "flags": 0,
+          "bytes": 874,
+          "fields": [
+            "kv_server_message"
+          ]
+        },
+        {
+          "index": 2,
+          "kind": "message",
+          "flags": 0,
+          "bytes": 547,
+          "fields": [
+            "kv_server_message"
+          ]
+        },
+        {
+          "index": 3,
+          "kind": "message",
+          "flags": 0,
+          "bytes": 76,
+          "fields": [
+            "thinking_delta",
+            "message_started_at_ms"
+          ]
+        },
+        {
+          "index": 4,
+          "kind": "message",
+          "flags": 0,
+          "bytes": 6,
+          "fields": [
+            "token_delta"
+          ]
+        },
+        {
+          "index": 5,
+          "kind": "message",
+          "flags": 0,
+          "bytes": 30,
+          "fields": [
+            "thinking_delta",
+            "message_started_at_ms"
+          ]
+        },
+        {
+          "index": 6,
+          "kind": "message",
+          "flags": 0,
+          "bytes": 6,
+          "fields": [
+            "token_delta"
+          ]
+        },
+        {
+          "index": 7,
+          "kind": "message",
+          "flags": 0,
+          "bytes": 14,
+          "fields": [
+            "thinking_completed",
+            "message_started_at_ms"
+          ]
+        },
+        {
+          "index": 8,
+          "kind": "message",
+          "flags": 0,
+          "bytes": 16,
+          "fields": [
+            "text_delta",
+            "message_started_at_ms"
+          ]
+        },
+        {
+          "index": 9,
+          "kind": "message",
+          "flags": 0,
+          "bytes": 10,
+          "fields": [
+            "step_completed"
+          ]
+        },
+        {
+          "index": 10,
+          "kind": "message",
+          "flags": 1,
+          "bytes": 780,
+          "fields": [
+            "kv_server_message"
+          ]
+        },
+        {
+          "index": 11,
+          "kind": "message",
+          "flags": 0,
+          "bytes": 111,
+          "fields": [
+            "kv_server_message"
+          ]
+        },
+        {
+          "index": 12,
+          "kind": "message",
+          "flags": 0,
+          "bytes": 155,
+          "fields": [
+            "kv_server_message"
+          ]
+        },
+        {
+          "index": 13,
+          "kind": "message",
+          "flags": 0,
+          "bytes": 469,
+          "fields": [
+            "kv_server_message"
+          ]
+        },
+        {
+          "index": 14,
+          "kind": "message",
+          "flags": 0,
+          "bytes": 937,
+          "fields": [
+            "kv_server_message"
+          ]
+        },
+        {
+          "index": 15,
+          "kind": "message",
+          "flags": 0,
+          "bytes": 25,
+          "fields": [
+            "turn_ended"
+          ]
+        },
+        {
+          "index": 16,
+          "kind": "message",
+          "flags": 1,
+          "bytes": 1415,
+          "fields": [
+            "conversation_checkpoint_update"
+          ]
+        },
+        {
+          "index": 17,
+          "kind": "message",
+          "flags": 0,
+          "bytes": 919,
+          "fields": [
+            "conversation_checkpoint_update"
+          ]
+        },
+        {
+          "index": 18,
+          "kind": "message",
+          "flags": 0,
+          "bytes": 919,
+          "fields": [
+            "conversation_checkpoint_update"
+          ]
+        },
+        {
+          "index": 19,
+          "kind": "end",
+          "flags": 2,
+          "bytes": 2,
+          "fields": []
+        }
+      ],
+      "ledger": {
+        "timestamp": 1791377660857,
+        "conversationRef": "94929312e6eeedd598749794bd47263a76b84a98db9e146667a3642555b7026a",
+        "model": "cursor-grok-4.6-medium",
+        "kind": "usage_kind_7",
+        "productId": "free",
+        "subscriptionName": "free",
+        "input": 355,
+        "output": 16,
+        "cacheRead": 17792,
+        "cacheWrite": 0,
+        "chargedCents": 0.9702000021934509
+      }
+    }
+  ],
+  "models": [
+    {
+      "id": "default",
+      "name": "Auto",
+      "contextLimit": null,
+      "supportsThinking": false,
+      "supportsMax": true,
+      "parameters": []
+    },
+    {
+      "id": "grok-4.7",
+      "name": "Grok 4.7",
+      "contextLimit": 256000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": [
+        {
+          "id": "context",
+          "name": "Context",
+          "options": [
+            {
+              "id": "256K",
+              "value": "256k"
+            },
+            {
+              "id": "500K",
+              "value": "500k"
+            }
+          ]
+        },
+        {
+          "id": "reasoning_effort",
+          "name": "Effort",
+          "options": [
+            {
+              "id": "Low",
+              "value": "low"
+            },
+            {
+              "id": "Medium",
+              "value": "medium"
+            },
+            {
+              "id": "High",
+              "value": "high"
+            },
+            {
+              "id": "Extra High",
+              "value": "xhigh"
+            }
+          ]
+        },
+        {
+          "id": "fast",
+          "name": "Fast",
+          "options": [
+            {
+              "id": "false",
+              "value": "false"
+            },
+            {
+              "id": "Fast​​",
+              "value": "true"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "grok-4.6",
+      "name": "Grok 4.6",
+      "contextLimit": 256000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": [
+        {
+          "id": "effort",
+          "name": "Effort",
+          "options": [
+            {
+              "id": "Low",
+              "value": "low"
+            },
+            {
+              "id": "Medium",
+              "value": "medium"
+            },
+            {
+              "id": "High",
+              "value": "high"
+            },
+            {
+              "id": "Extra High",
+              "value": "xhigh"
+            }
+          ]
+        },
+        {
+          "id": "fast",
+          "name": "Fast",
+          "options": [
+            {
+              "id": "false",
+              "value": "false"
+            },
+            {
+              "id": "Fast​​",
+              "value": "true"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "composer-2.5",
+      "name": "Composer 2.5",
+      "contextLimit": 200000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": [
+        {
+          "id": "fast",
+          "name": "Fast",
+          "options": [
+            {
+              "id": "false",
+              "value": "false"
+            },
+            {
+              "id": "Fast",
+              "value": "true"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "claude-opus-5-5",
+      "name": "Claude Opus 5.5",
+      "contextLimit": 300000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": [
+        {
+          "id": "context",
+          "name": "Context",
+          "options": [
+            {
+              "id": "300K",
+              "value": "300k"
+            },
+            {
+              "id": "1M",
+              "value": "1m"
+            }
+          ]
+        },
+        {
+          "id": "effort",
+          "name": "Effort",
+          "options": [
+            {
+              "id": "Low",
+              "value": "low"
+            },
+            {
+              "id": "Medium",
+              "value": "medium"
+            },
+            {
+              "id": "High",
+              "value": "high"
+            },
+            {
+              "id": "Extra High",
+              "value": "xhigh"
+            },
+            {
+              "id": "Max",
+              "value": "max"
+            }
+          ]
+        },
+        {
+          "id": "fast",
+          "name": "Fast",
+          "options": [
+            {
+              "id": "false",
+              "value": "false"
+            },
+            {
+              "id": "Fast",
+              "value": "true"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "claude-opus-5",
+      "name": "Claude Opus 5",
+      "contextLimit": 300000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": [
+        {
+          "id": "thinking",
+          "name": "Thinking",
+          "options": [
+            {
+              "id": "false",
+              "value": "false"
+            },
+            {
+              "id": "true",
+              "value": "true"
+            }
+          ]
+        },
+        {
+          "id": "context",
+          "name": "Context",
+          "options": [
+            {
+              "id": "300K",
+              "value": "300k"
+            },
+            {
+              "id": "1M",
+              "value": "1m"
+            }
+          ]
+        },
+        {
+          "id": "effort",
+          "name": "Effort",
+          "options": [
+            {
+              "id": "Low",
+              "value": "low"
+            },
+            {
+              "id": "Medium",
+              "value": "medium"
+            },
+            {
+              "id": "High",
+              "value": "high"
+            },
+            {
+              "id": "Extra High",
+              "value": "xhigh"
+            },
+            {
+              "id": "Max",
+              "value": "max"
+            }
+          ]
+        },
+        {
+          "id": "fast",
+          "name": "Fast",
+          "options": [
+            {
+              "id": "false",
+              "value": "false"
+            },
+            {
+              "id": "Fast",
+              "value": "true"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "claude-opus-4-8",
+      "name": "Claude Opus 4.8",
+      "contextLimit": 300000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": [
+        {
+          "id": "thinking",
+          "name": "Thinking",
+          "options": [
+            {
+              "id": "false",
+              "value": "false"
+            },
+            {
+              "id": "true",
+              "value": "true"
+            }
+          ]
+        },
+        {
+          "id": "context",
+          "name": "Context",
+          "options": [
+            {
+              "id": "300K",
+              "value": "300k"
+            },
+            {
+              "id": "1M",
+              "value": "1m"
+            }
+          ]
+        },
+        {
+          "id": "effort",
+          "name": "Effort",
+          "options": [
+            {
+              "id": "Low",
+              "value": "low"
+            },
+            {
+              "id": "Medium",
+              "value": "medium"
+            },
+            {
+              "id": "High",
+              "value": "high"
+            },
+            {
+              "id": "Extra High",
+              "value": "xhigh"
+            },
+            {
+              "id": "Max",
+              "value": "max"
+            }
+          ]
+        },
+        {
+          "id": "fast",
+          "name": "Fast",
+          "options": [
+            {
+              "id": "false",
+              "value": "false"
+            },
+            {
+              "id": "Fast",
+              "value": "true"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gpt-5.6-sol",
+      "name": "GPT-5.6 Sol",
+      "contextLimit": 272000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": [
+        {
+          "id": "context",
+          "name": "Context",
+          "options": [
+            {
+              "id": "272K",
+              "value": "272k"
+            },
+            {
+              "id": "1M",
+              "value": "1m"
+            }
+          ]
+        },
+        {
+          "id": "reasoning",
+          "name": "Reasoning",
+          "options": [
+            {
+              "id": "None",
+              "value": "none"
+            },
+            {
+              "id": "Low",
+              "value": "low"
+            },
+            {
+              "id": "Medium",
+              "value": "medium"
+            },
+            {
+              "id": "High",
+              "value": "high"
+            },
+            {
+              "id": "Extra High",
+              "value": "xhigh"
+            },
+            {
+              "id": "Max",
+              "value": "max"
+            }
+          ]
+        },
+        {
+          "id": "fast",
+          "name": "Fast",
+          "options": [
+            {
+              "id": "false",
+              "value": "false"
+            },
+            {
+              "id": "Fast",
+              "value": "true"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gpt-5.5",
+      "name": "GPT-5.5",
+      "contextLimit": 272000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": [
+        {
+          "id": "context",
+          "name": "Context",
+          "options": [
+            {
+              "id": "272K",
+              "value": "272k"
+            },
+            {
+              "id": "1M",
+              "value": "1m"
+            }
+          ]
+        },
+        {
+          "id": "reasoning",
+          "name": "Reasoning",
+          "options": [
+            {
+              "id": "None",
+              "value": "none"
+            },
+            {
+              "id": "Low",
+              "value": "low"
+            },
+            {
+              "id": "Medium",
+              "value": "medium"
+            },
+            {
+              "id": "High",
+              "value": "high"
+            },
+            {
+              "id": "Extra High",
+              "value": "extra-high"
+            }
+          ]
+        },
+        {
+          "id": "fast",
+          "name": "Fast",
+          "options": [
+            {
+              "id": "false",
+              "value": "false"
+            },
+            {
+              "id": "Fast",
+              "value": "true"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "claude-fable-5-1",
+      "name": "Claude Fable 5.1",
+      "contextLimit": 300000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": [
+        {
+          "id": "thinking",
+          "name": "Thinking",
+          "options": [
+            {
+              "id": "false",
+              "value": "false"
+            },
+            {
+              "id": "true",
+              "value": "true"
+            }
+          ]
+        },
+        {
+          "id": "context",
+          "name": "Context",
+          "options": [
+            {
+              "id": "300K",
+              "value": "300k"
+            },
+            {
+              "id": "1M",
+              "value": "1m"
+            }
+          ]
+        },
+        {
+          "id": "effort",
+          "name": "Effort",
+          "options": [
+            {
+              "id": "Low",
+              "value": "low"
+            },
+            {
+              "id": "Medium",
+              "value": "medium"
+            },
+            {
+              "id": "High",
+              "value": "high"
+            },
+            {
+              "id": "Extra High",
+              "value": "xhigh"
+            },
+            {
+              "id": "Max",
+              "value": "max"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "claude-fable-5",
+      "name": "Claude Fable 5",
+      "contextLimit": 300000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": [
+        {
+          "id": "thinking",
+          "name": "Thinking",
+          "options": [
+            {
+              "id": "false",
+              "value": "false"
+            },
+            {
+              "id": "true",
+              "value": "true"
+            }
+          ]
+        },
+        {
+          "id": "context",
+          "name": "Context",
+          "options": [
+            {
+              "id": "300K",
+              "value": "300k"
+            },
+            {
+              "id": "1M",
+              "value": "1m"
+            }
+          ]
+        },
+        {
+          "id": "effort",
+          "name": "Effort",
+          "options": [
+            {
+              "id": "Low",
+              "value": "low"
+            },
+            {
+              "id": "Medium",
+              "value": "medium"
+            },
+            {
+              "id": "High",
+              "value": "high"
+            },
+            {
+              "id": "Extra High",
+              "value": "xhigh"
+            },
+            {
+              "id": "Max",
+              "value": "max"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "grok-4.5",
+      "name": "Grok 4.5",
+      "contextLimit": 256000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": [
+        {
+          "id": "effort",
+          "name": "Effort",
+          "options": [
+            {
+              "id": "Low",
+              "value": "low"
+            },
+            {
+              "id": "Medium",
+              "value": "medium"
+            },
+            {
+              "id": "High",
+              "value": "high"
+            }
+          ]
+        },
+        {
+          "id": "fast",
+          "name": "Fast",
+          "options": [
+            {
+              "id": "false",
+              "value": "false"
+            },
+            {
+              "id": "Fast​",
+              "value": "true"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gemini-3.8-flash",
+      "name": "Gemini 3.8 Flash",
+      "contextLimit": 1000000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": [
+        {
+          "id": "reasoning_effort",
+          "name": "Effort",
+          "options": [
+            {
+              "id": "Low",
+              "value": "low"
+            },
+            {
+              "id": "Medium",
+              "value": "medium"
+            },
+            {
+              "id": "High",
+              "value": "high"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gemini-3.7-flash",
+      "name": "Gemini 3.7 Flash",
+      "contextLimit": 1000000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": [
+        {
+          "id": "effort",
+          "name": "Effort",
+          "options": [
+            {
+              "id": "Low",
+              "value": "low"
+            },
+            {
+              "id": "Medium",
+              "value": "medium"
+            },
+            {
+              "id": "High",
+              "value": "high"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "muse-spark-1.3",
+      "name": "Muse Spark 1.3",
+      "contextLimit": 300000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": [
+        {
+          "id": "context",
+          "name": "Context",
+          "options": [
+            {
+              "id": "300K",
+              "value": "300k"
+            },
+            {
+              "id": "1M",
+              "value": "1m"
+            }
+          ]
+        },
+        {
+          "id": "effort",
+          "name": "Effort",
+          "options": [
+            {
+              "id": "Minimal",
+              "value": "minimal"
+            },
+            {
+              "id": "Low",
+              "value": "low"
+            },
+            {
+              "id": "Medium",
+              "value": "medium"
+            },
+            {
+              "id": "High",
+              "value": "high"
+            },
+            {
+              "id": "Extra High",
+              "value": "xhigh"
+            },
+            {
+              "id": "Max",
+              "value": "max"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gpt-5.6-terra",
+      "name": "GPT-5.6 Terra",
+      "contextLimit": 272000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": [
+        {
+          "id": "context",
+          "name": "Context",
+          "options": [
+            {
+              "id": "272K",
+              "value": "272k"
+            },
+            {
+              "id": "1M",
+              "value": "1m"
+            }
+          ]
+        },
+        {
+          "id": "reasoning",
+          "name": "Reasoning",
+          "options": [
+            {
+              "id": "None",
+              "value": "none"
+            },
+            {
+              "id": "Low",
+              "value": "low"
+            },
+            {
+              "id": "Medium",
+              "value": "medium"
+            },
+            {
+              "id": "High",
+              "value": "high"
+            },
+            {
+              "id": "Extra High",
+              "value": "xhigh"
+            },
+            {
+              "id": "Max",
+              "value": "max"
+            }
+          ]
+        },
+        {
+          "id": "fast",
+          "name": "Fast",
+          "options": [
+            {
+              "id": "false",
+              "value": "false"
+            },
+            {
+              "id": "Fast",
+              "value": "true"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "claude-sonnet-5-5",
+      "name": "Claude Sonnet 5.5",
+      "contextLimit": 300000,
+      "supportsThinking": false,
+      "supportsMax": true,
+      "parameters": [
+        {
+          "id": "context",
+          "name": "Context",
+          "options": [
+            {
+              "id": "300K",
+              "value": "300k"
+            },
+            {
+              "id": "1M",
+              "value": "1m"
+            }
+          ]
+        },
+        {
+          "id": "reasoning_effort",
+          "name": "Effort",
+          "options": [
+            {
+              "id": "Low",
+              "value": "low"
+            },
+            {
+              "id": "Medium",
+              "value": "medium"
+            },
+            {
+              "id": "High",
+              "value": "high"
+            },
+            {
+              "id": "Extra High",
+              "value": "xhigh"
+            },
+            {
+              "id": "Max",
+              "value": "max"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "claude-sonnet-5",
+      "name": "Claude Sonnet 5",
+      "contextLimit": 300000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": [
+        {
+          "id": "thinking",
+          "name": "Thinking",
+          "options": [
+            {
+              "id": "false",
+              "value": "false"
+            },
+            {
+              "id": "true",
+              "value": "true"
+            }
+          ]
+        },
+        {
+          "id": "context",
+          "name": "Context",
+          "options": [
+            {
+              "id": "300K",
+              "value": "300k"
+            },
+            {
+              "id": "1M",
+              "value": "1m"
+            }
+          ]
+        },
+        {
+          "id": "effort",
+          "name": "Effort",
+          "options": [
+            {
+              "id": "Low",
+              "value": "low"
+            },
+            {
+              "id": "Medium",
+              "value": "medium"
+            },
+            {
+              "id": "High",
+              "value": "high"
+            },
+            {
+              "id": "Extra High",
+              "value": "xhigh"
+            },
+            {
+              "id": "Max",
+              "value": "max"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "claude-sonnet-4-6",
+      "name": "Claude Sonnet 4.6",
+      "contextLimit": 1000000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": [
+        {
+          "id": "thinking",
+          "name": "Thinking",
+          "options": [
+            {
+              "id": "false",
+              "value": "false"
+            },
+            {
+              "id": "true",
+              "value": "true"
+            }
+          ]
+        },
+        {
+          "id": "context",
+          "name": "Context",
+          "options": [
+            {
+              "id": "200K",
+              "value": "200k"
+            },
+            {
+              "id": "1M",
+              "value": "1m"
+            }
+          ]
+        },
+        {
+          "id": "effort",
+          "name": "Effort",
+          "options": [
+            {
+              "id": "Low",
+              "value": "low"
+            },
+            {
+              "id": "Medium",
+              "value": "medium"
+            },
+            {
+              "id": "High",
+              "value": "high"
+            },
+            {
+              "id": "Max",
+              "value": "max"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gpt-5.3-codex",
+      "name": "Codex 5.3",
+      "contextLimit": 272000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": [
+        {
+          "id": "reasoning",
+          "name": "Reasoning",
+          "options": [
+            {
+              "id": "Low",
+              "value": "low"
+            },
+            {
+              "id": "Medium",
+              "value": "medium"
+            },
+            {
+              "id": "High",
+              "value": "high"
+            },
+            {
+              "id": "Extra High",
+              "value": "extra-high"
+            }
+          ]
+        },
+        {
+          "id": "fast",
+          "name": "Fast",
+          "options": [
+            {
+              "id": "false",
+              "value": "false"
+            },
+            {
+              "id": "Fast",
+              "value": "true"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "claude-opus-4-7",
+      "name": "Claude Opus 4.7",
+      "contextLimit": 300000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": [
+        {
+          "id": "thinking",
+          "name": "Thinking",
+          "options": [
+            {
+              "id": "false",
+              "value": "false"
+            },
+            {
+              "id": "true",
+              "value": "true"
+            }
+          ]
+        },
+        {
+          "id": "context",
+          "name": "Context",
+          "options": [
+            {
+              "id": "300K",
+              "value": "300k"
+            },
+            {
+              "id": "1M",
+              "value": "1m"
+            }
+          ]
+        },
+        {
+          "id": "effort",
+          "name": "Effort",
+          "options": [
+            {
+              "id": "Low",
+              "value": "low"
+            },
+            {
+              "id": "Medium",
+              "value": "medium"
+            },
+            {
+              "id": "High",
+              "value": "high"
+            },
+            {
+              "id": "Extra High",
+              "value": "xhigh"
+            },
+            {
+              "id": "Max",
+              "value": "max"
+            }
+          ]
+        },
+        {
+          "id": "fast",
+          "name": "Fast",
+          "options": [
+            {
+              "id": "false",
+              "value": "false"
+            },
+            {
+              "id": "Fast",
+              "value": "true"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gpt-5.4",
+      "name": "GPT-5.4",
+      "contextLimit": 1000000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": [
+        {
+          "id": "context",
+          "name": "Context",
+          "options": [
+            {
+              "id": "272K",
+              "value": "272k"
+            },
+            {
+              "id": "1M",
+              "value": "1m"
+            }
+          ]
+        },
+        {
+          "id": "reasoning",
+          "name": "Reasoning",
+          "options": [
+            {
+              "id": "None",
+              "value": "none"
+            },
+            {
+              "id": "Low",
+              "value": "low"
+            },
+            {
+              "id": "Medium",
+              "value": "medium"
+            },
+            {
+              "id": "High",
+              "value": "high"
+            },
+            {
+              "id": "Extra High",
+              "value": "extra-high"
+            }
+          ]
+        },
+        {
+          "id": "fast",
+          "name": "Fast",
+          "options": [
+            {
+              "id": "false",
+              "value": "false"
+            },
+            {
+              "id": "Fast",
+              "value": "true"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "claude-opus-4-6",
+      "name": "Claude Opus 4.6",
+      "contextLimit": 1000000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": [
+        {
+          "id": "thinking",
+          "name": "Thinking",
+          "options": [
+            {
+              "id": "false",
+              "value": "false"
+            },
+            {
+              "id": "true",
+              "value": "true"
+            }
+          ]
+        },
+        {
+          "id": "context",
+          "name": "Context",
+          "options": [
+            {
+              "id": "200K",
+              "value": "200k"
+            },
+            {
+              "id": "1M",
+              "value": "1m"
+            }
+          ]
+        },
+        {
+          "id": "effort",
+          "name": "Effort",
+          "options": [
+            {
+              "id": "Low",
+              "value": "low"
+            },
+            {
+              "id": "Medium",
+              "value": "medium"
+            },
+            {
+              "id": "High",
+              "value": "high"
+            },
+            {
+              "id": "Max",
+              "value": "max"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "claude-opus-4-5",
+      "name": "Claude Opus 4.5",
+      "contextLimit": 200000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": [
+        {
+          "id": "thinking",
+          "name": "Thinking",
+          "options": [
+            {
+              "id": "false",
+              "value": "false"
+            },
+            {
+              "id": "true",
+              "value": "true"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gpt-5.2",
+      "name": "GPT-5.2",
+      "contextLimit": 272000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": [
+        {
+          "id": "reasoning",
+          "name": "Reasoning",
+          "options": [
+            {
+              "id": "Low",
+              "value": "low"
+            },
+            {
+              "id": "Medium",
+              "value": "medium"
+            },
+            {
+              "id": "High",
+              "value": "high"
+            },
+            {
+              "id": "Extra High",
+              "value": "extra-high"
+            }
+          ]
+        },
+        {
+          "id": "fast",
+          "name": "Fast",
+          "options": [
+            {
+              "id": "false",
+              "value": "false"
+            },
+            {
+              "id": "Fast",
+              "value": "true"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gpt-5.6-luna",
+      "name": "GPT-5.6 Luna",
+      "contextLimit": 272000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": [
+        {
+          "id": "context",
+          "name": "Context",
+          "options": [
+            {
+              "id": "272K",
+              "value": "272k"
+            },
+            {
+              "id": "1M",
+              "value": "1m"
+            }
+          ]
+        },
+        {
+          "id": "reasoning",
+          "name": "Reasoning",
+          "options": [
+            {
+              "id": "None",
+              "value": "none"
+            },
+            {
+              "id": "Low",
+              "value": "low"
+            },
+            {
+              "id": "Medium",
+              "value": "medium"
+            },
+            {
+              "id": "High",
+              "value": "high"
+            },
+            {
+              "id": "Extra High",
+              "value": "xhigh"
+            },
+            {
+              "id": "Max",
+              "value": "max"
+            }
+          ]
+        },
+        {
+          "id": "fast",
+          "name": "Fast",
+          "options": [
+            {
+              "id": "false",
+              "value": "false"
+            },
+            {
+              "id": "Fast",
+              "value": "true"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gemini-3.6-flash",
+      "name": "Gemini 3.6 Flash",
+      "contextLimit": 1000000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": [
+        {
+          "id": "effort",
+          "name": "Effort",
+          "options": [
+            {
+              "id": "Minimal",
+              "value": "minimal"
+            },
+            {
+              "id": "Low",
+              "value": "low"
+            },
+            {
+              "id": "Medium",
+              "value": "medium"
+            },
+            {
+              "id": "High",
+              "value": "high"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gemini-3.1-pro",
+      "name": "Gemini 3.1 Pro",
+      "contextLimit": 1000000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": []
+    },
+    {
+      "id": "gpt-5.4-mini",
+      "name": "GPT-5.4 Mini",
+      "contextLimit": 272000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": [
+        {
+          "id": "reasoning",
+          "name": "Reasoning",
+          "options": [
+            {
+              "id": "None",
+              "value": "none"
+            },
+            {
+              "id": "Low",
+              "value": "low"
+            },
+            {
+              "id": "Medium",
+              "value": "medium"
+            },
+            {
+              "id": "High",
+              "value": "high"
+            },
+            {
+              "id": "Extra High",
+              "value": "xhigh"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gpt-5.4-nano",
+      "name": "GPT-5.4 Nano",
+      "contextLimit": 272000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": [
+        {
+          "id": "reasoning",
+          "name": "Reasoning",
+          "options": [
+            {
+              "id": "None",
+              "value": "none"
+            },
+            {
+              "id": "Low",
+              "value": "low"
+            },
+            {
+              "id": "Medium",
+              "value": "medium"
+            },
+            {
+              "id": "High",
+              "value": "high"
+            },
+            {
+              "id": "Extra High",
+              "value": "xhigh"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "claude-haiku-4-5",
+      "name": "Claude Haiku 4.5",
+      "contextLimit": 200000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": [
+        {
+          "id": "thinking",
+          "name": "Thinking",
+          "options": [
+            {
+              "id": "false",
+              "value": "false"
+            },
+            {
+              "id": "true",
+              "value": "true"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "claude-sonnet-4-5",
+      "name": "Claude Sonnet 4.5",
+      "contextLimit": 200000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": [
+        {
+          "id": "thinking",
+          "name": "Thinking",
+          "options": [
+            {
+              "id": "false",
+              "value": "false"
+            },
+            {
+              "id": "true",
+              "value": "true"
+            }
+          ]
+        },
+        {
+          "id": "context",
+          "name": "Context",
+          "options": [
+            {
+              "id": "200K",
+              "value": "200k"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gpt-5.1",
+      "name": "GPT-5.1",
+      "contextLimit": 272000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": [
+        {
+          "id": "reasoning",
+          "name": "Reasoning",
+          "options": [
+            {
+              "id": "Low",
+              "value": "low"
+            },
+            {
+              "id": "Medium",
+              "value": "medium"
+            },
+            {
+              "id": "High",
+              "value": "high"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gemini-3-flash",
+      "name": "Gemini 3 Flash",
+      "contextLimit": 1000000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": []
+    },
+    {
+      "id": "gemini-3.5-flash",
+      "name": "Gemini 3.5 Flash",
+      "contextLimit": 1000000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": []
+    },
+    {
+      "id": "claude-sonnet-4",
+      "name": "Claude Sonnet 4",
+      "contextLimit": 200000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": [
+        {
+          "id": "thinking",
+          "name": "Thinking",
+          "options": [
+            {
+              "id": "false",
+              "value": "false"
+            },
+            {
+              "id": "true",
+              "value": "true"
+            }
+          ]
+        },
+        {
+          "id": "context",
+          "name": "Context",
+          "options": [
+            {
+              "id": "200K",
+              "value": "200k"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gpt-5-mini",
+      "name": "GPT-5 Mini",
+      "contextLimit": 272000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": []
+    },
+    {
+      "id": "gemini-2.5-flash",
+      "name": "Gemini 2.5 Flash",
+      "contextLimit": 1000000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": []
+    },
+    {
+      "id": "kimi-k3",
+      "name": "Kimi K3",
+      "contextLimit": 1048576,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": [
+        {
+          "id": "reasoning",
+          "name": "Reasoning",
+          "options": [
+            {
+              "id": "Low",
+              "value": "low"
+            },
+            {
+              "id": "High",
+              "value": "high"
+            },
+            {
+              "id": "Max",
+              "value": "max"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kimi-k2.7-code",
+      "name": "Kimi K2.7 Code",
+      "contextLimit": 262000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": []
+    },
+    {
+      "id": "glm-5.2",
+      "name": "GLM 5.2",
+      "contextLimit": 1000000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": [
+        {
+          "id": "reasoning",
+          "name": "Reasoning",
+          "options": [
+            {
+              "id": "High",
+              "value": "high"
+            },
+            {
+              "id": "Max",
+              "value": "max"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "glm-5p3",
+      "name": "GLM 5.3",
+      "contextLimit": 1000000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": [
+        {
+          "id": "reasoning",
+          "name": "Reasoning",
+          "options": [
+            {
+              "id": "Low",
+              "value": "low"
+            },
+            {
+              "id": "High",
+              "value": "high"
+            },
+            {
+              "id": "Max",
+              "value": "max"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "glm-5p3-flash",
+      "name": "GLM 5.3 Flash",
+      "contextLimit": 1000000,
+      "supportsThinking": true,
+      "supportsMax": true,
+      "parameters": [
+        {
+          "id": "reasoning",
+          "name": "Reasoning",
+          "options": [
+            {
+              "id": "Low",
+              "value": "low"
+            },
+            {
+              "id": "High",
+              "value": "high"
+            },
+            {
+              "id": "Max",
+              "value": "max"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

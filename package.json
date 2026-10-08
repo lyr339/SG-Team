@@ -26,10 +26,12 @@
     "verify:win": "npm run pack:win && npm run smoke:mcp:packaged",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "lint:dead": "npx --yes knip@5"
+    "test": "vitest run && npm run test:wire",
+    "lint:dead": "npx --yes knip@5",
+    "test:wire": "node --test packages/cursor-wire-runtime/wire-client.test.mjs"
   },
   "dependencies": {
+    "@shiguang/cursor-wire-runtime": "file:packages/cursor-wire-runtime",
     "electron-updater": "^6.8.9",
     "ws": "^8.21.3",
     "zod": "^4.4.3"
