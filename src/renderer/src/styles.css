@@ -2219,11 +2219,12 @@ button.workspace-group-chip:focus-visible { outline: 2px solid var(--accent-bord
 @keyframes todo-march { to { mask-position: 8px 0; } }
 .process-turn-step__todos { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
 .process-turn-step__todos li { display: flex; align-items: flex-start; gap: 8px; color: var(--text-soft); font-size: var(--fs-12); line-height: 1.4; user-select: text; cursor: text; animation: todo-fade-in .2s ease-out both; }
-.todo-indicator { flex: none; width: 14px; height: 16px; display: grid; place-items: center; color: var(--muted); }
+.todo-indicator { flex: none; width: 18px; height: 18px; display: grid; place-items: center; color: var(--muted); }
 .todo-indicator svg { width: 16px; height: 16px; }
+.todo-indicator > .feedback-icon { width:18px; height:18px; }
 .process-turn-step__todos li.is-in_progress { color: var(--text); }
 .process-turn-step__todos li.is-in_progress .todo-indicator { color: var(--text); }
-.process-turn-step__todos li.is-completed { opacity: .5; text-decoration: line-through; }
+.process-turn-step__todos li.is-completed .todo-text { opacity: .55; text-decoration: line-through; }
 .process-turn-step__todos li.is-cancelled { opacity: .5; text-decoration: line-through; }
 .process-turn-step__todos li.is-pending { opacity: .4; }
 @keyframes todo-fade-in { from { opacity: 0; } }

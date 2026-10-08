@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import { FeedbackIcon } from '../feedback/FeedbackIcon'
 import type {
   AccountAutomationPhase,
   AccountAutomationRun,
@@ -33,7 +34,7 @@ function StageNode({ state, countdown }: Pick<AutomationStageView, 'state' | 'co
   return (
     <span className={`automation-run__node is-${state}${countdown ? ' has-countdown' : ''}`} aria-hidden="true">
       {state === 'done' ? (
-        <svg viewBox="0 0 20 20"><path d="m5.2 10.2 3.1 3.1 6.6-7" /></svg>
+        <FeedbackIcon tone="success" className="automation-run__completion" />
       ) : state === 'failed' ? (
         <svg viewBox="0 0 20 20"><path d="m6.2 6.2 7.6 7.6M13.8 6.2l-7.6 7.6" /></svg>
       ) : state === 'cancelled' ? (

@@ -468,7 +468,7 @@
 .inspector-plan__count { margin-left: 5px; color: var(--text-soft); font-size: var(--fs-12); font-weight: 500; }
 .inspector-plan__list { min-height: 0; margin: 0; padding: 4px 0 10px; overflow: auto; list-style: none; }
 .inspector-plan__list li {
-  min-height: 30px; display: grid; grid-template-columns: 16px minmax(0, 1fr); align-items: start; gap: 10px;
+  min-height: 30px; display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: start; gap: 10px;
   padding: 6px 16px;
   transition: background-color 120ms ease;
   animation: inspector-plan-enter 200ms ease-out both;
@@ -480,7 +480,8 @@
 /* 当前项只有正文升主色；环与待办保持同一灰阶。 */
 .inspector-plan__list li.is-in_progress .inspector-plan__text { color: var(--text); }
 /* 完成 / 取消：单行收拢 + 划线 + 降级色；多行删除线是主要噪声源，全文由 title 承担。 */
-.inspector-plan__list li.is-completed .todo-indicator, .inspector-plan__list li.is-cancelled .todo-indicator { color: var(--muted); }
+.inspector-plan__list li.is-completed .todo-indicator { color: var(--color-text-success); opacity:1; }
+.inspector-plan__list li.is-cancelled .todo-indicator { color: var(--muted); }
 .inspector-plan__list li.is-completed .inspector-plan__text, .inspector-plan__list li.is-cancelled .inspector-plan__text {
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; overflow: hidden;
   color: var(--muted); text-decoration: line-through; text-decoration-color: var(--color-border-secondary);

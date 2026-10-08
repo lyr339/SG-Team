@@ -925,7 +925,8 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
 .automation-run__ring circle + circle { stroke: var(--blue); stroke-linecap: round; opacity: 1; transition: stroke-dashoffset 500ms linear; }
 
 /* 终态是描边空心环 + 同色字形；只有进行中的节点是实心——实心即「当前」。 */
-.automation-run__node.is-done { color: var(--color-text-success); box-shadow: inset 0 0 0 1.5px var(--color-border-success); }
+.automation-run__node.is-done { color: var(--color-text-success); }
+.automation-run__node.is-done > .automation-run__completion { width:22px; height:22px; stroke-width:1.5; }
 .automation-run__node.is-failed { color: var(--red); box-shadow: inset 0 0 0 1.5px var(--red-border); }
 .automation-run__node.is-cancelled { color: var(--muted); box-shadow: inset 0 0 0 1.5px var(--line-strong); }
 .automation-run__node:is(.is-warning, .is-unknown) { color: var(--color-text-warning); box-shadow: inset 0 0 0 1.5px var(--color-text-warning); }

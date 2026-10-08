@@ -1,4 +1,5 @@
 import { FeedbackLine } from '../feedback/FeedbackLine'
+import { FeedbackIcon } from '../feedback/FeedbackIcon'
 import { useEffect, useRef, useState } from 'react'
 import type { PlanTaskInput, TaskStatus } from '../../../domain/task-pool'
 import { teamMessageReceiptStage, isOrphanedReceipt } from '../../../domain/team-collaboration'
@@ -277,7 +278,7 @@ export function GroupContextPanel({
               <details key={task.id} className={`group-context__task is-${task.status}`}>
                 <summary>
                   <span>{task.title}</span>
-                  <em>{TASK_LABEL[task.status]}</em>
+                  <em>{task.status === 'done' ? <FeedbackIcon tone="success" /> : null}{TASK_LABEL[task.status]}</em>
                 </summary>
                 <div>
                   {task.title.length > 90 ? (

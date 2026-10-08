@@ -10,6 +10,7 @@ import { buildProcessTurnView, type ProcessTurnStep } from './process-turn-view'
 import { QuestionCard, type QuestionActions } from './QuestionCard'
 import { tokenizeShellCommand } from './shell-command-tokens'
 import { TodoIndicator, todoTone } from './TodoIndicator'
+import { FeedbackIcon } from './feedback/FeedbackIcon'
 import { useStreamingText } from './use-streaming-text'
 import { mcpWriteReadIdentity } from '../../domain/mcp-write-observation'
 
@@ -717,7 +718,7 @@ function ProcessTurnCardImpl({
   return (
     <section className={`process-turn ${compact ? 'is-compact' : ''} ${live ? 'is-live' : ''} is-${model.status}`} aria-label={`${title}，${summary}`}>
       <button className="process-turn__header" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
-        <span className="process-turn__state" aria-hidden="true">{model.status === 'done' ? '✓' : model.status === 'failed' ? '!' : <i />}</span>
+        <span className="process-turn__state" aria-hidden="true">{model.status === 'done' ? <FeedbackIcon tone="success" /> : model.status === 'failed' ? '!' : <i />}</span>
         <strong>{title}</strong>
         {live ? <em className="process-turn__live-label"><i />实时</em> : null}
         <span>{summary}</span>
