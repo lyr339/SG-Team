@@ -1,0 +1,50 @@
+/* Shared geometry for both switch skins. The outline is paint-only: Chromium
+   rounds layout borders at fractional zoom, which used to move the fixed inset. */
+:where(.toggle-switch__track, .notification-preference > i) {
+  --switch-travel: 0px;
+  position: relative;
+  display: block;
+  flex: none;
+  box-sizing: border-box;
+  width: var(--switch-width);
+  height: var(--switch-height);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+}
+:where(.toggle-switch__track, .notification-preference > i)::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--switch-edge);
+  border-radius: inherit;
+  box-shadow: var(--switch-edge-shadow, none);
+  pointer-events: none;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+:where(.toggle-switch__thumb), :where(.notification-preference > i)::after {
+  position: absolute;
+  display: block;
+  box-sizing: border-box;
+  width: var(--switch-thumb-size);
+  height: var(--switch-thumb-size);
+  top: 50%;
+  left: calc((var(--switch-height) - var(--switch-thumb-size)) / 2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  transform: translate(var(--switch-travel), -50%);
+  pointer-events: none;
+}
+:where(.toggle-switch input:checked + .toggle-switch__track, .notification-preference > input:checked + i) {
+  --switch-travel: calc(var(--switch-width) - var(--switch-height));
+}
+@media (prefers-reduced-motion: reduce) {
+  .toggle-switch__track, .toggle-switch__track::before, .toggle-switch__thumb,
+  .notification-preference > i, .notification-preference > i::before, .notification-preference > i::after {
+    transition: none !important;
+  }
+}

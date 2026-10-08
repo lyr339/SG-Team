@@ -1,4 +1,5 @@
 import { FeedbackReview } from './feedback-review'
+import { SwitchReview } from './switch-review'
 import type { ProtocolExperimentSnapshot } from '../../../domain/protocol-experiment'
 import { reduceGroupEffects } from '../../../domain/group-effects-notification'
 import { observedMcpWrite } from '../../../domain/mcp-write-observation'
@@ -2333,6 +2334,6 @@ applyAppearancePreferences(readAppearancePreferences())
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    {previewParameters.get('feedback') === 'showcase' ? <FeedbackReview/> : <App />}
+    {previewParameters.get('controls') === 'switches' ? <SwitchReview/> : previewParameters.get('feedback') === 'showcase' ? <FeedbackReview/> : <App />}
   </StrictMode>
 )

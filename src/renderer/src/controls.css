@@ -1,3 +1,5 @@
+@import './switch-geometry.css';
+
 /* 拾光统一表单控件：保留原生 select 语义，仅替换浏览器默认箭头与间距。 */
 select:not([multiple]) {
   appearance: none;
