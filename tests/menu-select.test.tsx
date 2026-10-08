@@ -42,6 +42,16 @@ describe('MenuSelect（账号管线自绘下拉）', () => {
     expect(document.body.querySelector('.menu-select__menu')).toBeNull()
     expect(buttonOf().getAttribute('aria-expanded')).toBe('false')
   })
+  it('a transient save lock blocks selection without dimming the trigger or removing focus', async () => {
+    const change = vi.fn(), props = { value: 'a', options: [{ value: 'a', label: '当前' }], onChange: change }
+    await renderSelect(props); buttonOf().focus()
+    const node = buttonOf(); await renderSelect({ ...props, busy: true })
+    expect(buttonOf()).toBe(node); expect(node.disabled).toBe(false)
+    expect(document.activeElement).toBe(node); expect(node.getAttribute('aria-disabled')).toBe('true')
+    expect(container!.querySelector('.is-disabled')).toBeNull()
+    await act(async () => node.click()); expect(document.querySelector('[role="listbox"]')).toBeNull()
+    expect(change).not.toHaveBeenCalled()
+  })
 
   it('点击展开选项列表，选中项带 is-selected 与矢量勾选；点击选项回调并关闭', async () => {
     const onChange = vi.fn()

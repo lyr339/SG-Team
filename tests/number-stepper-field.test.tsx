@@ -174,6 +174,16 @@ describe('NumberStepperField 数值步进输入', () => {
     expect(decreaseButton().disabled).toBe(true)
     expect(increaseButton().disabled).toBe(true)
   })
+  it('a transient save lock preserves focus/contrast but blocks both step buttons and keyboard edits', async () => {
+    const change = vi.fn()
+    await render(propsFor({ onChange: change })); input().focus()
+    const node = input(); await render(propsFor({ onChange: change, busy: true }))
+    expect(input()).toBe(node); expect(node.disabled).toBe(false); expect(node.readOnly).toBe(true)
+    expect(document.activeElement).toBe(node); expect(container.querySelector('.is-disabled')).toBeNull()
+    await act(async () => increaseButton().click())
+    await act(async () => node.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true })))
+    expect(change).not.toHaveBeenCalled()
+  })
 
   it('键盘 Space/Enter 派发的 click（detail=0）可步进；鼠标 click 不双步进', async () => {
     const onChange = vi.fn()

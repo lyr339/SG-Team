@@ -36,6 +36,7 @@ interface RunSeatsProps {
   selections: Record<string, CursorModelSelection>
   plan?: AgentLaunchPlan
   busy: boolean
+  settingsBusy?: boolean
   /** 主按钮文案由页面按模式与阶段决定（批量创建 / 补齐 / 一键创建）。 */
   createLabel: string
   createCount?: number
@@ -63,7 +64,7 @@ interface RunSeatsProps {
   /** 页面上一次把统一配置铺到全部席位的时刻：变化时每一行泛一次光晕作确认。 */
   syncedAt?: number
   onEnableCdp?: () => void
-  onToggleAutoHeal?: (enabled: boolean) => void
+  onToggleAutoHeal?: (enabled: boolean) => void | Promise<unknown>
   onCancelCountdown?: () => void
 }
 
@@ -78,6 +79,7 @@ export function RunSeats({
   selections,
   plan,
   busy,
+  settingsBusy = false,
   createLabel,
   createCount,
   createBlockedReason,
@@ -236,7 +238,7 @@ export function RunSeats({
           <summary><ChevronDownIcon /><span>启动设置</span>{onToggleWarmup && warmupEnabled ? <small>模型探测消耗额度</small> : null}</summary>
         <div className="run-seats__toggles">
           {onToggleAutoHeal ? (
-            <ToggleSwitch checked={cdpAutoHealEnabled} disabled={busy} onChange={(enabled) => void onToggleAutoHeal(enabled)}>
+            <ToggleSwitch checked={cdpAutoHealEnabled} disabled={busy && !settingsBusy} busy={settingsBusy} onChange={onToggleAutoHeal}>
               <span className="run-guard__copy">
                 <strong>自动恢复连接</strong>
                 <small>调试端口缺失时，倒计时重启 Cursor</small>
@@ -244,7 +246,7 @@ export function RunSeats({
             </ToggleSwitch>
           ) : null}
           {onToggleWarmup ? (
-            <ToggleSwitch checked={warmupEnabled} disabled={busy} onChange={(enabled) => void onToggleWarmup(enabled)}>
+            <ToggleSwitch checked={warmupEnabled} disabled={busy && !settingsBusy} busy={settingsBusy} onChange={onToggleWarmup}>
               <span className="run-guard__copy">
                 <strong>创建前模型探测</strong>
                 <small>消耗低成本模型额度；探测失败则停止创建</small>

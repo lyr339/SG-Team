@@ -24,6 +24,20 @@ beforeEach(async () => {
 afterEach(async () => { await act(async () => root.unmount()); ledger.close(); host.remove() })
 const confirm = () => host.querySelector<HTMLButtonElement>('button')!
 describe('quiet history facts and exact-version acknowledgement', () => {
+  it('opening and closing policy preserves the trigger/content nodes and never acknowledges or reads business history', async () => {
+    const details = host.querySelector<HTMLDetailsElement>('.notification-history-policy')!
+    const summary = details.querySelector('summary')!, content = details.querySelector<HTMLDivElement>('.notification-history-policy__content')!
+    const saved = ledger.historyGap().integrity
+    expect(content.getAttribute('role')).toBe('region'); expect(content.tabIndex).toBe(0)
+    expect(summary.querySelectorAll('svg')).toHaveLength(1)
+    await act(async () => summary.click()); expect(details.open).toBe(true)
+    await act(async () => summary.click()); expect(details.open).toBe(false)
+    expect(details.querySelector('summary')).toBe(summary)
+    expect(details.querySelector('.notification-history-policy__content')).toBe(content)
+    expect(api.acknowledgeNotificationHistory).not.toHaveBeenCalled()
+    expect(api.readNotification).not.toHaveBeenCalled(); expect(api.clearReadNotifications).not.toHaveBeenCalled()
+    expect(ledger.historyGap().integrity).toEqual(saved)
+  })
   it('hides the explanation only after durable confirmation, keeps the fact/policy, and never marks notifications read', async () => {
     await act(async () => { confirm().click() })
     expect(host.querySelector('.notification-history-notice')).toBeNull(); expect(store.snapshot().historyIncomplete).toBe(true)

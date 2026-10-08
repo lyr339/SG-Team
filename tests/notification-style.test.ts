@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 const file = (path: string) => readFileSync(join(process.cwd(), 'src/renderer/src', path), 'utf8')
 const css = file('notifications/notifications.css'), center = file('notifications/NotificationCenter.tsx')
 const styles = file('styles.css'), theme = file('claude-theme.css'), shared = file('feedback/feedback.css')
-const rule = (selector: string) => css.match(new RegExp(`${selector.replaceAll('.', '\\.')}\\s*\\{([^}]+)\\}`))?.[1]?.replace(/\s+/g, '') ?? ''
+const rule = (selector: string) => css.match(new RegExp(`${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{([^}]+)\\}`))?.[1]?.replace(/\s+/g, '') ?? ''
 describe('polished notification presentation contracts', () => {
   it('uses neutral framing, explicit existing font tokens and no status rail or decorative glow', () => {
     for (const selector of ['.notification-panel', '.notification-toast']) {
@@ -36,6 +36,28 @@ describe('polished notification presentation contracts', () => {
     expect(rule('.notification-row__detail > p')).not.toMatch(/max-height|overflow-y/)
     expect(rule('.notification-panel__footer-actions')).toContain('flex-wrap:wrap')
     expect(rule('.notification-hours')).toContain('max-width:360px'); expect(rule('.notification-hours input')).toContain('width:100%')
+  })
+  it('stabilizes tab width and empty/loading geometry without removing the panel entry animation', () => {
+    expect(rule('.notification-tabs button')).toContain('min-inline-size:calc(3em+18px)')
+    expect(rule('.notification-empty')).toContain('min-block-size:132px')
+    expect(rule('.notification-empty')).toContain('box-sizing:border-box')
+    expect(css).toContain('.notification-tabs button:hover:not([aria-selected="true"])')
+    expect(rule('.notification-panel')).toContain('animation:notification-enter160msease-out')
+  })
+  it('does not change the history disclosure trigger box or make the trigger itself a scroll child when opened', () => {
+    const open = css.match(/\.notification-history-policy\[open\]\s*\{([^}]+)\}/)?.[1] ?? ''
+    expect(open).not.toMatch(/padding|margin|overflow|block-size/)
+    expect(rule('.notification-history-policy__content')).toContain('overflow-y:auto')
+    expect(rule('.notification-history-policy__content')).toContain('scrollbar-gutter:stable')
+    expect(file('notifications/NotificationHistoryNotice.tsx')).toContain('notification-history-policy__content')
+  })
+  it('keeps scrollbar allocation stable in the same-pattern long disclosures and their scroll surfaces', () => {
+    const settings = file('settings/settings.css').replace(/\s+/g, '')
+    expect(settings).toMatch(/\.settings-page\{[^}]*scrollbar-gutter:stable/)
+    expect(settings).toMatch(/\.settings-notice__details>div\{[^}]*max-height:180px;overflow-y:auto;scrollbar-gutter:stable/)
+    expect(settings).not.toMatch(/\.settings-notice__details\.is-open>div\{/)
+    expect(file('notifications/team-memory-inspection.css').replace(/\s+/g, '')).toMatch(/\.memory-inspection__scroll\{[^}]*scrollbar-gutter:stable/)
+    expect(file('team/collaboration-map.css').replace(/\s+/g, '')).toMatch(/\.collaboration-dialog__body\{[^}]*scrollbar-gutter:stable/)
   })
   it('aligns the Toast icon, title and dismiss action in a real header rather than fixed margin guesses', () => {
     expect(file('notifications/NotificationCard.tsx')).toContain('notification-toast__header')

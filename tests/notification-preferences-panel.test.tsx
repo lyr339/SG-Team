@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, Profiler } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { NotificationPreferencesPanel } from '../src/renderer/src/notifications/NotificationPreferencesPanel'
@@ -22,6 +22,102 @@ describe('precise notification settings with real persistent preferences', () =>
   afterEach(async () => { await act(async () => root.unmount()); release(); host.remove(); listeners.clear(); ledger.close() })
   const control = (label: string) => host.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!
   const click = async (label: string) => { await act(async () => control(label).click()) }
+  it('keeps the switch intent and other controls stable while a preference save is pending', async () => {
+    const frames: Array<{ quiet: boolean; enabledDisabled: boolean }> = []
+    await act(async () => root.render(<Profiler id="preferences-save" onRender={() => {
+      frames.push({ quiet: control('安静模式').checked, enabledDisabled: control('开启提醒').disabled })
+    }}><NotificationPreferencesPanel store={store} /></Profiler>))
+    frames.length = 0
+    let resolve!: () => void
+    const original = vi.mocked(api.saveNotificationPreferences).getMockImplementation()!
+    vi.mocked(api.saveNotificationPreferences).mockImplementationOnce(value => new Promise<void>(done => { resolve = done }).then(() => original(value)))
+    const panel = host.querySelector('.notification-preferences'), input = control('安静模式')
+    input.focus(); await click('安静模式')
+    expect(input.checked).toBe(true)
+    expect(control('开启提醒').disabled).toBe(false)
+    expect(document.activeElement).toBe(input)
+    expect(host.querySelector('.notification-preferences')).toBe(panel)
+    expect(host.textContent).not.toContain('正在保存…')
+    await act(async () => resolve())
+    expect(frames.every(frame => frame.quiet && !frame.enabledDisabled)).toBe(true)
+    expect(ledger.preferences().quiet).toBe(true)
+  })
+  it('queues edits to different switches and the category table without losing dependencies or dimming siblings', async () => {
+    const original = vi.mocked(api.saveNotificationPreferences).getMockImplementation()!
+    const releases: Array<() => void> = []
+    vi.mocked(api.saveNotificationPreferences).mockImplementation(value => new Promise<void>(done => { releases.push(done) }).then(() => original(value)))
+    await click('系统通知'); await click('系统通知声音'); await click('显示通知摘要'); await click('自动化流程应用内提醒')
+    expect(api.saveNotificationPreferences).toHaveBeenCalledTimes(1)
+    for (const label of ['系统通知', '系统通知声音', '显示通知摘要']) expect(control(label).checked).toBe(true)
+    expect(control('自动化流程应用内提醒').checked).toBe(false)
+    expect(control('安静模式').disabled).toBe(false)
+    for (let index = 0; index < 4; index++) {
+      await act(async () => releases[index]!())
+      for (const label of ['系统通知', '系统通知声音', '显示通知摘要']) expect(control(label).checked).toBe(true)
+    }
+    expect(ledger.preferences()).toMatchObject({ nativeEnabled: true, sound: true, preview: true, inAppMutedCategories: ['automation'] })
+    expect(api.saveNotificationPreferences).toHaveBeenCalledTimes(4)
+  })
+  it('keeps the final rapid-click intent across delayed earlier acknowledgments', async () => {
+    const original = vi.mocked(api.saveNotificationPreferences).getMockImplementation()!
+    const releases: Array<() => void> = []
+    vi.mocked(api.saveNotificationPreferences).mockImplementation(value => new Promise<void>(done => { releases.push(done) }).then(() => original(value)))
+    await click('安静模式'); await click('安静模式'); await click('安静模式')
+    expect(control('安静模式').checked).toBe(true)
+    for (let index = 0; index < 2; index++) {
+      await act(async () => releases[index]!())
+      expect(control('安静模式').checked).toBe(true)
+    }
+    expect(ledger.preferences().quiet).toBe(true)
+    expect(vi.mocked(api.saveNotificationPreferences).mock.calls.map(([value]) => value.quiet)).toEqual([true, true])
+  })
+  it('a failed field rolls back alone; later edits still save and external unrelated preferences survive', async () => {
+    let reject!: (reason: Error) => void
+    vi.mocked(api.saveNotificationPreferences).mockImplementationOnce(() => new Promise((_, fail) => { reject = fail }))
+    await click('安静模式'); await click('自动化流程应用内提醒')
+    await act(async () => store.savePreferences({ ...store.snapshot().preferences, sessionPreferences: [{ scope: { workspaceId: 'a', sessionId: 'ch-1', generation: 'g-1' }, mode: 'focus' }] }))
+    await act(async () => reject(Error('disk full')))
+    expect(control('安静模式').checked).toBe(false)
+    expect(control('自动化流程应用内提醒').checked).toBe(false)
+    expect(ledger.preferences().sessionPreferences).toHaveLength(1)
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('安静模式')
+    expect(ledger.preferences().inAppMutedCategories).toEqual(['automation'])
+  })
+  it('does not replay pending edits into a replaced preferences generation', async () => {
+    let resolve!: (preferences: ReturnType<typeof ledger.preferences>) => void
+    vi.mocked(api.saveNotificationPreferences).mockImplementationOnce(() => new Promise(done => { resolve = done }))
+    await click('安静模式'); await click('系统通知')
+    const fresh = { ...ledger.preferences(), quiet: false, nativeEnabled: false }
+    await act(async () => store.accept({ health: 'ready', historyIncomplete: true, storageEpoch: 1, preferences: fresh }))
+    await act(async () => resolve({ ...fresh, quiet: true }))
+    expect(api.saveNotificationPreferences).toHaveBeenCalledTimes(1)
+    expect(control('安静模式').checked).toBe(false); expect(control('系统通知').checked).toBe(false)
+    expect(store.snapshot().preferences).toEqual(fresh)
+  })
+  it('clears an earlier field failure once the later intent for that same field was actually saved', async () => {
+    let reject!: (reason: Error) => void
+    vi.mocked(api.saveNotificationPreferences).mockImplementationOnce(() => new Promise((_, fail) => { reject = fail }))
+    await click('安静模式'); await click('安静模式'); await click('安静模式')
+    await act(async () => reject(Error('first write failed')))
+    expect(ledger.preferences().quiet).toBe(true); expect(control('安静模式').checked).toBe(true)
+    expect(host.querySelector('[role="alert"]')).toBeNull()
+  })
+  it('only shows feedback for a slow save, with the same settings and footer nodes throughout', async () => {
+    vi.useFakeTimers()
+    try {
+      let resolve!: (preferences: ReturnType<typeof ledger.preferences>) => void
+      vi.mocked(api.saveNotificationPreferences).mockImplementationOnce(() => new Promise(done => { resolve = done }))
+      const panel = host.querySelector('.notification-preferences'), footer = host.querySelector('.notification-preferences__save')
+      await click('安静模式'); await act(async () => vi.advanceTimersByTime(179))
+      expect(footer?.textContent).toBe('设置自动保存')
+      await act(async () => vi.advanceTimersByTime(1)); expect(footer?.textContent).toBe('正在保存…')
+      expect(control('开启提醒').disabled).toBe(false)
+      await act(async () => resolve({ ...store.snapshot().preferences, quiet: true }))
+      expect(host.querySelector('.notification-preferences')).toBe(panel)
+      expect(host.querySelector('.notification-preferences__save')).toBe(footer)
+      expect(footer?.textContent).toBe('设置自动保存'); expect(vi.getTimerCount()).toBe(0)
+    } finally { vi.useRealTimers() }
+  })
   it('keeps all new intrusive channels off by default, with independent accessible controls and no history reload', async () => {
     for (const name of ['系统通知', '系统通知声音', '显示通知摘要', '连接变化', '完整新回复', '按时间暂停提醒']) expect(control(name).checked).toBe(false)
     expect(control('系统通知声音').disabled).toBe(true)

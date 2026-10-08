@@ -1847,6 +1847,8 @@ button.workspace-group-chip:focus-visible { outline: 2px solid var(--accent-bord
 .toggle-switch input:checked + .toggle-switch__track .toggle-switch__thumb { transform: translateX(14px); }
 .toggle-switch input:focus-visible + .toggle-switch__track { box-shadow: 0 0 0 3px color-mix(in srgb, var(--anthropic-orange) 18%, transparent); }
 .toggle-switch.is-disabled { cursor: not-allowed; }
+.toggle-switch.is-saving { cursor: progress; }
+.toggle-switch__error { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
 .toggle-switch.is-disabled .toggle-switch__track { opacity: 0.45; }
 .toggle-switch__text { color: var(--text-soft); font-size: var(--fs-10); font-weight: 600; }
 

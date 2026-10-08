@@ -106,13 +106,14 @@ export function createNotificationPreview() {
     },
     getNotificationPreferences: async () => structuredClone(preferences),
     saveNotificationPreferences: async input => {
+      if (scenario === 'preferences-save') await new Promise(resolve => setTimeout(resolve, 240))
       preferences = normalizeNotificationPreferences(input)
       for (const listener of listeners) listener({ preferences: structuredClone(preferences), health: 'ready', historyIncomplete: history.revision > 0, historyIntegrity: structuredClone(history), historyGapUnconfirmed: false })
       return structuredClone(preferences)
     },
     onNotificationChanged: callback => { listeners.add(callback); if (startToast && !toastStarted) { toastStarted = true; setTimeout(startToast, 1200) } return () => { listeners.delete(callback) } }
   }
-  if (scenario && !['empty','human','operator-read','context','memory','restore','compatibility','operator-memory','group-effects','mcp-write','mcp-legacy','mcp-unattributed','question-original','reply-body','source-history','usage-store','model-catalog','usage-runtime','context-source','usage-binding','native-content'].includes(scenario)) {
+  if (scenario && !['empty','preferences-save','human','operator-read','context','memory','restore','compatibility','operator-memory','group-effects','mcp-write','mcp-legacy','mcp-unattributed','question-original','reply-body','source-history','usage-store','model-catalog','usage-runtime','context-source','usage-binding','native-content'].includes(scenario)) {
     const templates = [
       { key: 'preview:automation', category: 'automation' as const, source: '自动化', title: '主要步骤已完成，浏览器清场未完成', detail: '处理和加固已经完成；浏览器清场未结束。请查看本轮详情，不要重复执行已完成的步骤。', tone: 'warning' as const, attention: 'action' as const, state: 'active' as const, target: { kind: 'settings' as const, section: 'automation' as const } },
       { key: 'preview:batch', category: 'run' as const, source: '运行 · 接口重构', title: '6 个会话已就绪，2 个尚未接入', detail: '批量发起已结束。未接入成员的结果可在运行页逐项查看；已就绪会话保持可用。', tone: 'warning' as const, attention: 'notice' as const, state: 'resolved' as const, target: { kind: 'run' as const } },

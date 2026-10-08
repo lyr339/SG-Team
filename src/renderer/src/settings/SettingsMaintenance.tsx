@@ -70,14 +70,11 @@ export function SettingsMaintenance({
   const pumpPort = switchPumpStatus?.config?.port
   // 切号补丁建模为开关：开 = 无感换号能力已就位。两种不可操作态用禁用表达——
   // 外部工具管理的兼容补丁（开态禁用：拾光只复用，不卸载）与不支持的版本（关态禁用）。
-  const pumpDisabled = switchPumpBusy || detectBusy
-    || externalCompatiblePump
+  const pumpDisabled = externalCompatiblePump
     || switchPumpStatus?.kind === 'unsupported'
     || switchPumpStatus?.kind === 'unavailable'
     || (pumpInstalled && !onRemoveSwitchPump)
-  const switchPumpHint = switchPumpBusy
-    ? '正在处理切号补丁…'
-    : externalCompatiblePump
+  const switchPumpHint = externalCompatiblePump
       ? `已安装（端口 ${pumpPort ?? '—'}）；由其他工具管理，拾光只复用、不覆盖或卸载`
       : pumpInstalled
         ? switchPumpStatus?.profileRefreshReady===false?'切号泵已在位；账号资料刷新需补全':`已安装（端口 ${pumpPort ?? '—'}）；安装或更新后需重启 Cursor 才生效`
@@ -127,9 +124,9 @@ export function SettingsMaintenance({
             </div>
             <ToggleSwitch
               checked={cursorUpdatePreferences.autoUpdateDisabled}
-              disabled={cursorUpdateBusy}
+              busy={cursorUpdateBusy}
               label="关闭 Cursor 自动更新"
-              onChange={(checked) => void onSetCursorAutoUpdateDisabled(checked)}
+              onChange={onSetCursorAutoUpdateDisabled}
             />
           </div>
         ) : null}
@@ -138,18 +135,18 @@ export function SettingsMaintenance({
             <div className="settings-row__copy">
               <span className="settings-row__label">自动确认受限模型数据政策</span>
               <span className="settings-row__hint">
-                {policyBusy ? '正在更新受限模型政策…' : '新账号导入与自动化预检时查询官网状态，缺失才确认'}
+                新账号导入与自动化预检时查询官网状态，缺失才确认
               </span>
             </div>
             <ToggleSwitch
               checked={automationSettings.autoAcknowledgeModelDataPolicies !== false}
-              disabled={policyBusy || isActiveAutomationPhase(phase)}
+              disabled={isActiveAutomationPhase(phase)} busy={policyBusy}
               label="自动确认受限模型数据政策"
               title={!automationSettings.bitProfileId ? '关闭可直接生效；重新开启前请先在「导入来源」选择默认窗口' : undefined}
               onChange={(enabled) => {
                 setPolicyBusy(true)
                 setPolicyFeedback(undefined)
-                void onSetModelDataPolicyAutoAcknowledge(enabled)
+                return onSetModelDataPolicyAutoAcknowledge(enabled)
                   .then((result) => setPolicyFeedback({ ok: true, message: result.message, notification: result.notification }))
                   .catch((reason: unknown) => setPolicyFeedback({
                     ok: false,
@@ -180,10 +177,11 @@ export function SettingsMaintenance({
               <ToggleSwitch
                 checked={pumpInstalled}
                 disabled={pumpDisabled}
+                busy={switchPumpBusy || detectBusy}
+                optimistic={false}
                 label="切号补丁（无感换号）"
                 onChange={(checked) => {
-                  if (checked) void onEnsureSwitchPump()
-                  else void onRemoveSwitchPump?.()
+                  return checked ? onEnsureSwitchPump() : onRemoveSwitchPump?.()
                 }}
               />
             </div>

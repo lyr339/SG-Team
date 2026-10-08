@@ -49,14 +49,15 @@ export function SettingsAutomation({
   const boundarySaving = useRef(false)
   const postProcessingEnabled = automationSettings?.postProcessingEnabled !== false
   const postProcessingOpen = automationSettings?.enabled === true && postProcessingEnabled
-  const saveBoundary = async (enabled: boolean): Promise<void> => {
-    if (!automationSettings || !onSaveAutomationSettings || boundarySaving.current || processingBusy || active) return
+  const saveBoundary = async (enabled: boolean): Promise<boolean> => {
+    if (!automationSettings || !onSaveAutomationSettings || boundarySaving.current || processingBusy || active) return false
     boundarySaving.current = true
     setSavingBoundary(true); setBoundaryError('')
     try {
       const saved = await onSaveAutomationSettings({ ...automationSettings, postProcessingEnabled: enabled })
       if (saved === false) setBoundaryError('后续操作设置未保存，请重试')
-    } catch (reason) { setBoundaryError(reason instanceof Error ? reason.message : String(reason)) }
+      return saved !== false
+    } catch (reason) { setBoundaryError(reason instanceof Error ? reason.message : String(reason)); return false }
     finally { boundarySaving.current = false; setSavingBoundary(false) }
   }
   const activeAccount = accounts.find((account) => account.active)
@@ -95,7 +96,7 @@ export function SettingsAutomation({
               </div>
               <ToggleSwitch
                 checked={automationSettings.enabled}
-                disabled={processingBusy || active || savingBoundary}
+                disabled={processingBusy || active} busy={savingBoundary}
                 label="会话创建后自动处理账号"
                 onChange={(enabled) => onSaveAutomationSettings({ ...automationSettings, enabled })}
               />
@@ -115,7 +116,7 @@ export function SettingsAutomation({
                       max={ACCOUNT_AUTOMATION_DELAY_MAX_SEC}
                       step={0.5}
                       unit="秒"
-                      disabled={processingBusy || active || savingBoundary}
+                      disabled={processingBusy || active} busy={savingBoundary}
                       label={`${providerLabel}处理前倒计时秒数`}
                       onChange={(delaySec) => onSaveAutomationSettings({ ...automationSettings, delaySec })}
                     />
@@ -125,13 +126,13 @@ export function SettingsAutomation({
                 <div className="settings-row settings-row--divided settings-automation__post-boundary">
                   <div className="settings-row__copy">
                     <span className="settings-row__label">处理后执行后续操作</span>
-                    <span className="settings-row__hint">{savingBoundary ? '正在保存…' : postProcessingEnabled
+                    <span className="settings-row__hint">{postProcessingEnabled
                       ? '加固与清场不可撤销；无感切换按下方设置执行'
                       : `仅执行${providerLabel}处理，保留账号记录；不换号、不加固、不清场`}</span>
                   </div>
-                  <ToggleSwitch checked={postProcessingEnabled} disabled={processingBusy || active || savingBoundary}
+                  <ToggleSwitch checked={postProcessingEnabled} disabled={processingBusy || active} busy={savingBoundary}
                     label="处理后执行后续操作" title="关闭会同时跳过换号票据准备、Token 刷新、官网账号删除和浏览器清场"
-                    onChange={(enabled) => void saveBoundary(enabled)} />
+                    onChange={saveBoundary} />
                 </div>
                 {boundaryError ? <FeedbackLine className="cursor-maintenance__error" role="alert" tone={'error'}>{boundaryError}</FeedbackLine> : null}
                 {!postProcessingEnabled ? <p className="account-automation__follow">仅保留本地记录，不代表原 Token 仍有效；处理服务可能使登录态失效。</p> : null}
@@ -149,7 +150,7 @@ export function SettingsAutomation({
                         max={ACCOUNT_AUTOMATION_DELAY_MAX_SEC}
                         step={0.5}
                         unit="秒"
-                        disabled={processingBusy || active || savingBoundary}
+                        disabled={processingBusy || active} busy={savingBoundary}
                         label={`${providerLabel}完成后账号加固前倒计时秒数`}
                         onChange={(postProcessDelaySec) => onSaveAutomationSettings({ ...automationSettings, postProcessDelaySec })}
                       />
@@ -162,7 +163,7 @@ export function SettingsAutomation({
                       </div>
                       <ToggleSwitch
                         checked={automationSettings.preflightRecheckEnabled !== false}
-                        disabled={processingBusy || active || savingBoundary}
+                        disabled={processingBusy || active} busy={savingBoundary}
                         label="倒计时后复核会话"
                         onChange={(preflightRecheckEnabled) => onSaveAutomationSettings({ ...automationSettings, preflightRecheckEnabled })}
                       />
@@ -175,7 +176,7 @@ export function SettingsAutomation({
                       </div>
                       <ToggleSwitch
                         checked={automationSettings.seamlessHandoverEnabled !== false}
-                        disabled={processingBusy || active || savingBoundary}
+                        disabled={processingBusy || active} busy={savingBoundary}
                         label="处理完成后无感切换"
                         title={`${providerLabel}处理成功后，经切号补丁把运行中的 Cursor 直接换到指定接手账号（不换机器码、不中断会话）`}
                         onChange={(seamlessHandoverEnabled) => onSaveAutomationSettings({ ...automationSettings, seamlessHandoverEnabled })}
@@ -193,7 +194,7 @@ export function SettingsAutomation({
                             <MenuSelect
                               key={handoverOpen ? 'handover-open' : 'handover-closed'}
                               value={effectivePreferredId}
-                              disabled={!handoverOpen || processingBusy || active || savingBoundary || handoverCandidates.length === 0}
+                              disabled={!handoverOpen || processingBusy || active || handoverCandidates.length === 0} busy={savingBoundary}
                               ariaLabel="自动化无感换号接手账号"
                               options={[
                                 { value: '', label: `自动${handoverTarget ? ` · ${handoverTarget.label}` : ' · 暂无可用账号'}` },
@@ -216,7 +217,7 @@ export function SettingsAutomation({
                               max={ACCOUNT_AUTOMATION_DELAY_MAX_SEC}
                               step={0.5}
                               unit="秒"
-                              disabled={processingBusy || active || savingBoundary}
+                              disabled={processingBusy || active} busy={savingBoundary}
                               label="无感切换前等待秒数"
                               onChange={(handoverDelaySec) => onSaveAutomationSettings({ ...automationSettings, handoverDelaySec })}
                             />

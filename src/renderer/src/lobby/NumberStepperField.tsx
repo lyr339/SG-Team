@@ -7,6 +7,7 @@ export interface NumberStepperFieldProps {
   step: number
   unit?: string
   disabled?: boolean
+  busy?: boolean
   onChange: (value: number) => void
   /** 无可见文本时的屏幕阅读器语义标签。 */
   label?: string
@@ -33,11 +34,12 @@ function formatValue(value: number): string {
  * 编辑态与展示态分离：聚焦时进入草稿（允许 "1." 之类的中间输入），
  * Enter / 失焦提交（解析 → 钳制 → 对齐步进），Escape 还原；↑ / ↓ 直接步进。
  */
-export function NumberStepperField({ value, min, max, step, unit, disabled, onChange, label }: NumberStepperFieldProps): React.JSX.Element {
+export function NumberStepperField({ value, min, max, step, unit, disabled, busy, onChange, label }: NumberStepperFieldProps): React.JSX.Element {
   // draft 为 null 时是非编辑展示态；聚焦后才进入草稿态，避免输入中间态被父级值覆盖。
   const [draft, setDraft] = useState<string | null>(null)
   const valueRef = useRef(value)
   const repeatRef = useRef<{ timeout?: number; interval?: number }>({})
+  const blocked = useRef(false); blocked.current = Boolean(disabled || busy)
 
   useEffect(() => {
     valueRef.current = value
@@ -50,15 +52,16 @@ export function NumberStepperField({ value, min, max, step, unit, disabled, onCh
   }
   // 卸载时停掉长按定时器，避免组件销毁后还在回调。
   useEffect(() => stopRepeat, [])
+  useEffect(() => { if (disabled || busy) stopRepeat() }, [disabled, busy])
 
   const stepOnce = (direction: 1 | -1): void => {
-    if (disabled) return
+    if (blocked.current) return
     const next = clampToStep(valueRef.current + direction * step, min, max, step)
     if (next !== valueRef.current) onChange(next)
   }
 
   const startRepeat = (direction: 1 | -1): void => {
-    if (disabled) return
+    if (blocked.current) return
     stopRepeat()
     stepOnce(direction)
     repeatRef.current.timeout = window.setTimeout(() => {
@@ -68,6 +71,7 @@ export function NumberStepperField({ value, min, max, step, unit, disabled, onCh
 
   const commitDraft = (): void => {
     if (draft === null) return
+    if (blocked.current) { setDraft(null); return }
     const parsed = Number(draft.trim())
     if (draft.trim() && Number.isFinite(parsed)) {
       const next = clampToStep(parsed, min, max, step)
@@ -82,11 +86,12 @@ export function NumberStepperField({ value, min, max, step, unit, disabled, onCh
   const atMax = alignedValue >= clampToStep(max, min, max, step)
 
   return (
-    <span className={`stepper-field${disabled ? ' is-disabled' : ''}`} role="group" aria-label={label}>
+    <span className={`stepper-field${disabled ? ' is-disabled' : ''}`} role="group" aria-label={label} aria-busy={busy || undefined}>
       <button
         type="button"
         className="stepper-field__btn"
         disabled={disabled || atMin}
+        aria-disabled={disabled || busy || atMin || undefined}
         aria-label="减少"
         onPointerDown={(event) => { event.preventDefault(); startRepeat(-1) }}
         onPointerUp={stopRepeat}
@@ -110,6 +115,8 @@ export function NumberStepperField({ value, min, max, step, unit, disabled, onCh
           {...(label ? { 'aria-label': label } : {})}
           value={draft ?? formatValue(value)}
           disabled={disabled}
+          readOnly={busy}
+          aria-disabled={disabled || busy || undefined}
           onFocus={(event) => {
             setDraft(formatValue(value))
             event.target.select()
@@ -117,6 +124,7 @@ export function NumberStepperField({ value, min, max, step, unit, disabled, onCh
           onChange={(event) => setDraft(event.target.value)}
           onBlur={commitDraft}
           onKeyDown={(event) => {
+            if (blocked.current && event.key !== 'Escape') { event.preventDefault(); return }
             if (event.key === 'Enter') {
               event.preventDefault()
               commitDraft()
@@ -143,6 +151,7 @@ export function NumberStepperField({ value, min, max, step, unit, disabled, onCh
         type="button"
         className="stepper-field__btn"
         disabled={disabled || atMax}
+        aria-disabled={disabled || busy || atMax || undefined}
         aria-label="增加"
         onPointerDown={(event) => { event.preventDefault(); startRepeat(1) }}
         onPointerUp={stopRepeat}

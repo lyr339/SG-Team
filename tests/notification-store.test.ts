@@ -14,6 +14,20 @@ function harness() {
 }
 const flush = async () => { await Promise.resolve(); await Promise.resolve() }
 describe('notification renderer store', () => {
+  it('serializes field edits across views, rebasing each on confirmed preferences and recovering from a failed write', async () => {
+    const h = harness(), release = h.store.acquire(); await flush()
+    let reject!: (reason: Error) => void
+    vi.mocked(h.api.saveNotificationPreferences).mockImplementationOnce(() => new Promise((_, fail) => { reject = fail }))
+    const first = h.store.updatePreferences(current => ({ ...current, quiet: true }))
+    const rejected = expect(first).rejects.toThrow('disk full')
+    const second = h.store.updatePreferences(current => ({ ...current, nativeEnabled: true }))
+    const third = h.store.updatePreferences(current => ({ ...current, preview: true }))
+    await flush(); expect(h.api.saveNotificationPreferences).toHaveBeenCalledTimes(1)
+    reject(Error('disk full')); await rejected; await Promise.all([second, third])
+    expect(h.store.snapshot().preferences).toMatchObject({ quiet: false, nativeEnabled: true, preview: true })
+    expect(vi.mocked(h.api.saveNotificationPreferences).mock.calls[2]![0]).toMatchObject({ nativeEnabled: true, preview: true })
+    release()
+  })
   it('a proven new private generation accepts a lower summary, but neither an old generation nor a late same-generation reload can rewind it', async () => {
     const h = harness(), release = h.store.acquire(); await flush()
     h.push({ storageEpoch: 0, change: { changed: true, record, summary: summary(100) }, health: 'ready', historyIncomplete: false })

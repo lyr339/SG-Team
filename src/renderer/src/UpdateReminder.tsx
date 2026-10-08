@@ -18,9 +18,9 @@ export function useAppUpdateStatus(initial?: AppUpdateStatus): AppUpdateStatus |
   useEffect(() => {
     const api = reminderApi()
     if (!api) return
-    let cancelled = false
-    void api.getAppUpdateStatus().then((next) => { if (!cancelled) setStatus(next) }).catch(() => {})
-    const unsubscribe = api.onAppUpdateStatus((next) => setStatus(next))
+    let cancelled = false, pushed = false
+    const unsubscribe = api.onAppUpdateStatus(next => { pushed = true; if (!cancelled) setStatus(next) })
+    void api.getAppUpdateStatus().then(next => { if (!cancelled && !pushed) setStatus(next) }).catch(() => {})
     return () => {
       cancelled = true
       unsubscribe()

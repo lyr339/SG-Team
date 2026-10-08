@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, Profiler } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SqliteNotificationRepository } from '../src/infrastructure/notifications/sqlite-notification-repository'
@@ -27,6 +27,139 @@ describe('notification center real-ledger interactions', () => {
   afterEach(async () => { await act(async () => root.unmount()); release(); listeners.clear(); repository.close(); host.remove() })
   const button = (text: string): HTMLButtonElement => [...host.querySelectorAll<HTMLButtonElement>('button')].find(node => node.textContent === text)!
   const click = async (text: string) => { await act(async () => { button(text).click() }) }
+  it('commits a filter, count and body together without a blank/loading frame between valid pages', async () => {
+    const frames: Array<{ selected: string | null; header: string | null; body: string | null }> = []
+    await act(async () => root.render(<Profiler id="notification-switch" onRender={() => {
+      frames.push({ selected: host.querySelector('[role="tab"][aria-selected="true"]')?.textContent ?? null,
+        header: host.querySelector('.notification-panel__header')?.textContent ?? null,
+        body: host.querySelector('.notification-panel__body')?.textContent ?? null })
+    }}><NotificationCenter store={store} workspaceId="a" onClose={() => {}} onNavigate={async () => {}} /></Profiler>))
+    frames.length = 0
+    await click('待处理')
+    expect(frames.length).toBeGreaterThan(0)
+    for (const frame of frames) {
+      expect(frame.body).toBeTruthy()
+      expect(frame.body).not.toContain('正在读取通知')
+      expect(frame.header).not.toContain('重要结果与待处理事项')
+      if (frame.selected === '待处理') {
+        expect(frame.header).toContain('1 条待处理')
+        expect(frame.body).toContain('请回答问卷')
+        expect(frame.body).not.toContain('批量发起结束')
+      } else expect(frame.selected).toBe('全部')
+    }
+  })
+  it('keeps the settled tab, exact opened body and scope label during a slow switch, but freezes old actions', async () => {
+    await click('批量发起结束')
+    const panel = host.querySelector('.notification-panel'), detail = host.querySelector('.notification-row__detail')
+    let resolve!: (page: NotificationPage) => void
+    vi.mocked(api.getNotificationPage).mockImplementationOnce(() => new Promise(done => { resolve = done }))
+    await click('待处理')
+    expect(host.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('全部')
+    expect(host.querySelector('.notification-panel__header')?.textContent).toContain('2 条记录')
+    expect(host.querySelector('.notification-panel__body')?.getAttribute('aria-busy')).toBe('true')
+    expect(host.querySelector('.notification-panel')).toBe(panel)
+    expect(host.querySelector('.notification-row__detail')).toBe(detail)
+    expect(host.querySelector('.notification-panel__body')?.textContent).not.toContain('正在读取通知')
+    for (const text of ['全部已读', '清理已读…', '归档', '请回答问卷']) expect(button(text).disabled).toBe(true)
+    await click('归档'); await click('全部已读'); await click('请回答问卷')
+    expect(api.archiveNotification).not.toHaveBeenCalled(); expect(api.readAllNotifications).not.toHaveBeenCalled()
+    expect(api.readNotification).toHaveBeenCalledTimes(1)
+    await act(async () => resolve(repository.page({ filter: 'pending' })))
+    expect(host.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('待处理')
+    expect(host.querySelector('.notification-panel__header')?.textContent).toContain('1 条待处理')
+    expect(host.querySelector('.notification-row__detail')).toBeNull()
+    expect(host.querySelector('.notification-panel')).toBe(panel)
+    expect(host.querySelector('.notification-panel__body')?.getAttribute('aria-busy')).toBe('false')
+  })
+  it('only shows slow-read feedback after the grace period, in the header without replacing the body', async () => {
+    vi.useFakeTimers()
+    try {
+      let resolve!: (page: NotificationPage) => void
+      vi.mocked(api.getNotificationPage).mockImplementationOnce(() => new Promise(done => { resolve = done }))
+      await click('未读')
+      await act(async () => vi.advanceTimersByTime(179))
+      expect(host.querySelector('.notification-panel__header')?.textContent).toContain('2 条记录')
+      await act(async () => vi.advanceTimersByTime(1))
+      expect(host.querySelector('.notification-panel__header')?.textContent).toContain('正在读取…')
+      expect(host.querySelector('.notification-panel__body')?.textContent).toContain('批量发起结束')
+      await act(async () => resolve(repository.page({ filter: 'unread' })))
+      expect(host.querySelector('.notification-panel__header')?.textContent).toContain('2 条未读')
+      expect(vi.getTimerCount()).toBe(0)
+    } finally { vi.useRealTimers() }
+  })
+  it('retains the same empty-state DOM across filter switches without a temporary loading state', async () => {
+    const empty: NotificationPage = { records: [], reset: false, summary: { revision: repository.page().summary.revision, total: 0, pending: 0, unread: 0, clearable: 0 } }
+    vi.mocked(api.getNotificationPage).mockResolvedValue(empty)
+    await click('待处理')
+    const panel = host.querySelector('.notification-panel'), state = host.querySelector('.notification-empty')
+    expect(state?.textContent).toContain('没有待处理事项')
+    let resolve!: (page: NotificationPage) => void
+    vi.mocked(api.getNotificationPage).mockImplementationOnce(() => new Promise(done => { resolve = done }))
+    await click('未读')
+    expect(host.querySelector('.notification-empty')).toBe(state)
+    expect(state?.textContent).toContain('没有待处理事项')
+    await act(async () => resolve(empty))
+    expect(host.querySelector('.notification-empty')).toBe(state)
+    expect(state?.textContent).toContain('未读通知已看完')
+    expect(host.querySelector('.notification-panel')).toBe(panel)
+    await click('全部')
+    expect(host.querySelector('.notification-empty')).toBe(state)
+    expect(state?.textContent).toContain('暂时没有通知')
+  })
+  it('ignores a late response or failure from an earlier filter even after a later filter settles', async () => {
+    let resolvePending!: (page: NotificationPage) => void, rejectUnread!: (reason: Error) => void
+    vi.mocked(api.getNotificationPage).mockImplementationOnce(() => new Promise(done => { resolvePending = done }))
+    await click('待处理')
+    vi.mocked(api.getNotificationPage).mockImplementationOnce(() => new Promise((_, reject) => { rejectUnread = reject }))
+    await click('未读')
+    await click('全部')
+    expect(host.querySelector('.notification-panel__header')?.textContent).toContain('2 条记录')
+    await act(async () => { resolvePending(repository.page({ filter: 'pending' })); rejectUnread(Error('superseded lookup')) })
+    expect(host.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('全部')
+    expect(host.querySelector('.notification-row__open')?.textContent).toContain('请回答问卷')
+    expect(host.querySelectorAll('.notification-row')).toHaveLength(2)
+    expect(host.querySelector('[role="alert"]')).toBeNull()
+    expect(button('全部已读').disabled).toBe(false)
+  })
+  it('a failed filter switch commits an explicit retry view, never the previous scope as an actionable new filter', async () => {
+    vi.mocked(api.getNotificationPage).mockRejectedValueOnce(Error('filter lookup failed'))
+    await click('待处理')
+    expect(host.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('待处理')
+    expect(host.querySelectorAll('.notification-row')).toHaveLength(0)
+    expect(button('全部已读').disabled).toBe(true); expect(button('清理已读…').disabled).toBe(true)
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('通知暂不可读取')
+    await click('重新读取')
+    expect(host.querySelectorAll('.notification-row')).toHaveLength(1)
+    expect(host.querySelector('.notification-panel__header')?.textContent).toContain('1 条待处理')
+    expect(host.querySelector('[role="alert"]')).toBeNull()
+  })
+  it('a storage replacement during a slow switch reloads the target even with an old detail open', async () => {
+    await click('批量发起结束')
+    let resolveOld!: (page: NotificationPage) => void, resolveNew!: (page: NotificationPage) => void
+    const oldPage = { ...repository.page({ filter: 'pending' }), storageEpoch: 0 }
+    vi.mocked(api.getNotificationPage).mockImplementationOnce(() => new Promise(done => { resolveOld = done }))
+    await click('待处理')
+    vi.mocked(api.getNotificationPage).mockImplementationOnce(() => new Promise(done => { resolveNew = done }))
+    const summary = { revision: 1, total: 0, pending: 0, unread: 0, clearable: 0 }
+    await act(async () => { for (const listener of listeners) listener({ health: 'ready', historyIncomplete: true, historyReload: true, storageEpoch: 1,
+      change: { changed: false, storageEpoch: 1, summary } }) })
+    await act(async () => resolveOld(oldPage))
+    expect(host.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('全部')
+    await act(async () => resolveNew({ records: [], summary, storageEpoch: 1, reset: true }))
+    expect(host.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('待处理')
+    expect(host.querySelector('.notification-empty')?.textContent).toContain('没有待处理事项')
+    expect(host.querySelector('.notification-row__detail')).toBeNull()
+    expect(host.querySelector('.notification-panel__body')?.getAttribute('aria-busy')).toBe('false')
+  })
+  it('does not jump scroll position while waiting, then starts the committed new filter at its first result', async () => {
+    const body = host.querySelector<HTMLDivElement>('.notification-panel__body')!
+    body.scrollTop = 173
+    let resolve!: (page: NotificationPage) => void
+    vi.mocked(api.getNotificationPage).mockImplementationOnce(() => new Promise(done => { resolve = done }))
+    await click('待处理'); expect(body.scrollTop).toBe(173)
+    await act(async () => resolve(repository.page({ filter: 'pending' })))
+    expect(body.scrollTop).toBe(0)
+  })
   it('does not mark the whole center read merely by opening; detail reading does not resolve business work', async () => {
     expect(repository.page().summary.unread).toBe(2)
     await click('请回答问卷')

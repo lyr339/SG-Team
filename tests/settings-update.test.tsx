@@ -254,6 +254,42 @@ describe('设置 › 软件更新', () => {
     await click('恢复默认')
     expect(api.saveAppUpdateSettings).toHaveBeenLastCalledWith({ autoCheck: false, checkIntervalHours: 6 })
   })
+  it('keeps a pending toggle stable and never rewinds newer live progress with its late save receipt', async () => {
+    const initial = statusOf({ phase: 'up_to_date', checkedAt: NOW })
+    const { api, push } = installApi(initial)
+    let resolve!: (value: AppUpdateStatus) => void
+    vi.mocked(api.saveAppUpdateSettings).mockImplementationOnce(() => new Promise(done => { resolve = done }))
+    await render()
+    const toggle = container.querySelector<HTMLInputElement>('input[aria-label="自动检查新版本"]')!
+    toggle.focus(); await act(async () => toggle.click())
+    expect(toggle.checked).toBe(false); expect(toggle.disabled).toBe(false)
+    expect(document.activeElement).toBe(toggle)
+    await act(async () => push(statusOf({ phase: 'downloading', release, receivedBytes: 75, totalBytes: 100, startedAt: NOW })))
+    await act(async () => resolve({ ...initial, settings: { ...initial.settings, autoCheck: false } }))
+    expect(container.querySelector('.app-update__bar')?.getAttribute('aria-valuenow')).toBe('75')
+    expect(button('取消下载')).toBeDefined(); expect(toggle.checked).toBe(false)
+  })
+  it('does not silently pretend a failed settings save succeeded and supports retry', async () => {
+    const { api } = installApi(statusOf({ phase: 'up_to_date', checkedAt: NOW }))
+    vi.mocked(api.saveAppUpdateSettings).mockRejectedValueOnce(Error('disk full'))
+    await render()
+    const toggle = container.querySelector<HTMLInputElement>('input[aria-label="自动检查新版本"]')!
+    await act(async () => toggle.click())
+    expect(toggle.checked).toBe(true)
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('检查设置未能保存')
+    await act(async () => toggle.click())
+    expect(toggle.checked).toBe(false); expect(container.querySelector('[role="alert"]')).toBeNull()
+  })
+  it('ignores an older initial status pull once a live status was already received', async () => {
+    const initial = statusOf({ phase: 'idle', lastCheckedAt: NOW })
+    const { api, push } = installApi(initial)
+    let resolve!: (value: AppUpdateStatus) => void
+    vi.mocked(api.getAppUpdateStatus).mockImplementationOnce(() => new Promise(done => { resolve = done }))
+    await render()
+    await act(async () => push(statusOf({ phase: 'downloading', release, receivedBytes: 75, totalBytes: 100, startedAt: NOW })))
+    await act(async () => resolve(initial))
+    expect(container.querySelector('.app-update__bar')?.getAttribute('aria-valuenow')).toBe('75')
+  })
 
   it('镜像预设：点胶囊只填入输入框（仍要保存）；保存后胶囊点亮为当前源，恢复默认后熄灭', async () => {
     const { api } = installApi(statusOf({ phase: 'up_to_date', checkedAt: NOW }))

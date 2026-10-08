@@ -460,7 +460,7 @@ export function PoolPage({
       if (result.notification) setPlanFeedback({ ...result.notification, text: result.message })
     }
   }) : undefined
-  const toggleAutoHeal = onToggleCdpAutoHeal ? (enabled: boolean) => void run('cdp-autoheal', async () => {
+  const toggleAutoHeal = onToggleCdpAutoHeal ? (enabled: boolean) => run('cdp-autoheal', async () => {
     await onToggleCdpAutoHeal(enabled)
     setNotice(enabled ? '自动保持已开启：此后检测到端口缺失会提示并自动处理。' : '自动保持已关闭。')
   }) : undefined
@@ -487,6 +487,7 @@ export function PoolPage({
       selections={selections}
       plan={relevantPlan}
       busy={isBusy}
+      settingsBusy={busy === 'cdp-autoheal'}
       createLabel={createLabel}
       createCount={composingIndependent ? undefined : view.pendingSeats.length}
       createBlockedReason={!composingIndependent && view.evidencePending ? '正在确认离线会话的运行状态，确认完成后开放安全重建' : undefined}

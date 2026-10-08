@@ -15,6 +15,7 @@
   gap: 26px;
   padding: 22px 24px 36px;
   overflow: auto;
+  scrollbar-gutter: stable;
   color: var(--text);
   background: transparent;
 }
@@ -176,8 +177,7 @@
 .settings-notice__toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
 .settings-notice__details { display: grid; grid-template-rows: 0fr; opacity: 0; visibility: hidden; transition: grid-template-rows 180ms ease, opacity 120ms ease; }
 .settings-notice__details.is-open { grid-template-rows: 1fr; opacity: 1; visibility: visible; }
-.settings-notice__details > div { min-height: 0; overflow: hidden; }
-.settings-notice__details.is-open > div { max-height: 180px; overflow-y: auto; overscroll-behavior: contain; }
+.settings-notice__details > div { min-height: 0; max-height: 180px; overflow-y: auto; scrollbar-gutter: stable; overscroll-behavior: contain; }
 .settings-notice__details > div:focus-visible { outline: 2px solid var(--color-ring-primary); outline-offset: -2px; }
 .settings-notice__detail { margin: 7px 0 0 28px; color: var(--text-soft); font-size: var(--font-text-sm-size); line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 .settings-notice__close { display: grid; place-items: center; width: 24px; min-height: 30px; padding: 3px 7px; color: var(--muted); background: transparent; border: 0; border-radius: 6px; }

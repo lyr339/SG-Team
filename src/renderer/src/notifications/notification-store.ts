@@ -35,6 +35,7 @@ export class NotificationStore {
   private users = 0
   private epoch = 0
   private preferencesEpoch = 0
+  private preferenceWrites: Promise<void> = Promise.resolve()
   private historyEpoch = 0
   private storageVersion = 0
   private summaryStorageEpoch?: number
@@ -161,6 +162,17 @@ export class NotificationStore {
     const epoch = ++this.preferencesEpoch
     const saved = await this.api.saveNotificationPreferences(preferences)
     if (epoch === this.preferencesEpoch) this.applyPreferences(saved)
+  }
+  updatePreferences(update: (current: NotificationPreferences) => NotificationPreferences): Promise<void> {
+    const storageVersion = this.storageVersion
+    const write = this.preferenceWrites.then(async () => {
+      if (!this.state.preferencesReady || storageVersion !== this.storageVersion) throw Error('提醒设置已换代，请重新读取')
+      await this.savePreferences(update(this.state.preferences))
+      if (storageVersion !== this.storageVersion) throw Error('提醒设置已换代，请重新读取')
+    })
+    // One failed field must not poison later saves; callers still receive its rejection.
+    this.preferenceWrites = write.catch(() => {})
+    return write
   }
   read(record: NotificationRecord): Promise<void> {
     return this.api.readNotification({ id: record.id, revision: record.revision, ...(record.storageEpoch !== undefined ? { storageEpoch: record.storageEpoch } : {}) }).then(change => {

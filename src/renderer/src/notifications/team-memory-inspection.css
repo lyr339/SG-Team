@@ -91,6 +91,7 @@
 .memory-inspection__scroll {
   min-height: 0;
   overflow: auto;
+  scrollbar-gutter: stable;
   overscroll-behavior: contain;
 }
 .memory-inspection__body {

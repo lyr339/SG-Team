@@ -8,6 +8,7 @@ export interface MenuSelectProps {
   options: MenuSelectOption[]
   placeholder?: string
   disabled?: boolean
+  busy?: boolean
   ariaLabel?: string
   menuMinWidth?: number
   className?: string
@@ -15,7 +16,7 @@ export interface MenuSelectProps {
 }
 /** Shared, theme-owned selection. Portal escapes clipped panels while retaining
  * the owning overlay, keyboard context and exact value semantics. */
-export function MenuSelect({ value, options, placeholder = '请选择…', disabled, ariaLabel, menuMinWidth = 0, className = '', onChange }: MenuSelectProps): React.JSX.Element {
+export function MenuSelect({ value, options, placeholder = '请选择…', disabled, busy, ariaLabel, menuMinWidth = 0, className = '', onChange }: MenuSelectProps): React.JSX.Element {
   const [open, setOpen] = useState(false)
   const [menuStyle, setMenuStyle] = useState<CSSProperties>()
   const [highlighted, setHighlighted] = useState(0)
@@ -24,8 +25,8 @@ export function MenuSelect({ value, options, placeholder = '请选择…', disab
   const menuId = useId()
   const search = useRef({ text: '', at: 0 })
   const selected = options.find(option => option.value === value)
-  const menuOpen = open && !disabled
-  useEffect(() => { if (disabled) setOpen(false) }, [disabled])
+  const menuOpen = open && !disabled && !busy
+  useEffect(() => { if (disabled || busy) setOpen(false) }, [disabled, busy])
   const positionMenu = useCallback((): void => {
     const button = buttonRef.current
     if (!button) return
@@ -39,7 +40,7 @@ export function MenuSelect({ value, options, placeholder = '请选择…', disab
     setOwner(rootRef.current?.closest<HTMLElement>('[data-overlay-scope]')?.dataset.overlayScope)
   }, [menuMinWidth])
   const openMenu = (last = false): void => {
-    if (disabled) return
+    if (disabled || busy) return
     search.current = { text: '', at: 0 }
     positionMenu(); setHighlighted(Math.max(0, options.findIndex(option => option.value === value) >= 0 ? options.findIndex(option => option.value === value) : last ? options.length - 1 : 0)); setOpen(true)
   }
@@ -71,8 +72,8 @@ export function MenuSelect({ value, options, placeholder = '请选择…', disab
     }
   }, [menuOpen, positionMenu])
   return <div className={`menu-select ${className}${menuOpen ? ' is-open' : ''}${disabled ? ' is-disabled' : ''}${selected?.tone ? ` ${selected.tone}` : ''}`} ref={rootRef}>
-    <button ref={buttonRef} type="button" className="menu-select__button" disabled={disabled} aria-label={ariaLabel} aria-haspopup="listbox" aria-expanded={menuOpen} aria-controls={menuOpen ? menuId : undefined}
-      onClick={() => menuOpen ? closeMenu(false) : openMenu()}
+    <button ref={buttonRef} type="button" className="menu-select__button" disabled={disabled} aria-disabled={disabled || busy || undefined} aria-busy={busy || undefined} aria-label={ariaLabel} aria-haspopup="listbox" aria-expanded={menuOpen} aria-controls={menuOpen ? menuId : undefined}
+      onClick={() => { if (!busy) { if (menuOpen) closeMenu(false); else openMenu() } }}
       onKeyDown={event => {
         if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); openMenu(event.key === 'ArrowUp') }
       }}>

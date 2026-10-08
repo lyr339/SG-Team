@@ -66,6 +66,11 @@ export function SettingsUpdate({ initialStatus, now = () => Date.now() }: Settin
   const [feedDraft, setFeedDraft] = useState<string>()
   const [updatedNoteDismissed, setUpdatedNoteDismissed] = useState(false)
   const [busyAction, setBusyAction] = useState<UpdateActionId>()
+  const [settingsError, setSettingsError] = useState('')
+  const statusRef = useRef(status); statusRef.current = status
+  const settingsQueue = useRef(Promise.resolve())
+  const alive = useRef(true)
+  useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
   const panelRef = useRef<HTMLDivElement>(null)
   const notificationResultRef = useRef<HTMLDivElement>(null)
   const notificationReceiptRef = useRef<HTMLParagraphElement>(null)
@@ -89,9 +94,14 @@ export function SettingsUpdate({ initialStatus, now = () => Date.now() }: Settin
   useEffect(() => {
     const api = updateApi()
     if (!api) return
-    let cancelled = false
-    void api.getAppUpdateStatus().then((next) => { if (!cancelled) setStatus(next) }).catch(() => {})
-    const unsubscribe = api.onAppUpdateStatus((next) => setStatus(next))
+    let cancelled = false, pushed = false
+    const unsubscribe = api.onAppUpdateStatus(next => {
+      pushed = true; statusRef.current = next
+      if (!cancelled) setStatus(next)
+    })
+    void api.getAppUpdateStatus().then(next => {
+      if (!cancelled && !pushed) { statusRef.current = next; setStatus(next) }
+    }).catch(() => {})
     return () => {
       cancelled = true
       unsubscribe()
@@ -105,11 +115,21 @@ export function SettingsUpdate({ initialStatus, now = () => Date.now() }: Settin
   useNotificationResultRead(notificationResultRef, notificationResult?.key, notificationResult?.eventId)
   useNotificationResultRead(notificationReceiptRef, notificationReceipt?.key, notificationReceipt?.eventId)
 
-  const saveSettings = (patch: Partial<AppUpdateSettings>): void => {
+  const saveSettings = (patch: Partial<AppUpdateSettings>): Promise<boolean> => {
     const api = updateApi()
-    if (!api) return
-    const next = normalizeAppUpdateSettings({ ...settings, ...patch })
-    void api.saveAppUpdateSettings(next).then(setStatus).catch(() => {})
+    if (!api) return Promise.resolve(false)
+    setSettingsError('')
+    const write = settingsQueue.current.then(async () => {
+      if (api !== updateApi()) throw Error('settings source changed')
+      const next = normalizeAppUpdateSettings({ ...statusRef.current?.settings ?? settings, ...patch })
+      const saved = await api.saveAppUpdateSettings(next)
+      // Saving a field is not an update-workflow snapshot grant. A late save
+      // receipt must not rewind newer download/check progress from live pushes.
+      statusRef.current = statusRef.current ? { ...statusRef.current, settings: saved.settings } : saved
+      if (alive.current) setStatus(current => current ? { ...current, settings: saved.settings } : saved)
+    })
+    settingsQueue.current = write.catch(() => {})
+    return write.then(() => true, () => { if (alive.current) setSettingsError('检查设置未能保存，原设置保持不变。'); return false })
   }
 
   /**
@@ -354,6 +374,7 @@ export function SettingsUpdate({ initialStatus, now = () => Date.now() }: Settin
               onChange={(checked) => saveSettings({ autoCheck: checked })}
             />
           </div>
+          {settingsError ? <FeedbackLine tone="error">{settingsError}</FeedbackLine> : null}
           {/* 间隔隶属于开关：关掉就收起（与自动化页的子组同一手法），不留一个灰掉的下拉。 */}
           <div className={`settings-collapse${settings.autoCheck && !unsupported ? ' is-open' : ''}`}>
             <div className="settings-collapse__inner">
