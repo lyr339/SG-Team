@@ -24,7 +24,6 @@ const model = z.object({
   parameters: z.array(z.object({ id: text, name: text, options: z.array(parameter).max(60) }).strict()).max(30)
 }).strict()
 const capture = z.object({ format: z.literal('shiguang.cursor-protocol.v1'), capturedAt: stamp, cursorVersion: text, records: z.array(record).max(200), models: z.array(model).max(300) }).strict()
-export type ProtocolTokens = z.infer<typeof tokens>
 export type ProtocolReceipt = z.infer<typeof receipt>
 export type ProtocolRecord = z.infer<typeof record>
 export type ProtocolModel = z.infer<typeof model>

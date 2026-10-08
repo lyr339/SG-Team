@@ -24,6 +24,7 @@ jobs:
       - run: node node_modules/electron/install.js
       # dist:mac 内含 build / typecheck、签名与 zip 打包。
       - run: npm run dist:mac
+      - run: npm run smoke:wire:packaged
       - uses: actions/upload-artifact@v4
         with:
           name: shiguang-mac-arm64
@@ -44,6 +45,7 @@ jobs:
       - run: node node_modules/electron/install.js
       # pack:win 内含 build / typecheck。
       - run: npm run pack:win
+      - run: npm run smoke:wire:packaged
       - uses: actions/upload-artifact@v4
         with:
           name: shiguang-windows-x64

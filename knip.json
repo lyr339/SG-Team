@@ -1,15 +1,31 @@
 {
   "$schema": "https://unpkg.com/knip@5/schema.json",
-  "entry": [
-    "src/main/index.ts",
-    "src/preload/index.ts",
-    "src/renderer/src/preview/preview-main.tsx",
-    "src/mcp/index.ts",
-    "scripts/*.{ts,mjs}",
-    "tests/**/*.test.{ts,tsx}",
-    "electron.vite.config.ts"
-  ],
-  "project": ["src/**/*.{ts,tsx}", "scripts/**/*.{ts,mjs}", "tests/**/*.{ts,tsx}"],
   "ignoreExportsUsedInFile": true,
-  "exclude": ["duplicates"]
+  "exclude": [
+    "duplicates"
+  ],
+  "workspaces": {
+    ".": {
+      "entry": [
+        "src/main/index.ts",
+        "src/preload/index.ts",
+        "src/renderer/src/preview/preview-main.tsx",
+        "src/mcp/index.ts",
+        "scripts/*.{ts,mjs}",
+        "tests/**/*.test.{ts,tsx}",
+        "electron.vite.config.ts"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx}",
+        "scripts/**/*.{ts,mjs}",
+        "tests/**/*.{ts,tsx}"
+      ]
+    },
+    "packages/cursor-wire-runtime": {
+      "project": [
+        "*.mjs",
+        "*.d.ts"
+      ]
+    }
+  }
 }

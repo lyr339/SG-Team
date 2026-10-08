@@ -323,15 +323,15 @@ describe('theme surface contracts', () => {
     expect(lobby).toContain('.account-browser__connection-row')
   })
 
-  it('keeps tool identity colors theme-aware and the todo list on the Cursor-native monochrome design', () => {
+  it('keeps tool identity colors theme-aware and completion marks readable alongside muted todo text', () => {
     // 工具身份色板：明暗双值（light-dark）成对出现，卡体不染色
     for (const kind of ['read', 'search', 'edit', 'write', 'command', 'browser', 'mcp', 'todo']) {
       expect(styles).toMatch(new RegExp(`\\.cursor-native-tool\\.is-${kind}, \\.process-turn-step\\.is-${kind}, \\.session-row__activity\\.is-${kind} \\{[^}]*--tool-hue:\\s*light-dark\\(`))
     }
-    // todo 的进行中与待处理图元均静止；保留时间线的单色透明度阶梯。
+    // 进行中与待处理图元静止；完成正文降级，但新圈勾不被整行透明度洗淡。
     expect(styles).not.toContain('.todo-live__core')
     expect(styles).not.toContain('@keyframes todo-breathe')
-    expect(styles).toMatch(/\.process-turn-step__todos li\.is-completed\s*\{[^}]*opacity:\s*\.5[^}]*line-through/)
+    expect(styles).toMatch(/\.process-turn-step__todos li\.is-completed \.todo-text\s*\{[^}]*opacity:\s*\.55[^}]*line-through/)
     expect(styles).toMatch(/\.process-turn-step__todos li\.is-pending\s*\{[^}]*opacity:\s*\.4/)
     // reduced-motion 下关闭新条目淡入；静止图元仍保留状态区分。
     expect(styles).toMatch(/@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\.process-turn-step__todos li\s*\{[^}]*animation:\s*none/)
