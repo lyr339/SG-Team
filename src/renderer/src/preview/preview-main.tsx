@@ -1,3 +1,4 @@
+import { FeedbackReview } from './feedback-review'
 import { reduceGroupEffects } from '../../../domain/group-effects-notification'
 import { observedMcpWrite } from '../../../domain/mcp-write-observation'
 import { reduceMcpWriteNotifications } from '../../../domain/mcp-write-notification'
@@ -1782,6 +1783,7 @@ const api: SgDesktopApi = {
   onAccountAutomationProgress: () => () => {},
   getSnapshot: async () => structuredClone(state.desktop),
   sendMessage: async ({ channelId, text }) => {
+    if (previewParameters.get('feedback') === 'send-failure') throw new Error('发送未完成：示例连接暂不可用。草稿仍在输入框，可在连接恢复后手动重试。')
     const entry: ConversationEntry = {
       id: `outbox:preview-${Date.now()}`,
       channelId,
@@ -2299,6 +2301,6 @@ applyAppearancePreferences(readAppearancePreferences())
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    {previewParameters.get('feedback') === 'showcase' ? <FeedbackReview/> : <App />}
   </StrictMode>
 )

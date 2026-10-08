@@ -11,6 +11,7 @@ export function createNotificationPreview() {
   const scenario = new URLSearchParams(window.location.search).get('notifications')
   const nativeFeedback = new URLSearchParams(window.location.search).get('nativeFeedback')
   let history: NotificationHistoryIntegrity = scenario?.startsWith('history') ? { revision: 1, acknowledgedRevision: 0, latestGapId: '11111111-1111-4111-8111-111111111111', observedAt: Date.now() - 120_000 } : { revision: 0, acknowledgedRevision: 0 }
+  let startToast: (() => void) | undefined, toastStarted = false
   let revision = 0; let preferences = structuredClone(DEFAULT_NOTIFICATION_PREFERENCES)
   let delayedPage: (() => void) | undefined, heldSecondPage = false
   const filtered = (query: NotificationQuery = {}) => [...records.values()].filter(record => record.archivedAt === undefined
@@ -109,7 +110,7 @@ export function createNotificationPreview() {
       for (const listener of listeners) listener({ preferences: structuredClone(preferences), health: 'ready', historyIncomplete: history.revision > 0, historyIntegrity: structuredClone(history), historyGapUnconfirmed: false })
       return structuredClone(preferences)
     },
-    onNotificationChanged: callback => { listeners.add(callback); return () => { listeners.delete(callback) } }
+    onNotificationChanged: callback => { listeners.add(callback); if (startToast && !toastStarted) { toastStarted = true; setTimeout(startToast, 1200) } return () => { listeners.delete(callback) } }
   }
   if (scenario && !['empty','human','operator-read','context','memory','restore','compatibility','operator-memory','group-effects','mcp-write','mcp-legacy','mcp-unattributed','question-original','reply-body','source-history','usage-store','model-catalog','usage-runtime','context-source','usage-binding','native-content'].includes(scenario)) {
     const templates = [
@@ -123,9 +124,11 @@ export function createNotificationPreview() {
       offer({ ...item, key: `${item.key}:${index}`, scope: {}, occurredAt: Date.now() - (index + 1) * 240_000,
         ...(scenario === 'long' ? { title: item.title + ' · 跨工作区与成员身份校验', detail: `${item.detail}\n\n${'src/long_unbroken_workspace_path/'.repeat(18)}` } : {}) })
     }
-    if (scenario === 'toast') setTimeout(() => {
+    // UI loading may exceed 1.2s. Begin the pure preview live signal only after
+    // the notification subscriber exists; never replay production opportunities.
+    if (scenario === 'toast') startToast = () => {
       offer({ ...templates[2]!, key: 'preview:live-cleanup', scope: {}, occurredAt: Date.now(), announce: true })
-    }, 1_200)
+    }
     if (scenario === 'native') setTimeout(() => {
       const record = [...records.values()].find(record => record.key.startsWith('preview:cleanup:'))
       if (record) for (const listener of listeners) listener({ health: 'ready', historyIncomplete: history.revision > 0, historyIntegrity: structuredClone(history), historyGapUnconfirmed: false, openRequested: {

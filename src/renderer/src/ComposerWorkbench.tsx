@@ -1,3 +1,4 @@
+import { FeedbackLine } from './feedback/FeedbackLine'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { AgentSession } from '../../domain/agent-session'
 import type { MessageAttachment } from '../../domain/conversation-entry'
@@ -471,8 +472,9 @@ export function ComposerWorkbench({
         </div>
       </div>
 
-      {attachmentBusy ? <p className="composer-attachment-status" role="status">正在读取附件，完成后再发送。</p> : null}
-      {attachmentError ? <p className="composer-attachment-error" role="alert">{attachmentError}</p> : null}
+      {sendError ? <FeedbackLine className="composer-send-error" tone="error">{sendError}</FeedbackLine> : null}
+      {attachmentBusy ? <FeedbackLine className="composer-attachment-status" role="status" tone={'working'}>正在读取附件，完成后再发送。</FeedbackLine> : null}
+      {attachmentError ? <FeedbackLine className="composer-attachment-error" role="alert" tone={'error'}>{attachmentError}</FeedbackLine> : null}
 
       {attachments.length > 0 && (
         <div className="composer-attachments">
@@ -539,7 +541,7 @@ export function ComposerWorkbench({
           )}
         </div>
         <ContextUsagePopover usage={session.contextUsage} notificationSession={session} notificationScope={contextNotificationScope} sampledAt={contextUsageSampledAt} />
-        {sendError && <span className="composer-error" role="alert">{sendError}</span>}
+
         <div className="composer-submit">
           <kbd title="Enter 发送；Shift + Enter 换行">↵</kbd>
           <button

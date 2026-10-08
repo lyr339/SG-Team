@@ -1,3 +1,4 @@
+import { FeedbackLine } from './feedback/FeedbackLine'
 import { useMemo, useRef, useState } from 'react'
 import type { ProcessQuestion } from '../../domain/conversation-entry'
 import {
@@ -195,7 +196,7 @@ export function QuestionCard({ question, actions, readOnly = false }: QuestionCa
               {busy === 'answer' ? '提交中…' : '提交回答'}
             </button>
           </div>
-          {error ? <p ref={actionResultRef} className="cursor-question__error" role="alert" data-notification-result data-notification-key={actionReference?.key} data-notification-event={actionReference?.eventId}>{error}</p> : null}
+          {error ? <FeedbackLine ref={actionResultRef} className="cursor-question__error" role="alert" data-notification-result data-notification-key={actionReference?.key} data-notification-event={actionReference?.eventId} tone={'error'}>{error}</FeedbackLine> : null}
         </div>
       ) : (
         <p className="cursor-question__resolution">{readOnly || !actions ? '请在 Cursor 中回答这组提问' : ''}</p>

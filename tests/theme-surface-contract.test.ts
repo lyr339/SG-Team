@@ -8,23 +8,26 @@ const controls = readFileSync(join(process.cwd(), 'src/renderer/src/controls.css
 const lobby = readFileSync(join(process.cwd(), 'src/renderer/src/lobby/lobby.css'), 'utf8')
 const run = readFileSync(join(process.cwd(), 'src/renderer/src/run/run.css'), 'utf8')
 const settings = readFileSync(join(process.cwd(), 'src/renderer/src/settings/settings.css'), 'utf8')
+const notifications = readFileSync(join(process.cwd(), 'src/renderer/src/notifications/notifications.css'), 'utf8')
 const update = readFileSync(join(process.cwd(), 'src/renderer/src/settings/update.css'), 'utf8')
 
 describe('theme surface contracts', () => {
   it('keeps the update reminder frame neutral and uniform, reserving accent for its action', () => {
-    const card = update.match(/\.update-reminder\s*\{([^}]*)\}/)?.[1] ?? ''
-    expect(card).toContain('background: var(--surface-solid)')
-    expect(card).toContain('border: 1px solid var(--color-border-secondary)')
+    const card = notifications.match(/\.notification-toast\s*\{([^}]*)\}/)?.[1]?.replace(/\s+/g, '') ?? ''
+    expect(card).toContain('background:var(--surface-solid)')
+    expect(card).toContain('border:1pxsolidvar(--color-border-secondary)')
     expect(card).not.toMatch(/\bborder-(?:left|inline-start)(?:-color|-width|-style)?\s*:/)
     expect(card).not.toContain('var(--accent)')
-    expect(update).toMatch(/\.update-reminder__button\.is-primary\s*\{[^}]*color:\s*var\(--accent-deep\)/)
+    expect(notifications).toMatch(/\.notification-toast__actions button\s*\{[^}]*color:\s*var\(--notification-action-ink, var\(--accent-deep\)\)/)
+    expect(update).toContain('.update-reminder.notification-toast')
   })
 
   it('retires the account error banner and keeps notice surfaces neutral and readable', () => {
     expect(styles).not.toContain('.account-dialog-error')
     expect(settings).not.toContain('.settings-error')
     expect(settings).toMatch(/\.settings-notice\s*\{[^}]*background:\s*var\(--surface-solid\)/)
-    expect(settings).toMatch(/\.settings-notice__head\s*\{[^}]*align-items:\s*center/)
+    expect(settings).toMatch(/\.settings-notice__head\s*\{[^}]*align-items:\s*start/) // Long titles align actions/icons with the first line, not the middle of two lines.
+    expect(settings).toMatch(/\.settings-notice__head strong\s*\{[^}]*line-height:\s*1\.6/)
     expect(settings).toMatch(/\.settings-notice__head strong\s*\{[^}]*overflow-wrap:\s*anywhere/)
   })
 

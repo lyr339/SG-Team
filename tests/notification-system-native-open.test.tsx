@@ -30,6 +30,23 @@ describe('explicit native click opens exact ledger content, never a saved busine
   })
   afterEach(async () => { await act(async () => root.unmount()); host.remove(); ledger.close(); listeners.clear(); vi.restoreAllMocks(); vi.useRealTimers(); delete (window as unknown as { sgDesktop?: unknown }).sgDesktop })
   const open = async (token = 'open:1') => { await act(async () => push({ health: 'ready', historyIncomplete: false, openRequested: { token, recordId: record.id, key: record.key, revision: record.revision } })) }
+  it('portal selection stays inside its owner; Esc only closes the menu, and a second Esc closes the center', async () => {
+    const trigger = host.querySelector<HTMLButtonElement>('[aria-label^="通知"]')!
+    await act(async () => trigger.click())
+    const scope = document.querySelector<HTMLButtonElement>('[aria-label="通知工作区范围"]')!
+    await act(async () => scope.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })))
+    const list = document.querySelector<HTMLElement>('[role="listbox"]')!
+    expect(list.dataset.overlayOwner).toBe(document.querySelector<HTMLElement>('[data-overlay-scope]')!.dataset.overlayScope)
+    expect(document.querySelector('.notification-panel')).not.toBeNull()
+    await act(async () => document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })))
+    expect(document.querySelector('[role="listbox"]')).toBeNull(); expect(document.querySelector('.notification-panel')).not.toBeNull(); expect(document.activeElement).toBe(scope)
+    await act(async () => scope.click())
+    const current = [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find(option => option.textContent === '当前工作区')!
+    await act(async () => { current.dispatchEvent(new Event('pointerdown', { bubbles: true })); current.click() })
+    expect(document.querySelector('.notification-panel')).not.toBeNull(); expect(api.readNotification).not.toHaveBeenCalled(); expect(api.readAllNotifications).not.toHaveBeenCalled()
+    await act(async () => scope.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })))
+    expect(document.querySelector('.notification-panel')).toBeNull(); expect(document.activeElement).toBe(trigger)
+  })
   it('renders and reads only the exact opened body, leaving other notifications unread and never invoking source navigation', async () => {
     await open()
     expect(document.querySelector('.notification-row__detail')?.textContent).toContain('原始具体结果')

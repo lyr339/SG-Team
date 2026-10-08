@@ -1,3 +1,4 @@
+import { FeedbackLine } from '../feedback/FeedbackLine'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AccountAutomationPhase } from '../../../domain/account-automation'
 import { detectPastedSecret, parseCursorAccountCard, type ParsedCursorAccountCard } from '../../../domain/cursor-account-card'
@@ -237,7 +238,7 @@ function SettingsManualAddForm({
           </small>
         </div>
       ) : null}
-      {detection.kind === 'card-error' ? <p className="settings-add-form__error" role="alert">{detection.message}</p> : null}
+      {detection.kind === 'card-error' ? <FeedbackLine className="settings-add-form__error" role="alert" tone={'error'}>{detection.message}</FeedbackLine> : null}
       <label>
         <span>账号备注</span>
         <input
@@ -250,8 +251,8 @@ function SettingsManualAddForm({
       </label>
       <small>明文不会写入 SQLite、日志或再次显示。</small>
       {feedback ? (
-        <p ref={resultRef} className={feedback.tone === 'warn' ? 'settings-add-form__warn' : 'settings-add-form__ok'} role="status" data-notification-result
-          data-notification-key={feedback.notification?.key} data-notification-event={feedback.notification?.eventId}>{feedback.message}</p>
+        <FeedbackLine ref={resultRef} className={feedback.tone === 'warn' ? 'settings-add-form__warn' : 'settings-add-form__ok'} role="status" data-notification-result
+          data-notification-key={feedback.notification?.key} data-notification-event={feedback.notification?.eventId} tone={feedback.tone === 'warn' ? 'warning' : 'success'}>{feedback.message}</FeedbackLine>
       ) : null}
       <button className="lobby-account__save" disabled={!canSubmit} onClick={() => void submit()}>
         {busy ? '保存中…' : isCard ? '导入卡号' : '保存账号'}

@@ -1,3 +1,5 @@
+import { FeedbackIcon } from '../feedback/FeedbackIcon'
+import { MenuSelect } from '../lobby/MenuSelect'
 import { HistoryGapNotice, HistoryRetentionInfo } from './NotificationHistoryNotice'
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { notificationIsPending, notificationIsUnread, notificationSessionPreferenceKey, type NotificationPage, type NotificationQuery, type NotificationRecord } from '../../../domain/notification'
@@ -10,9 +12,7 @@ import { observeSourceNotificationRead } from './observe-source-read'
 import { NotificationCenterProjection } from './notification-center-projection'
 
 export function NoticeIcon({ tone }: { tone: NotificationRecord['tone'] }): React.JSX.Element {
-  return <svg className={`notification-status-icon is-${tone}`} viewBox="0 0 20 20" aria-hidden="true">
-    {tone === 'success' ? <path d="m4 10 4 4 8-8" /> : <><circle cx="10" cy="10" r="7" /><path d={tone === 'error' ? 'm7.5 7.5 5 5m0-5-5 5' : 'M10 6.5v4M10 13.5v.1'} /></>}
-  </svg>
+  return <FeedbackIcon tone={tone} className="notification-status-icon" />
 }
 
 interface Props {
@@ -147,13 +147,13 @@ export function NotificationCenter({ store, workspaceId, onClose, onNavigate, fo
             setExpanded(record); void store.read(record).catch(() => { if (mounted.current) setError('已读状态暂未保存，通知仍会保留。') })
           }}>查看最新结果</button> : dirty ? <span>正在阅读已展开的内容</span> : null}
         </div>
-        {displayed.scope.sessionId && displayed.scope.generation !== undefined ? <label className="notification-session-preference"><span>此会话的提醒</span><select aria-label="此会话的提醒偏好" value={notificationSessionMode(displayed, preferences)} disabled={loading} onChange={event => {
-          const mode = event.target.value, key = notificationSessionPreferenceKey(displayed.scope)
+        {displayed.scope.sessionId && displayed.scope.generation !== undefined ? <div className="notification-session-preference"><span>此会话的提醒</span><MenuSelect ariaLabel="此会话的提醒偏好" value={notificationSessionMode(displayed, preferences)} disabled={loading} menuMinWidth={168} onChange={mode => {
+          const key = notificationSessionPreferenceKey(displayed.scope)
           void perform(async () => {
             const current = store.snapshot().preferences, values = (current.sessionPreferences ?? []).filter(value => notificationSessionPreferenceKey(value.scope) !== key)
             await store.savePreferences({ ...current, sessionPreferences: mode === 'default' ? values : [...values, { scope: displayed.scope, mode: mode === 'focus' ? 'focus' as const : 'quiet' as const }].slice(-256) })
           })
-        }}><option value="default">默认</option><option value="focus">重点关注</option><option value="quiet">安静</option></select><small>重点关注仅增加后台新回复与连接提醒，仍遵循总开关、类别和安静时段。</small></label> : null}
+        }} options={[{ value: 'default', label: '默认' }, { value: 'focus', label: '重点关注' }, { value: 'quiet', label: '安静' }]} /><small>重点关注仅增加后台新回复与连接提醒，仍遵循总开关、类别和安静时段。</small></div> : null}
       </div> : null}
     </li>
   }
@@ -167,7 +167,7 @@ export function NotificationCenter({ store, workspaceId, onClose, onNavigate, fo
     <header className="notification-panel__header">
       <div><h2>通知</h2><span>{count !== undefined ? `${count} 条${filter === 'pending' ? '待处理' : filter === 'unread' ? '未读' : '记录'}` : '重要结果与待处理事项'}</span></div>
       <div className="notification-panel__header-actions">
-        {dirty ? <button type="button" className="notification-panel__refresh" aria-label="有更新，刷新列表" disabled={loading} onClick={() => void load(false)}>有更新 <span aria-hidden="true">↻</span></button> : null}
+        {dirty ? <button type="button" className="notification-panel__refresh" aria-label="有更新，刷新列表" disabled={loading} aria-busy={loading} onClick={() => void load(false)}>{loading ? '读取中…' : '有更新'} <svg className={loading ? 'notification-refresh is-loading' : 'notification-refresh'} viewBox="0 0 16 16" aria-hidden="true"><path d="M13 5a5.5 5.5 0 1 0 .5 5M13 2v3H10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg></button> : null}
         <button type="button" className="notification-icon-button" aria-label="关闭通知中心" onClick={onClose}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8m0-8-8 8" /></svg></button>
       </div>
     </header>
@@ -184,9 +184,7 @@ export function NotificationCenter({ store, workspaceId, onClose, onNavigate, fo
           }}
           onClick={() => { setFilter(value); setExpanded(undefined) }}>{({ all: '全部', pending: '待处理', unread: '未读' } as const)[value]}</button>)}
       </div>
-      {workspaceId ? <select aria-label="通知工作区范围" value={currentWorkspace ? 'current' : 'all'} onChange={event => { setCurrentWorkspace(event.target.value === 'current'); setExpanded(undefined) }}>
-        <option value="all">所有工作区</option><option value="current">当前工作区</option>
-      </select> : null}
+      {workspaceId ? <MenuSelect className="notification-scope" ariaLabel="通知工作区范围" value={currentWorkspace ? 'current' : 'all'} menuMinWidth={176} options={[{ value: 'all', label: '所有工作区' }, { value: 'current', label: '当前工作区' }]} onChange={value => { setCurrentWorkspace(value === 'current'); setExpanded(undefined) }} /> : null}
     </div>
     {error ? <p className="notification-panel__feedback" role="alert">{error}</p> : null}
     {navigationError ? <p className="notification-panel__feedback" role="status">{navigationError}</p> : null}

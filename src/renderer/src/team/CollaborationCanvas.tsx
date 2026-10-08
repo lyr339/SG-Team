@@ -1,3 +1,4 @@
+import { FeedbackLine } from '../feedback/FeedbackLine'
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { AgentAvatar } from '../AgentAvatar'
 import type { CollaborationMapFacts, CollaborationMapDisplayLink } from './collaboration-map-view'
@@ -118,8 +119,8 @@ export const CollaborationCanvas = memo(function CollaborationCanvas({
         {!facts.members.length ? <p className="collaboration-canvas__empty">{facts.dissolved ? '本组已解散，成员已恢复独立。记录保留在下方。' : '组内暂无成员。'}</p> : null}
         {routing.pending && links.length ? <small className="collaboration-canvas__routing" role="status">整理连线…</small> : null}
       </div>
-      {!routing.pending && routing.reply?.hasUnrouted ? <p className="collaboration-canvas__notice" role="status">部分连线暂不可用，全部成员与消息记录仍可查看。</p>
-        : !routing.pending && (routing.reply?.crossings ?? 0) > 0 ? <p className="collaboration-canvas__notice">关系较密集，点击成员可聚焦其收发通道。</p> : null}
+      {!routing.pending && routing.reply?.hasUnrouted ? <FeedbackLine className="collaboration-canvas__notice" role="status" tone={'info'}>部分连线暂不可用，全部成员与消息记录仍可查看。</FeedbackLine>
+        : !routing.pending && (routing.reply?.crossings ?? 0) > 0 ? <FeedbackLine className="collaboration-canvas__notice" tone={'info'}>关系较密集，点击成员可聚焦其收发通道。</FeedbackLine> : null}
     </div>
   )
 })

@@ -1,3 +1,4 @@
+import { FeedbackLine } from '../feedback/FeedbackLine'
 import { useEffect, useRef, useState } from 'react'
 import { TEAM_ROLE_TEMPLATES } from '../../../domain/team-control'
 import type { CreateTeamGroupInput, TeamGroupMembersInput } from '../../../shared/desktop-api'
@@ -266,7 +267,7 @@ export function GroupComposer({
             </div>
           ) : null}
 
-          {error ? <p className="group-composer__error" role="alert">{error}</p> : null}
+          {error ? <FeedbackLine className="group-composer__error" role="alert" tone={'error'}>{error}</FeedbackLine> : null}
         </div>
 
         <footer className="group-composer__actions">

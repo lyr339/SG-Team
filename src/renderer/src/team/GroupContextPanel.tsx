@@ -1,3 +1,4 @@
+import { FeedbackLine } from '../feedback/FeedbackLine'
 import { useEffect, useRef, useState } from 'react'
 import type { PlanTaskInput, TaskStatus } from '../../../domain/task-pool'
 import { teamMessageReceiptStage, isOrphanedReceipt } from '../../../domain/team-collaboration'
@@ -251,9 +252,9 @@ export function GroupContextPanel({
               />
             </label>
             {error ? (
-              <p role="alert" className="group-context__error">
+              <FeedbackLine role="alert" className="group-context__error" tone={'error'}>
                 {error}
-              </p>
+              </FeedbackLine>
             ) : null}
             <footer>
               <button
@@ -311,7 +312,7 @@ export function GroupContextPanel({
                       {task.result}
                     </p>
                   ) : null}
-                  {task.failureReason ? <p className="group-context__error">{task.failureReason}</p> : null}
+                  {task.failureReason ? <FeedbackLine className="group-context__error" tone={'error'}>{task.failureReason}</FeedbackLine> : null}
                 </div>
               </details>
             ))}

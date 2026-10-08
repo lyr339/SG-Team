@@ -1,3 +1,4 @@
+import { FeedbackText } from './feedback/FeedbackText'
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent, type MouseEvent } from 'react'
 import type { DesktopSnapshot } from '../../shared/desktop-api'
 import { SessionRailCard } from './SessionRailCard'
@@ -807,7 +808,7 @@ export function SessionSidebar({
               ) : null}
               {barHint ? (
                 <p className={`session-pane__bar-hint is-${barHint.tone}`} role="status">
-                  <span>{barHint.text}</span>
+                  <FeedbackText role="presentation" tone={barHint.tone === 'danger' ? 'error' : barHint.tone === 'warning' ? 'warning' : 'info'}>{barHint.text}</FeedbackText>
                   {!pickedRows.length ? (
                     <button type="button" className="session-pane__bar-dismiss" onClick={clearPicks}>知道了</button>
                   ) : null}

@@ -1,3 +1,4 @@
+import { FeedbackLine } from '../feedback/FeedbackLine'
 import { GroupEffectsNotice } from '../notifications/GroupEffectsNotice'
 import type { NotificationRecord } from '../../../domain/notification'
 import { useEffect, useRef, useState, type Ref } from 'react'
@@ -170,7 +171,7 @@ export function GroupCard({
             <button type="button" className="secondary-button" disabled={disabled} onClick={() => setEditingGoal(undefined)}>取消</button>
             <button type="submit" className="primary-button" disabled={disabled}>{savingGoal ? '保存中…' : '保存目标'}</button>
           </footer>
-          {goalError ? <p className="group-card__error" role="alert">{goalError}</p> : null}
+          {goalError ? <FeedbackLine className="group-card__error" role="alert" tone={'error'}>{goalError}</FeedbackLine> : null}
         </form>
       ) : (
         <p className={`group-card__goal${group.goal ? '' : ' is-empty'}`} title={group.goal || undefined}>

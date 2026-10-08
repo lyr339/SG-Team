@@ -1757,8 +1757,8 @@ button.workspace-group-chip:focus-visible { outline: 2px solid var(--accent-bord
 .handoff-context-option small { color: var(--muted); font-size: var(--fs-10); line-height: 1.45; }
 
 /* 两个交接弹窗共用的结果页 */
-.handoff-done { display: grid; gap: 10px; padding: 18px 17px 15px; }
-.handoff-done > i { width: 34px; height: 34px; display: grid; place-items: center; color: var(--accent-deep); background: var(--accent-wash); border-radius: 9px; font-style: normal; font-weight: 700; }
+.handoff-done { display: grid; gap: 10px; padding: 20px; }
+.handoff-done__icon { width: 22px; height: 22px; }
 .handoff-done strong { font-size: var(--fs-13, 14px); }
 .handoff-done p { margin: 0; color: var(--text-soft); font-size: var(--fs-12); line-height: 1.65; text-wrap: pretty; }
 .handoff-done p.is-warning { color: var(--color-text-warning); }
@@ -1854,19 +1854,22 @@ button.workspace-group-chip:focus-visible { outline: 2px solid var(--accent-bord
 .menu-select__button { width: 100%; min-height: 32px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 10px; color: var(--text); background: var(--surface-solid); border: 1px solid var(--line); border-radius: 9px; font-size: var(--fs-10); cursor: pointer; box-shadow: var(--shadow-hairline); transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease; }
 .menu-select__button:hover:not(:disabled) { border-color: var(--accent-border); }
 .menu-select__button:disabled { opacity: 0.55; cursor: not-allowed; }
-.menu-select.is-open .menu-select__button { border-color: var(--accent-border-strong); box-shadow: 0 0 0 3px color-mix(in srgb, var(--anthropic-orange) 12%, transparent); }
+.menu-select.is-open .menu-select__button { border-color: var(--line-strong); box-shadow: none; background: var(--surface-soft); }
 .menu-select__value { min-width: 0; display: inline-flex; align-items: center; gap: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
 .menu-select__value em { color: var(--faint); font-style: normal; }
 .menu-select__chevron { flex: none; width: 12px; height: 12px; color: var(--muted); transition: transform 140ms ease; }
 .menu-select.is-open .menu-select__chevron { transform: rotate(180deg); }
-.menu-select__menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 240; min-width: 100%; margin: 0; padding: 5px; list-style: none; background: var(--surface-solid); border: 1px solid var(--line); border-radius: 11px; box-shadow: var(--shadow-3); max-height: 224px; overflow-y: auto; }
+.menu-select__menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 240; min-width: 100%; margin: 0; padding: 5px; list-style: none; background: var(--surface-solid); border: 1px solid var(--line); border-radius: 11px; box-shadow: var(--shadow-3); max-height: 224px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; animation: menu-select-enter 120ms ease-out; }
+@keyframes menu-select-enter { from { opacity: 0; transform: translateY(-2px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .menu-select__menu { animation: none; } .menu-select__button, .menu-select__chevron { transition: none; } }
 .menu-select__menu.is-portal { position: fixed; top: auto; bottom: auto; min-width: 0; }
-.menu-select__menu li[role="option"] > button { width: 100%; min-height: 30px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 9px; color: var(--text); background: none; border: 0; border-radius: 7px; font-size: var(--font-text-sm-size); text-align: left; cursor: pointer; }
-.menu-select__menu li[role="option"] > button:hover { background: var(--accent-wash); }
-.menu-select__menu li[role="option"] > button.is-selected { color: var(--accent-deep); background: var(--accent-wash); font-weight: 600; }
-.menu-select__menu li[role="option"] > button > span { min-width: 0; display: flex; align-items: center; gap: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.menu-select__menu button[role="option"] { width: 100%; min-height: 30px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 9px; color: var(--text); background: none; border: 0; border-radius: 7px; font-size: var(--font-text-sm-size); text-align: left; cursor: pointer; }
+.menu-select__menu button[role="option"]:hover { background: var(--surface-soft); }
+.menu-select__menu button[role="option"]:focus-visible { outline: 2px solid var(--color-ring-primary); outline-offset: -2px; background: var(--surface-soft); }
+.menu-select__menu button[role="option"].is-selected { color: var(--text); background: var(--accent-wash); font-weight: 600; }
+.menu-select__menu button[role="option"] > span { min-width: 0; display: flex; align-items: center; gap: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .menu-select__swatch { width: 9px; height: 9px; flex: none; background: var(--model-provider-fg, var(--muted)); border: 1px solid var(--model-provider-border, var(--line)); border-radius: 3px; box-shadow: 0 0 0 2px var(--model-provider-bg, var(--surface-soft)); }
-.menu-select__check { flex: none; color: var(--model-provider-fg, var(--accent)); font-style: normal; }
+.menu-select__check { display: grid; place-items: center; flex: none; color: var(--model-provider-fg, var(--accent)); font-style: normal; }
 .menu-select__check svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .menu-select__empty { padding: 10px; color: var(--faint); font-size: var(--fs-10); text-align: center; }
 
@@ -2577,7 +2580,7 @@ button.workspace-group-chip:focus-visible { outline: 2px solid var(--accent-bord
 .attachment-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .attachment-thumb:hover { border-color: var(--accent-border-strong); }
 .attachment-thumb:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.attachment-thumb__feedback { position: absolute; inset: auto 0 0 0; padding: 2px 4px; color: #fff; background: rgba(0, 0, 0, .62); font-size: var(--fs-9, 10px); line-height: 1.3; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.attachment-thumb__feedback { position: absolute; inset: auto 0 0 0; padding: 2px 4px; color: #fff; background: rgba(0, 0, 0, .62); font-size: var(--font-text-xs-size); line-height: 1.4; text-align: center; white-space: normal; overflow: hidden; overflow-wrap: anywhere; }
 .chat-attachment .attachment-thumb { width: auto; height: auto; max-width: 240px; }
 .chat-attachment .attachment-thumb img { width: auto; height: auto; max-width: 240px; max-height: 180px; object-fit: contain; }
 /* 正文里的 Markdown 图片：独占一行时为 figure；行内时随文本流。 */
@@ -2602,7 +2605,7 @@ button.workspace-group-chip:focus-visible { outline: 2px solid var(--accent-bord
 .attachment-lightbox__meta strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-11); }
 .attachment-lightbox__meta span { color: var(--muted); font: 500 var(--fs-10)/1.3 var(--mono); }
 .attachment-lightbox__actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
-.attachment-lightbox__actions em { margin-right: 4px; color: var(--color-text-success); font-size: var(--fs-10); font-style: normal; }
+.attachment-lightbox__feedback.feedback-text { margin-right: 4px; color: #eef1f5; }
 .attachment-lightbox__actions button { min-height: 30px; padding: 0 11px; color: var(--text-soft); background: var(--surface); border: var(--border-width-regular) solid var(--line); border-radius: 8px; font-size: var(--fs-11); font-weight: 600; cursor: pointer; }
 .attachment-lightbox__actions button:hover { color: var(--color-text-info); border-color: var(--color-border-info); background: var(--color-background-info); }
 .attachment-lightbox__actions button.is-primary { color: var(--color-text-inverse); background: var(--color-background-inverse); border-color: var(--color-background-inverse); }

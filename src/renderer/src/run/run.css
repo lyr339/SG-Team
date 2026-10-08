@@ -92,38 +92,6 @@ html[data-card-transparency="clear"] :is(.run-body, .pool-groups) {
 .run-link:hover:not(:disabled) { background: var(--accent-wash); }
 .run-link:disabled { opacity: 0.45; }
 
-.run-feedback {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 10px;
-  margin: 0;
-  padding: 10px 10px 10px 14px;
-  color: var(--text-soft);
-  background: var(--surface-soft);
-  border: 1px solid var(--line);
-  border-radius: 11px;
-  font-size: var(--fs-12);
-  line-height: 1.5;
-}
-.run-feedback > i { width: 7px; height: 7px; margin-top: 6px; background: var(--color-text-success); border-radius: 50%; }
-.run-feedback > span { min-width: 0; overflow-wrap: anywhere; }
-.run-feedback > button {
-  width: 24px;
-  height: 24px;
-  margin: -3px 0;
-  padding: 0;
-  color: var(--muted);
-  background: transparent;
-  border: 0;
-  border-radius: 6px;
-  font-size: var(--fs-15);
-  line-height: 1;
-}
-.run-feedback > button:hover { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
-.run-feedback.is-error { color: var(--red); background: var(--red-soft); border-color: var(--red-border-soft); }
-.run-feedback.is-error > i { background: var(--red); }
-.run-feedback.is-error > button { color: var(--red); }
 
 .run-callout {
   margin: 0;
@@ -192,7 +160,6 @@ html[data-card-transparency="clear"] :is(.run-body, .pool-groups) {
   font-size: var(--fs-12);
   line-height: 1.5;
 }
-.run-banner > i { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
 .run-banner > span { min-width: 0; overflow-wrap: anywhere; }
 .run-banner > button {
   min-height: 26px;
@@ -205,9 +172,6 @@ html[data-card-transparency="clear"] :is(.run-body, .pool-groups) {
   font-weight: 600;
   transition: background 120ms ease;
 }
-.run-banner.is-amber { color: var(--amber); background: color-mix(in srgb, var(--amber-soft) 70%, var(--surface-solid)); border-color: var(--amber-border-soft); }
-.run-banner.is-amber > i { background: var(--amber); }
-.run-banner.is-amber > button:hover:not(:disabled) { background: var(--amber-soft); }
 
 .run-state-chip {
   min-width: 0;
@@ -796,21 +760,6 @@ button.group-card-member__who:focus-visible { outline: 2px solid var(--accent-bo
 
 .run-seats__hint { margin: 0; color: var(--muted); font-size: var(--fs-11); line-height: 1.5; }
 
-.run-seats__cdp {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  font-size: var(--fs-12);
-  line-height: 1.5;
-}
-.run-seats__cdp.is-required,
-.run-seats__cdp.is-countdown { color: var(--amber); background: var(--amber-soft); border-color: var(--amber-border-soft); }
-.run-seats__cdp.is-working { color: var(--blue); background: var(--blue-soft); border-color: var(--blue-border-soft); }
 .run-seats__cdp .secondary-button { min-height: 30px; padding: 0 11px; font-size: var(--fs-11); }
 
 .run-seats__footer {

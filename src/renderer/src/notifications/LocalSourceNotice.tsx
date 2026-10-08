@@ -1,3 +1,5 @@
+import { FeedbackIcon } from '../feedback/FeedbackIcon'
+import { ChevronDownIcon } from '../UiIcons'
 import { useEffect, useRef, useState } from 'react'
 import type { NotificationRecord } from '../../../domain/notification'
 import { useNotificationResultRead } from './use-notification-result-read'
@@ -15,8 +17,8 @@ type LocalSource = keyof typeof LOCAL_SOURCES
 function Issue({ record }: { record: NotificationRecord }) {
   const ref = useRef<HTMLParagraphElement>(null)
   useNotificationResultRead(ref, record.key, record.eventId, record)
-  return <details className="usage-storage-notice">
-    <summary><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7"/><path d="M10 6v5m0 3v.1"/></svg><span>{record.title}</span><span className="usage-storage-notice__more">详情</span></summary>
+  return <details className="feedback-disclosure usage-storage-notice">
+    <summary><FeedbackIcon tone={record.tone}/><span>{record.title}</span><span className="feedback-disclosure__toggle usage-storage-notice__more">详情<ChevronDownIcon/></span></summary>
     <p ref={ref} data-notification-result data-notification-key={record.key} data-notification-event={record.eventId}>{record.detail}</p>
   </details>
 }

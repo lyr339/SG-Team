@@ -1,3 +1,6 @@
+import { FeedbackText } from '../feedback/FeedbackText'
+import { FeedbackIcon, CloseFeedbackIcon } from '../feedback/FeedbackIcon'
+import { FeedbackLine } from '../feedback/FeedbackLine'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNotificationResultRead } from '../notifications/use-notification-result-read'
 import {
@@ -90,7 +93,7 @@ function CleanupRow({ spec, entry, scan, selected, blockedReason, disabled, onTo
         <p className="storage-cleanup__summary">{spec.summary}</p>
         {note ? <p className="storage-cleanup__note" title={entry?.note}>{note}</p> : null}
         {selected && !spec.diagnostic ? <p className="storage-cleanup__loss">清掉后：{spec.loss}</p> : null}
-        {blocked && selected ? <p className="storage-cleanup__blocked" role="status">{blockedReason}</p> : null}
+        {blocked && selected ? <FeedbackText className="storage-cleanup__blocked">{blockedReason}</FeedbackText> : null}
         {children}
       </div>
       <div className="storage-cleanup__meta">
@@ -212,7 +215,7 @@ export function SettingsCleanup({
           </div>
         </header>
 
-        {storageScanError ? <p className="cursor-maintenance__error" role="alert">{storageScanError}</p> : null}
+        {storageScanError ? <FeedbackLine className="cursor-maintenance__error" role="alert" tone={'error'}>{storageScanError}</FeedbackLine> : null}
 
         {confirming && plan ? (
           <div
@@ -244,11 +247,7 @@ export function SettingsCleanup({
         {storageCleanupResult && storageCleanupResult !== dismissedResult ? (
           <div ref={resultRef} className={storageCleanupResult.ok ? 'storage-cleanup__result is-ok' : 'storage-cleanup__result is-error'} role={storageCleanupResult.ok ? 'status' : 'alert'} data-notification-result
             data-notification-key={storageCleanupResult.notification?.key} data-notification-event={storageCleanupResult.notification?.eventId}>
-            <svg className="storage-cleanup__result-icon" viewBox="0 0 16 16" aria-hidden="true">
-              {storageCleanupResult.ok
-                ? <path d="m3.5 8 3 3 6-6" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-                : <path d="M8 3.5v5M8 11.5v.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />}
-            </svg>
+            <FeedbackIcon className="storage-cleanup__result-icon" tone={storageCleanupResult.ok ? 'success' : 'error'}/>
             <div className="storage-cleanup__result-copy">
               <p>{storageCleanupResult.message}</p>
               {storageCleanupResult.skipped.length ? (
@@ -259,7 +258,7 @@ export function SettingsCleanup({
                 </ul>
               ) : null}
             </div>
-            <button type="button" className="storage-cleanup__result-dismiss" aria-label="收起清理结果" onClick={() => setDismissedResult(storageCleanupResult)}>×</button>
+            <button type="button" className="storage-cleanup__result-dismiss" aria-label="收起清理结果" onClick={() => setDismissedResult(storageCleanupResult)}><CloseFeedbackIcon/></button>
           </div>
         ) : null}
 

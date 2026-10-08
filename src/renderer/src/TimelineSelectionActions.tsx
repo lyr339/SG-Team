@@ -1,3 +1,4 @@
+import { FeedbackText } from './feedback/FeedbackText'
 import { useEffect, useRef, useState, type RefObject } from 'react'
 
 interface SelectedText { text: string; x: number; y: number }
@@ -82,7 +83,7 @@ export function TimelineSelectionActions({ viewportRef, onQuote, onError }: {
   return (
     <div className="timeline-selection-actions" role="toolbar" aria-label="选中文字操作"
       style={{ left: selected.x, top: selected.y }} onPointerDown={(event) => event.preventDefault()}>
-      {feedback ? <span role="status" aria-live="polite" className={feedback === '复制失败' ? 'is-error' : undefined}>{feedback}</span> : null}
+      {feedback ? <FeedbackText aria-live="polite" tone={feedback === '复制失败' ? 'error' : 'success'}>{feedback}</FeedbackText> : null}
       <button type="button" onClick={() => void copy()} title="复制选中文字">复制</button>
       <button type="button" onClick={quote} title="引用选中文字到输入框">引用</button>
     </div>

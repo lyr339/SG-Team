@@ -1,3 +1,4 @@
+import { FeedbackIcon } from '../feedback/FeedbackIcon'
 import { groupEffectsLines, groupEffectsProblem } from '../../../domain/group-effects'
 import { useRef, useState } from 'react'
 import type { MembershipTransferCandidate, MembershipTransferOptions, MembershipTransferOutcome } from '../../../domain/team-handoff'
@@ -48,7 +49,7 @@ export function TransferMembershipDialog({ options, busy, error, onClose, onConf
         </header>
         {outcome ? (
           <div ref={resultRef} className="handoff-done" role="status" data-notification-key={outcome.result.notification?.key} data-notification-event={outcome.result.notification?.eventId}>
-            <i aria-hidden="true">✓</i>
+            <FeedbackIcon tone="success" className="handoff-done__icon"/>
             <strong>
               {outcome.result.transfer.transferredLead
                 ? `组身份与 lead 已迁移给 CH-${outcome.result.transfer.toChannelId ?? '?'}（${outcome.result.transfer.roleName}）`

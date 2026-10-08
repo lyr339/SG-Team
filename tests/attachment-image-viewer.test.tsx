@@ -52,7 +52,7 @@ describe('AttachmentThumbnail', () => {
     expect(lightbox?.textContent).toContain('在 Finder 中显示')
     await act(async () => { [...document.querySelectorAll<HTMLButtonElement>('.attachment-lightbox__actions button')].find((b) => b.textContent === '复制图片')!.click() })
     expect(copyImageToClipboard).toHaveBeenCalledWith({ dataUrl: attachment.previewUrl })
-    expect(document.querySelector('.attachment-lightbox__actions em')?.textContent).toBe('已复制到剪贴板')
+    expect(document.querySelector('.attachment-lightbox__feedback')?.textContent).toBe('已复制到剪贴板')
     await act(async () => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })) })
     expect(document.querySelector('.attachment-lightbox')).toBeNull()
   })

@@ -1,3 +1,4 @@
+import { FeedbackLine } from '../feedback/FeedbackLine'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ToggleSwitch } from '../lobby/ToggleSwitch'
 import type { SettingsPageProps } from './settings-view'
@@ -113,7 +114,7 @@ export function SettingsMaintenance({
             ) : null}
           </div>
         ) : null}
-        {detectError ? <p className="cursor-maintenance__error" role="alert">{detectError}</p> : null}
+        {detectError ? <FeedbackLine className="cursor-maintenance__error" role="alert" tone={'error'}>{detectError}</FeedbackLine> : null}
         {onSetCursorAutoUpdateDisabled && cursorUpdatePreferences ? (
           <div className="settings-row">
             <div className="settings-row__copy">
@@ -160,10 +161,10 @@ export function SettingsMaintenance({
           </div>
         ) : null}
         {policyFeedback ? (
-          <p ref={policyResultRef} className={policyFeedback.ok ? 'cursor-maintenance__ok' : 'cursor-maintenance__error'} role={policyFeedback.ok ? 'status' : 'alert'} data-notification-result
-            data-notification-key={policyFeedback.notification?.key} data-notification-event={policyFeedback.notification?.eventId}>
+          <FeedbackLine ref={policyResultRef} className={policyFeedback.ok ? 'cursor-maintenance__ok' : 'cursor-maintenance__error'} role={policyFeedback.ok ? 'status' : 'alert'} data-notification-result
+            data-notification-key={policyFeedback.notification?.key} data-notification-event={policyFeedback.notification?.eventId} tone={policyFeedback.ok ? 'success' : 'error'}>
             {policyFeedback.message}
-          </p>
+          </FeedbackLine>
         ) : null}
         {onEnsureSwitchPump ? (
           <div className={`settings-row settings-row--divided cursor-maintenance__switch-pump${externalCompatiblePump ? ' is-compatible' : pumpInstalled ? ' is-installed' : ' is-inactive'}`}>
@@ -193,12 +194,12 @@ export function SettingsMaintenance({
           <p className="cursor-maintenance__hint">{switchPumpStatus.message}</p>
         ) : null}
         {switchPumpFeedback ? (
-          <p ref={patchResultRef} className={switchPumpFeedback.pending ? 'cursor-maintenance__pending' : switchPumpFeedback.ok ? 'cursor-maintenance__ok' : 'cursor-maintenance__error'} role={switchPumpFeedback.ok ? 'status' : 'alert'} data-notification-result
-            data-notification-key={switchPumpFeedback.notification?.key} data-notification-event={switchPumpFeedback.notification?.eventId}>
+          <FeedbackLine ref={patchResultRef} className={switchPumpFeedback.pending ? 'cursor-maintenance__pending' : switchPumpFeedback.ok ? 'cursor-maintenance__ok' : 'cursor-maintenance__error'} role={switchPumpFeedback.ok ? 'status' : 'alert'} data-notification-result
+            data-notification-key={switchPumpFeedback.notification?.key} data-notification-event={switchPumpFeedback.notification?.eventId} tone={switchPumpFeedback.pending ? 'info' : switchPumpFeedback.ok ? 'success' : 'error'}>
             {switchPumpFeedback.message}
-          </p>
+          </FeedbackLine>
         ) : null}
-        {cursorUpdateError ? <p className="cursor-maintenance__error">{cursorUpdateError}</p> : null}
+        {cursorUpdateError ? <FeedbackLine className="cursor-maintenance__error" tone={'error'}>{cursorUpdateError}</FeedbackLine> : null}
       </div>
     </SettingsSection>
   )

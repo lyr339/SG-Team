@@ -1,3 +1,4 @@
+import { NotificationCard } from './notifications/NotificationCard'
 import { useEffect, useRef, useState } from 'react'
 import type { AppUpdateStatus } from '../../domain/app-update'
 
@@ -43,50 +44,34 @@ export function UpdateReminder({ status, onOpen, autoHideMs = UPDATE_REMINDER_AU
   const version = status?.reminderVersion
   const [shownFor, setShownFor] = useState<string>()
   const [hidden, setHidden] = useState(false)
-  const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
-
+  const remaining = useRef(autoHideMs)
+  const [hovering, setHovering] = useState(false), [within, setWithin] = useState(false), [saving, setSaving] = useState(false), [error, setError] = useState('')
+  const busy = useRef(false), alive = useRef(true), currentVersion = useRef(version); currentVersion.current = version
+  useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
   useEffect(() => {
     if (!version || shownFor === version) return
-    setShownFor(version)
-    setHidden(false)
-    if (timer.current) clearTimeout(timer.current)
-    timer.current = setTimeout(() => setHidden(true), autoHideMs)
+    remaining.current = autoHideMs; setShownFor(version); setHidden(false); setError('')
   }, [autoHideMs, shownFor, version])
-  // 只在卸载时清定时器：上面的 effect 因 shownFor 变化会立刻重跑，不能把清理挂在它身上。
-  useEffect(() => () => { if (timer.current) clearTimeout(timer.current) }, [])
+  useEffect(() => {
+    if (!version || shownFor !== version || hidden || hovering || within || saving) return
+    const started = Date.now(), timer = setTimeout(() => setHidden(true), remaining.current)
+    return () => { clearTimeout(timer); remaining.current = Math.max(0, remaining.current - (Date.now() - started)) }
+  }, [version, shownFor, hidden, hovering, within, saving])
+  const snooze = async (): Promise<void> => {
+    const wanted = version, api = reminderApi()
+    if (busy.current || !wanted) return
+    if (!api) { setError('稍后提醒暂未保存，可到软件更新页查看。'); return }
+    busy.current = true; setSaving(true); setError('')
+    try { await api.snoozeAppUpdate({ expectedVersion: wanted }); if (alive.current && currentVersion.current === wanted) setHidden(true) }
+    catch { if (alive.current && currentVersion.current === wanted) setError('稍后提醒未能保存；当前版本提示仍保留。') }
+    finally { busy.current = false; if (alive.current) setSaving(false) }
+  }
 
   if (!version || hidden || shownFor !== version) return null
   const phase = status?.state.phase
   const ready = phase === 'downloaded'
-  return (
-    <div className="update-reminder" role="status" aria-live="polite">
-      <div className="update-reminder__copy">
-        <strong>{ready ? `拾光 ${version} 已下载好` : `拾光 ${version} 可用`}</strong>
-        <span>{ready ? '到「软件更新」里点安装即可' : '有空时到「软件更新」看看'}</span>
-      </div>
-      <div className="update-reminder__actions">
-        <button
-          type="button"
-          className="update-reminder__button is-primary"
-          onClick={() => {
-            setHidden(true)
-            onOpen()
-          }}
-        >
-          查看
-        </button>
-        <button
-          type="button"
-          className="update-reminder__button"
-          onClick={() => {
-            setHidden(true)
-            void reminderApi()?.snoozeAppUpdate().catch(() => {})
-          }}
-        >
-          稍后
-        </button>
-      </div>
-      <button type="button" className="update-reminder__close" aria-label="收起提醒" onClick={() => setHidden(true)}>×</button>
-    </div>
-  )
+  return <NotificationCard className="update-reminder" title={ready ? `拾光 ${version} 已下载好` : `拾光 ${version} 可用`} source="软件更新" detail={ready ? '到「软件更新」里点安装即可' : '有空时到「软件更新」看看'} error={error} onDismiss={() => setHidden(true)} onMouseEnter={() => setHovering(true)} onMouseLeave={() => setHovering(false)} onFocusCapture={() => setWithin(true)} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setWithin(false) }} actions={<>
+    <button type="button" className="update-reminder__button is-primary" onClick={() => { setHidden(true); onOpen() }}>查看</button>
+    <button type="button" className="update-reminder__button" disabled={saving} aria-busy={saving} onClick={() => void snooze()}>{saving ? '保存中…' : '稍后'}</button>
+  </>}/>
 }

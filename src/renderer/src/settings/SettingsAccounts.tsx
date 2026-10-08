@@ -1,3 +1,4 @@
+import { FeedbackLine } from '../feedback/FeedbackLine'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNotificationResultRead } from '../notifications/use-notification-result-read'
 import type { CursorAccountMetadata } from '../../../domain/cursor-account'
@@ -360,11 +361,11 @@ export function SettingsAccounts({
             ) : null}
           </p>
         )}
-        {processingError?.providerId === providerId ? <p className="account-aozai__fail" role="alert">{processingError.message}</p> : null}
-        {!processingBusy && processingFeedback?.providerId === providerId && processingFeedback.originSection !== 'aozai' ? <p ref={processingResultRef} className={processingFeedback.ok ? 'account-aozai__ok' : 'account-aozai__fail'} role="status" data-notification-result
-          data-notification-key={processingFeedback.notification?.key} data-notification-event={processingFeedback.notification?.eventId}>{processingFeedback.message}</p> : null}
-        {proUpgradeFeedback ? <p ref={checkoutResultRef} className={proUpgradeFeedback.pending ? 'account-aozai__pending' : proUpgradeFeedback.ok ? 'account-aozai__ok' : 'account-aozai__fail'} role="status" data-notification-result
-          data-notification-key={proUpgradeFeedback.notification?.key} data-notification-event={proUpgradeFeedback.notification?.eventId}>{proUpgradeFeedback.message}</p> : null}
+        {processingError?.providerId === providerId ? <FeedbackLine className="account-aozai__fail" role="alert" tone={'error'}>{processingError.message}</FeedbackLine> : null}
+        {!processingBusy && processingFeedback?.providerId === providerId && processingFeedback.originSection !== 'aozai' ? <FeedbackLine ref={processingResultRef} className={processingFeedback.ok ? 'account-aozai__ok' : 'account-aozai__fail'} role="status" data-notification-result
+          data-notification-key={processingFeedback.notification?.key} data-notification-event={processingFeedback.notification?.eventId} tone={processingFeedback.ok ? 'success' : 'error'}>{processingFeedback.message}</FeedbackLine> : null}
+        {proUpgradeFeedback ? <FeedbackLine ref={checkoutResultRef} className={proUpgradeFeedback.pending ? 'account-aozai__pending' : proUpgradeFeedback.ok ? 'account-aozai__ok' : 'account-aozai__fail'} role="status" data-notification-result
+          data-notification-key={proUpgradeFeedback.notification?.key} data-notification-event={proUpgradeFeedback.notification?.eventId} tone={proUpgradeFeedback.pending ? 'info' : proUpgradeFeedback.ok ? 'success' : 'error'}>{proUpgradeFeedback.message}</FeedbackLine> : null}
       </SettingsSection>
     </>
   )

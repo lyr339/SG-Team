@@ -1,3 +1,4 @@
+import { FeedbackText } from './feedback/FeedbackText'
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { CursorWorkspaceDetection } from '../../domain/cursor-workspace'
@@ -110,7 +111,7 @@ export function WorkspaceMenu({ workspace, detection, onOpenConfiguration }: Wor
           setOpen(false)
           onOpenConfiguration()
         }}>前往项目配置 <span aria-hidden="true">→</span></button>
-        <span className="workspace-menu__feedback" role="status">{feedback}</span>
+        <FeedbackText className="workspace-menu__feedback">{feedback}</FeedbackText>
       </div>, document.body
     )}
   </>

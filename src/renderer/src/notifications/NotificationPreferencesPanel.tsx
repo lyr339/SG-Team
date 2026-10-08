@@ -1,3 +1,4 @@
+import { FeedbackLine } from '../feedback/FeedbackLine'
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { NOTIFICATION_CATEGORIES, type NotificationCategory, type NotificationPreferences } from '../../../domain/notification'
 import type { NotificationStore } from './notification-store'
@@ -35,8 +36,8 @@ export function NotificationPreferencesPanel({ store }: { store: NotificationSto
   }
   return <div className="notification-preferences">
     <p className="notification-preferences__intro">只控制如何提醒。关闭或静音后，结果和待处理事项仍会保留。</p>
-    {error ? <p className="notification-preferences__feedback" role="alert">{error}</p> : null}
-    {snapshot.preferencesError ? <p className="notification-preferences__feedback" role="status">{snapshot.preferencesError}</p> : null}
+    {error ? <FeedbackLine className="notification-preferences__feedback" tone="error">{error}</FeedbackLine> : null}
+    {snapshot.preferencesError ? <FeedbackLine className="notification-preferences__feedback" tone="warning">{snapshot.preferencesError}</FeedbackLine> : null}
     <section aria-label="提醒总开关">
       {flag('enabled', '开启提醒', '不影响业务执行、通知记录和未读状态。')}
       {flag('quiet', '安静模式', '暂停应用内与系统提醒，不会把事项标为已读。', !preferences.enabled)}
@@ -48,7 +49,7 @@ export function NotificationPreferencesPanel({ store }: { store: NotificationSto
           : snapshot.delivery?.nativeFeedback === 'unconfirmed' ? '最近一条系统提醒的显示尚未确认；通知记录仍在中心。'
             : snapshot.delivery?.nativeFeedback === 'reported' ? '最近一次显示已收到系统回执；横幅和声音仍遵循系统设置。'
               : '是否显示还取决于系统权限和勿扰设置；开启不会立即发送测试通知。'}</p>
-      {snapshot.delivery?.message ? <p className="notification-preferences__feedback" role="status">{snapshot.delivery.message}</p> : null}
+      {snapshot.delivery?.message ? <FeedbackLine className="notification-preferences__feedback" tone={snapshot.delivery.state === 'failed' ? 'warning' : 'info'}>{snapshot.delivery.message}</FeedbackLine> : null}
       {snapshot.delivery?.state === 'failed' ? <p className="notification-preferences__note">排除问题后，可关闭再开启系统通知；只尝试新的提醒，不重发旧结果。</p> : null}
       {flag('sound', '系统通知声音', '默认静音；仍遵循系统声音和勿扰设置。', !preferences.enabled || !preferences.nativeEnabled)}
       {flag('preview', '显示通知摘要', '默认仅提示有通知，不显示模型消息或账号信息。', !preferences.enabled || !preferences.nativeEnabled)}

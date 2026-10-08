@@ -1,11 +1,2 @@
-.usage-storage-notices { display: grid; gap: 8px; margin: 0 0 16px; min-width: 0; }
-.usage-storage-notice { min-width: 0; border: 1px solid var(--line); border-radius: 10px; background: transparent; }
-.usage-storage-notice summary { display: flex; align-items: center; gap: 10px; padding: 11px 14px; cursor: pointer; list-style: none; color: var(--text); font-size: var(--fs-13); line-height: 1.55; }
-.usage-storage-notice summary::-webkit-details-marker { display: none; }
-.usage-storage-notice summary:hover { background: var(--surface-soft); border-radius: 9px; }
-.usage-storage-notice summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 9px; }
-.usage-storage-notice summary svg { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; }
-.usage-storage-notice summary > span:first-of-type { min-width: 0; overflow-wrap: anywhere; }
-.usage-storage-notice__more { margin-left: auto; flex: none; color: var(--muted); font-size: var(--fs-12); }
-.usage-storage-notice p { margin: 0; padding: 0 14px 14px 40px; color: var(--text-soft); font-size: var(--fs-13); line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
-@media (max-width: 480px) { .usage-storage-notice summary { padding-inline: 12px; } .usage-storage-notice p { padding-inline: 12px; } }
+/* Source history uses the shared feedback disclosure, never its own status rail. */
+.usage-storage-notices { display:grid; gap:8px; margin:0 0 16px; min-width:0; }

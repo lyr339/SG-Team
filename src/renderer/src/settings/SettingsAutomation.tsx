@@ -1,3 +1,4 @@
+import { FeedbackLine } from '../feedback/FeedbackLine'
 import { useRef, useState } from 'react'
 import {
   ACCOUNT_AUTOMATION_DELAY_MAX_SEC,
@@ -132,7 +133,7 @@ export function SettingsAutomation({
                     label="处理后执行后续操作" title="关闭会同时跳过换号票据准备、Token 刷新、官网账号删除和浏览器清场"
                     onChange={(enabled) => void saveBoundary(enabled)} />
                 </div>
-                {boundaryError ? <p className="cursor-maintenance__error" role="alert">{boundaryError}</p> : null}
+                {boundaryError ? <FeedbackLine className="cursor-maintenance__error" role="alert" tone={'error'}>{boundaryError}</FeedbackLine> : null}
                 {!postProcessingEnabled ? <p className="account-automation__follow">仅保留本地记录，不代表原 Token 仍有效；处理服务可能使登录态失效。</p> : null}
 
                 <div className={`settings-collapse settings-automation__post-options${postProcessingOpen ? ' is-open' : ''}`} inert={!postProcessingOpen}>
@@ -320,9 +321,9 @@ export function SettingsAutomation({
               />
             </label>
             {checkoutIssue ? (
-              <p className="settings-add-form__warn settings-checkout-form__wide">资料不完整：缺{checkoutIssue}，补齐后才能发起升级</p>
+              <FeedbackLine className="settings-add-form__warn settings-checkout-form__wide" tone={'success'}>资料不完整：缺{checkoutIssue}，补齐后才能发起升级</FeedbackLine>
             ) : (
-              <p className="settings-add-form__ok settings-checkout-form__wide">资料完整，可在账号卡片发起「升级 Pro」</p>
+              <FeedbackLine className="settings-add-form__ok settings-checkout-form__wide" tone={'success'}>资料完整，可在账号卡片发起「升级 Pro」</FeedbackLine>
             )}
           </div>
         </SettingsSection>

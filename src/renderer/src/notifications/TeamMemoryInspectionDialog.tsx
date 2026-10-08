@@ -1,3 +1,4 @@
+import { FeedbackLine } from '../feedback/FeedbackLine'
 import { useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type {
@@ -273,20 +274,20 @@ export function TeamMemoryInspectionDialog({
             </time>
           </div>
           {prerequisite === 'conflict' ? (
-            <p className="memory-inspection__notice">
+            <FeedbackLine className="memory-inspection__notice" tone="warning">
               要取代的旧记忆已发生变化，不能直接采纳这项修订。先核对两份内容，再决定是否驳回并回到原协作流程处理；不会自动审核。
-            </p>
+            </FeedbackLine>
           ) : null}
           {value.operatorReview && value.item.status === 'proposed' ? (
-            <p className="memory-inspection__notice">
+            <FeedbackLine className="memory-inspection__notice" tone="warning">
               {value.operatorReview.reason === 'timeout' ? '原审核等待时间较长' : '原流程未找到独立审核成员'}
               ，已发给你处理。先看提案和引用，再选择采纳或驳回。
-            </p>
+            </FeedbackLine>
           ) : null}
           {error ? (
-            <p className="memory-inspection__notice" role="alert">
+            <FeedbackLine className="memory-inspection__notice" tone="error">
               {error}
-            </p>
+            </FeedbackLine>
           ) : null}
           <div ref={body} className="memory-inspection__body" tabIndex={0}>
             <h3>提案内容</h3>

@@ -1,3 +1,4 @@
+import { FeedbackIcon } from './feedback/FeedbackIcon'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AgentSession } from '../../domain/agent-session'
 import {
@@ -185,7 +186,7 @@ export function SessionHandoffDialog({
 
         {result ? (
           <div ref={resultRef} className="handoff-done" role="status" data-notification-key={result.notification?.key} data-notification-event={result.notification?.eventId}>
-            <i aria-hidden="true"><svg viewBox="0 0 20 20" width="20" height="20"><path d="M3 7h14M3 11h8M3 15h8m2-3 3 3-3 3" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg></i>
+            <FeedbackIcon tone="info" className="handoff-done__icon" />
             <strong>{result.entryId ? '已排队到' : '投递已受理 ·'} CH-{result.targetChannelId}</strong>
             <p>
               {result.held

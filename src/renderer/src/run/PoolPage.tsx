@@ -1,3 +1,5 @@
+import { FeedbackLine } from '../feedback/FeedbackLine'
+import { FeedbackIcon } from '../feedback/FeedbackIcon'
 import { useGroupEffectNotes } from '../notifications/use-group-effect-notes'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AgentLaunchPlan, AgentLaunchRequest } from '../../../domain/agent-launch'
@@ -472,12 +474,10 @@ export function PoolPage({
   const isBusy = Boolean(busy) || agentLaunchPlan?.state === 'running'
   const feedback = error || notice
   const feedbackStrip = feedback ? (
-    <p ref={feedbackRef} className={`run-feedback${error ? ' is-error' : ''}`} role={error ? 'alert' : 'status'} aria-live={error ? 'assertive' : 'polite'}
+    <FeedbackLine tone={error ? 'error' : 'success'} onDismiss={() => { setError(''); setNotice('') }} ref={feedbackRef} className={`run-feedback${error ? ' is-error' : ''}`} role={error ? 'alert' : 'status'} aria-live={error ? 'assertive' : 'polite'}
       data-notification-page="run" data-notification-result data-notification-key={matchesPlanFeedback ? planFeedback.key : undefined} data-notification-event={matchesPlanFeedback ? planFeedback.eventId : undefined}>
-      <i aria-hidden="true" />
-      <span>{feedback}</span>
-      <button type="button" aria-label="关闭提示" onClick={() => { setError(''); setNotice('') }}>×</button>
-    </p>
+      {feedback}
+    </FeedbackLine>
   ) : null
 
   const seats = (seatRows.length > 0 || composingIndependent) && (composingIndependent ? Boolean(targetWorkspace) : true) ? (
@@ -636,8 +636,8 @@ export function PoolPage({
 
       <RunSlot>
         {compose ? (
-          <div className="run-banner is-amber" role="status">
-            <i aria-hidden="true" />
+          <div className="run-banner" role="status">
+            <FeedbackIcon tone="info"/>
             <span>
               配置新批次
               {view.phase === 'completed'

@@ -164,4 +164,22 @@ describe('MenuSelect（账号管线自绘下拉）', () => {
     expect(menu.style.top).toBe('')
     expect(menu.style.bottom).toBe('74px')
   })
+  it('navigates options with arrows/Home/End and typeahead without committing until an explicit choice', async () => {
+    const change = vi.fn()
+    await renderSelect({ value:'a', options:[{value:'a',label:'Alpha'},{value:'b',label:'Beta'},{value:'g',label:'Gamma'}], onChange:change })
+    await act(async () => buttonOf().dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true,cancelable:true})))
+    expect(document.activeElement?.textContent).toBe('Alpha')
+    const list = document.body.querySelector<HTMLElement>('[role="listbox"]')!
+    await act(async () => list.dispatchEvent(new KeyboardEvent('keydown',{key:'End',bubbles:true,cancelable:true})))
+    expect(document.activeElement?.textContent).toBe('Gamma')
+    await act(async () => list.dispatchEvent(new KeyboardEvent('keydown',{key:'Home',bubbles:true,cancelable:true})))
+    expect(document.activeElement?.textContent).toBe('Alpha')
+    await act(async () => list.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true,cancelable:true})))
+    expect(document.activeElement?.textContent).toBe('Beta')
+    await act(async () => list.dispatchEvent(new KeyboardEvent('keydown',{key:'g',bubbles:true,cancelable:true})))
+    expect(document.activeElement?.textContent).toBe('Gamma'); expect(change).not.toHaveBeenCalled()
+    await act(async () => (document.activeElement as HTMLButtonElement).click())
+    expect(change).toHaveBeenCalledExactlyOnceWith('g'); expect(document.activeElement).toBe(buttonOf())
+  })
+
 })

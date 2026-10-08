@@ -1,3 +1,4 @@
+import { FeedbackLine } from '../feedback/FeedbackLine'
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { MessageContent } from '../MessageContent'
@@ -180,7 +181,7 @@ export function GroupCollaborationDialog({ facts, workspaceName, onClose, onOpen
         onClickCapture={holdImageMessage} onContextMenuCapture={holdMessageForInspection}><MessageContent text={latestMessage.content} /><time dateTime={new Date(latestMessage.createdAt).toISOString()} title={new Date(latestMessage.createdAt).toLocaleString()}>{new Date(latestMessage.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</time></div>
         : <p role={messageId ? 'status' : undefined}>{messageId ? '这条已定位的原消息当前没有在本次组记录中确认。不替换成别的消息，也不推断已回复、撤回或删除；可在全部记录中明确选择其他事项。'
           : facts.scoped ? '成员加入并不等于已经通信；有真实组内消息后才会显示连线。' : '等待当前组的记录同步，不使用其他组或批次的数据。关闭后重新打开可重试同步。'}</p>}
-      {error ? <p className="collaboration-dialog__error" role="alert">{error}</p> : null}
+      {error ? <FeedbackLine className="collaboration-dialog__error" role="alert" tone={'error'}>{error}</FeedbackLine> : null}
     </section>
   )
   return createPortal(

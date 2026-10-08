@@ -1,3 +1,5 @@
+import { FeedbackText } from '../feedback/FeedbackText'
+import { FeedbackLine } from '../feedback/FeedbackLine'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { CursorModelOption, CursorModelSelection } from '../../../domain/cursor-model'
@@ -213,8 +215,8 @@ export function CursorModelConfigDialog({
           {fixedContext ? (
             <div className="cursor-model-dialog__fixed"><span>Context</span><b>{fixedContext}</b></div>
           ) : null}
-          {linkNotice ? <p className="cursor-model-dialog__linked" role="status">{linkNotice}</p> : null}
-          {saveError ? <em className="cursor-model-dialog__error" role="alert">{saveError}</em> : null}
+          {linkNotice ? <FeedbackLine className="cursor-model-dialog__linked" role="status" tone={'info'}>{linkNotice}</FeedbackLine> : null}
+          {saveError ? <FeedbackText className="cursor-model-dialog__error" tone="error">{saveError}</FeedbackText> : null}
           <p>
             {scope.kind === 'all'
               ? `保存后 ${scope.count} 个席位下一次新建 Composer 都用这套配置，不改变 Cursor 全局模型。`

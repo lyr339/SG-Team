@@ -1,3 +1,4 @@
+import { FeedbackText } from './feedback/FeedbackText'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { MessageAttachment } from '../../domain/conversation-entry'
 import type { SgDesktopApi } from '../../shared/desktop-api'
@@ -188,7 +189,7 @@ export function AttachmentLightbox({
             <span>{meta}</span>
           </div>
           <div className="attachment-lightbox__actions">
-            {actions.feedback ? <em role="status">{actions.feedback}</em> : null}
+            {actions.feedback ? <FeedbackText className="attachment-lightbox__feedback" role="status" tone={actions.feedback === '已保存' || actions.feedback === '已复制到剪贴板' ? 'success' : 'error'}>{actions.feedback}</FeedbackText> : null}
             <button type="button" onClick={() => void actions.copy()}>复制图片</button>
             <button type="button" onClick={() => void actions.save()}>另存为…</button>
             {actions.canReveal ? <button type="button" onClick={() => void actions.reveal()}>在 Finder 中显示</button> : null}
@@ -227,7 +228,7 @@ export function AttachmentThumbnail({
       <button
         type="button"
         className={`attachment-thumb ${className ?? ''}`}
-        title={`${attachment.name} · 点击查看大图，右键更多操作`}
+        title={`${attachment.name} · ${actions.feedback || '点击查看大图，右键更多操作'}`}
         onClick={() => setViewerOpen(true)}
         onContextMenu={(event) => {
           event.preventDefault()

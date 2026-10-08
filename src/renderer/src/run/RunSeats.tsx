@@ -1,3 +1,4 @@
+import { FeedbackLine } from '../feedback/FeedbackLine'
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import type { AgentLaunchPlan } from '../../../domain/agent-launch'
 import type { SessionWarmupRun } from '../../../domain/session-warmup'
@@ -221,19 +222,13 @@ export function RunSeats({
       ) : null}
 
       {needsCdp && onEnableCdp ? (
-        <div className="run-seats__cdp is-required" role="alert">
-          <span>会话创建需要 Cursor 开启调试端口（一次性设置）。</span>
-          <button type="button" className="secondary-button" disabled={busy || launching} onClick={onEnableCdp}>重启 Cursor 并启用会话创建</button>
-        </div>
+        <FeedbackLine className="run-seats__cdp is-required" tone="warning" role="alert" action={<button type="button" className="secondary-button" disabled={busy || launching} onClick={onEnableCdp}>重启 Cursor 并启用会话创建</button>}>会话创建需要 Cursor 开启调试端口（一次性设置）。</FeedbackLine>
       ) : null}
       {cdpAutoHealEvent?.phase === 'countdown' ? (
-        <div className="run-seats__cdp is-countdown" role="alert">
-          <span>检测到 Cursor 未启用会话创建端口，<b className="countdown-value">{countdownLeft}</b> 秒后将自动重启并打开当前工作区。</span>
-          <button type="button" className="secondary-button" onClick={onCancelCountdown}>取消本次自动重启</button>
-        </div>
+        <FeedbackLine className="run-seats__cdp is-countdown" tone="warning" role="alert" action={<button type="button" className="secondary-button" onClick={onCancelCountdown}>取消本次自动重启</button>}>检测到 Cursor 未启用会话创建端口，<b className="countdown-value">{countdownLeft}</b> 秒后将自动重启并打开当前工作区。</FeedbackLine>
       ) : null}
       {cdpAutoHealEvent?.phase === 'restarting' ? (
-        <div className="run-seats__cdp is-working" role="status">正在优雅重启 Cursor、打开工作区并启用会话创建端口…</div>
+        <FeedbackLine className="run-seats__cdp is-working" tone="working">正在优雅重启 Cursor、打开工作区并启用会话创建端口…</FeedbackLine>
       ) : null}
 
       <footer className="run-seats__footer">

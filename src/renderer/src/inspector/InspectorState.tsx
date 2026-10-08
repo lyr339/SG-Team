@@ -1,3 +1,4 @@
+import { FeedbackLine } from '../feedback/FeedbackLine'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 
 /**
@@ -69,7 +70,7 @@ export function InspectorGroupLabel({ children, count }: { children: ReactNode; 
  */
 export function InspectorToast({ message }: { message: string }): React.JSX.Element | null {
   if (!message) return null
-  return <p className="inspector-toast" role="status">{message}</p>
+  return <FeedbackLine className="inspector-toast">{message}</FeedbackLine>
 }
 
 /**

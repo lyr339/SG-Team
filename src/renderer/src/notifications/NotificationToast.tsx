@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { NoticeIcon } from './NotificationCenter'
+import { NotificationCard } from './NotificationCard'
 import { notificationTargetLabel } from './notification-view'
 import type { NotificationStore, ToastCandidate } from './notification-store'
 import { notificationIsUnread, type NotificationPush, type NotificationRecord } from '../../../domain/notification'
@@ -59,6 +59,9 @@ export function NotificationToast({ store, blocked, onOpen, onSnoozeUpdate }: Pr
   const [hovering, setHovering] = useState(false)
   const [within, setWithin] = useState(false)
   const [error, setError] = useState('')
+  const [snoozing, setSnoozing] = useState(false)
+  const snoozeBusy = useRef(false), alive = useRef(true)
+  useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
   const [placement, setPlacement] = useState({ bottom: 16, visible: true })
   const toastRef = useRef<HTMLElement>(null)
   const remaining = useRef({ key: '', ms: 5_000 })
@@ -126,29 +129,32 @@ export function NotificationToast({ store, blocked, onOpen, onSnoozeUpdate }: Pr
     return () => { stop(); window.removeEventListener('focus', onFocus); window.removeEventListener('blur', onBlur) }
   }, [store])
   useEffect(() => {
-    if (!active || blocked || !focused || hovering || within || !placement.visible) return
+    if (!active || blocked || !focused || hovering || within || snoozing || !placement.visible) return
     if (active.expiresAt <= Date.now()) { finishRef.current(); return }
     const duration = remaining.current
     const started = performance.now()
     const timer = setTimeout(() => finishRef.current(), Math.max(0, duration.ms))
     return () => { clearTimeout(timer); duration.ms = Math.max(0, duration.ms - (performance.now() - started)) }
-  }, [active, blocked, focused, hovering, within, placement.visible])
+  }, [active, blocked, focused, hovering, within, placement.visible, snoozing])
   useEffect(() => {
     if (active || blocked || !focused || !store.snapshot().preferencesReady || notificationIsQuiet(store.snapshot().preferences, Date.now())) return
     // Dismissal may be the last queue change. Re-check pending candidates once after the old card unmounts.
     const item = nextReminder(store).find(value => value.expiresAt > Date.now() && !sourceResultVisible(value.record))
     if (item) { remaining.current = { key: item.key, ms: item.record.category === 'updates' ? 15_000 : item.record.target ? 10_000 : 5_000 }; current.current = item; setActive(item) }
   }, [active, blocked, focused, store])
+  const snooze = async (): Promise<void> => {
+    const item = current.current
+    if (!item || !onSnoozeUpdate || snoozeBusy.current) return
+    snoozeBusy.current = true; setSnoozing(true); setError('')
+    try { await onSnoozeUpdate(item.record); if (alive.current && current.current?.key === item.key) finishRef.current() }
+    catch { if (alive.current && current.current?.key === item.key) setError('更新状态可能已变化；未延后其他版本，请到软件更新查看。') }
+    finally { snoozeBusy.current = false; if (alive.current) setSnoozing(false) }
+  }
   if (!active || blocked) return null
-  return createPortal(<aside ref={toastRef} className="notification-toast" role="status" aria-live="polite" aria-hidden={!placement.visible} inert={!placement.visible}
-    style={{ bottom: placement.bottom, visibility: placement.visible ? undefined : 'hidden' }} onMouseEnter={() => setHovering(true)} onMouseLeave={() => setHovering(false)}
-    onFocusCapture={() => setWithin(true)} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setWithin(false) }}>
-    <NoticeIcon tone={active.record.tone} />
-    <div className="notification-toast__copy"><span>{active.record.source}</span><strong>{active.record.title}</strong>{active.record.detail ? <p>{active.record.detail}</p> : null}
-      <div className="notification-toast__actions"><button type="button" onClick={() => { onOpen(active.record, active.grouped); finish() }}>{notificationTargetLabel(active.record.target, ['mcp.write-result', 'mcp.call-unattributed', 'question.original-recheck', 'session.reply'].includes(active.record.eventType ?? '') ? active.record.subjectState : undefined)}</button>
-        {active.record.category === 'updates' && (active.record.eventId?.startsWith('update:available:') || active.record.eventId?.startsWith('update:downloaded:')) && onSnoozeUpdate ? <button type="button" onClick={() => { void onSnoozeUpdate(active.record).then(finish).catch(() => setError('更新状态可能已变化；未延后其他版本，请到软件更新查看。')) }}>稍后</button> : null}</div>
-      {error ? <p className="notification-toast__error" role="alert">{error}</p> : null}
-    </div>
-    <button className="notification-icon-button" type="button" aria-label="收起提醒" onClick={finish}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8m0-8-8 8" /></svg></button>
-  </aside>, document.body)
+  return createPortal(<NotificationCard ref={toastRef} title={active.record.title} source={active.record.source} detail={active.record.detail} tone={active.record.tone} error={error} onDismiss={finish}
+    aria-hidden={!placement.visible} inert={!placement.visible} style={{ bottom: placement.bottom, visibility: placement.visible ? undefined : 'hidden' }} onMouseEnter={() => setHovering(true)} onMouseLeave={() => setHovering(false)}
+    onFocusCapture={() => setWithin(true)} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setWithin(false) }}
+    actions={<><button type="button" onClick={() => { onOpen(active.record, active.grouped); finish() }}>{notificationTargetLabel(active.record.target, ['mcp.write-result', 'mcp.call-unattributed', 'question.original-recheck', 'session.reply'].includes(active.record.eventType ?? '') ? active.record.subjectState : undefined)}</button>
+      {active.record.category === 'updates' && (active.record.eventId?.startsWith('update:available:') || active.record.eventId?.startsWith('update:downloaded:')) && onSnoozeUpdate ? <button type="button" disabled={snoozing} aria-busy={snoozing} onClick={() => void snooze()}>{snoozing ? '保存中…' : '稍后'}</button> : null}</>}
+  />, document.body)
 }

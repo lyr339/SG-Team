@@ -1,0 +1,36 @@
+/* One quiet language for transient and local results. Status lives in the icon,
+   never a coloured rail, glow, decorative dot or a fully tinted message. */
+.feedback-icon { display:block; flex:none; width:18px; height:18px; color:var(--muted); fill:none; stroke:currentColor; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
+.feedback-icon.is-success { color:var(--color-text-success); }
+.feedback-icon.is-warning { color:var(--color-text-warning); }
+.feedback-icon.is-error { color:var(--color-text-danger); }
+.feedback-icon.is-working { animation:feedback-working 900ms linear infinite; }
+.feedback-icon__track { opacity:.2; }
+p.feedback-line[class] { display:flex; align-items:flex-start; gap:10px; min-width:0; margin:0; padding:12px 14px; border:1px solid var(--line); border-radius:11px; background:var(--surface); color:var(--text-soft); font-size:var(--font-text-sm-size); line-height:1.65; }
+.feedback-line > .feedback-icon { margin-top:3px; }
+.feedback-line__copy { flex:1; min-width:0; overflow-wrap:anywhere; white-space:pre-wrap; }
+.feedback-line__action { flex:none; display:inline-flex; align-items:center; min-height:28px; margin-top:-2px; }
+.feedback-close { display:grid; place-items:center; flex:none; width:30px; height:30px; margin:-3px -3px -3px 0; padding:0; border:0; border-radius:8px; background:transparent; color:var(--muted); cursor:pointer; transition:background 140ms ease,color 140ms ease; }
+.feedback-close svg { display:block; width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:1.5; stroke-linecap:round; }
+.feedback-close:hover { background:color-mix(in srgb,var(--text) 6%,transparent); color:var(--text); }
+.feedback-close:focus-visible { outline:2px solid var(--color-ring-primary); outline-offset:2px; }
+@keyframes feedback-working { to { transform:rotate(360deg); } }
+@media (max-width:520px) { .feedback-line { flex-wrap:wrap; } .feedback-line__copy { flex-basis:calc(100% - 38px); } .feedback-line__action { margin-left:28px; } }
+@media (prefers-reduced-motion:reduce) { .feedback-icon.is-working { animation:none; } .feedback-close { transition:none; } }
+.feedback-disclosure { min-width:0; border:1px solid var(--line); border-radius:11px; background:var(--surface); overflow:hidden; }
+.feedback-disclosure > summary { display:grid; grid-template-columns:18px minmax(0,1fr) auto; align-items:start; gap:10px; min-height:44px; box-sizing:border-box; padding:11px 14px; color:var(--text); font-size:var(--font-text-sm-size); line-height:1.6; list-style:none; cursor:pointer; transition:background 140ms ease; }
+.feedback-disclosure > summary::-webkit-details-marker { display:none; }
+.feedback-disclosure > summary > .feedback-icon { margin-top:2px; }
+.feedback-disclosure > summary > span { min-width:0; overflow-wrap:anywhere; }
+.feedback-disclosure > summary:hover { background:color-mix(in srgb,var(--text) 4%,transparent); }
+.feedback-disclosure > summary:focus-visible { outline:2px solid var(--color-ring-primary); outline-offset:-3px; border-radius:10px; }
+.feedback-disclosure__toggle { display:inline-flex; align-items:center; gap:4px; align-self:start; padding-block:2px; color:var(--muted); font-size:var(--font-text-xs-size); white-space:nowrap; }
+.feedback-disclosure__toggle svg { width:12px; height:12px; fill:none; stroke:currentColor; stroke-width:1.5; transition:transform 160ms ease; }
+.feedback-disclosure[open] .feedback-disclosure__toggle svg { transform:rotate(180deg); }
+.feedback-disclosure > p { margin:0; padding:0 14px 14px 42px; color:var(--text-soft); font-size:var(--font-text-sm-size); line-height:1.75; white-space:pre-wrap; overflow-wrap:anywhere; }
+.feedback-disclosure > small { display:block; padding:0 14px 14px 42px; color:var(--muted); font-size:var(--font-text-xs-size); line-height:1.7; }
+@media (max-width:480px) { .feedback-disclosure > p, .feedback-disclosure > small { padding-inline:14px; } }
+@media (prefers-reduced-motion:reduce) { .feedback-disclosure > summary, .feedback-disclosure__toggle svg { transition:none; } }
+span.feedback-text[class] { display:inline-flex; align-items:flex-start; gap:6px; min-width:0; max-width:100%; color:var(--text-soft); font-size:var(--font-text-xs-size); font-style:normal; line-height:1.65; }
+.feedback-text > .feedback-icon { width:14px; height:14px; margin-top:2px; }
+.feedback-text > span { min-width:0; overflow-wrap:anywhere; white-space:normal; }

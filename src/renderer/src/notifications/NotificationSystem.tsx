@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import type { NotificationRecord, NotificationScope, NotificationTarget } from '../../../domain/notification'
 import { NotificationCenter } from './NotificationCenter'
 import { NotificationStore } from './notification-store'
 import { NotificationToast } from './NotificationToast'
 import './notifications.css'
+import { overlayOwnsTarget } from '../overlay-ownership'
 import { notificationPanelPlacement } from './notification-panel-placement'
 
 interface Props {
@@ -33,6 +34,7 @@ function NotificationEntry({ store, workspaceId, onNavigate, onAvailable, onSnoo
   const [toastFocus, setToastFocus] = useState(0)
   const groupedToast = useRef(false)
   const toastEpoch = useRef(0)
+  const overlayScope = useId()
   const trigger = useRef<HTMLButtonElement>(null)
   const panel = useRef<HTMLDivElement>(null)
   const navigationRef = useRef(onNavigate); navigationRef.current = onNavigate
@@ -114,7 +116,7 @@ function NotificationEntry({ store, workspaceId, onNavigate, onAvailable, onSnoo
     if (!open) return
     const outside = (event: Event): void => {
       const target = event.target as Node
-      if (!panel.current?.contains(target) && !trigger.current?.contains(target)) close(false)
+      if (!overlayOwnsTarget(panel.current, target) && !trigger.current?.contains(target)) close(false)
     }
     const escape = (event: KeyboardEvent): void => {
       if (event.key === 'Escape' && !event.defaultPrevented) { event.preventDefault(); event.stopPropagation(); close() }
@@ -139,7 +141,7 @@ function NotificationEntry({ store, workspaceId, onNavigate, onAvailable, onSnoo
       <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5.5 8a4.5 4.5 0 0 1 9 0v3.2l1.4 2.3H4.1l1.4-2.3V8ZM8.2 16a2 2 0 0 0 3.6 0" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
       {unread > 0 ? <span>{unread > 99 ? '99+' : unread}</span> : null}
     </button>
-    {open ? createPortal(<div ref={panel} className="notification-panel-anchor" style={{ top: position.top, right: position.right, '--notification-panel-height': `${position.height}px` } as React.CSSProperties}>
+    {open ? createPortal(<div ref={panel} data-overlay-scope={overlayScope} className="notification-panel-anchor" style={{ top: position.top, right: position.right, '--notification-panel-height': `${position.height}px` } as React.CSSProperties}>
       <NotificationCenter key={nativeOpenToken} store={store} workspaceId={workspaceId} onClose={close} onNavigate={navigate} focusRecord={focusRecord} navigationError={navigationError} />
     </div>, document.body) : null}
     <NotificationToast store={store} blocked={open || otherModal} onOpen={(record, grouped) => {

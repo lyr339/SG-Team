@@ -1,3 +1,4 @@
+import { FeedbackLine } from '../feedback/FeedbackLine'
 import { useEffect, useRef, useState } from 'react'
 import type { AccountAutomationSettings } from '../../../domain/account-automation'
 import { MenuSelect } from './MenuSelect'
@@ -199,7 +200,7 @@ export function AccountBrowserPanel({
               </div>
             </div>
           </div>
-          {profilesMessage ? <p className="account-browser__error" role="alert">{profilesMessage}</p> : null}
+          {profilesMessage ? <FeedbackLine className="account-browser__error" role="alert" tone={'error'}>{profilesMessage}</FeedbackLine> : null}
           {onCleanupEnvironment ? (
             <div className="account-browser__cleanup">
               <span className="account-browser__cleanup-text">
@@ -223,7 +224,7 @@ export function AccountBrowserPanel({
             </div>
           ) : null}
           {cleanupNote ? (
-            <p className={`account-browser__cleanup-note${cleanupBusy ? '' : cleanupNote.includes('已清理') ? ' is-ok' : ' is-fail'}`} role="status">{cleanupNote}</p>
+            <FeedbackLine className={`account-browser__cleanup-note${cleanupBusy ? '' : cleanupNote.includes('已清理') ? ' is-ok' : ' is-fail'}`} role="status" tone={cleanupBusy ? 'working' : cleanupNote.includes('已清理') ? 'success' : 'error'}>{cleanupNote}</FeedbackLine>
           ) : null}
         </div>
       ) : (
