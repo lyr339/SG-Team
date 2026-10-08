@@ -25,7 +25,9 @@ function atomic(path, body) {
   const temp = path + "." + randomUUID() + ".tmp";
   try {
     writeFileSync(temp, body, { mode: 0o600, flag: "wx" });
-    const fd = openSync(temp, "r");
+    // Windows FlushFileBuffers requires a writable handle. Keep the fsync
+    // durability gate; a read-only handle is accepted on POSIX but fails there.
+    const fd = openSync(temp, "r+");
     try {
       fsyncSync(fd);
     } finally {
