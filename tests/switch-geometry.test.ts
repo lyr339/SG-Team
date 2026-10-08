@@ -8,6 +8,7 @@ const geometry = read('switch-geometry.css').replace(/\s+/g, '')
 const styles = read('styles.css'), notices = read('notifications/notifications.css')
 const files = (directory: string, suffix: string): string[] => readdirSync(directory, { withFileTypes: true }).flatMap(entry => entry.isDirectory()
   ? files(join(directory, entry.name), suffix) : entry.name.endsWith(suffix) ? [join(directory, entry.name)] : [])
+const rendererRelativePath = (file: string, directory = root) => file.slice(directory.length + 1).replaceAll('\\', '/')
 
 describe('all switch skins share border-independent centering', () => {
   it('centers vertically and derives horizontal travel instead of maintaining magic pixel offsets', () => {
@@ -43,9 +44,15 @@ describe('all switch skins share border-independent centering', () => {
       }
     }
   })
+  it('normalizes Windows and POSIX paths before excluding preview-only callers', () => {
+    for (const [directory, separator] of [['C:\\workspace\\src', '\\'], ['/workspace/src', '/']] as const) {
+      expect(rendererRelativePath(`${directory}${separator}preview${separator}switch-review.tsx`, directory)).toBe('preview/switch-review.tsx')
+      expect(rendererRelativePath(`${directory}${separator}settings${separator}SettingsUpdate.tsx`, directory)).toBe('settings/SettingsUpdate.tsx')
+    }
+  })
   it('covers every shared switch caller and respects reduced motion for both painted outlines and thumbs', () => {
-    const callers = files(root, '.tsx').filter(file => !file.includes('/preview/') && readFileSync(file, 'utf8').includes('<ToggleSwitch'))
-    expect(callers.map(file => file.slice(root.length + 1)).sort()).toEqual([
+    const callers = files(root, '.tsx').filter(file => !rendererRelativePath(file).startsWith('preview/') && readFileSync(file, 'utf8').includes('<ToggleSwitch'))
+    expect(callers.map(file => rendererRelativePath(file)).sort()).toEqual([
       'lobby/CursorModelConfigDialog.tsx', 'run/GroupComposer.tsx', 'run/RunSeats.tsx', 'settings/SettingsAutomation.tsx',
       'settings/SettingsCleanup.tsx', 'settings/SettingsMaintenance.tsx', 'settings/SettingsUpdate.tsx'
     ])
