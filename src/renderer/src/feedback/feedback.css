@@ -14,6 +14,14 @@ p.feedback-line[class] { display:flex; align-items:flex-start; gap:10px; min-wid
 .feedback-close svg { display:block; width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:1.5; stroke-linecap:round; }
 .feedback-close:hover { background:color-mix(in srgb,var(--text) 6%,transparent); color:var(--text); }
 .feedback-close:focus-visible { outline:2px solid var(--color-ring-primary); outline-offset:2px; }
+/* A dismiss control owns a fixed first-row slot. Text may wrap without moving
+   it; optional actions use the next row instead of competing with the close. */
+p.feedback-line[class]:has(> .feedback-close) { display:grid; grid-template-columns:18px minmax(0,1fr) 30px; }
+.feedback-line:has(> .feedback-close) > .feedback-icon { grid-column:1; grid-row:1; }
+.feedback-line:has(> .feedback-close) > .feedback-line__copy { grid-column:2; grid-row:1; }
+.feedback-line:has(> .feedback-close) > .feedback-close { grid-column:3; grid-row:1; }
+.feedback-line:has(> .feedback-close) > .feedback-line__action { grid-column:2 / -1; grid-row:2; min-width:0; margin:0; flex-wrap:wrap; }
+.feedback-line:has(> .feedback-close) > .feedback-line__action > button { max-width:100%; white-space:normal; overflow-wrap:anywhere; }
 @keyframes feedback-working { to { transform:rotate(360deg); } }
 @media (max-width:520px) { .feedback-line { flex-wrap:wrap; } .feedback-line__copy { flex-basis:calc(100% - 38px); } .feedback-line__action { margin-left:28px; } }
 @media (prefers-reduced-motion:reduce) { .feedback-icon.is-working { animation:none; } .feedback-close { transition:none; } }

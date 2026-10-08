@@ -4,6 +4,7 @@
 .feedback-review > header p { margin:0; color:var(--muted); font-size:14px; line-height:1.65; }
 .feedback-review__grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:24px; align-items:start; }
 .feedback-review__grid > section { display:grid; gap:12px; min-width:0; }
+.feedback-review__wide { grid-column:1 / -1; }
 .feedback-review h2 { margin:0; font-size:16px; font-weight:600; line-height:1.5; }
 .feedback-review .notification-toast { position:static; width:100%; }
 @media (max-width:760px) { .feedback-review__grid { grid-template-columns:1fr; } }

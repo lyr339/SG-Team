@@ -80,6 +80,37 @@ it('forwards exact local result provenance and only dismisses through an explici
   )
   expect(dismiss).toHaveBeenCalledOnce()
 })
+it('keeps rich text, actions and dismiss controls in separate slots without remounting on a result update', async () => {
+  const dismiss = vi.fn(), action = vi.fn(), ref = vi.fn()
+  const render = async (text: string) => act(async () => root.render(
+    <FeedbackLine tone="warning" ref={ref} onDismiss={dismiss}
+      data-notification-key="record:key" data-notification-event="record:version"
+      action={<button type="button" onClick={action}>查看完整结果</button>}>
+      <b>结果说明</b>{text}
+    </FeedbackLine>
+  ))
+  await render('长说明'.repeat(150))
+  const line = host.querySelector('.feedback-line')!
+  const close = line.querySelector<HTMLButtonElement>(':scope > .feedback-close')!
+  const operation = line.querySelector<HTMLButtonElement>('.feedback-line__action button')!
+  expect(line.querySelector('.feedback-line__copy button')).toBeNull()
+  expect(line.querySelector('.feedback-line__copy b')?.textContent).toBe('结果说明')
+  expect(close.querySelector('svg[aria-hidden="true"]')).not.toBeNull()
+  expect(close.type).toBe('button')
+  close.focus()
+  await render('更新后的说明')
+  expect(host.querySelector('.feedback-line')).toBe(line)
+  expect(host.querySelector('.feedback-close')).toBe(close)
+  expect(document.activeElement).toBe(close)
+  expect(dismiss).not.toHaveBeenCalled()
+  expect(action).not.toHaveBeenCalled()
+  await act(async () => close.click())
+  expect(dismiss).toHaveBeenCalledOnce()
+  expect(action).not.toHaveBeenCalled()
+  await act(async () => operation.click())
+  expect(action).toHaveBeenCalledOnce()
+  expect(dismiss).toHaveBeenCalledOnce()
+})
 it('fallback update reminder keeps its existing once-per-version lifecycle on the shared surface', async () => {
   vi.useFakeTimers()
   const open = vi.fn()

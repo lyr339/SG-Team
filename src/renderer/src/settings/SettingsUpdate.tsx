@@ -237,14 +237,12 @@ export function SettingsUpdate({ initialStatus, now = () => Date.now() }: Settin
       >
         <div className="app-update" ref={panelRef}>
           {applyResult ? (
-            <FeedbackLine className={`app-update__updated is-${applyResult.tone}`} role={applyResult.tone === 'danger' ? 'alert' : 'status'} ref={notificationReceiptRef} data-notification-key={notificationReceipt?.key} data-notification-event={notificationReceipt?.eventId} tone={applyResult.tone === 'danger' ? 'error' : 'success'}>
-              <span>{applyResult.text}</span>
-              <button type="button" aria-label="收起" onClick={dismissApplyResult}>×</button>
+            <FeedbackLine className={`app-update__updated is-${applyResult.tone}`} role={applyResult.tone === 'danger' ? 'alert' : 'status'} ref={notificationReceiptRef} data-notification-key={notificationReceipt?.key} data-notification-event={notificationReceipt?.eventId} tone={applyResult.tone === 'danger' ? 'error' : 'success'} onDismiss={dismissApplyResult}>
+              {applyResult.text}
             </FeedbackLine>
           ) : status?.launchedAfterUpdate && !updatedNoteDismissed ? (
-            <FeedbackLine className="app-update__updated" role="status" ref={notificationReceiptRef} data-notification-key={notificationReceipt?.key} data-notification-event={notificationReceipt?.eventId} tone={'success'}>
-              <span>已更新到 {status.currentVersion}。Cursor 里的 SG Team 服务器会随之重载一次；若席位长时间未恢复，到 Cursor 的 MCP 设置里刷新 SG Team。</span>
-              <button type="button" aria-label="收起" onClick={() => setUpdatedNoteDismissed(true)}>×</button>
+            <FeedbackLine className="app-update__updated" role="status" ref={notificationReceiptRef} data-notification-key={notificationReceipt?.key} data-notification-event={notificationReceipt?.eventId} tone={'success'} onDismiss={() => setUpdatedNoteDismissed(true)}>
+              已更新到 {status.currentVersion}。Cursor 里的 SG Team 服务器会随之重载一次；若席位长时间未恢复，到 Cursor 的 MCP 设置里刷新 SG Team。
             </FeedbackLine>
           ) : null}
           {view ? (

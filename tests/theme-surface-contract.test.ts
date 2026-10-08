@@ -10,6 +10,7 @@ const run = readFileSync(join(process.cwd(), 'src/renderer/src/run/run.css'), 'u
 const settings = readFileSync(join(process.cwd(), 'src/renderer/src/settings/settings.css'), 'utf8')
 const notifications = readFileSync(join(process.cwd(), 'src/renderer/src/notifications/notifications.css'), 'utf8')
 const update = readFileSync(join(process.cwd(), 'src/renderer/src/settings/update.css'), 'utf8')
+const feedback = readFileSync(join(process.cwd(), 'src/renderer/src/feedback/feedback.css'), 'utf8')
 
 describe('theme surface contracts', () => {
   it('keeps the update reminder frame neutral and uniform, reserving accent for its action', () => {
@@ -49,13 +50,15 @@ describe('theme surface contracts', () => {
     expect(badge).toContain('border: 0')
   })
 
-  it('insets the seat hover surface without moving shared columns and centres update notice contents', () => {
+  it('insets the seat hover surface without moving shared columns and keeps update receipts on the shared feedback surface', () => {
     expect(run).toMatch(/\.run-seat\s*\{[^}]*padding:\s*4px 8px/)
     expect(run).toMatch(/\.run-seat::before\s*\{[^}]*inset:\s*4px 0[^}]*border-radius:\s*9px[^}]*pointer-events:\s*none/)
     expect(run).not.toMatch(/\.run-seat:hover\s*\{/)
     expect(run).toMatch(/\.run-seat:focus-within::before/)
-    expect(update).toMatch(/\.app-update__updated\s*\{[^}]*align-items:\s*center/)
-    expect(update).toMatch(/\.app-update__updated > button\s*\{[^}]*place-items:\s*center/)
+    expect(update).not.toContain('.app-update__updated')
+    expect(feedback).toMatch(/p\.feedback-line\[class\]:has\(> \.feedback-close\)\s*\{[^}]*grid-template-columns:\s*18px minmax\(0,1fr\) 30px/)
+    expect(feedback).toMatch(/\.feedback-close\s*\{[^}]*place-items:\s*center[^}]*width:\s*30px[^}]*height:\s*30px[^}]*padding:\s*0/)
+    expect(settings).toMatch(/\.settings-notice__close\s*\{[^}]*place-items:\s*center[^}]*width:\s*30px[^}]*height:\s*30px[^}]*padding:\s*0/)
     expect(styles).toMatch(/\.menu-select__menu\.is-portal\s*\{[^}]*top:\s*auto[^}]*bottom:\s*auto/)
   })
 

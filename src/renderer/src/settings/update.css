@@ -37,41 +37,7 @@
 }
 @keyframes app-update-spin { to { transform: rotate(360deg); } }
 
-.app-update__updated {
-  margin: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
-  align-items: center;
-  padding: 9px 12px;
-  color: var(--color-text-success);
-  background: var(--color-background-success);
-  border: 1px solid var(--color-border-success);
-  border-radius: 10px;
-  font-size: var(--fs-11);
-  line-height: 1.5;
-}
-.app-update__updated > button {
-  width: 22px; height: 22px;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  color: inherit;
-  background: transparent;
-  border: 0;
-  border-radius: 6px;
-  font-size: var(--fs-12);
-  line-height: 1;
-  opacity: .7;
-}
-.app-update__updated > button:hover { opacity: 1; background: color-mix(in srgb, currentColor 10%, transparent); }
-.app-update__updated > button:focus-visible { outline: 2px solid var(--color-ring-primary); outline-offset: 2px; }
-/* mac 脚本结果的失败态（更新失败已恢复 / 回滚失败）：同一横幅，换成危险色。 */
-.app-update__updated.is-danger {
-  color: var(--color-text-danger);
-  background: var(--color-background-danger);
-  border-color: var(--color-border-danger);
-}
+/* 更新与回滚回执使用 FeedbackLine 的中性外壳与关闭插槽，不另设按钮尺寸或状态色皮肤。 */
 
 /* 版本状态行：左边「拾光 0.3.2」/「新版本 0.3.3」+ 说明，右边操作（与维护页的开关同一位置）。 */
 .app-update__row > .settings-row__copy { gap: 3px; }

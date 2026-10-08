@@ -11,7 +11,9 @@ import './feedback-review.css'
  * system delivery are executed by this page. Same components as the app. */
 export function FeedbackReview(): React.JSX.Element {
   const [success, showSuccess] = useState(true),
-    [card, showCard] = useState(true)
+    [card, showCard] = useState(true),
+    [update, showUpdate] = useState(true),
+    [actionResult, showActionResult] = useState(true)
   return (
     <main className="feedback-review">
       <header>
@@ -43,6 +45,14 @@ export function FeedbackReview(): React.JSX.Element {
         </div>
       </header>
       <div className="feedback-review__grid">
+        <section className="feedback-review__wide">
+          <h2>更新结果 · 关闭与长文案</h2>
+          {update ? (
+            <FeedbackLine tone="success" onDismiss={() => showUpdate(false)}>
+              示例 · 已更新到 0.5.22。Cursor 里的 SG Team 服务器会随之重载一次；若席位长时间未恢复，到 Cursor 的 MCP 设置里刷新 SG Team。
+            </FeedbackLine>
+          ) : <button type="button" className="secondary-button" onClick={() => showUpdate(true)}>重新展示更新提示</button>}
+        </section>
         <section>
           <h2>操作结果</h2>
           {success ? (
@@ -97,6 +107,12 @@ export function FeedbackReview(): React.JSX.Element {
           <FeedbackLine tone="error">
             示例：发送未完成。完整说明不挤在模型栏旁，用户仍可查看和保留输入。
           </FeedbackLine>
+          {actionResult ? (
+            <FeedbackLine tone="warning" onDismiss={() => showActionResult(false)}
+              action={<button type="button" className="secondary-button">示例查看完整结果，不重新运行操作</button>}>
+              示例 · 长说明可以自然换行，关闭按钮始终在第一行右侧。额外操作位于正文下方，不挤占正文，也不覆盖关闭按钮。
+            </FeedbackLine>
+          ) : <button type="button" className="secondary-button" onClick={() => showActionResult(true)}>重新展示带操作提示</button>}
         </section>
         <section>
           <h2>低打扰提醒卡</h2>

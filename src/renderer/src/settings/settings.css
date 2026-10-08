@@ -180,7 +180,7 @@
 .settings-notice__details > div { min-height: 0; max-height: 180px; overflow-y: auto; scrollbar-gutter: stable; overscroll-behavior: contain; }
 .settings-notice__details > div:focus-visible { outline: 2px solid var(--color-ring-primary); outline-offset: -2px; }
 .settings-notice__detail { margin: 7px 0 0 28px; color: var(--text-soft); font-size: var(--font-text-sm-size); line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
-.settings-notice__close { display: grid; place-items: center; width: 24px; min-height: 30px; padding: 3px 7px; color: var(--muted); background: transparent; border: 0; border-radius: 6px; }
+.settings-notice__close { display: grid; place-items: center; flex: none; width: 30px; height: 30px; padding: 0; color: var(--muted); background: transparent; border: 0; border-radius: 6px; }
 .settings-notice__close svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; }
 .settings-notice__close:hover { color: var(--text); background: color-mix(in srgb, var(--text) 6%, transparent); }
 @media (prefers-reduced-motion: reduce) { .settings-notice__toggle svg, .settings-notice__details { transition: none; } }

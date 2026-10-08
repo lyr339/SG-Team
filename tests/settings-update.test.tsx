@@ -322,10 +322,38 @@ describe('设置 › 软件更新', () => {
   })
 
   it('更新后首次启动：绿色提示可收起', async () => {
-    installApi(statusOf({ phase: 'idle' }, { launchedAfterUpdate: true }))
+    const { api } = installApi(statusOf({ phase: 'idle' }, { launchedAfterUpdate: true }))
     await render()
-    expect(container.querySelector('.app-update__updated')?.textContent).toContain('已更新到 0.3.2')
-    await act(async () => container.querySelector<HTMLButtonElement>('.app-update__updated button')!.click())
+    const banner = container.querySelector('.app-update__updated')!
+    const close = banner.querySelector<HTMLButtonElement>(':scope > .feedback-close')!
+    expect(banner.textContent).toContain('已更新到 0.3.2')
+    expect(close.getAttribute('aria-label')).toBe('关闭提示')
+    expect(close.querySelector('svg')).not.toBeNull()
+    expect(banner.querySelector('.feedback-line__copy button')).toBeNull()
+    await act(async () => close.click())
+    expect(container.querySelector('.app-update__updated')).toBeNull()
+    expect(api.dismissAppUpdateApplyResult).not.toHaveBeenCalled()
+    expect(api.checkAppUpdate).not.toHaveBeenCalled()
+  })
+
+  it.each(['applied', 'rolled_back', 'apply_failed', 'rollback_failed'] as const)('脚本回执 %s 的关闭按钮独立于正文，保留回执清除与读回语义', async (status) => {
+    const { api } = installApi(statusOf({ phase: 'idle' }, {
+      applyResult: { status, from: '0.3.2', to: '0.3.3', reason: '示例诊断'.repeat(100) }
+    }))
+    await render()
+    const banner = container.querySelector('.app-update__updated')!
+    const close = banner.querySelector<HTMLButtonElement>(':scope > .feedback-close')!
+    expect(close).not.toBeNull()
+    expect(close.type).toBe('button')
+    expect(close.querySelector('svg[aria-hidden="true"]')).not.toBeNull()
+    expect(banner.querySelector('.feedback-line__copy button')).toBeNull()
+    expect(banner.getAttribute('role')).toBe(status.endsWith('_failed') ? 'alert' : 'status')
+    expect(banner.hasAttribute('data-notification-key')).toBe(true)
+    expect(banner.hasAttribute('data-notification-event')).toBe(true)
+    await act(async () => close.click())
+    expect(api.dismissAppUpdateApplyResult).toHaveBeenCalledOnce()
+    expect(api.installAppUpdate).not.toHaveBeenCalled()
+    expect(api.rollbackAppUpdate).not.toHaveBeenCalled()
     expect(container.querySelector('.app-update__updated')).toBeNull()
   })
 
