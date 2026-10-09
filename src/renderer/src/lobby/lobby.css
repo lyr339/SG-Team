@@ -514,8 +514,9 @@
   .account-browser__modes { grid-template-columns: minmax(0, 1fr); }
 }
 
-/* 按连接区实际宽度换行，而不是按整个窗口宽度。 */
-@container account-browser-config (max-width: 640px) {
+/* 按连接区实际宽度换行：300 + 340 列宽、18 间距、24 内边距、2 边框
+   共需 684px；只把两列相加会在 640–684px 之间裁掉右侧控件。 */
+@container account-browser-config (max-width: 684px) {
   .account-browser__connection-row { grid-template-columns: minmax(0, 1fr); }
   .account-browser__window-cell { padding-top: 10px; border-top: 1px solid var(--color-border-tertiary); }
 }

@@ -821,15 +821,16 @@ button.group-card-member__who:focus-visible { outline: 2px solid var(--accent-bo
   border-radius: 14px;
   box-shadow: var(--shadow-hairline);
 }
-.run-sheet__body { display: grid; gap: 4px; min-width: 0; }
+.run-sheet__body { display: grid; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
 .run-sheet__body strong { font-size: var(--fs-13); font-weight: 650; }
 .run-sheet__body p { margin: 0; color: var(--text-soft); font-size: var(--fs-12); line-height: 1.55; }
-.run-sheet__actions { display: flex; gap: 8px; }
+.run-sheet__actions { min-width: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.run-sheet__actions > button { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .run-sheet__actions .secondary-button { min-height: 34px; }
 /* 确认按钮按后果分级：不可逆（解散 / 结束）走红色；可收回的（移出成员 / 新建批次）走主操作色。 */
 .run-sheet__confirm {
   min-height: 34px;
-  padding: 0 14px;
+  padding: 6px 14px;
   color: var(--action-primary-text);
   background: var(--action-primary-bg);
   border: 0;

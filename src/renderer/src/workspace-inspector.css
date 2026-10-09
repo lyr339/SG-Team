@@ -213,9 +213,10 @@
 .inspector-confirm::before { content: ''; position: absolute; inset: 0; border-radius: inherit; background: var(--color-background-warning); opacity: 0.55; pointer-events: none; }
 .inspector-confirm > * { position: relative; }
 .inspector-confirm p { margin: 0; color: var(--text); font-size: var(--fs-11); line-height: 1.5; overflow-wrap: anywhere; }
-.inspector-confirm div { display: flex; justify-content: flex-end; gap: 6px; }
+.inspector-confirm div { min-width: 0; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .inspector-confirm button {
-  height: 28px; padding: 0 12px; border-radius: 7px; font-size: var(--fs-11); font-weight: 600;
+  min-width: 0; max-width: 100%; min-height: 28px; padding: 4px 12px; border-radius: 7px; font-size: var(--fs-11); font-weight: 600;
+  line-height: 1.35; white-space: normal; overflow-wrap: anywhere;
   border: 1px solid var(--color-border-secondary); background: var(--surface-solid); color: var(--text);
 }
 .inspector-confirm button.is-danger { color: var(--action-danger-text); background: var(--action-danger-bg); border-color: transparent; }

@@ -77,6 +77,7 @@
 .app-update__rollback > .app-update__button { justify-self: end; }
 
 .app-update__confirm {
+  min-width: 0;
   display: grid;
   gap: 10px;
   padding: 10px 12px;
@@ -86,8 +87,10 @@
   border-radius: 10px;
   font-size: var(--fs-11);
   line-height: 1.55;
+  overflow-wrap: anywhere;
 }
 .app-update__confirm > p { margin: 0; }
+.app-update__confirm .app-update__button { min-width: 0; max-width: 100%; padding-block: 6px; line-height: 1.4; white-space: normal; overflow-wrap: anywhere; }
 /* 回滚会用更新前的库快照覆盖当前库——破坏性与「装个新版」不是一回事，底色与主按钮都换成危险色；
    正文保持炭色（色彩纪律：只给容器与主按钮上色，不把整段话染红）。 */
 .app-update__confirm.is-danger { background: var(--color-background-danger); border-color: var(--color-border-danger); }
