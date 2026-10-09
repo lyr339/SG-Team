@@ -8,7 +8,7 @@ import { useNow } from './inspector/use-now'
 import { MenuSelect } from './lobby/MenuSelect'
 import { ConfirmSheet } from './run/ConfirmSheet'
 import { removeMembersConsequence, type RemoveMemberFact } from './run/pool-view'
-import { EraseIcon, PinTopIcon, SessionsIcon } from './UiIcons'
+import { ChevronDownIcon, EraseIcon, PinTopIcon, SessionsIcon } from './UiIcons'
 import {
   applySessionOrder,
   moveSessionWithinGroup,
@@ -624,7 +624,7 @@ export function SessionSidebar({
                   <em className="session-group__attention" aria-label="有成员已确认离线：交接给其他席位，或移出组">成员离线</em>
                 ) : null}
                 <i className="session-group__rule" aria-hidden="true" />
-                <svg className="session-group__chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.4" /></svg>
+                <ChevronDownIcon className="session-group__chevron" />
               </button>
               <Collapsible open={!collapsed} keepMounted>
                 <div

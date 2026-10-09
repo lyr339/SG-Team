@@ -1,3 +1,4 @@
+import { DisclosureSummary } from '../DisclosureSummary'
 import { FeedbackLine } from '../feedback/FeedbackLine'
 import { FeedbackIcon } from '../feedback/FeedbackIcon'
 import { useGroupEffectNotes } from '../notifications/use-group-effect-notes'
@@ -582,7 +583,7 @@ export function PoolPage({
       ) : <p className="pool-groups__empty">{ended ? '本批次没有协作组。' : '尚未建组，会话可独立运行。'}</p>}
       {dissolvedGroups.length ? (
         <details className="pool-groups__history">
-          <summary title="已解散的协作组保留 24 小时，只读展示">已解散 · {dissolvedGroups.length} 个组</summary>
+          <DisclosureSummary title="已解散的协作组保留 24 小时，只读展示">已解散 · {dissolvedGroups.length} 个组</DisclosureSummary>
           <div className="pool-groups__grid">
             {dissolvedGroups.map(groupCard(groupActions))}
           </div>

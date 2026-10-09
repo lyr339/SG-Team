@@ -1,3 +1,4 @@
+import { DisclosureSummary } from '../DisclosureSummary'
 import { FeedbackLine } from '../feedback/FeedbackLine'
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import type { AgentLaunchPlan } from '../../../domain/agent-launch'
@@ -8,7 +9,6 @@ import { cursorModelSelectionFromOption, cursorModelSelectionSummary } from '../
 import { formatRelativeTime } from '../format'
 import { CursorModelConfigDialog } from '../lobby/CursorModelConfigDialog'
 import { ToggleSwitch } from '../lobby/ToggleSwitch'
-import { ChevronDownIcon } from '../UiIcons'
 import { ModelProviderLogo } from '../ModelProviderLogo'
 import { modelProvider, modelProviderClass } from '../model-provider'
 import { SEAT_STATE_LABEL, type PoolSeatState } from './pool-view'
@@ -235,7 +235,7 @@ export function RunSeats({
 
       <footer className="run-seats__footer">
         {onToggleAutoHeal || onToggleWarmup ? <details className="run-launch-options">
-          <summary><ChevronDownIcon /><span>启动设置</span>{onToggleWarmup && warmupEnabled ? <small>模型探测消耗额度</small> : null}</summary>
+          <DisclosureSummary><span>启动设置</span>{onToggleWarmup && warmupEnabled ? <small>模型探测消耗额度</small> : null}</DisclosureSummary>
         <div className="run-seats__toggles">
           {onToggleAutoHeal ? (
             <ToggleSwitch checked={cdpAutoHealEnabled} disabled={busy && !settingsBusy} busy={settingsBusy} onChange={onToggleAutoHeal}>

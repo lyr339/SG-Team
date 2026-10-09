@@ -1,3 +1,4 @@
+import { DisclosureChevron, DisclosureSummary } from '../DisclosureSummary'
 import { FeedbackIcon } from '../feedback/FeedbackIcon'
 import { useDelayedBusy } from '../feedback/use-delayed-busy'
 import { MenuSelect } from '../lobby/MenuSelect'
@@ -157,7 +158,7 @@ export function NotificationCenter({ store, workspaceId, onClose, onNavigate, fo
     return <li className={`notification-row${notificationIsUnread(record) ? ' is-unread' : ''}`} key={record.id}>
       <div className="notification-row__meta"><span>{record.source}</span><time dateTime={new Date(record.occurredAt).toISOString()} title={`${record.timeBasis === 'observed' ? '观察时间：' : ''}${formatFullClock(record.occurredAt)}`}>{record.timeBasis === 'observed' ? '观察于 ' : ''}{formatRelativeClock(record.occurredAt)}</time></div>
       <button type="button" className="notification-row__open" aria-expanded={open} disabled={switching} onClick={() => openDetail(record)}>
-        <NoticeIcon tone={displayed.tone} /><strong>{displayed.title}</strong><svg className={open ? 'is-open' : ''} viewBox="0 0 16 16" aria-hidden="true"><path d="m5 6 3 3 3-3" /></svg>
+        <NoticeIcon tone={displayed.tone} /><strong>{displayed.title}</strong><DisclosureChevron open={open} />
       </button>
       {!open && record.detail ? <p className="notification-row__preview">{record.detail}</p> : null}
       {notificationIsPending(record) ? <span className="notification-row__pending">需要处理</span> : null}
@@ -226,7 +227,7 @@ export function NotificationCenter({ store, workspaceId, onClose, onNavigate, fo
       <ol className="notification-list">
         {focusRecord && !focusInPage ? renderRecord(focusRecord) : null}
         {displayedPage?.records.filter(record => record.attention !== 'activity').map(renderRecord)}
-        {displayedPage?.records.some(record => record.attention === 'activity') ? <li><details className="notification-activities"><summary>日常动态 · {displayedPage.records.filter(record => record.attention === 'activity').length}</summary>
+        {displayedPage?.records.some(record => record.attention === 'activity') ? <li><details className="notification-activities"><DisclosureSummary>日常动态 · {displayedPage.records.filter(record => record.attention === 'activity').length}</DisclosureSummary>
           <ol>{displayedPage.records.filter(record => record.attention === 'activity').map(renderRecord)}</ol>
         </details></li> : null}
       </ol>

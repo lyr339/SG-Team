@@ -1,5 +1,5 @@
+import { DisclosureSummary } from '../DisclosureSummary'
 import { FeedbackIcon } from '../feedback/FeedbackIcon'
-import { ChevronDownIcon } from '../UiIcons'
 import { useEffect, useRef, useState } from 'react'
 import type { NotificationRecord } from '../../../domain/notification'
 import { useNotificationResultRead } from './use-notification-result-read'
@@ -18,7 +18,7 @@ function Issue({ record }: { record: NotificationRecord }) {
   const ref = useRef<HTMLParagraphElement>(null)
   useNotificationResultRead(ref, record.key, record.eventId, record)
   return <details className="feedback-disclosure usage-storage-notice">
-    <summary><FeedbackIcon tone={record.tone}/><span>{record.title}</span><span className="feedback-disclosure__toggle usage-storage-notice__more">详情<ChevronDownIcon/></span></summary>
+    <DisclosureSummary chevronPosition="end"><FeedbackIcon tone={record.tone}/><span>{record.title}</span><span className="feedback-disclosure__toggle usage-storage-notice__more">详情</span></DisclosureSummary>
     <p ref={ref} data-notification-result data-notification-key={record.key} data-notification-event={record.eventId}>{record.detail}</p>
   </details>
 }

@@ -1,8 +1,8 @@
+import { DisclosureSummary } from '../DisclosureSummary'
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { notificationHistoryNeedsAcknowledgement } from '../../../domain/notification-history'
 import type { NotificationStore } from './notification-store'
 import { formatFullClock } from '../format'
-import { ChevronDownIcon } from '../UiIcons'
 
 export function HistoryGapNotice({ store }: { store: NotificationStore }): React.JSX.Element | null {
   const snapshot = useSyncExternalStore(store.subscribe, store.snapshot, store.snapshot)
@@ -34,7 +34,7 @@ export function HistoryGapNotice({ store }: { store: NotificationStore }): React
 
 export function HistoryRetentionInfo({ store }: { store: NotificationStore }): React.JSX.Element {
   const snapshot = useSyncExternalStore(store.subscribe, store.snapshot, store.snapshot), integrity = snapshot.historyIntegrity
-  return <details className="notification-history-policy"><summary><ChevronDownIcon /><span>历史保留与完整性</span></summary>
+  return <details className="notification-history-policy"><DisclosureSummary><span>历史保留与完整性</span></DisclosureSummary>
     <div className="notification-history-policy__content" role="region" aria-label="历史保留与完整性说明" tabIndex={0}>
     <p>普通已读结果与日常动态：至少保留 30 天。未读、待处理及曾需诊断的重要结果不会自动清理；旧版未分类历史也会保留。</p>
     <p>需要长期追溯时，请查看原会话或操作记录；手动清理仍需确认。</p>

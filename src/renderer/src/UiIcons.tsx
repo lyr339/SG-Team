@@ -1,3 +1,5 @@
+import type { SVGProps } from 'react'
+
 interface IconProps {
   className?: string
 }
@@ -69,8 +71,11 @@ export function HandoffIcon(props: IconProps): React.JSX.Element {
   return <Icon {...props}><path d="M4 8h12.5M13 4.5 16.5 8 13 11.5M20 16H7.5M11 12.5 7.5 16l3.5 3.5" {...stroke} /></Icon>
 }
 
-export function ChevronDownIcon(props: IconProps): React.JSX.Element {
-  return <Icon {...props}><path d="m6.5 9 5.5 5.5L17.5 9" {...stroke} /></Icon>
+export function ChevronDownIcon(props: SVGProps<SVGSVGElement>): React.JSX.Element {
+  return <svg {...props} className={`ui-chevron ${props.className ?? ''}`.trim()} viewBox="0 0 16 16"
+    aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <path d="m4 6 4 4 4-4" />
+  </svg>
 }
 
 export function MoreIcon(props: IconProps): React.JSX.Element {

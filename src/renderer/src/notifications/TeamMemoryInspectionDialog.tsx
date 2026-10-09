@@ -1,3 +1,4 @@
+import { DisclosureSummary } from '../DisclosureSummary'
 import { FeedbackLine } from '../feedback/FeedbackLine'
 import { useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -294,7 +295,7 @@ export function TeamMemoryInspectionDialog({
             <p>{value.item.content}</p>
             {value.predecessor ? (
               <details>
-                <summary>查看要取代的前置条目 · {statusNames[value.predecessor.status]}</summary>
+                <DisclosureSummary>查看要取代的前置条目 · {statusNames[value.predecessor.status]}</DisclosureSummary>
                 <h3>{value.predecessor.title}</h3>
                 <p>{value.predecessor.content}</p>
               </details>
@@ -302,7 +303,7 @@ export function TeamMemoryInspectionDialog({
               <p>前置条目当前未确认；不能把缺失当成冲突已解决。</p>
             ) : null}
             <details>
-              <summary>原引用 · {value.item.sources.length} 项</summary>
+              <DisclosureSummary>原引用 · {value.item.sources.length} 项</DisclosureSummary>
               <ul>
                 {value.item.sources.map((source, index) => (
                   <li key={index}>

@@ -1,5 +1,6 @@
 @import './switch-geometry.css';
 @import './action-controls.css';
+@import './disclosure-controls.css';
 
 /* 拾光统一表单控件：保留原生 select 语义，仅替换浏览器默认箭头与间距。 */
 select:not([multiple]) {
@@ -10,10 +11,10 @@ select:not([multiple]) {
   /* 文本距左边、箭头距右边统一为 14px；右侧额外预留箭头本身的宽度。 */
   padding-left: 14px !important;
   padding-right: 42px !important;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='M4 6.25 8 10l4-3.75' stroke='%236D7788' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") !important;
+  background-image: url('./assets/chevron-down.svg') !important;
   background-repeat: no-repeat !important;
   background-position: right 14px center !important;
-  background-size: 16px 16px !important;
+  background-size: 14px 14px !important;
   cursor: pointer;
   transition: border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
 }

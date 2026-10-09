@@ -1,3 +1,4 @@
+import { DisclosureChevron } from './DisclosureSummary'
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type { ProcessBlock } from '../../domain/conversation-entry'
 import { MessageImage } from './AttachmentImageViewer'
@@ -502,7 +503,7 @@ function ProcessTurnCardImpl({
     const workDuration = formatWorkDuration(workStartedAt !== undefined && updatedAt !== undefined
       ? updatedAt - workStartedAt : model.elapsedMs)
     const chevron = (isOpen: boolean): React.JSX.Element => (
-      <svg viewBox="0 0 16 16" aria-hidden="true"><path d={isOpen ? 'm4 10 4-4 4 4' : 'm4 6 4 4 4-4'} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.4"/></svg>
+      <DisclosureChevron open={isOpen} />
     )
     /**
      * 单步渲染；`nested` = 组内成员（渲染为无边框轻行，Cursor 组展开后的明细行同款）；
@@ -700,7 +701,7 @@ function ProcessTurnCardImpl({
             {pendingQuestion ? <span>Awaiting answer</span> : turnState === 'worked'
               ? <span>{`Worked${workDuration ? ` for ${workDuration}` : ''}`}</span>
               : <WorkingDuration startedAt={workStartedAt} observedMs={model.elapsedMs} />}
-            {turnState === 'worked' && !pendingQuestion ? <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg> : null}
+            {turnState === 'worked' && !pendingQuestion ? <DisclosureChevron open={flowOpen} /> : null}
           </button>
         ) : null}
         <div className="cursor-native-process__flow" hidden={!flowOpen}>
@@ -722,7 +723,7 @@ function ProcessTurnCardImpl({
         <strong>{title}</strong>
         {live ? <em className="process-turn__live-label"><i />实时</em> : null}
         <span>{summary}</span>
-        <svg viewBox="0 0 16 16" aria-hidden="true"><path d={open ? 'm4 10 4-4 4 4' : 'm4 6 4 4 4-4'} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5"/></svg>
+        <DisclosureChevron open={open} />
       </button>
       {open ? (
         <div className="process-turn__content">
@@ -757,7 +758,7 @@ function ProcessTurnCardImpl({
                       {step.hint ? <span className="process-turn-step__hint">{step.hint}</span> : null}
                       {stepDuration(step) ? <time>{stepDuration(step)}</time> : null}
                       <span className="process-turn-step__status">{step.stateText}</span>
-                      {hasDetails ? <svg viewBox="0 0 16 16" aria-hidden="true"><path d={stepOpen ? 'm4 10 4-4 4 4' : 'm4 6 4 4 4-4'} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.4"/></svg> : null}
+                      {hasDetails ? <DisclosureChevron open={stepOpen} /> : null}
                     </button>
                     <ImageBody step={step} />
                     {pendingQuestion && step.question ? <QuestionCard question={step.question} actions={questionActions} /> : null}

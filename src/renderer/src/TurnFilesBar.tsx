@@ -1,3 +1,4 @@
+import { ChevronDownIcon } from './UiIcons'
 import { memo, useEffect, useId, useState } from 'react'
 import { FileTypeIcon } from './FileTypeIcon'
 import type { ReviewFocusRequest } from './inspector/review-focus-bus'
@@ -29,13 +30,6 @@ function storeCollapsed(value: boolean): void {
   try { localStorage.setItem(TURN_FILES_COLLAPSED_KEY, value ? '1' : '0') } catch { /* 当前窗口仍然生效。 */ }
 }
 
-function ChevronIcon(): React.JSX.Element {
-  return (
-    <svg viewBox="0 0 16 16" aria-hidden="true">
-      <path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" />
-    </svg>
-  )
-}
 
 const STATUS_TITLES: Record<NonNullable<TurnFileView['status']>, string> = {
   modified: '已修改',
@@ -116,7 +110,7 @@ export const TurnFilesBar = memo(function TurnFilesBar({ view, onReview, yieldTo
           title={open ? '收起文件列表' : yieldToTray ? '展开文件列表（有消息待投递时默认收起）' : '展开文件列表'}
           onClick={toggle}
         >
-          <span className="turn-files__chevron"><ChevronIcon /></span>
+          <span className="turn-files__chevron"><ChevronDownIcon /></span>
           {previous ? <em className="turn-files__scope" title="新一轮刚开始、还没有编辑：这里保留的是上一轮改动的文件，本轮第一次编辑后替换">上一轮</em> : null}
           <strong className="turn-files__title"><b>{view.files.length}</b> 个文件</strong>
           <span

@@ -34,7 +34,6 @@
 .notification-row__open strong { font-size:var(--font-text-sm-size); font-weight:500; line-height:1.6; overflow-wrap:anywhere; }
 .notification-row.is-unread .notification-row__open strong { color:var(--text); font-weight:600; }
 .notification-row__open > svg:last-child { width:14px; height:14px; margin-top:4px; fill:none; stroke:var(--muted); stroke-width:1.5; transition:transform 160ms ease; }
-.notification-row__open > svg.is-open:last-child { transform:rotate(180deg); }
 .notification-status-icon { width:18px; height:18px; margin-top:2px; }
 .notification-row__preview { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; margin:2px 0 0 28px; color:var(--muted); font-size:var(--font-text-sm-size); line-height:1.6; overflow-wrap:anywhere; }
 .notification-row__pending { display:block; margin:7px 0 0 28px; color:var(--color-text-warning); font-size:var(--font-text-xs-size); line-height:1.5; }
@@ -129,12 +128,12 @@
 .notification-history-notice small { display:block; margin-top:5px; color:var(--muted); font-size:var(--font-text-xs-size); line-height:1.7; }
 .notification-history-notice > button { min-height:30px; margin:0 -6px 0 0; white-space:nowrap; }
 .notification-history-notice__error { color:var(--color-text-warning)!important; }
-.notification-history-policy { margin:0 8px 8px; color:var(--muted); font-size:var(--font-text-xs-size); line-height:1.7; }
+.notification-history-policy { position:relative; margin:0 8px 8px; color:var(--muted); font-size:var(--font-text-xs-size); line-height:1.7; }
 .notification-history-policy summary { display:flex; align-items:center; gap:6px; width:fit-content; max-width:100%; min-height:30px; padding-block:4px; list-style:none; cursor:pointer; }
 .notification-history-policy summary::-webkit-details-marker { display:none; }
-.notification-history-policy summary > svg { display:block; flex:none; width:13px; height:13px; transform:rotate(-90deg); transition:transform 140ms ease; }
-.notification-history-policy[open] > summary > svg { transform:none; }
-.notification-history-policy__content { max-block-size:160px; overflow-y:auto; scrollbar-gutter:stable; scrollbar-width:thin; overscroll-behavior:contain; padding-inline-end:4px; }
+/* The footer trigger must not move out from under a repeated click. Native
+   details keeps its keyboard/open semantics; only its reading panel floats. */
+.notification-history-policy__content { position:absolute; inset-inline:0; bottom:calc(100% + 8px); z-index:2; max-block-size:min(160px,calc(100dvh - 160px)); padding:10px 12px; color:var(--text-soft); background:var(--surface-solid); border:1px solid var(--line); border-radius:9px; box-shadow:var(--shadow-2); overflow-y:auto; scrollbar-gutter:stable; scrollbar-width:thin; overscroll-behavior:contain; -webkit-user-select:text; user-select:text; }
 .notification-history-policy__content:focus-visible { outline:2px solid var(--color-ring-primary); outline-offset:-2px; border-radius:5px; }
 .notification-history-policy p { margin:6px 0; overflow-wrap:anywhere; }
 .notification-history-policy summary:focus-visible, .notification-activities > summary:focus-visible { outline:2px solid var(--color-ring-primary); outline-offset:2px; border-radius:5px; }

@@ -1,0 +1,14 @@
+/* Control labels are not reading content. Do not clear document selection or
+   cancel pointer/keyboard events: body text, code, inputs and clipboard remain native. */
+:where(button, summary) { -webkit-user-select:none; user-select:none; }
+summary { list-style:none; }
+summary::-webkit-details-marker { display:none; }
+summary::marker { content:''; }
+.ui-chevron { display:block; flex:none; width:14px; height:14px; }
+.disclosure-summary { display:flex; align-items:center; gap:6px; min-width:0; cursor:pointer; }
+.disclosure-summary__content { display:flex; align-items:center; gap:6px; min-width:0; flex:1; overflow-wrap:anywhere; }
+.disclosure-chevron { transform:rotate(-90deg); transition:transform 140ms ease; }
+details[open] > .disclosure-summary > .disclosure-chevron,
+.disclosure-chevron[data-open="true"] { transform:none; }
+.disclosure-summary:focus-visible { outline:2px solid var(--color-ring-primary); outline-offset:2px; border-radius:5px; }
+@media (prefers-reduced-motion:reduce) { .disclosure-chevron { transition:none; } }

@@ -1,3 +1,4 @@
+import { DisclosureSummary } from '../DisclosureSummary'
 import { FeedbackLine } from '../feedback/FeedbackLine'
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -195,7 +196,7 @@ export function GroupCollaborationDialog({ facts, workspaceName, onClose, onOpen
         <div className="collaboration-dialog__body">
           <div className="collaboration-dialog__meta"><span>{facts.members.length} 位成员</span><span>{lead ? `${facts.actingLead ? '临时主控' : '主控'} · CH-${lead.channelId ?? '未绑定'}` : facts.dissolved ? '成员已离组' : facts.missingLead ? '主控身份待确认' : '未指定主控 · 平等协作'}</span>
             {facts.closed ? <span className="is-archived">{facts.dissolved ? '已解散 · 只读' : '批次已结束 · 只读'}</span> : !facts.scoped ? <span>记录暂未同步</span> : null}</div>
-          {facts.goal ? <details className="collaboration-dialog__goal"><summary title="展开完整共同目标"><span>共同目标</span><span>{facts.goal.slice(0, 140)}{facts.goal.length > 140 ? '…' : ''}</span><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m5 6 3 3 3-3" /></svg></summary><p>{facts.goal}</p></details> : null}
+          {facts.goal ? <details className="collaboration-dialog__goal"><DisclosureSummary chevronPosition="end" title="展开完整共同目标"><span>共同目标</span><span>{facts.goal.slice(0, 140)}{facts.goal.length > 140 ? '…' : ''}</span></DisclosureSummary><p>{facts.goal}</p></details> : null}
           {focusMessageId ? detailPanel : null}
           <div className="collaboration-dialog__tools"><div className="collaboration-dialog__legend"><span className="is-flow">最近通信</span><span className="is-wait">待送达 / 回应</span><span className="is-history">历史方向</span></div>
             <div><button type="button" className="collaboration-text-button" onClick={clear}>{memberId || linkId ? '取消聚焦' : messageId ? '查看最新' : display.hiddenCount ? '近期关系' : '全部关系'}</button>

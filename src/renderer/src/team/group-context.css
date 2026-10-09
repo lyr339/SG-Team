@@ -190,7 +190,8 @@
 .group-context__task summary::-webkit-details-marker {
   display: none;
 }
-.group-context__task summary > span {
+.group-context__task .disclosure-summary__content { justify-content:space-between; }
+.group-context__task .disclosure-summary__content > span {
   display: -webkit-box;
   overflow: hidden;
   -webkit-line-clamp: 3;
@@ -201,7 +202,7 @@
   line-height: 1.55;
   overflow-wrap: anywhere;
 }
-.group-context__task summary > em {
+.group-context__task .disclosure-summary__content > em {
   display:inline-flex;
   align-items:center;
   gap:5px;
@@ -211,14 +212,14 @@
   font-size: var(--fs-11);
   font-style: normal;
 }
-.group-context__task summary > em .feedback-icon { width:16px; height:16px; }
-.group-context__task.is-review summary > em {
+.group-context__task .disclosure-summary__content > em .feedback-icon { width:16px; height:16px; }
+.group-context__task.is-review .disclosure-summary__content > em {
   color: var(--amber);
 }
-.group-context__task.is-failed summary > em {
+.group-context__task.is-failed .disclosure-summary__content > em {
   color: var(--red);
 }
-.group-context__task.is-done summary > em {
+.group-context__task.is-done .disclosure-summary__content > em {
   color: var(--color-text-success);
 }
 .group-context__task > div {

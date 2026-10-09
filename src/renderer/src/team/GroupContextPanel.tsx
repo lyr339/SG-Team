@@ -1,3 +1,4 @@
+import { DisclosureSummary } from '../DisclosureSummary'
 import { FeedbackLine } from '../feedback/FeedbackLine'
 import { FeedbackIcon } from '../feedback/FeedbackIcon'
 import { useEffect, useRef, useState } from 'react'
@@ -156,7 +157,7 @@ export function GroupContextPanel({
         </p>
         {group.group.goal.length > 220 ? (
           <details className="group-context__goal-details">
-            <summary>展开完整目标</summary>
+            <DisclosureSummary>展开完整目标</DisclosureSummary>
             <p className="group-context__goal">{group.group.goal}</p>
           </details>
         ) : null}
@@ -276,10 +277,10 @@ export function GroupContextPanel({
           <div className="group-context__tasks">
             {view.tasks.slice(0, taskLimit).map((task) => (
               <details key={task.id} className={`group-context__task is-${task.status}`}>
-                <summary>
+                <DisclosureSummary>
                   <span>{task.title}</span>
                   <em>{task.status === 'done' ? <FeedbackIcon tone="success" /> : null}{TASK_LABEL[task.status]}</em>
-                </summary>
+                </DisclosureSummary>
                 <div>
                   {task.title.length > 90 ? (
                     <p>

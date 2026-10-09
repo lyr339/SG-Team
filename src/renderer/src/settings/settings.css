@@ -173,8 +173,7 @@
 .settings-notice.is-error .settings-notice__icon { color: var(--color-text-danger); }
 .settings-notice__toggle { display: inline-flex; align-items: center; gap: 4px; min-height: 30px; padding: 3px 7px; color: var(--muted); background: transparent; border: 0; border-radius: 5px; font-size: var(--font-text-xs-size); white-space: nowrap; }
 .settings-notice__toggle:hover { color: var(--text); background: color-mix(in srgb, var(--text) 5%, transparent); }
-.settings-notice__toggle svg { width: 12px; height: 12px; transition: transform 140ms ease; }
-.settings-notice__toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
+.settings-notice__toggle svg { width: 14px; height: 14px; transition: transform 140ms ease; }
 .settings-notice__details { display: grid; grid-template-rows: 0fr; opacity: 0; visibility: hidden; transition: grid-template-rows 180ms ease, opacity 120ms ease; }
 .settings-notice__details.is-open { grid-template-rows: 1fr; opacity: 1; visibility: visible; }
 .settings-notice__details > div { min-height: 0; max-height: 180px; overflow-y: auto; scrollbar-gutter: stable; overscroll-behavior: contain; }
@@ -585,7 +584,6 @@ html[data-card-transparency="clear"] .settings-section { background: var(--reada
 .account-window-binding .menu-select__value { gap: 4px; }
 .account-window-binding .menu-select__value em { color: var(--muted); }
 .account-window-binding .menu-select__swatch { display: none; }
-.account-window-binding .menu-select__chevron { width: 5px; height: 5px; border-width: 1px; }
 .account-window-binding.is-bound .menu-select__button {
   color: var(--text-soft);
   background: var(--surface-solid);

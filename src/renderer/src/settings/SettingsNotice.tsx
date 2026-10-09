@@ -1,6 +1,6 @@
 import { FeedbackIcon } from '../feedback/FeedbackIcon'
 import { useEffect, useId, useRef, useState } from 'react'
-import { ChevronDownIcon } from '../UiIcons'
+import { DisclosureChevron } from '../DisclosureSummary'
 import { useNotificationResultRead } from '../notifications/use-notification-result-read'
 
 export interface SettingsNoticeMessage {
@@ -28,7 +28,7 @@ export function SettingsNotice({ message, onDismiss }: {
         <strong>{message.title}</strong>
         <div className="settings-notice__actions">
           {message.detail ? <button type="button" className="settings-notice__toggle" aria-expanded={expanded} aria-controls={detailId} onClick={() => setExpanded((current) => !current)}>
-            详情<ChevronDownIcon />
+            详情<DisclosureChevron open={expanded} />
           </button> : null}
           {onDismiss ? <button type="button" className="settings-notice__close" aria-label="关闭提示" title="关闭提示" onClick={onDismiss}>
             <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8m0-8-8 8" /></svg>

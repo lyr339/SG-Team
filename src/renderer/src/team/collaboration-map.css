@@ -93,13 +93,8 @@
 }
 .collaboration-dialog__goal summary:hover { border-color: var(--line-strong); }
 .collaboration-dialog__goal summary::-webkit-details-marker { display: none; }
-.collaboration-dialog__goal summary > span:first-child { flex: none; color: var(--collaboration-muted, var(--muted)); font-size: var(--fs-11); }
-.collaboration-dialog__goal summary > span:nth-child(2) { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.collaboration-dialog__goal summary svg {
-  flex: none; width: 15px; height: 15px; fill: none; stroke: var(--muted); stroke-width: 1.4;
-  stroke-linecap: round; stroke-linejoin: round; transition: transform 140ms ease;
-}
-.collaboration-dialog__goal[open] summary svg { transform: rotate(180deg); }
+.collaboration-dialog__goal .disclosure-summary__content > span:first-child { flex: none; color: var(--collaboration-muted, var(--muted)); font-size: var(--fs-11); }
+.collaboration-dialog__goal .disclosure-summary__content > span:nth-child(2) { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .collaboration-dialog__goal p { margin: 10px 3px 0; line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .collaboration-dialog__tools {

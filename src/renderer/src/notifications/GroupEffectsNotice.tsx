@@ -1,5 +1,5 @@
+import { DisclosureSummary } from '../DisclosureSummary'
 import { FeedbackIcon } from '../feedback/FeedbackIcon'
-import { ChevronDownIcon } from '../UiIcons'
 import { useRef } from 'react'
 import type { NotificationRecord } from '../../../domain/notification'
 import { useNotificationResultRead } from './use-notification-result-read'
@@ -14,13 +14,13 @@ export function GroupEffectsNotice({ record }: { record?: NotificationRecord }):
       className="group-effects-notice"
     >
       <details className="feedback-disclosure">
-        <summary>
+        <DisclosureSummary chevronPosition="end">
           <FeedbackIcon tone="warning" />
           <span>先前的组后续事项待核对</span>
           <span className="feedback-disclosure__toggle group-effects-notice__disclosure" aria-hidden="true">
-            详情<ChevronDownIcon/>
+            详情
           </span>
-        </summary>
+        </DisclosureSummary>
         <p ref={ref} data-notification-result data-notification-key={record.key} data-notification-event={record.eventId}>{record.detail}</p>
         <small>阅读通知不会改变任务或成员状态。</small>
       </details>

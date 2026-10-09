@@ -1,3 +1,4 @@
+import { DisclosureSummary } from '../DisclosureSummary'
 import { useEffect, useRef, useState } from "react";
 import {
   EXPERIMENT_MAX_SENDS,
@@ -218,10 +219,10 @@ export function ProtocolExperiments({
                   <ExperimentTurn key={turn.id} turn={turn} index={index} />
                 ) : (
                   <details className="wire-previous" key={turn.id}>
-                    <summary>
+                    <DisclosureSummary>
                       第 {index + 1} 次 · {labels[turn.state]}{" "}
                       <span>{turn.prompt}</span>
-                    </summary>
+                    </DisclosureSummary>
                     <ExperimentTurn turn={turn} index={index} />
                   </details>
                 ),
@@ -345,7 +346,7 @@ function ExperimentTurn({
       </div>
       {turn.thinking ? (
         <details className="wire-thinking">
-          <summary>查看思考内容</summary>
+          <DisclosureSummary>查看思考内容</DisclosureSummary>
           <p>{turn.thinking}</p>
         </details>
       ) : null}
@@ -358,13 +359,13 @@ function ExperimentTurn({
         </p>
       ) : null}
       <details className="wire-evidence" open={turn.state === "completed"}>
-        <summary>
+        <DisclosureSummary>
           传输与记账证据{" "}
           <span>
             {turn.checkpointCount} checkpoint · KV {turn.kvGets} 读 /{" "}
             {turn.kvSets} 写
           </span>
-        </summary>
+        </DisclosureSummary>
         <div className="protocol-token-table">
           <div className="protocol-token-table__head">
             <span>Token</span>

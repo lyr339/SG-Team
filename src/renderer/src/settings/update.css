@@ -135,17 +135,6 @@
   list-style: none;
 }
 .app-update__advanced > summary::-webkit-details-marker { display: none; }
-.app-update__advanced > summary::before {
-  content: '';
-  display: inline-block;
-  width: 6px; height: 6px;
-  margin: 0 8px 1px 2px;
-  border-right: 1.5px solid currentColor;
-  border-bottom: 1.5px solid currentColor;
-  transform: rotate(-45deg);
-  transition: transform 160ms ease;
-}
-.app-update__advanced[open] > summary::before { transform: rotate(45deg); }
 .app-update__advanced-hint { margin: 8px 0 0; color: var(--muted); font-size: var(--fs-10); line-height: 1.5; }
 .app-update__advanced-hint code { padding: 0 4px; background: var(--surface-soft); border-radius: 4px; font-size: var(--fs-10); }
 /* 预设一句话：正文里嵌一枚可点的胶囊（填入输入框，仍要按「保存」）；已是当前源时点亮为品牌色。 */

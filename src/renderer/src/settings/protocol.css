@@ -62,7 +62,7 @@
 .protocol-ledger p { color:var(--muted); font-size:var(--fs-10); margin:7px 0 12px; }
 .protocol-page summary { cursor:pointer; padding:10px 0; color:var(--text-soft); font-size:var(--fs-11); }
 .protocol-frames { margin-top:12px; border-top:1px solid var(--line); }
-.protocol-frames summary span { color:var(--muted); font-size:var(--fs-10); margin-left:8px; }
+.protocol-frames .disclosure-summary__content > span { color:var(--muted); font-size:var(--fs-10); margin-left:8px; }
 .protocol-frames ol { max-height:290px; overflow:auto; padding:0; margin:0; list-style:none; }
 .protocol-frames li { display:grid; grid-template-columns:20px minmax(0,1fr) auto; align-items:start; gap:8px; padding:7px 0; }
 .protocol-frames li > span,.protocol-frames small { color:var(--muted); font-size:var(--fs-10); font-variant-numeric:tabular-nums; }
@@ -71,9 +71,10 @@
 .protocol-search input { min-width:0; width:250px; max-width:70%; background:var(--surface-solid); border:1px solid var(--line); border-radius:8px; min-height:34px; padding:6px 10px; color:var(--text); font:inherit; }
 .protocol-model-list details { border-top:1px solid var(--line); }
 .protocol-model-list summary { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:12px 0; }
-.protocol-model-list summary > span:first-child { display:grid; gap:3px; min-width:0; }
+.protocol-model-list .disclosure-summary__content { justify-content:space-between; }
+.protocol-model-list .disclosure-summary__content > span:first-child { display:grid; gap:3px; min-width:0; }
 .protocol-model-list summary strong { font-size:var(--fs-12); font-weight:550; }
-.protocol-model-list summary > span:last-child { color:var(--muted); font-size:var(--fs-10); flex-shrink:0; }
+.protocol-model-list .disclosure-summary__content > span:last-child { color:var(--muted); font-size:var(--fs-10); flex-shrink:0; }
 .protocol-model-list summary code { color:var(--muted); }
 .protocol-model-body { padding:0 0 16px; font-size:var(--fs-11); color:var(--muted); }
 .protocol-model-body > div { display:flex; align-items:baseline; flex-wrap:wrap; gap:12px; padding:6px 0; }
@@ -123,8 +124,8 @@ button.wire-mode:hover:not(:disabled) { background:var(--accent-wash); border-co
 .wire-answer { padding:4px 0 12px; font-size:var(--fs-15); line-height:1.75; white-space:pre-wrap; overflow-wrap:anywhere; max-height:360px; overflow:auto; }
 .wire-thinking p { white-space:pre-wrap; overflow-wrap:anywhere; max-height:180px; overflow:auto; color:var(--muted); font-size:var(--fs-12); }
 .wire-evidence { border-top:1px solid var(--line); }
-.protocol-page .wire-evidence summary { display:flex; flex-wrap:wrap; gap:6px 12px; align-items:center; justify-content:space-between; }
-.wire-evidence summary span { color:var(--muted); font-size:var(--fs-10); font-variant-numeric:tabular-nums; }
+.protocol-page .wire-evidence .disclosure-summary__content { flex-wrap:wrap; gap:6px 12px; justify-content:space-between; }
+.wire-evidence .disclosure-summary__content > span { color:var(--muted); font-size:var(--fs-10); font-variant-numeric:tabular-nums; }
 .wire-evidence .protocol-token-table { margin-top:0; font-size:var(--fs-11); }
 .wire-error-note { display:block; margin-top:6px; color:var(--muted); font-size:var(--fs-11); }
 .wire-receipt { display:grid; gap:4px; border-top:1px solid var(--line); padding-top:12px; margin-top:12px; }
@@ -133,7 +134,7 @@ button.wire-mode:hover:not(:disabled) { background:var(--accent-wash); border-co
 .wire-receipt small { color:var(--muted); font-size:var(--fs-10); }
 .wire-previous { border-bottom:1px solid var(--line); }
 .wire-previous > summary { display:flex; gap:12px; align-items:center; }
-.wire-previous > summary span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); }
+.wire-previous .disclosure-summary__content > span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); }
 .wire-awaiting { margin:0; padding:20px 18px; border:1px dashed var(--line); border-radius:10px; color:var(--muted); font-size:var(--fs-12); }
 .wire-composer { display:grid; gap:8px; padding:14px 16px; border:1px solid var(--line); border-radius:12px; background:var(--readable-surface); }
 .wire-composer label { font-size:var(--fs-12); font-weight:550; }

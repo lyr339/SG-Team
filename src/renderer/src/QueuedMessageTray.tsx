@@ -1,3 +1,4 @@
+import { ChevronDownIcon } from './UiIcons'
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import type { AgentSession } from '../../domain/agent-session'
 import type { ConversationEntry } from '../../domain/conversation-entry'
@@ -25,13 +26,6 @@ function QueueIcon(): React.JSX.Element {
   )
 }
 
-function ChevronIcon(): React.JSX.Element {
-  return (
-    <svg viewBox="0 0 16 16" aria-hidden="true">
-      <path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" />
-    </svg>
-  )
-}
 
 export const QUEUE_TRAY_COLLAPSED_KEY = 'sg-team.workspace:queue-tray-collapsed'
 
@@ -113,7 +107,7 @@ export function QueuedMessageTray({ session, entries, onWithdraw, onRelease }: Q
         <strong className="queue-tray__title">待投递 <b>{depth}</b></strong>
         <span className="queue-tray__state" title={stateText}>{stateText}</span>
         {heldCount > 0 ? <em className="queue-tray__held" title={`${heldCount} 条等待新会话`}>{heldCount} 条等待新会话</em> : null}
-        {expandable ? <span className="queue-tray__chevron"><ChevronIcon /></span> : null}
+        {expandable ? <span className="queue-tray__chevron"><ChevronDownIcon /></span> : null}
       </button>
       {expandable ? (
         // 列表常驻挂载，收起走 grid-rows 高度过渡（与展开对称）；收起后 inert 挡掉焦点与读屏。

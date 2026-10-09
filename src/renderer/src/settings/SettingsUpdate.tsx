@@ -1,3 +1,4 @@
+import { DisclosureSummary } from '../DisclosureSummary'
 import { FeedbackLine } from '../feedback/FeedbackLine'
 import { useEffect, useRef, useState } from 'react'
 import type { AppUpdateApplyResult, AppUpdateSettings, AppUpdateStatus, UpdateGate } from '../../../domain/app-update'
@@ -397,7 +398,7 @@ export function SettingsUpdate({ initialStatus, now = () => Date.now() }: Settin
             </div>
           </div>
           <details className="app-update__advanced settings-row--divided">
-            <summary>自定义更新源（高级）</summary>
+            <DisclosureSummary>自定义更新源（高级）</DisclosureSummary>
             <p className="app-update__advanced-hint">
               填一个静态目录地址：Windows 读目录下的 <code>latest.yml</code>，mac 读 <code>update-manifest.json</code>，安装包同目录；留空走 GitHub Releases。
             </p>

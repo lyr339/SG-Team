@@ -363,17 +363,6 @@ html[data-card-transparency="clear"] :is(.run-body, .pool-groups) {
   user-select: none;
 }
 .pool-groups__history > summary::-webkit-details-marker { display: none; }
-.pool-groups__history > summary::before {
-  content: "";
-  width: 6px;
-  height: 6px;
-  margin: 0 4px 0 6px;
-  border-right: 1.5px solid currentColor;
-  border-bottom: 1.5px solid currentColor;
-  transform: rotate(-45deg);
-  transition: transform 200ms cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-.pool-groups__history[open] > summary::before { transform: rotate(45deg); }
 .pool-groups__history > summary:hover { color: var(--text); background: var(--surface-soft); }
 .pool-groups__history > .pool-groups__grid { margin-top: 10px; }
 
@@ -779,9 +768,7 @@ button.group-card-member__who:focus-visible { outline: 2px solid var(--accent-bo
 .run-launch-options { min-width: 0; flex: 1 1 240px; interpolate-size: allow-keywords; }
 .run-launch-options > summary { display: flex; align-items: center; gap: 6px; min-height: 32px; color: var(--text-soft); font-size: var(--fs-11); cursor: pointer; list-style: none; }
 .run-launch-options > summary::-webkit-details-marker { display: none; }
-.run-launch-options > summary svg { width: 12px; height: 12px; transform: rotate(-90deg); transition: transform 180ms ease; }
-.run-launch-options[open] > summary svg { transform: none; }
-.run-launch-options > summary small { color: var(--muted); font-size: var(--fs-10); }
+.run-launch-options .disclosure-summary__content > small { color: var(--muted); font-size: var(--fs-10); }
 .run-launch-options::details-content { block-size: 0; overflow: clip; transition: block-size 180ms ease, content-visibility 180ms; transition-behavior: allow-discrete; }
 .run-launch-options[open]::details-content { block-size: auto; }
 .run-seats__toggles { display: grid; gap: 10px; align-content: start; padding: 8px 3px 3px; }
@@ -876,9 +863,9 @@ button.group-card-member__who:focus-visible { outline: 2px solid var(--accent-bo
   .run-panel .run-section-head > .run-new-batch { transition: none; }
   .run-batch-config__value.is-swapped, .run-batch-config__value.is-swapped > strong { animation: none; }
   .run-slot, .run-slot__inner > * { transition: none; }
-  .pool-groups__history > summary::before, .group-card, .group-card-member__actions, .group-composer__member, .group-composer__lead-pick { transition: none; }
+  .group-card, .group-card-member__actions, .group-composer__member, .group-composer__lead-pick { transition: none; }
   .seat-dot { animation: none; }
-  .run-launch-options::details-content, .run-launch-options > summary svg { transition: none; }
+  .run-launch-options::details-content { transition: none; }
   .run-page :is(.primary-button, .secondary-button, .run-header__ghost, .run-sheet__confirm, .run-stepper button):active:not(:disabled) { transform: none; }
 }
 
