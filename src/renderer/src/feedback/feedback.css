@@ -6,7 +6,7 @@
 .feedback-icon.is-error { color:var(--color-text-danger); }
 .feedback-icon.is-working { animation:feedback-working 900ms linear infinite; }
 .feedback-icon__track { opacity:.2; }
-p.feedback-line[class] { display:flex; align-items:flex-start; gap:10px; min-width:0; margin:0; padding:12px 14px; border:1px solid var(--line); border-radius:11px; background:var(--surface); color:var(--text-soft); font-size:var(--font-text-sm-size); line-height:1.65; }
+p.feedback-line[class] { display:flex; align-items:flex-start; gap:10px; min-width:0; margin:0; padding:12px 14px; border:1px solid var(--line); border-radius:11px; background:var(--surface-solid); color:var(--text-soft); font-size:var(--font-text-sm-size); line-height:1.65; }
 .feedback-line > .feedback-icon { margin-top:3px; }
 .feedback-line__copy { flex:1; min-width:0; overflow-wrap:anywhere; white-space:pre-wrap; }
 .feedback-line__action { flex:none; display:inline-flex; align-items:center; min-height:28px; margin-top:-2px; }
@@ -25,7 +25,7 @@ p.feedback-line[class]:has(> .feedback-close) { display:grid; grid-template-colu
 @keyframes feedback-working { to { transform:rotate(360deg); } }
 @media (max-width:520px) { .feedback-line { flex-wrap:wrap; } .feedback-line__copy { flex-basis:calc(100% - 38px); } .feedback-line__action { margin-left:28px; } }
 @media (prefers-reduced-motion:reduce) { .feedback-icon.is-working { animation:none; } .feedback-close { transition:none; } }
-.feedback-disclosure { min-width:0; border:1px solid var(--line); border-radius:11px; background:var(--surface); overflow:hidden; }
+.feedback-disclosure { min-width:0; border:1px solid var(--line); border-radius:11px; background:var(--readable-surface); overflow:hidden; }
 .feedback-disclosure > summary { display:grid; grid-template-columns:18px minmax(0,1fr) auto; align-items:start; gap:10px; min-height:44px; box-sizing:border-box; padding:11px 14px; color:var(--text); font-size:var(--font-text-sm-size); line-height:1.6; list-style:none; cursor:pointer; transition:background 140ms ease; }
 .feedback-disclosure > summary::-webkit-details-marker { display:none; }
 .feedback-disclosure > summary > .feedback-icon { margin-top:2px; }

@@ -2,6 +2,8 @@ import { TeamMemoryInspectionDialog } from './notifications/TeamMemoryInspection
 import type { TeamMemoryInspection,TeamMemoryInspectionRequest } from '../../domain/team-memory-inspection'
 import { memoryInspectionMatches } from '../../domain/team-memory-inspection'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
+import { createAppearanceTransition } from './appearance-transition'
 import type { QuestionActions } from './QuestionCard'
 import type {
   CreateIndependentSessionsInput,
@@ -214,6 +216,9 @@ export function App(): React.JSX.Element {
   const [cdpAutoHealEnabled, setCdpAutoHealEnabled] = useState(false)
   const [cdpAutoHealEvent, setCdpAutoHealEvent] = useState<CdpAutoHealEvent>()
   const [appearance, setAppearance] = useState<AppearancePreferences>(() => readAppearancePreferences())
+  const appearanceIntent = useRef(appearance)
+  const [appearanceTransition] = useState(createAppearanceTransition)
+  useEffect(() => () => appearanceTransition.cancel(), [appearanceTransition])
   const activeRunRef = useRef<{ id?: string; status?: TeamRunStatus }>({})
   const activeWorkspace = teamControl.workspaces.find((workspace) => workspace.id === teamControl.activeWorkspaceId)
   const activeProjectName = activeWorkspace?.name ?? cursorWorkspace?.workspace?.name
@@ -227,19 +232,22 @@ export function App(): React.JSX.Element {
   }, [appearance])
 
   /**
-   * 外观更新单入口。离散换肤（主题色 / 深浅模式）用 View Transition 做全站交叉淡化：
+   * 外观更新单入口。离散换肤（主题色 / 深浅模式）用 View Transition 淡化内容区：
    * transition 快照之间同步写 :root 变量（effect 里的再写同值幂等），
-   * React 驱动的 swatch 选中环等 UI 在淡化中随下一帧落地。
+   * React 的选中控件与 CSS 在同一快照更新，旧回调不能覆盖新意图。
    * 透明度滑杆连续拖动不拍快照（见 isDiscreteAppearanceChange）。
    */
   const changeAppearance = useCallback((patch: Partial<AppearancePreferences>): void => {
-    const next = { ...appearance, ...patch }
-    setAppearance(next)
-    if (!isDiscreteAppearanceChange(patch)) return
+    const next = { ...appearanceIntent.current, ...patch }
+    appearanceIntent.current = next
     const reduced = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    if (reduced || typeof document.startViewTransition !== 'function') return
-    document.startViewTransition(() => applyAppearancePreferences(next))
-  }, [appearance])
+    appearanceTransition.commit(() => {
+      applyAppearancePreferences(next)
+      // CSS and React's selected/focused controls belong to the same snapshot.
+      // A late callback cannot restore a superseded theme or opacity value.
+      flushSync(() => setAppearance(next))
+    }, isDiscreteAppearanceChange(patch) && !reduced, document)
+  }, [appearanceTransition])
 
   // Windows 标题栏覆盖层是系统原生绘制，读不到 CSS 主题：每次主题生效时推送
   // 实际深浅色；system 模式跟随系统切换实时更新（CSS 侧 light-dark() 自动，

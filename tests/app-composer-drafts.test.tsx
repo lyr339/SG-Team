@@ -284,4 +284,30 @@ describe('App 输入框草稿与附件按通道隔离', () => {
     expect(composerTextarea().value).toBe('')
     expect(sendMessage).toHaveBeenCalledTimes(1)
   })
+
+  it('theme and mode changes preserve the actual workspace, composer, draft and attachments without sending', async () => {
+    await renderApp('#sessions:2')
+    await typeDraft('Theme changes must not send or replace this draft.')
+    await attachFile('theme-preserved.md')
+    const textarea = composerTextarea(), workspace = container.querySelector('.workspace-main')
+    expect(workspace).not.toBeNull()
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="外观设置"]')!.click())
+    for (const id of ['dai-blue', 'luoshen-violet', 'ink-jade', 'sg-orange']) {
+      const choice = container.querySelector<HTMLButtonElement>(`[data-accent-choice="${id}"]`)!
+      choice.focus()
+      await act(async () => choice.click())
+      expect(document.documentElement.dataset.accent).toBe(id)
+      expect(document.activeElement).toBe(choice)
+      expect(composerTextarea()).toBe(textarea)
+      expect(composerTextarea().value).toBe('Theme changes must not send or replace this draft.')
+      expect(container.querySelector('.workspace-main')).toBe(workspace)
+      expect(container.textContent).toContain('theme-preserved.md')
+    }
+    await act(async () => clickButtonWithText('深色'))
+    expect(document.documentElement.dataset.colorMode).toBe('dark')
+    expect(composerTextarea()).toBe(textarea)
+    expect(composerTextarea().value).toBe('Theme changes must not send or replace this draft.')
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(JSON.parse(localStorage.getItem('shiguang.appearance.v1')!)).toMatchObject({ accent: 'sg-orange', colorMode: 'dark' })
+  })
 })

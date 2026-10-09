@@ -1,5 +1,6 @@
 import { FeedbackReview } from './feedback-review'
 import { SwitchReview } from './switch-review'
+import { ThemeReview } from './theme-review'
 import type { ProtocolExperimentSnapshot } from '../../../domain/protocol-experiment'
 import { reduceGroupEffects } from '../../../domain/group-effects-notification'
 import { observedMcpWrite } from '../../../domain/mcp-write-observation'
@@ -68,7 +69,7 @@ import {
   taskPoolSnapshot,
   teamControlSnapshot
 } from './mock-data'
-import '../claude-theme.css'
+import '../foundation.css'
 import '../styles.css'
 import '../lobby/lobby.css'
 import '../settings/settings.css'
@@ -81,6 +82,8 @@ import '../workspace-inspector.css'
 type Listener<T> = (snapshot: T) => void
 
 const previewParameters = new URLSearchParams(window.location.search)
+const previewPlatform = previewParameters.get('platform')
+if (previewPlatform === 'darwin' || previewPlatform === 'win32') document.documentElement.dataset.platform = previewPlatform
 
 const pumpScene = previewParameters.get('pump')
 const setupMode = previewParameters.get('setup') === '1'
@@ -947,10 +950,10 @@ if (previewParameters.has('teamContext')) {
       group.group.name='接口重构与消息隔离 · 长名称验收'
       group.group.goal='检查路径 '+ 'src/really_long_unbroken_directory_name/'.repeat(8)+' 和成员切换边界，保留完整验收证据。'
       previewTasks.tasks[planned[0]!.id]!.title='src/'+ 'unbroken_module_name_'.repeat(12)+'index.ts'
-      const first=Object.values(previewCollaboration.messages)[0]!
-      first.content='## 验收记录\n\n**同组隔离**已完成，请核对以下长路径：\n\n`'+ 'src/unbroken_directory/'.repeat(12)+'`\n\n```ts\nconst stableIdentity = "'+ 'very_long_identifier'.repeat(15)+'"\n```'
+      const first=Object.values(previewCollaboration.messages)[0]
+      if (first) first.content='## 验收记录\n\n**同组隔离**已完成，请核对以下长路径：\n\n`'+ 'src/unbroken_directory/'.repeat(12)+'`\n\n```ts\nconst stableIdentity = "'+ 'very_long_identifier'.repeat(15)+'"\n```'
     }
-    if(large) {
+    if(large && Object.keys(previewCollaboration.messages).length) {
       const sample=Object.values(previewCollaboration.messages)[0]!
       previewCollaboration.messages=Object.fromEntries(Array.from({length:65},(_,index)=>{
         const id=`context-message-${index}`
@@ -2334,6 +2337,6 @@ applyAppearancePreferences(readAppearancePreferences())
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    {previewParameters.get('controls') === 'switches' ? <SwitchReview/> : previewParameters.get('feedback') === 'showcase' ? <FeedbackReview/> : <App />}
+    {previewParameters.get('theme') === 'review' ? <ThemeReview/> : previewParameters.get('controls') === 'switches' ? <SwitchReview/> : previewParameters.get('feedback') === 'showcase' ? <FeedbackReview/> : <App />}
   </StrictMode>
 )

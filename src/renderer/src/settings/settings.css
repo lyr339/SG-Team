@@ -189,14 +189,14 @@
 .settings-section {
   min-width: 0;
   overflow: hidden;
-  background: var(--surface);
+  background: var(--readable-surface);
   border: 1px solid var(--color-border-tertiary);
   border-radius: 14px;
   box-shadow: var(--shadow-hairline);
 }
 /* 透明卡片：设置正文保持阅读面下限（与会话名册同一规则）——
    否则 4K 背景的高光区透进列表，「定位」等 10px 辅助文字对比度崩塌。 */
-html[data-card-transparency="clear"] .settings-section { background: color-mix(in srgb, var(--surface-solid) 74%, transparent); }
+html[data-card-transparency="clear"] .settings-section { background: var(--readable-surface); }
 
 .settings-section__head {
   min-height: 52px;
@@ -272,7 +272,7 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
   align-items: center;
   min-height: 38px;
   padding: 6px 12px;
-  background: var(--surface);
+  background: var(--readable-surface);
   border: 1px solid var(--color-border-tertiary);
   border-radius: 12px;
   box-shadow: var(--shadow-hairline);
@@ -339,8 +339,8 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
 }
 
 .account-row.is-active .account-row__avatar {
-  color: #fff;
-  background: var(--accent);
+  color: var(--action-primary-text);
+  background: var(--action-primary-bg);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, #000 8%, transparent);
 }
 
@@ -593,7 +593,7 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
 }
 .account-window-binding .menu-select.is-open .menu-select__button {
   border-color: var(--accent-border-strong);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--anthropic-orange) 10%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 .settings-empty {
@@ -674,12 +674,12 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
 }
 
 .settings-import-actions .lobby-account__quick-primary:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--anthropic-orange) 12%, var(--color-background-primary));
+  background: color-mix(in srgb, var(--accent) 12%, var(--color-background-primary));
 }
 
 /* 升级 Pro：资金动作，品牌橙文字 + 同族悬停底色，与普通操作区分。 */
-.account-pro-upgrade { color: var(--anthropic-orange); }
-.account-pro-upgrade:hover:not(:disabled) { background: color-mix(in srgb, var(--anthropic-orange) 12%, transparent); }
+.account-pro-upgrade { color: var(--accent); }
+.account-pro-upgrade:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 
 .settings-page .lobby-account__note { margin: 2px 0 0; -webkit-line-clamp: none; display: block; }
 
@@ -697,7 +697,7 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
   min-height: 64px;
   padding: 8px 10px;
   color: var(--text);
-  background: var(--surface);
+  background: var(--surface-solid);
   border: var(--border-width-regular) solid var(--line);
   border-radius: 8px;
   outline: none;
@@ -707,7 +707,7 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
   line-height: 1.5;
   word-break: break-all;
 }
-.settings-add-form textarea:focus { border-color: var(--accent-border-strong); box-shadow: 0 0 0 3px color-mix(in srgb, var(--anthropic-orange) 10%, transparent); }
+.settings-add-form textarea:focus { border-color: var(--accent-border-strong); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent); }
 
 /* 卡号识别预览：确认事实（邮箱/有效期/辅邮），过期用警示色。 */
 .settings-card-preview {
@@ -715,7 +715,7 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
   display: grid;
   gap: 2px;
   padding: 7px 9px;
-  background: var(--surface);
+  background: var(--readable-surface);
   border: var(--border-width-regular) solid var(--line-faint);
   border-radius: 8px;
 }
@@ -737,7 +737,7 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
 .automation-run {
   min-width: 0;
   display: grid;
-  background: var(--surface);
+  background: var(--readable-surface);
   border: 1px solid var(--color-border-tertiary);
   border-radius: 14px;
   box-shadow: var(--shadow-hairline);
@@ -894,7 +894,7 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
 .automation-run__node.is-skipped::before { border-color: var(--line); border-style: dashed; }
 
 .automation-run__node.is-running {
-  color: #fff;
+  color: var(--color-text-inverse);
   background: var(--blue);
   animation: automation-node-pulse 1.8s ease-out infinite;
 }
@@ -1275,8 +1275,9 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
 }
 .storage-cleanup__button:not(.is-primary):hover:not(:disabled) { border-color: var(--accent-border); color: var(--text); }
 .storage-cleanup__button:disabled { opacity: .5; cursor: not-allowed; }
-.storage-cleanup__button.is-primary { color: var(--color-text-inverse); background: var(--color-background-inverse); border-color: var(--color-background-inverse); }
-.storage-cleanup__button.is-primary:hover:not(:disabled) { opacity: .88; }
+.storage-cleanup__button.is-primary { color: var(--action-primary-text); background: var(--action-primary-bg); border-color: var(--action-primary-bg); }
+.storage-cleanup__button.is-primary:not(.is-danger):hover:not(:disabled) { background: var(--action-primary-hover-bg); }
+.storage-cleanup__button.is-primary:not(.is-danger):active:not(:disabled) { background: var(--action-primary-pressed-bg); }
 .storage-cleanup__button:focus-visible, .storage-cleanup__reveal:focus-visible, .storage-cleanup__result-dismiss:focus-visible { outline: 2px solid var(--color-ring-primary); outline-offset: 2px; }
 .storage-cleanup__button.is-primary.is-danger { color: var(--red); background: var(--red-soft); border-color: var(--red-border); }
 .storage-cleanup__button.is-primary.is-danger:hover:not(:disabled) { border-color: var(--red); }
@@ -1377,7 +1378,7 @@ html[data-card-transparency="clear"] .settings-section { background: color-mix(i
 }
 
 /* Cleanup results share the quiet framing and icon language of page feedback. */
-.storage-cleanup__result { display:grid; grid-template-columns:18px minmax(0,1fr) 30px; align-items:start; gap:10px; margin:0 16px 12px; padding:12px 14px; color:var(--text-soft); background:var(--surface); border:1px solid var(--line); border-radius:11px; font-size:var(--font-text-sm-size); line-height:1.65; }
+.storage-cleanup__result { display:grid; grid-template-columns:18px minmax(0,1fr) 30px; align-items:start; gap:10px; margin:0 16px 12px; padding:12px 14px; color:var(--text-soft); background:var(--readable-surface); border:1px solid var(--line); border-radius:11px; font-size:var(--font-text-sm-size); line-height:1.65; }
 .storage-cleanup__result-copy p, .storage-cleanup__result ul { font-size:var(--font-text-sm-size); line-height:1.7; overflow-wrap:anywhere; }
 .storage-cleanup__result-dismiss { display:grid; place-items:center; width:30px; height:30px; margin-top:-3px; padding:0; border-radius:8px; }
 .storage-cleanup__result-dismiss svg { display:block; width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:1.5; stroke-linecap:round; }

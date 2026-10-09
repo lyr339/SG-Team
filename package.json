@@ -7,6 +7,7 @@
   "description": "拾光：面向 Cursor 多 Agent 的协作工作台",
   "main": "./out/main/index.js",
   "scripts": {
+    "theme:generate": "tsx scripts/generate-theme-palette.ts",
     "dev": "electron-vite dev",
     "preview:ui": "vite --config vite.preview.config.ts",
     "preview:shots": "node scripts/preview-shots.mjs",

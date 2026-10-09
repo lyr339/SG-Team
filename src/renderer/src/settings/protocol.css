@@ -5,7 +5,7 @@
 .protocol-tools p { margin:0; font-weight:600; display:grid; gap:2px; }
 .protocol-tools p span { color:var(--muted); font-weight:400; font-size:var(--fs-11); }
 .protocol-tools > div { display:flex; flex-wrap:wrap; gap:8px; }
-.protocol-button { display:inline-flex; align-items:center; justify-content:center; gap:7px; min-height:34px; padding:6px 12px; border:1px solid var(--line); border-radius:9px; background:var(--surface); color:var(--text); font:inherit; cursor:pointer; transition:background 140ms,border-color 140ms; }
+.protocol-button { display:inline-flex; align-items:center; justify-content:center; gap:7px; min-height:34px; padding:6px 12px; border:1px solid var(--line); border-radius:9px; background:var(--readable-surface); color:var(--text); font:inherit; cursor:pointer; transition:background 140ms,border-color 140ms; }
 .protocol-button:hover:not(:disabled) { background:var(--accent-wash); border-color:var(--accent-border); }
 .protocol-button--primary { background:var(--accent-soft); border-color:var(--accent-border); color:var(--accent-deep); font-weight:600; }
 .protocol-button:disabled { cursor:default; opacity:.55; }
@@ -22,18 +22,18 @@
 .protocol-tabs button { display:flex; align-items:center; gap:7px; padding:10px 0; border:0; border-bottom:2px solid transparent; margin-bottom:-1px; background:transparent; color:var(--muted); cursor:pointer; font:inherit; font-weight:550; }
 .protocol-tabs button[aria-selected="true"] { border-bottom-color:var(--accent-deep); color:var(--text); }
 .protocol-tabs button span { font-size:var(--fs-10); font-variant-numeric:tabular-nums; color:var(--muted); }
-.protocol-empty { padding:36px 26px; display:grid; justify-items:start; gap:12px; border:1px solid var(--line); border-radius:14px; background:var(--surface); }
+.protocol-empty { padding:36px 26px; display:grid; justify-items:start; gap:12px; border:1px solid var(--line); border-radius:14px; background:var(--readable-surface); }
 .protocol-empty strong { font-size:var(--fs-15); font-weight:600; }
 .protocol-empty p { max-width:54ch; margin:0; color:var(--muted); }
 .protocol-records { display:grid; grid-template-columns:174px minmax(0,1fr); gap:20px; align-items:start; }
 .protocol-records > nav { display:grid; gap:4px; }
 .protocol-records > nav button { min-width:0; display:grid; gap:4px 8px; padding:11px 12px; text-align:left; border:1px solid transparent; background:transparent; border-radius:10px; font:inherit; color:var(--text); cursor:pointer; transition:background 140ms,border-color 140ms; }
-.protocol-records > nav button:hover { background:var(--surface); }
+.protocol-records > nav button:hover { background:var(--readable-surface); }
 .protocol-records > nav button.is-selected { border-color:var(--accent-border); background:var(--accent-wash); }
 .protocol-records > nav strong { font-size:var(--fs-12); font-weight:600; overflow-wrap:anywhere; }
 .protocol-records > nav time,.protocol-records > nav span { color:var(--muted); font-size:var(--fs-10); }
 .protocol-records > nav time { grid-row:2; }
-.protocol-detail { min-width:0; padding:18px; border:1px solid var(--line); border-radius:14px; background:var(--surface); }
+.protocol-detail { min-width:0; padding:18px; border:1px solid var(--line); border-radius:14px; background:var(--readable-surface); }
 .protocol-detail > header { display:flex; justify-content:space-between; align-items:start; gap:12px; margin-bottom:18px; }
 .protocol-detail h2 { font-size:var(--fs-15); font-weight:600; margin:0 0 3px; overflow-wrap:anywhere; }
 .protocol-detail header p { color:var(--muted); font-size:var(--fs-11); margin:0; }
@@ -95,7 +95,7 @@
 /* The wire workspace is an explicit, separate entrance, not a global switch. */
 .wire-workbench { display:grid; gap:16px; min-width:0; font-size:var(--fs-13); }
 .wire-modes { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
-.wire-mode { display:grid; gap:5px; padding:14px 16px; min-width:0; text-align:left; border:1px solid var(--line); border-radius:12px; background:var(--surface); color:var(--text); font:inherit; }
+.wire-mode { display:grid; gap:5px; padding:14px 16px; min-width:0; text-align:left; border:1px solid var(--line); border-radius:12px; background:var(--readable-surface); color:var(--text); font:inherit; }
 button.wire-mode { cursor:pointer; transition:background 140ms,border-color 140ms; }
 button.wire-mode:hover:not(:disabled) { background:var(--accent-wash); border-color:var(--accent-border); }
 .wire-mode:disabled { opacity:.65; cursor:default; }
@@ -116,7 +116,7 @@ button.wire-mode:hover:not(:disabled) { background:var(--accent-wash); border-co
 .wire-session-heading span { color:var(--muted); font-size:var(--fs-11); }
 .wire-state { flex-shrink:0; font-variant-numeric:tabular-nums; }
 .wire-transcript { display:grid; gap:12px; min-width:0; }
-.wire-turn { min-width:0; border:1px solid var(--line); border-radius:12px; padding:16px 18px; background:var(--surface); }
+.wire-turn { min-width:0; border:1px solid var(--line); border-radius:12px; padding:16px 18px; background:var(--readable-surface); }
 .wire-turn header { display:flex; justify-content:space-between; gap:12px; color:var(--muted); font-size:var(--fs-11); }
 .wire-turn header strong { font-weight:550; }
 .wire-prompt { margin:12px 0; padding:8px 11px; border-radius:7px; background:color-mix(in srgb,var(--text) 4%,transparent); color:var(--text-soft); font-size:var(--fs-12); white-space:pre-wrap; overflow-wrap:anywhere; }
@@ -135,7 +135,7 @@ button.wire-mode:hover:not(:disabled) { background:var(--accent-wash); border-co
 .wire-previous > summary { display:flex; gap:12px; align-items:center; }
 .wire-previous > summary span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); }
 .wire-awaiting { margin:0; padding:20px 18px; border:1px dashed var(--line); border-radius:10px; color:var(--muted); font-size:var(--fs-12); }
-.wire-composer { display:grid; gap:8px; padding:14px 16px; border:1px solid var(--line); border-radius:12px; background:var(--surface); }
+.wire-composer { display:grid; gap:8px; padding:14px 16px; border:1px solid var(--line); border-radius:12px; background:var(--readable-surface); }
 .wire-composer label { font-size:var(--fs-12); font-weight:550; }
 .wire-composer textarea { width:100%; min-width:0; min-height:66px; max-height:180px; resize:vertical; border:0; border-radius:6px; background:transparent; color:var(--text); padding:6px 0; font:inherit; font-size:var(--fs-13); line-height:1.65; }
 .wire-composer > div { display:flex; align-items:center; justify-content:space-between; gap:10px; }

@@ -54,13 +54,13 @@
 /* ---------- 共用：卡片 / 节标题 / 链接按钮 / 反馈 ---------- */
 .run-body,
 .pool-groups {
-  background: var(--surface);
+  background: var(--readable-surface);
   border: 1px solid var(--line);
   border-radius: 12px;
   box-shadow: var(--shadow-hairline);
 }
 html[data-card-transparency="clear"] :is(.run-body, .pool-groups) {
-  background: color-mix(in srgb, var(--surface-solid) 74%, transparent);
+  background: var(--readable-surface);
   border-color: var(--line-strong);
   backdrop-filter: blur(14px);
 }
@@ -233,7 +233,7 @@ html[data-card-transparency="clear"] :is(.run-body, .pool-groups) {
   min-height: 34px;
   gap: 7px;
   padding-inline: 12px;
-  color: #fff;
+  color: var(--action-primary-text);
   background: var(--action-primary-bg);
   border-color: var(--accent-border-strong);
   border-radius: 9px;
@@ -593,7 +593,7 @@ button.group-card-member__who:focus-visible { outline: 2px solid var(--accent-bo
 }
 .group-composer__member.is-selected { border-color: var(--accent-border-soft); background: var(--accent-wash); }
 .group-composer__member-pick { display: flex; flex: 1 1 auto; align-items: center; gap: 9px; min-width: 0; cursor: pointer; }
-.group-composer__member-pick input { flex: none; width: 14px; height: 14px; margin: 0; accent-color: var(--accent); }
+.group-composer__member-pick input { flex: none; width: 14px; height: 14px; margin: 0; accent-color: var(--action-primary-bg); }
 .group-composer__member-who { display: grid; min-width: 0; }
 .group-composer__member-who strong { overflow: hidden; font-size: var(--fs-12); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .group-composer__member-who small { color: var(--muted); font-size: var(--fs-11); }
@@ -614,7 +614,7 @@ button.group-card-member__who:focus-visible { outline: 2px solid var(--accent-bo
   cursor: pointer;
   transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
 }
-.group-composer__lead-pick input { width: 14px; height: 14px; flex: none; margin: 0; accent-color: var(--accent); }
+.group-composer__lead-pick input { width: 14px; height: 14px; flex: none; margin: 0; accent-color: var(--action-primary-bg); }
 .group-composer__lead-pick:hover:not(:has(input:disabled)) { color: var(--text); background: var(--surface-soft); }
 .group-composer__lead-pick.is-checked { color: var(--text); }
 .group-composer__lead-pick:has(input:disabled) { opacity: 0.4; cursor: default; }
@@ -816,7 +816,7 @@ button.group-card-member__who:focus-visible { outline: 2px solid var(--accent-bo
   align-items: center;
   gap: 18px;
   padding: 14px 18px;
-  background: var(--surface);
+  background: var(--readable-surface);
   border: 1px solid var(--amber-border-soft);
   border-radius: 14px;
   box-shadow: var(--shadow-hairline);
@@ -830,7 +830,7 @@ button.group-card-member__who:focus-visible { outline: 2px solid var(--accent-bo
 .run-sheet__confirm {
   min-height: 34px;
   padding: 0 14px;
-  color: #fff;
+  color: var(--action-primary-text);
   background: var(--action-primary-bg);
   border: 0;
   border-radius: var(--r-md);
@@ -838,7 +838,7 @@ button.group-card-member__who:focus-visible { outline: 2px solid var(--accent-bo
   font-weight: 650;
   transition: filter 140ms ease;
 }
-.run-sheet__confirm.is-danger { background: var(--red); }
+.run-sheet__confirm.is-danger { color:var(--action-danger-text); background:var(--action-danger-bg); }
 .run-sheet__confirm:hover:not(:disabled):not(.is-danger) { background: var(--action-primary-hover-bg); }
 .run-sheet__confirm:disabled { opacity: 0.55; }
 

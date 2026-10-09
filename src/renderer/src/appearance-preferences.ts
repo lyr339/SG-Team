@@ -1,3 +1,6 @@
+import { ACCENT_PRESETS, DEFAULT_ACCENT_ID } from './theme-palette'
+export { ACCENT_PRESETS, DEFAULT_ACCENT_ID } from './theme-palette'
+
 export interface AppearancePreferences {
   cardOpacity: number
   colorMode: 'system' | 'light' | 'dark'
@@ -28,36 +31,6 @@ export const BACKGROUND_PRESETS: readonly BackgroundPreset[] = [
 
 export const DEFAULT_BACKGROUND_ID = BACKGROUND_PRESETS[0]!.id
 
-/**
- * 主题色预设。基色进派生链（--accent-soft/wash/border 与焦点环由 color-mix 自动跟随），
- * 深读 / 明亮两组锚点逐色人工校过浅深双主题对比度——不做运行时对比度计算。
- * 色相刻意避开状态色语义区间（绿=健康、蓝=运行、琥珀=阻塞、红=错误）：
- * 黛蓝取灰调钢蓝与运行态的鲜亮长春花蓝拉开，胭脂取洋红向与错误红拉开。
- * 拾光橙的锚点与 claude-theme.css / styles.css 出厂值逐字一致：选默认 = 移除覆盖，
- * 样式表仍是唯一事实源。
- */
-export interface AccentPreset {
-  id: string
-  label: string
-  /** 基色（浅深共用），覆盖 --anthropic-orange。 */
-  base: string
-  /** --accent-deep 的 [浅色, 深色] 锚点（文本级强调）。 */
-  deep: readonly [string, string]
-  /** --accent-bright 的 [浅色, 深色] 锚点。 */
-  bright: readonly [string, string]
-}
-
-export const ACCENT_PRESETS: readonly AccentPreset[] = [
-  { id: 'sg-orange', label: '拾光橙', base: '#ff6b35', deep: ['#dc4718', '#ff8a61'], bright: ['#ff6b35', '#ff8056'] },
-  { id: 'dai-blue', label: '黛蓝', base: '#4173b3', deep: ['#31609c', '#93b6e4'], bright: ['#4173b3', '#6d99cf'] },
-  { id: 'bamboo-teal', label: '竹月', base: '#2e8fa3', deep: ['#1f7386', '#82c6d5'], bright: ['#2e8fa3', '#57aebf'] },
-  { id: 'luoshen-violet', label: '洛神紫', base: '#9c59cf', deep: ['#8140b4', '#c5a0e9'], bright: ['#9c59cf', '#b47fdd'] },
-  { id: 'rouge-rose', label: '胭脂', base: '#cf4f8e', deep: ['#b03674', '#e69cc3'], bright: ['#cf4f8e', '#dd77a9'] },
-  { id: 'ink-jade', label: '墨玉', base: '#5f6f80', deep: ['#48586a', '#adbccb'], bright: ['#5f6f80', '#8595a6'] }
-] as const
-
-export const DEFAULT_ACCENT_ID = ACCENT_PRESETS[0]!.id
-
 export const APPEARANCE_STORAGE_KEY = 'shiguang.appearance.v1'
 export const DEFAULT_APPEARANCE_PREFERENCES: AppearancePreferences = {
   cardOpacity: 0.9,
@@ -79,7 +52,7 @@ export function normalizeBackground(value: unknown): string {
 }
 
 /**
- * 离散换肤（主题色 / 背景 / 深浅模式）适合 View Transition 全站交叉淡化；
+ * 离散换肤（主题色 / 背景 / 深浅模式）可用 View Transition 淡化内容区；
  * 透明度滑杆连续拖动不拍快照——高频调用 transition 会掉帧。
  */
 export function isDiscreteAppearanceChange(patch: Partial<AppearancePreferences>): boolean {
@@ -122,17 +95,10 @@ export function applyAppearancePreferences(
   // 默认背景：移除属性，styles.css 的出厂两张图保持唯一事实源。
   if (background === DEFAULT_BACKGROUND_ID) delete target.dataset.background
   else target.dataset.background = background
-  const preset = ACCENT_PRESETS.find((candidate) => candidate.id === normalizeAccent(preferences.accent)) ?? ACCENT_PRESETS[0]!
-  if (preset.id === DEFAULT_ACCENT_ID) {
-    // 默认主题：移除覆盖，claude-theme.css / styles.css 保持唯一事实源。
-    target.style.removeProperty('--anthropic-orange')
-    target.style.removeProperty('--accent-deep')
-    target.style.removeProperty('--accent-bright')
-  } else {
-    target.style.setProperty('--anthropic-orange', preset.base)
-    target.style.setProperty('--accent-deep', `light-dark(${preset.deep[0]}, ${preset.deep[1]})`)
-    target.style.setProperty('--accent-bright', `light-dark(${preset.bright[0]}, ${preset.bright[1]})`)
-  }
+  // One attribute swaps the complete role palette, including the default.
+  // Remove only the three obsolete managed overrides left by earlier builds.
+  target.dataset.accent = normalizeAccent(preferences.accent)
+  for (const legacy of ['--anthropic-orange', '--accent-deep', '--accent-bright']) target.style.removeProperty(legacy)
 }
 
 export function persistAppearancePreferences(

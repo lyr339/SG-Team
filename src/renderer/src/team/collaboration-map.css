@@ -35,7 +35,7 @@
   background: rgba(15, 21, 30, .34); animation: collaboration-open 150ms ease-out;
 }
 .collaboration-dialog {
-  --collaboration-ink: light-dark(#37717e, #9ccbd1);
+  --collaboration-ink: var(--accent-deep);
   --collaboration-paper: color-mix(in srgb, var(--surface-solid) 94%, var(--canvas-solid));
   --collaboration-history: light-dark(#627083, #8190a2);
   --collaboration-muted: color-mix(in srgb, var(--muted) 94%, var(--text-soft));
@@ -133,13 +133,13 @@
 .collaboration-wire { cursor: pointer; transition: opacity 140ms ease; }
 .collaboration-wire__hit { pointer-events: stroke; }
 .collaboration-wire__silk {
-  stroke: #38bdf8; opacity: .85; vector-effect: non-scaling-stroke;
+  stroke: var(--collaboration-ink); opacity: .85; vector-effect: non-scaling-stroke;
   stroke-linecap: round; stroke-linejoin: round; pointer-events: none;
 }
-.collaboration-wire__silk.strand-1 { stroke: #818cf8; opacity: .8; }
-.collaboration-wire__silk.strand-2 { stroke: #c084fc; opacity: .8; }
-.collaboration-wire__silk.strand-3 { stroke: #e879f9; opacity: .78; }
-.collaboration-wire__silk.strand-4 { stroke: #22d3ee; opacity: .85; }
+.collaboration-wire__silk.strand-1 { opacity: .7; }
+.collaboration-wire__silk.strand-2 { opacity: .6; }
+.collaboration-wire__silk.strand-3 { opacity: .7; }
+.collaboration-wire__silk.strand-4 { opacity: .85; }
 .collaboration-wire.is-dimmed { opacity: .24; }
 .collaboration-wire__tip {
   stroke: var(--collaboration-ink); opacity: 0; pointer-events: none;

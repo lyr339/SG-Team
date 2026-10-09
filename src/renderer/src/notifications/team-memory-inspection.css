@@ -224,9 +224,9 @@
 }
 .memory-inspection button.memory-review-primary {
   padding: 5px 12px;
-  color: var(--color-text-inverse);
-  background: var(--accent-deep);
-  border: 1px solid var(--accent-deep);
+  color: var(--action-primary-text);
+  background: var(--action-primary-bg);
+  border: 1px solid var(--action-primary-bg);
   border-radius: 6px;
 }
 .memory-inspection button.memory-review-primary:hover:not(:disabled) {

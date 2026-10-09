@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const styles = readFileSync(join(process.cwd(), 'src/renderer/src/styles.css'), 'utf8')
-const foundation = readFileSync(join(process.cwd(), 'src/renderer/src/claude-theme.css'), 'utf8')
+const foundation = readFileSync(join(process.cwd(), 'src/renderer/src/foundation.css'), 'utf8')
 const controls = readFileSync(join(process.cwd(), 'src/renderer/src/controls.css'), 'utf8')
 const lobby = readFileSync(join(process.cwd(), 'src/renderer/src/lobby/lobby.css'), 'utf8')
 const run = readFileSync(join(process.cwd(), 'src/renderer/src/run/run.css'), 'utf8')
@@ -65,7 +65,7 @@ describe('theme surface contracts', () => {
   it('keeps cleanup hover text scoped to secondary buttons, preserving inverse and danger colours', () => {
     expect(settings).toMatch(/\.storage-cleanup__button:not\(\.is-primary\):hover:not\(:disabled\)\s*\{[^}]*color:\s*var\(--text\)/)
     expect(settings).not.toMatch(/\.storage-cleanup__button:hover:not\(:disabled\)/)
-    expect(settings).toMatch(/\.storage-cleanup__button\.is-primary\s*\{[^}]*color:\s*var\(--color-text-inverse\)/)
+    expect(settings).toMatch(/\.storage-cleanup__button\.is-primary\s*\{[^}]*color:\s*var\(--action-primary-text\)/)
     expect(settings).toMatch(/\.storage-cleanup__button\.is-primary\.is-danger\s*\{[^}]*color:\s*var\(--red\)/)
   })
 
@@ -189,9 +189,10 @@ describe('theme surface contracts', () => {
     expect(styles).toMatch(/prefers-reduced-motion: reduce\)\s*\{[^}]*\.session-dock, \.queue-tray, \.queue-tray__item\s*\{\s*animation:\s*none/)
   })
 
-  it('uses the cool Orbit palette instead of the former yellow parchment palette', () => {
-    expect(foundation).toContain('--anthropic-orange: #ff6b35')
-    expect(foundation).toContain('light-dark(#edf2f7, #0b1017)')
+  it('keeps neutral content and native chrome separate from the selectable complete palette', () => {
+    expect(foundation).toContain("@import './theme-palette.generated.css'")
+    expect(foundation).toContain('--color-background-primary: light-dark(#ffffff, #181d25)')
+    expect(foundation).not.toContain('--anthropic-orange:')
     expect(foundation).not.toContain('#f5f4ed')
     expect(foundation).not.toContain('#faf9f5')
     expect(styles).toContain('shiguang-light.png')
@@ -211,18 +212,19 @@ describe('theme surface contracts', () => {
   })
 
   it('keeps the settings sections readable under clear card transparency, like the session pane', () => {
-    expect(settings).toMatch(/html\[data-card-transparency="clear"\] \.settings-section\s*\{[^}]*var\(--surface-solid\) 74%/)
+    expect(settings).toMatch(/html\[data-card-transparency="clear"\] \.settings-section\s*\{[^}]*var\(--readable-surface\)/)
+    expect(styles).toContain('--readable-surface: color-mix(in srgb, var(--surface-solid) calc(max(var(--card-opacity), .78) * 100%), transparent)')
   })
 
-  it('keeps custom controls and run-page primary actions on the new signal-orange system', () => {
-    expect(controls).toMatch(/input\[type="checkbox"\][^{]*:checked\s*\{[^}]*background-color:\s*var\(--accent\)/)
+  it('keeps custom controls and run-page primary actions on the complete theme role system', () => {
+    expect(controls).toMatch(/input\[type="checkbox"\][^{]*:checked\s*\{[^}]*background-color:\s*var\(--action-primary-bg\)/)
     expect(controls).toMatch(/select:not\(\[multiple\]\):focus\s*\{[^}]*var\(--accent-border-strong\)/)
     // 运行页只用共享的 .primary-button（信号橙）。确认面的按钮不是主按钮样式：可收回的动作（移出成员）
     // 用主操作色，做了回不来的（解散 / 结束 / 新建批次）由 is-danger 切成红色——红只表破坏性，不作装饰。
     expect(styles).toMatch(/\.primary-button\s*\{[^}]*background:\s*var\(--action-primary-bg\)/)
-    expect(styles).toContain('--action-primary-bg: color-mix(in srgb, var(--accent) 64%, #171b24)')
+    expect(styles).not.toContain('--action-primary-bg:')
     expect(run).toMatch(/\.run-sheet__confirm\s*\{[^}]*background:\s*var\(--action-primary-bg\)/)
-    expect(run).toMatch(/\.run-sheet__confirm\.is-danger\s*\{[^}]*background:\s*var\(--red\)/)
+    expect(run).toMatch(/\.run-sheet__confirm\.is-danger\s*\{[^}]*background:\s*var\(--action-danger-bg\)/)
     expect(run).toMatch(/\.run-header__ghost\.is-danger\s*\{[^}]*color:\s*var\(--red\)/)
     expect(run).not.toContain('.lobby-command__primary')
   })

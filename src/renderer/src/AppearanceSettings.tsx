@@ -26,7 +26,7 @@ const PRESETS = [
   { label: '实色', value: 1 }
 ] as const
 
-/** 选项组惯例：←/→ 在选项间漫游（环绕），移动即选中——主题色色卡与背景缩略卡共用。 */
+/** 选项组惯例：←/→ 在选项间漫游（环绕），移动即选中——主题色点与背景缩略卡共用。 */
 function roamOptionsWithArrowKeys(event: React.KeyboardEvent<HTMLDivElement>): void {
   if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
   const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button'))
@@ -61,7 +61,7 @@ export function AppearanceSettings({
           <strong>外观</strong>
           <span>让内容保持清晰，也让背景自由透出来。</span>
         </div>
-        <button onClick={onClose} aria-label="关闭外观设置">×</button>
+        <button type="button" onClick={onClose} aria-label="关闭外观设置">×</button>
       </header>
 
       <div className="appearance-mode">
@@ -74,7 +74,9 @@ export function AppearanceSettings({
           ] as const).map(([value, label]) => (
             <button
               key={value}
+              type="button"
               className={colorMode === value ? 'is-active' : ''}
+              aria-pressed={colorMode === value}
               onClick={() => onColorModeChange(value)}
             >
               {label}
@@ -96,7 +98,7 @@ export function AppearanceSettings({
                 type="button"
                 className={`appearance-background__tile${activeBackground.id === preset.id ? ' is-active' : ''}`}
                 data-preset={preset.id}
-                title={preset.description}
+                title={`${preset.label} · ${preset.description}`}
                 aria-label={preset.label}
                 aria-pressed={activeBackground.id === preset.id}
                 onClick={() => onBackgroundChange(preset.id)}
@@ -119,13 +121,16 @@ export function AppearanceSettings({
             {ACCENT_PRESETS.map((preset) => (
               <button
                 key={preset.id}
+                type="button"
                 className={`appearance-accent__swatch${activeAccent.id === preset.id ? ' is-active' : ''}`}
-                style={{ '--swatch': preset.base } as React.CSSProperties}
-                title={preset.label}
+                data-accent-choice={preset.id}
+                title={`${preset.label} · ${preset.description}`}
                 aria-label={preset.label}
                 aria-pressed={activeAccent.id === preset.id}
                 onClick={() => onAccentChange(preset.id)}
-              />
+              >
+                <i aria-hidden="true" />
+              </button>
             ))}
           </div>
         </div>
@@ -146,9 +151,10 @@ export function AppearanceSettings({
           onChange={(event) => onCardOpacityChange(Number(event.currentTarget.value) / 100)}
         />
         <div className="appearance-opacity__ends" aria-hidden="true">
-          <span>完全透明</span>
-          <span>完全实色</span>
+          <span>通透</span>
+          <span>实色</span>
         </div>
+        <p className="appearance-opacity__hint">降低底色时，文字和表单仍保留可读底色。</p>
       </div>
 
       <div className="appearance-presets" aria-label="透明度预设">

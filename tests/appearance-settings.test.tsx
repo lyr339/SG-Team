@@ -71,27 +71,31 @@ describe('appearance preferences', () => {
     expect(readAppearancePreferences(storage).accent).toBe('sg-orange')
   })
 
-  it('主题色应用：非默认预设写三个覆盖变量，切回默认逐一移除（样式表回归唯一事实源）', () => {
+  it('主题色应用：统一选择完整色板，切回默认也清掉旧版残留的三枚覆盖', () => {
     const root = document.createElement('div')
+    root.style.setProperty('--anthropic-orange', '#ff6b35')
+    root.style.setProperty('--accent-deep', 'red')
+    root.style.setProperty('--accent-bright', 'orange')
     applyAppearancePreferences({ cardOpacity: 0.9, colorMode: 'system', accent: 'luoshen-violet', background: 'refraction' }, root)
-    const violet = ACCENT_PRESETS.find((preset) => preset.id === 'luoshen-violet')!
-    expect(root.style.getPropertyValue('--anthropic-orange')).toBe(violet.base)
-    expect(root.style.getPropertyValue('--accent-deep')).toBe(`light-dark(${violet.deep[0]}, ${violet.deep[1]})`)
-    expect(root.style.getPropertyValue('--accent-bright')).toBe(`light-dark(${violet.bright[0]}, ${violet.bright[1]})`)
+    expect(root.dataset.accent).toBe('luoshen-violet')
+    expect(root.style.getPropertyValue('--anthropic-orange')).toBe('')
+    expect(root.style.getPropertyValue('--accent-deep')).toBe('')
+    expect(root.style.getPropertyValue('--accent-bright')).toBe('')
 
     applyAppearancePreferences({ cardOpacity: 0.9, colorMode: 'system', accent: 'sg-orange', background: 'refraction' }, root)
+    expect(root.dataset.accent).toBe('sg-orange')
     expect(root.style.getPropertyValue('--anthropic-orange')).toBe('')
     expect(root.style.getPropertyValue('--accent-deep')).toBe('')
     expect(root.style.getPropertyValue('--accent-bright')).toBe('')
   })
 
-  it('预设色板：默认拾光橙打头且锚点与出厂值逐字一致；数量在 6~8 之间', () => {
+  it('预设色板：默认拾光橙打头，全部有使用说明，旧 ID 保持有效', () => {
     expect(ACCENT_PRESETS[0]).toMatchObject({
       id: 'sg-orange',
-      base: '#ff6b35',
-      deep: ['#dc4718', '#ff8a61'],
-      bright: ['#ff6b35', '#ff8056']
+      label: '拾光橙',
+      base: '#a64c2c'
     })
+    expect(ACCENT_PRESETS.every(preset => preset.description && preset.ink.length === 2)).toBe(true)
     expect(ACCENT_PRESETS.length).toBeGreaterThanOrEqual(6)
     expect(ACCENT_PRESETS.length).toBeLessThanOrEqual(8)
     // id 唯一
@@ -124,7 +128,7 @@ describe('AppearanceSettings', () => {
     container.remove()
   })
 
-  it('offers a true zero-opacity state and reports live slider changes', async () => {
+  it('preserves zero-opacity input and explains the readable content floor instead of claiming invisible text', async () => {
     const onChange = vi.fn<(value: number) => void>()
     const onColorModeChange = vi.fn<(value: 'system' | 'light' | 'dark') => void>()
     await act(async () => {
@@ -142,7 +146,8 @@ describe('AppearanceSettings', () => {
     const slider = container.querySelector<HTMLInputElement>('#card-opacity')!
     expect(slider.min).toBe('0')
     expect(slider.max).toBe('100')
-    expect(container.textContent).toContain('完全透明')
+    expect(container.querySelector('.appearance-opacity__ends')?.textContent).toBe('通透实色')
+    expect(container.querySelector('.appearance-opacity__hint')?.textContent).toContain('文字和表单仍保留可读底色')
 
     const darkMode = Array.from(container.querySelectorAll('button'))
       .find((button) => button.textContent === '深色')!
@@ -241,7 +246,7 @@ describe('AppearanceSettings', () => {
     expect(onBackgroundChange).toHaveBeenLastCalledWith(BACKGROUND_PRESETS[BACKGROUND_PRESETS.length - 1]!.id)
   })
 
-  it('主题色行：渲染全部预设色卡，当前项标注 aria-pressed 并写出名字，点击回调预设 id', async () => {
+  it('主题色行：紧凑色点保留名称提示、唯一选中态和真实预设 id，不再渲染多行微缩卡', async () => {
     const onAccentChange = vi.fn<(accent: string) => void>()
     await act(async () => {
       root.render(
@@ -259,12 +264,18 @@ describe('AppearanceSettings', () => {
 
     const swatches = [...container.querySelectorAll<HTMLButtonElement>('.appearance-accent__swatch')]
     expect(swatches).toHaveLength(ACCENT_PRESETS.length)
+    expect(swatches.map(button => button.dataset.accentChoice)).toEqual(ACCENT_PRESETS.map(preset => preset.id))
+    expect(swatches.map(button => button.getAttribute('aria-label'))).toEqual(ACCENT_PRESETS.map(preset => preset.label))
+    expect(swatches.map(button => button.title)).toEqual(ACCENT_PRESETS.map(preset => `${preset.label} · ${preset.description}`))
+    expect(swatches.every(button => button.type === 'button' && button.textContent === '')).toBe(true)
+    expect(swatches.every(button => button.children.length === 1 && button.querySelector('i[aria-hidden="true"]'))).toBe(true)
+    expect(container.querySelector('.appearance-accent__preview')).toBeNull()
     const active = swatches.filter((button) => button.getAttribute('aria-pressed') === 'true')
     expect(active).toHaveLength(1)
-    expect(active[0]!.getAttribute('aria-label')).toBe('竹月')
-    expect(container.querySelector('.appearance-accent em')?.textContent).toBe('竹月')
+    expect(active[0]!.getAttribute('aria-label')).toBe('青墨')
+    expect(container.querySelector('.appearance-accent em')?.textContent).toBe('青墨')
 
-    const daiBlue = swatches.find((button) => button.getAttribute('aria-label') === '黛蓝')!
+    const daiBlue = swatches.find((button) => button.getAttribute('aria-label') === '雾蓝')!
     await act(async () => daiBlue.click())
     expect(onAccentChange).toHaveBeenLastCalledWith('dai-blue')
   })
@@ -290,7 +301,7 @@ describe('AppearanceSettings', () => {
     expect(container.querySelector('.appearance-accent em')?.textContent).toBe('拾光橙')
   })
 
-  it('主题色行：←/→ 方向键在色卡间漫游，移动即选中（环绕）', async () => {
+  it('主题色行：←/→ 方向键在色点间漫游，移动即选中（环绕）', async () => {
     const onAccentChange = vi.fn<(accent: string) => void>()
     await act(async () => {
       root.render(

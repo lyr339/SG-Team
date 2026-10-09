@@ -173,7 +173,7 @@
   min-height: 32px;
   padding: 0 10px;
   color: var(--text);
-  background: var(--surface-pure);
+  background: var(--surface-solid);
   border: 1px solid var(--color-border-tertiary);
   border-radius: 9px;
   font-size: var(--fs-11);
@@ -191,7 +191,7 @@
   width: 7px; height: 7px;
   border-radius: 50%;
   background: var(--accent);
-  box-shadow: 0 0 0 2px var(--surface);
+  box-shadow: 0 0 0 2px var(--readable-surface);
 }
 
 /* ---------- 右下角小提醒框 ---------- */

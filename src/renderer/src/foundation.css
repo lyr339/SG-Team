@@ -1,8 +1,6 @@
-/*
- * Claude / Anthropic canonical theme foundation.
- * Source: https://claude.com/docs/connectors/building/mcp-apps/design-guidelines
- * Font source: https://brand.anthropic.com/typography
- */
+@import './theme-palette.generated.css';
+
+/* 拾光基础令牌：字体、结构、中性内容面与固定语义色。主题角色由独立色板提供。 */
 @font-face {
   font-family: "Anthropic Sans";
   src: url("./assets/fonts/AnthropicSansVariable.woff2") format("woff2-variations");
@@ -48,23 +46,28 @@
   --font-heading-2xl-line-height: 1.1;
   --font-heading-3xl-line-height: 1;
 
-  /* 拾光 Orbit 主题：冷中性色承载内容，亮橙只表达焦点与行动。 */
+  /* 内容面和语义色独立于用户选择的主题强调。 */
   --color-background-primary: light-dark(#ffffff, #181d25);
-  --color-background-secondary: light-dark(#f2f5f9, #121720);
-  --color-background-tertiary: light-dark(#edf2f7, #0b1017);
   --color-background-inverse: light-dark(#171b24, #f7f9fc);
   --color-background-ghost: light-dark(rgb(255 255 255 / 0), rgb(24 29 37 / 0));
+  --color-control-thumb: light-dark(#ffffff, #c9d0dc);
+  --color-control-track: light-dark(#7d8796, #414b59);
   --color-background-info: light-dark(#e8f0ff, #1c3157);
   --color-background-danger: light-dark(#fff0f0, #482428);
   --color-background-success: light-dark(#eaf7ef, #173b2a);
   --color-background-warning: light-dark(#fff5e4, #46331a);
   --color-background-disabled: light-dark(rgb(242 245 249 / 0.7), rgb(24 29 37 / 0.58));
+  /* A danger action is a solid control, not the brighter error-text ink. */
+  --action-danger-bg: light-dark(#b3353f, #963a44);
+  --action-danger-hover-bg: light-dark(#982c35, #842f39);
+  --action-danger-pressed-bg: light-dark(#82232d, #71252f);
+  --action-danger-text: #ffffff;
 
   --color-text-primary: light-dark(#171b24, #f4f7fb);
   --color-text-secondary: light-dark(#3d4655, #c9d0dc);
-  --color-text-tertiary: light-dark(#6d7788, #929dac);
+  --color-text-tertiary: light-dark(#566173, #9ca8ba);
   --color-text-inverse: light-dark(#ffffff, #11151c);
-  --color-text-ghost: light-dark(rgb(109 119 136 / 0.55), rgb(146 157 172 / 0.52));
+  --color-text-ghost: var(--color-text-tertiary);
   --color-text-info: light-dark(#315fca, #8fb1ff);
   --color-text-danger: light-dark(#b3353f, #ff9299);
   --color-text-success: light-dark(#237a4a, #75d39b);
@@ -82,9 +85,7 @@
   --color-border-warning: light-dark(#d3a25d, #9b753f);
   --color-border-disabled: light-dark(rgb(42 55 75 / 0.08), rgb(200 212 230 / 0.08));
 
-  /* 焦点环跟随主题色（--accent-bright 由 styles.css 定义、外观偏好可覆盖）；
-     回退值即出厂橙，观感与原 rgb(255 107 53 / .72) / rgb(255 126 82 / .72) 一致。 */
-  --color-ring-primary: color-mix(in srgb, var(--accent-bright, light-dark(#ff6b35, #ff7e52)) 72%, transparent);
+  /* 主焦点环由主题角色提供；语义提示环保持固定含义。 */
   --color-ring-secondary: light-dark(rgb(77 125 242 / 0.55), rgb(108 145 246 / 0.58));
   --color-ring-info: rgb(77 125 242 / 0.5);
   --color-ring-danger: light-dark(rgb(167 61 57 / 0.5), rgb(205 92 88 / 0.5));
@@ -104,10 +105,6 @@
   --shadow-md: 0 8px 24px rgb(30 46 68 / 0.11), 0 2px 6px rgb(30 46 68 / 0.06);
   --shadow-lg: 0 18px 48px rgb(18 31 50 / 0.18), 0 4px 12px rgb(18 31 50 / 0.08);
 
-  /* Anthropic brand accents, reserved for identity and primary actions. */
-  --anthropic-orange: #ff6b35;
-  --anthropic-blue: #4d7df2;
-  --anthropic-green: #37a86b;
 }
 
 html[data-color-mode="light"] { color-scheme: light; }

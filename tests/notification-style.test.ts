@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 const file = (path: string) => readFileSync(join(process.cwd(), 'src/renderer/src', path), 'utf8')
 const css = file('notifications/notifications.css'), center = file('notifications/NotificationCenter.tsx')
-const styles = file('styles.css'), theme = file('claude-theme.css'), shared = file('feedback/feedback.css')
+const styles = file('styles.css'), theme = file('foundation.css'), shared = file('feedback/feedback.css')
 const rule = (selector: string) => css.match(new RegExp(`${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{([^}]+)\\}`))?.[1]?.replace(/\s+/g, '') ?? ''
 describe('polished notification presentation contracts', () => {
   it('uses neutral framing, explicit existing font tokens and no status rail or decorative glow', () => {

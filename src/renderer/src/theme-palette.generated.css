@@ -1,0 +1,180 @@
+/* Generated from theme-palette.ts. Run npm run theme:generate; do not edit. */
+:root, html[data-accent="sg-orange"] {
+  --accent: light-dark(#a64c2c, #e5ad94);
+  --accent-deep: light-dark(#974127, #e5ad94);
+  --accent-bright: light-dark(#a64c2c, #e5ad94);
+  --action-primary-bg: #a64c2c;
+  --action-primary-hover-bg: #94452a;
+  --action-primary-pressed-bg: #823f28;
+  --action-primary-text: #ffffff;
+  --accent-bubble: #a64c2c;
+  --theme-solid-code-bg: #91442a;
+  --accent-wash: light-dark(#f9f3f1, #2a2a2f);
+  --accent-soft: light-dark(#f3e8e4, #393437);
+  --accent-selected: light-dark(#f6edea, #333033);
+  --accent-border-strong: light-dark(#a64c2c, #e5ad94);
+  --accent-border: light-dark(#d6ad9e, #765f58);
+  --accent-border-soft: light-dark(#e8d0c8, #4d4242);
+  --color-ring-primary: light-dark(#a64c2c, #e5ad94);
+  --theme-selection-bg: light-dark(#ebd8d1, #494040);
+  --theme-selection-text: light-dark(#171b24, #f4f7fb);
+  --theme-solid-selection-bg: #ffffff;
+  --theme-solid-selection-text: #a64c2c;
+  --color-background-secondary: light-dark(#efeff2, #171b23);
+  --color-background-tertiary: light-dark(#ebedf1, #0f131a);
+  --theme-backdrop: light-dark(color-mix(in srgb, #efeff2 48%, transparent), color-mix(in srgb, #171b23 42%, transparent));
+}
+
+html[data-accent="dai-blue"] {
+  --accent: light-dark(#3d628f, #a8c3e5);
+  --accent-deep: light-dark(#355781, #a8c3e5);
+  --accent-bright: light-dark(#3d628f, #a8c3e5);
+  --action-primary-bg: #3d628f;
+  --action-primary-hover-bg: #385981;
+  --action-primary-pressed-bg: #325073;
+  --action-primary-text: #ffffff;
+  --accent-bubble: #3d628f;
+  --theme-solid-code-bg: #37577f;
+  --accent-wash: light-dark(#f2f5f8, #252c36);
+  --accent-soft: light-dark(#e6ebf0, #2f3844);
+  --accent-selected: light-dark(#eceff4, #2b333e);
+  --accent-border-strong: light-dark(#3d628f, #a8c3e5);
+  --accent-border: light-dark(#a6b7cb, #5a697d);
+  --accent-border-soft: light-dark(#cdd6e2, #3d4857);
+  --color-ring-primary: light-dark(#3d628f, #a8c3e5);
+  --theme-selection-bg: light-dark(#d4dce6, #3b4553);
+  --theme-selection-text: light-dark(#171b24, #f4f7fb);
+  --theme-solid-selection-bg: #ffffff;
+  --theme-solid-selection-text: #3d628f;
+  --color-background-secondary: light-dark(#ecf0f5, #161b25);
+  --color-background-tertiary: light-dark(#e8eef4, #0e141b);
+  --theme-backdrop: light-dark(color-mix(in srgb, #ecf0f5 48%, transparent), color-mix(in srgb, #161b25 42%, transparent));
+}
+
+html[data-accent="bamboo-teal"] {
+  --accent: light-dark(#276d70, #9dd1d0);
+  --accent-deep: light-dark(#205c61, #9dd1d0);
+  --accent-bright: light-dark(#276d70, #9dd1d0);
+  --action-primary-bg: #276d70;
+  --action-primary-hover-bg: #246266;
+  --action-primary-pressed-bg: #22585c;
+  --action-primary-text: #ffffff;
+  --accent-bubble: #276d70;
+  --theme-solid-code-bg: #246164;
+  --accent-wash: light-dark(#f1f6f6, #242d34);
+  --accent-soft: light-dark(#e3ecec, #2d3a40);
+  --accent-selected: light-dark(#e9f0f1, #29343b);
+  --accent-border-strong: light-dark(#276d70, #9dd1d0);
+  --accent-border: light-dark(#9cbcbd, #557074);
+  --accent-border-soft: light-dark(#c7d9da, #3b4c51);
+  --color-ring-primary: light-dark(#276d70, #9dd1d0);
+  --theme-selection-bg: light-dark(#cfdfe0, #38484e);
+  --theme-selection-text: light-dark(#171b24, #f4f7fb);
+  --theme-solid-selection-bg: #ffffff;
+  --theme-solid-selection-text: #276d70;
+  --color-background-secondary: light-dark(#ebf0f4, #151c24);
+  --color-background-tertiary: light-dark(#e7eef3, #0e141b);
+  --theme-backdrop: light-dark(color-mix(in srgb, #ebf0f4 48%, transparent), color-mix(in srgb, #151c24 42%, transparent));
+}
+
+html[data-accent="luoshen-violet"] {
+  --accent: light-dark(#72518e, #c9b3df);
+  --accent-deep: light-dark(#63427f, #c9b3df);
+  --accent-bright: light-dark(#72518e, #c9b3df);
+  --action-primary-bg: #72518e;
+  --action-primary-hover-bg: #664a80;
+  --action-primary-pressed-bg: #5b4373;
+  --action-primary-text: #ffffff;
+  --accent-bubble: #72518e;
+  --theme-solid-code-bg: #64497e;
+  --accent-wash: light-dark(#f6f4f8, #282b36);
+  --accent-soft: light-dark(#ede8f0, #343543);
+  --accent-selected: light-dark(#f1eef4, #2f313d);
+  --accent-border-strong: light-dark(#72518e, #c9b3df);
+  --accent-border: light-dark(#beafcb, #69627b);
+  --accent-border-soft: light-dark(#dad2e2, #464455);
+  --color-ring-primary: light-dark(#72518e, #c9b3df);
+  --theme-selection-bg: light-dark(#e0d9e6, #424152);
+  --theme-selection-text: light-dark(#171b24, #f4f7fb);
+  --theme-solid-selection-bg: #ffffff;
+  --theme-solid-selection-text: #72518e;
+  --color-background-secondary: light-dark(#eeeff5, #171b25);
+  --color-background-tertiary: light-dark(#e9edf4, #0f131b);
+  --theme-backdrop: light-dark(color-mix(in srgb, #eeeff5 48%, transparent), color-mix(in srgb, #171b25 42%, transparent));
+}
+
+html[data-accent="rouge-rose"] {
+  --accent: light-dark(#96516c, #dfb1c4);
+  --accent-deep: light-dark(#85435d, #dfb1c4);
+  --accent-bright: light-dark(#96516c, #dfb1c4);
+  --action-primary-bg: #96516c;
+  --action-primary-hover-bg: #864a62;
+  --action-primary-pressed-bg: #764359;
+  --action-primary-text: #ffffff;
+  --accent-bubble: #96516c;
+  --theme-solid-code-bg: #834961;
+  --accent-wash: light-dark(#f8f4f5, #2a2a33);
+  --accent-soft: light-dark(#f1e8ec, #38353e);
+  --accent-selected: light-dark(#f5eef0, #32303a);
+  --accent-border-strong: light-dark(#96516c, #dfb1c4);
+  --accent-border: light-dark(#cfafbb, #74616e);
+  --accent-border-soft: light-dark(#e4d2d9, #4c434e);
+  --color-ring-primary: light-dark(#96516c, #dfb1c4);
+  --theme-selection-bg: light-dark(#e8d9df, #48414b);
+  --theme-selection-text: light-dark(#171b24, #f4f7fb);
+  --theme-solid-selection-bg: #ffffff;
+  --theme-solid-selection-text: #96516c;
+  --color-background-secondary: light-dark(#efeff4, #171b24);
+  --color-background-tertiary: light-dark(#eaedf3, #0f131a);
+  --theme-backdrop: light-dark(color-mix(in srgb, #efeff4 48%, transparent), color-mix(in srgb, #171b24 42%, transparent));
+}
+
+html[data-accent="ink-jade"] {
+  --accent: light-dark(#536271, #bdc8d4);
+  --accent-deep: light-dark(#455361, #bdc8d4);
+  --accent-bright: light-dark(#536271, #bdc8d4);
+  --action-primary-bg: #536271;
+  --action-primary-hover-bg: #4b5967;
+  --action-primary-pressed-bg: #43505d;
+  --action-primary-text: #ffffff;
+  --accent-bubble: #536271;
+  --theme-solid-code-bg: #4a5765;
+  --accent-wash: light-dark(#f4f5f6, #272c35);
+  --accent-soft: light-dark(#e9ebed, #323841);
+  --accent-selected: light-dark(#eeeff1, #2d333c);
+  --accent-border-strong: light-dark(#536271, #bdc8d4);
+  --accent-border: light-dark(#b0b7be, #646c76);
+  --accent-border-soft: light-dark(#d2d6da, #434953);
+  --color-ring-primary: light-dark(#536271, #bdc8d4);
+  --theme-selection-bg: light-dark(#d9dce0, #40464f);
+  --theme-selection-text: light-dark(#171b24, #f4f7fb);
+  --theme-solid-selection-bg: #ffffff;
+  --theme-solid-selection-text: #536271;
+  --color-background-secondary: light-dark(#ecf0f4, #161b25);
+  --color-background-tertiary: light-dark(#e8eef3, #0f141b);
+  --theme-backdrop: light-dark(color-mix(in srgb, #ecf0f4 48%, transparent), color-mix(in srgb, #161b25 42%, transparent));
+}
+
+.appearance-accent__swatch[data-accent-choice="sg-orange"] {
+  --choice-fill: light-dark(#a64c2c, #e5ad94);
+}
+
+.appearance-accent__swatch[data-accent-choice="dai-blue"] {
+  --choice-fill: light-dark(#3d628f, #a8c3e5);
+}
+
+.appearance-accent__swatch[data-accent-choice="bamboo-teal"] {
+  --choice-fill: light-dark(#276d70, #9dd1d0);
+}
+
+.appearance-accent__swatch[data-accent-choice="luoshen-violet"] {
+  --choice-fill: light-dark(#72518e, #c9b3df);
+}
+
+.appearance-accent__swatch[data-accent-choice="rouge-rose"] {
+  --choice-fill: light-dark(#96516c, #dfb1c4);
+}
+
+.appearance-accent__swatch[data-accent-choice="ink-jade"] {
+  --choice-fill: light-dark(#536271, #bdc8d4);
+}

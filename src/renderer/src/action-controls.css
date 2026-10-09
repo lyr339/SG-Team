@@ -1,0 +1,32 @@
+/* Solid, non-destructive actions share states, not layout. The guards keep
+   disabled/busy/danger behaviour owned by existing components. Soft actions
+   (for example update links) deliberately retain their quieter presentation. */
+:where(
+  .primary-button, .run-panel .run-section-head > .run-new-batch,
+  .lobby-account__save, .cursor-model-dialog > footer > button,
+  .composer-submit > button, .cursor-question__confirm,
+  .v2-module-header > button, .v2-module-header__actions > .is-primary,
+  .fresh-empty__actions > button:first-child, .storage-cleanup__button.is-primary, .run-sheet__confirm,
+  .account-browser__key-input > button:not(.is-secondary),
+  .account-aozai__setup button, .account-aozai__manual button,
+  .handoff-dialog > footer button:last-child, .handoff-done footer button:last-child,
+  .task-review-actions button:first-child, .attachment-lightbox__actions button.is-primary,
+  .memory-inspection button.memory-review-primary
+):not(.is-danger):not(:disabled):not([aria-disabled="true"]):not([aria-busy="true"]) {
+  &:hover { color:var(--action-primary-text); background:var(--action-primary-hover-bg); border-color:var(--action-primary-hover-bg); filter:none; opacity:1; }
+  &:active { color:var(--action-primary-text); background:var(--action-primary-pressed-bg); border-color:var(--action-primary-pressed-bg); filter:none; opacity:1; }
+  &:focus-visible { outline:2px solid var(--color-ring-primary); outline-offset:3px; box-shadow:0 0 0 3px var(--surface-solid); }
+  @media (prefers-reduced-motion:reduce) { transition:none; transform:none; }
+}
+
+/* The neutral default focus belongs to the palette too; component-specific
+   replacements still win. Never suppress keyboard focus without replacement. */
+button:focus-visible, a[href]:focus-visible { outline:2px solid var(--color-ring-primary); outline-offset:2px; box-shadow:0 0 0 2px var(--surface-solid); }
+
+:where(.run-sheet__confirm.is-danger, .task-cancel.is-confirming,
+  .task-reject-box button:last-child, .inspector-confirm button.is-danger):not(:disabled):not([aria-disabled="true"]):not([aria-busy="true"]) {
+  &:hover { color:var(--action-danger-text); background:var(--action-danger-hover-bg); border-color:var(--action-danger-hover-bg); }
+  &:active { color:var(--action-danger-text); background:var(--action-danger-pressed-bg); border-color:var(--action-danger-pressed-bg); }
+  &:focus-visible { outline:2px solid var(--color-text-danger); outline-offset:3px; box-shadow:0 0 0 3px var(--surface-solid); }
+  @media (prefers-reduced-motion:reduce) { transition:none; transform:none; }
+}

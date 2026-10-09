@@ -195,7 +195,7 @@
 
 .stats-card {
   min-width: 0;
-  background: var(--surface);
+  background: var(--readable-surface);
   border: 1px solid var(--color-border-tertiary);
   border-radius: 14px;
   box-shadow: var(--shadow-hairline);
@@ -205,7 +205,7 @@
   align-content: start;
 }
 
-html[data-card-transparency="clear"] .stats-card { background: color-mix(in srgb, var(--surface-solid) 74%, transparent); }
+html[data-card-transparency="clear"] .stats-card { background: var(--readable-surface); }
 
 .stats-card > header {
   display: flex;

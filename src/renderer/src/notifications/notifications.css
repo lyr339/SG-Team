@@ -73,11 +73,11 @@
 .notification-preference strong { display:block; font-size:var(--font-text-sm-size); font-weight:500; line-height:1.6; }
 .notification-preference small { display:block; margin-top:3px; color:var(--muted); font-size:var(--font-text-xs-size); line-height:1.7; text-wrap:pretty; }
 .notification-preference > input { position:absolute; right:0; width:36px; height:30px; margin:0; opacity:0; cursor:inherit; }
-.notification-preference > i { --switch-width:34px; --switch-height:20px; --switch-thumb-size:14px; --switch-edge:var(--line-strong); background:var(--surface-soft); pointer-events:none; transition:background 140ms ease; }
-.notification-preference > i::after { content:''; background:var(--muted); transition:transform 160ms ease,background 140ms ease; }
-.notification-preference > input:checked + i { --switch-edge:var(--accent-deep); background:var(--accent-deep); }
-.notification-preference > input:checked + i::after { background:var(--color-text-inverse); }
-.notification-preference > input:focus-visible + i { outline:2px solid var(--color-ring-primary); outline-offset:3px; }
+.notification-preference > i { --switch-width:34px; --switch-height:20px; --switch-thumb-size:14px; --switch-edge:var(--line-strong); background:var(--color-control-track); pointer-events:none; transition:background 140ms ease; }
+.notification-preference > i::after { content:''; background:var(--color-control-thumb); transition:transform 160ms ease,background 140ms ease; }
+.notification-preference > input:checked + i { --switch-edge:var(--accent-border-strong); background:var(--action-primary-bg); }
+.notification-preference > input:checked + i::after { background:var(--action-primary-text); }
+.notification-preference > input:focus-visible + i { outline:2px solid var(--color-ring-primary); outline-offset:3px; box-shadow:0 0 0 3px var(--surface-solid); }
 .notification-preference:has(input:disabled) { cursor:default; }
 .notification-preference > input:disabled + i { opacity:.5; }
 .notification-preferences__note { margin:3px 0 7px; color:var(--muted); font-size:var(--font-text-xs-size); line-height:1.7; }
@@ -96,7 +96,7 @@
 .notification-category-table td label { display:flex; align-items:center; justify-content:center; min-height:40px; cursor:pointer; }
 .notification-category-table input { appearance:none; position:relative; width:17px; height:17px; margin:0; border:1px solid var(--line-strong); border-radius:4px; background:var(--surface-solid); cursor:inherit; transition:background 120ms ease,border-color 120ms ease; }
 .notification-category-table input:checked { background:var(--accent-deep); border-color:var(--accent-deep); }
-.notification-category-table input:checked::after { content:''; position:absolute; left:5px; top:2px; width:4px; height:8px; border-right:1.8px solid var(--color-text-inverse); border-bottom:1.8px solid var(--color-text-inverse); transform:rotate(45deg); }
+.notification-category-table input:checked::after { content:''; position:absolute; left:5px; top:2px; width:4px; height:8px; border-right:1.8px solid var(--action-primary-text); border-bottom:1.8px solid var(--action-primary-text); transform:rotate(45deg); }
 .notification-category-table input:disabled { opacity:.5; cursor:default; }
 .notification-preferences__save { position:sticky; bottom:0; margin:12px -18px 0; padding:11px 18px; border-top:1px solid var(--line); background:var(--surface-solid); color:var(--muted); font-size:var(--font-text-xs-size); line-height:1.5; }
 .notification-session-preference { display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; margin:13px 0 3px; padding-top:12px; border-top:1px solid var(--line-faint); color:var(--muted); font-size:var(--font-text-xs-size); }

@@ -218,7 +218,7 @@
   height: 28px; padding: 0 12px; border-radius: 7px; font-size: var(--fs-11); font-weight: 600;
   border: 1px solid var(--color-border-secondary); background: var(--surface-solid); color: var(--text);
 }
-.inspector-confirm button.is-danger { color: var(--color-text-inverse); background: var(--color-text-danger); border-color: transparent; }
+.inspector-confirm button.is-danger { color: var(--action-danger-text); background: var(--action-danger-bg); border-color: transparent; }
 .inspector-confirm button:focus-visible { outline: 2px solid var(--color-ring-primary); outline-offset: 1px; }
 
 /* 图标按钮的统一形态：有类名的直接用 .inspector-icon-button，文件行 / hunk 头的按钮沿用结构选择器。 */
