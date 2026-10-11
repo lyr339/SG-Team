@@ -1,8 +1,8 @@
 name: CI
 
+# PR 验证；版本标签由 Release 覆盖，不在同一发布提交上重复跑 main CI。
+
 on:
-  push:
-    branches: [main]
   pull_request:
 
 concurrency:
@@ -17,8 +17,8 @@ jobs:
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: npm

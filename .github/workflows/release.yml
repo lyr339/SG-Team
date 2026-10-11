@@ -9,11 +9,12 @@ permissions:
 
 jobs:
   mac:
+    name: macOS
     runs-on: macos-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: npm
@@ -21,9 +22,10 @@ jobs:
         run: test "$GITHUB_REF_NAME" = "v$(node -p "require('./package.json').version")"
       - run: npm ci
       - run: npm test
+      - run: npm run lint:dead
       - run: node node_modules/electron/install.js
-      # dist:mac 内含 build / typecheck、签名与 zip 打包。
       - run: npm run dist:mac
+      - run: npm run smoke:channel
       - run: npm run smoke:wire:packaged
       - uses: actions/upload-artifact@v4
         with:
@@ -32,55 +34,50 @@ jobs:
           if-no-files-found: error
 
   windows:
+    name: Windows · 发布
+    # 发布只消费本次已通过的 macOS 包，不轮询、不创建半成品 Release。
+    needs: mac
     runs-on: windows-latest
     timeout-minutes: 30
+    permissions:
+      contents: write
+      actions: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: npm
+      - name: 检查版本标签
+        shell: bash
+        run: test "$GITHUB_REF_NAME" = "v$(node -p "require('./package.json').version")"
       - run: npm ci
       - run: npm test
+      - run: npm run lint:dead
       - run: node node_modules/electron/install.js
-      # pack:win 内含 build / typecheck。
       - run: npm run pack:win
+      - run: npm run smoke:channel
       - run: npm run smoke:wire:packaged
-      - uses: actions/upload-artifact@v4
-        with:
-          name: shiguang-windows-x64
-          path: |
-            release/*.exe
-            release/*.exe.blockmap
-            release/latest.yml
-          if-no-files-found: error
-
-  publish:
-    needs: [mac, windows]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
+          name: shiguang-mac-arm64
           path: artifacts
-          merge-multiple: true
-      - name: 检查双平台产物
+      - name: 检查双平台产物并生成更新清单
+        shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
+          cp release/*.exe release/*.exe.blockmap release/latest.yml artifacts/
           test -s "artifacts/ShiGuang-${version}-mac-arm64.zip"
           test -s "artifacts/ShiGuang-Setup-${version}.exe"
           test -s "artifacts/ShiGuang-Setup-${version}.exe.blockmap"
           test -s artifacts/latest.yml
-      - name: 生成更新清单
-        run: |
           awk '/^## / { section++; if (section > 1) exit } section == 1 { print }' .github/release-notes.md > current-release-notes.md
           node scripts/update-manifest.mjs \
-            --version "${GITHUB_REF_NAME#v}" --tag "$GITHUB_REF_NAME" \
+            --version "$version" --tag "$GITHUB_REF_NAME" \
             --notes current-release-notes.md --assets artifacts --out artifacts/update-manifest.json \
             --repo "$GITHUB_REPOSITORY"
       - name: 发布
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

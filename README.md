@@ -115,7 +115,7 @@ npm run preview:ui
 
 ### 发布流程
 
-版本号、锁文件与 `.github/release-notes.md` 同步更新后，推送对应的 `v<版本>` 标签。Release 工作流在 macOS、Windows 上分别验证并打包，两端成功后才发布安装包与应用内更新清单；无需手动上传散落的构建文件。
+版本号、锁文件与 `.github/release-notes.md` 同步更新后，推送对应的 `v<版本>` 标签。发版只运行两个检查：macOS、Windows。macOS 验证并打包后，Windows 接续验证、打包并统一发布安装包与更新清单；任何一步失败都不发布。日常 PR 另跑 CI，主分支发布提交不再重复跑一套验证。
 
 ## 技术文档
 
