@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import {
   closeSync,
   existsSync,
@@ -97,6 +98,8 @@ interface TranscriptSignals {
 interface CachedTranscriptSignals extends TranscriptSignals {
   path: string
   fileVersion: string
+  contentHash: string
+  checkedAt: number
   modifiedAt: number
 }
 
@@ -112,7 +115,7 @@ function sqliteFileChangeCounter(path: string): number | undefined {
     return readSync(fd, bytes, 0, 4, 24) === 4 ? bytes.readUInt32BE(0) : undefined
   } finally { closeSync(fd) }
 }
-interface TranscriptFile { path: string; modifiedAt: number; composerId: string; fileVersion: string }
+interface TranscriptFile { path: string; modifiedAt: number; composerId: string }
 
 
 export interface CursorComposerTelemetryPaths {
@@ -1220,7 +1223,7 @@ function listTranscriptFiles(projectsRoot: string): TranscriptFile[] {
       const candidate = join(transcriptsRoot, composerDir, `${composerDir}.jsonl`)
       try {
         const stat = statSync(candidate, { throwIfNoEntry: false })
-        if (stat?.isFile()) files.push({ path: candidate, modifiedAt: stat.mtimeMs, composerId: composerDir, fileVersion: fileVersion(stat) })
+        if (stat?.isFile()) files.push({ path: candidate, modifiedAt: stat.mtimeMs, composerId: composerDir })
       } catch {
         // 转录在扫描期间被清理——跳过
       }
@@ -1398,7 +1401,6 @@ export class CursorComposerTelemetryReader implements CursorComposerTelemetrySou
   private readonly paths: CursorComposerTelemetryPaths
   private readonly now: () => number
   private readonly transcriptSignalCache = new Map<string, CachedTranscriptSignals>()
-  private readonly channelSignalCache = new Map<string, TranscriptSignals & { path: string; fileVersion: string }>()
   private readonly channelActivityPollMs: number
   private readonly transcriptIndexTtlMs: number
   private channelActivityRun?: {
@@ -1671,14 +1673,26 @@ export class CursorComposerTelemetryReader implements CursorComposerTelemetrySou
   }
 
   private channelTranscriptSignals(file: TranscriptFile): TranscriptSignals {
-    const { path, modifiedAt } = file
-    const cached = this.channelSignalCache.get(path)
-    if (cached && cached.fileVersion === file.fileVersion) return cached
-    const signals = extractTranscriptSignals(transcriptMarkerWindow(path))
-    signals.modifiedAt = modifiedAt
-    if (this.channelSignalCache.size >= MAX_TRANSCRIPT_SIGNAL_CACHE) this.channelSignalCache.clear()
-    this.channelSignalCache.set(path, { ...signals, path, fileVersion: file.fileVersion })
-    return signals
+    return this.readTranscriptFile(file.path, this.now()) ?? emptyTranscriptSignals()
+  }
+
+  /** Filesystem timestamps can collide (notably short NTFS rewrites). Recheck
+   * the existing bounded head/tail window on the index cadence, not every read.
+   * Channel evidence and composer/snapshot dependencies share this one cache. */
+  private readTranscriptFile(path: string, now: number): CachedTranscriptSignals | undefined {
+    try {
+      const stat = statSync(path), version = fileVersion(stat)
+      const cached = this.transcriptSignalCache.get(path)
+      if (cached?.fileVersion === version && now >= cached.checkedAt
+        && now - cached.checkedAt < Math.max(1, this.transcriptIndexTtlMs)) return cached
+      const text = transcriptMarkerWindow(path)
+      const contentHash = createHash('sha256').update(text).digest('hex')
+      const signals = cached?.contentHash === contentHash ? cached : extractTranscriptSignals(text)
+      const result = { ...signals, path, fileVersion: version, contentHash, checkedAt: now, modifiedAt: stat.mtimeMs }
+      if (!cached && this.transcriptSignalCache.size >= MAX_TRANSCRIPT_SIGNAL_CACHE) this.transcriptSignalCache.clear()
+      this.transcriptSignalCache.set(path, result)
+      return result
+    } catch { return undefined }
   }
 
   /**
@@ -1956,52 +1970,22 @@ export class CursorComposerTelemetryReader implements CursorComposerTelemetrySou
     return result
   }
 
-  /** Existing transcript dependency stat also rejects restored equal-length files. */
+  /** A matching stat alone is insufficient on coarse filesystem clocks. */
   private transcriptDepsFresh(deps: Array<{ path: string; fileVersion: string }>): boolean {
-    for (const dep of deps) {
-      try {
-        const stat = statSync(dep.path)
-        if (fileVersion(stat) !== dep.fileVersion) return false
-      } catch {
-        return false
-      }
-    }
-    return true
-  }
-
-  /** 记录本轮计算实际读取的转录文件（供下轮缓存判定；与调用处已有的 statSync 共享结果）。 */
-  private noteTranscriptDep(path: string, stat: Stats): void {
-    this.transcriptDepsCollector?.push({ path, fileVersion: fileVersion(stat) })
+    const now = this.now()
+    return deps.every(dep => {
+      const current = this.readTranscriptFile(dep.path, now)
+      return current !== undefined && `${current.fileVersion}:${current.contentHash}` === dep.fileVersion
+    })
   }
 
   private readTranscriptSignals(workspacePaths: string[], composer: ParsedComposer, now: number): TranscriptSignals {
     const path = this.transcriptPathOf(workspacePaths, composer.telemetry.composerId, now)
     if (!path) return emptyTranscriptSignals()
-    try {
-      const stat = statSync(path)
-      this.noteTranscriptDep(path, stat)
-      const cached = this.transcriptSignalCache.get(composer.telemetry.composerId)
-      if (
-        cached &&
-        cached.path === path &&
-        cached.fileVersion === fileVersion(stat)
-      ) return cached
-
-      const signals = extractTranscriptSignals(transcriptMarkerWindow(path))
-      signals.modifiedAt = stat.mtimeMs
-      if (this.transcriptSignalCache.size >= MAX_TRANSCRIPT_SIGNAL_CACHE) {
-        this.transcriptSignalCache.clear()
-      }
-      this.transcriptSignalCache.set(composer.telemetry.composerId, {
-        ...signals,
-        path,
-        fileVersion: fileVersion(stat),
-        modifiedAt: stat.mtimeMs
-      })
-      return signals
-    } catch {
-      return emptyTranscriptSignals()
-    }
+    const signals = this.readTranscriptFile(path, now)
+    if (!signals) return emptyTranscriptSignals()
+    this.transcriptDepsCollector?.push({ path, fileVersion: `${signals.fileVersion}:${signals.contentHash}` })
+    return signals
   }
 
 
