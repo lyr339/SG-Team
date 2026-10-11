@@ -6,6 +6,11 @@ const css = file('notifications/notifications.css'), center = file('notification
 const styles = file('styles.css'), theme = file('foundation.css'), shared = file('feedback/feedback.css')
 const rule = (selector: string) => css.match(new RegExp(`${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{([^}]+)\\}`))?.[1]?.replace(/\s+/g, '') ?? ''
 describe('polished notification presentation contracts', () => {
+  it('uses the computed anchor width rather than an independent CSS width budget', () => {
+    expect(file('notifications/NotificationSystem.tsx')).toContain('width: position.width')
+    expect(rule('.notification-panel-anchor')).not.toMatch(/(?:^|;)width:/)
+    expect(rule('.notification-panel-anchor')).toContain('max-width:calc(100vw-24px)')
+  })
   it('uses neutral framing, explicit existing font tokens and no status rail or decorative glow', () => {
     for (const selector of ['.notification-panel', '.notification-toast']) {
       const block = rule(selector)

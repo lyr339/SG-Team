@@ -13,6 +13,14 @@ const update = readFileSync(join(process.cwd(), 'src/renderer/src/settings/updat
 const feedback = readFileSync(join(process.cwd(), 'src/renderer/src/feedback/feedback.css'), 'utf8')
 
 describe('theme surface contracts', () => {
+  it('keeps settings section explanations readable instead of silently truncating them', () => {
+    const description=settings.match(/\.settings-section__title small\s*\{([^}]+)\}/)?.[1]??''
+    expect(description).toContain('white-space: normal')
+    expect(description).toContain('overflow-wrap: anywhere')
+    expect(description).not.toContain('ellipsis')
+    expect(description).not.toContain('overflow: hidden')
+  })
+
   it('keeps the update reminder frame neutral and uniform, reserving accent for its action', () => {
     const card = notifications.match(/\.notification-toast\s*\{([^}]*)\}/)?.[1]?.replace(/\s+/g, '') ?? ''
     expect(card).toContain('background:var(--surface-solid)')

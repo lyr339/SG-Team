@@ -1,5 +1,5 @@
 import { DisclosureSummary } from '../DisclosureSummary'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { protocolBucketLabel, recordReceipt, type ProtocolModel, type ProtocolRecord, type ProtocolSnapshot } from '../../../domain/cursor-protocol'
 import { SettingsSection } from './SettingsSection'
 import './protocol.css'
@@ -21,21 +21,27 @@ export function SettingsProtocol({ active, onAccounts, onNative }: { active: boo
   const [tab,setTab]=useState<'experiments'|'records'|'models'|'quota'>('experiments')
   const [busy,setBusy]=useState<'load'|'import'|'quota'|null>(null)
   const [error,setError]=useState(''),[notice,setNotice]=useState(''),[search,setSearch]=useState('')
+  const mounted=useRef(true), actionPending=useRef(false)
+  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false}},[])
   const rows=snapshot.capture?.records??[]
   const row=rows.find(row=>row.id===selected)??rows.at(-1)
   useEffect(()=>{
-    if(!active||!window.sgDesktop?.getCursorProtocolSnapshot)return
+    // Hidden settings stay mounted. Re-entering must not race a local snapshot
+    // read against the import/quota operation the user already started.
+    if(!active||actionPending.current||!window.sgDesktop?.getCursorProtocolSnapshot)return
     let alive=true;setBusy('load')
     window.sgDesktop.getCursorProtocolSnapshot().then(value=>{if(alive){setSnapshot(value);setError('')}}).catch(()=>{if(alive)setError('无法读取本机协议记录，原文件未覆盖。')}).finally(()=>{if(alive)setBusy(null)})
     return()=>{alive=false}
   },[active])
   async function run(action:'import'|'quota'):Promise<void>{
+    if(actionPending.current)return
     const api=window.sgDesktop,method=action==='import'?api?.importCursorProtocolCapture:api?.checkCursorProtocolQuota
     if(!method){setError('当前运行版本尚未接入协议诊断接口。');return}
+    actionPending.current=true
     setBusy(action);setError('');setNotice('')
-    try{const value=await method();if(value){setSnapshot(value);setNotice(action==='import'?'脱敏记录已保存到本机。':'额度接口已读取；未发送模型请求，未改动登录态或收费设置。')}}
-    catch(e){setError(e instanceof Error?e.message:'操作未完成，原记录保留。')}
-    finally{setBusy(null)}
+    try{const value=await method();if(value&&mounted.current){setSnapshot(value);setNotice(action==='import'?'脱敏记录已保存到本机。':'额度接口已读取；未发送模型请求，未改动登录态或收费设置。')}}
+    catch(e){if(mounted.current)setError(e instanceof Error?e.message:'操作未完成，原记录保留。')}
+    finally{actionPending.current=false;if(mounted.current)setBusy(null)}
   }
   return <div className="protocol-page">
     {tab!=='experiments'?<><div className="protocol-tools">

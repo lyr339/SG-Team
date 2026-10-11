@@ -2,6 +2,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { SettingsMaintenance } from '../src/renderer/src/settings/SettingsMaintenance'
 import { DEFAULT_ACCOUNT_AUTOMATION_SETTINGS } from '../src/domain/account-automation'
 import { SettingsPage as LobbyAccountTile } from '../src/renderer/src/settings/SettingsPage'
 import type { SettingsPageProps as LobbyAccountTileProps } from '../src/renderer/src/settings/settings-view'
@@ -200,4 +201,16 @@ describe('Cursor 本机维护操作', () => {
     expect(install).toHaveBeenCalledTimes(1)
     expect(container.querySelector('input[aria-label="关闭 Cursor 自动更新"]')!.closest('.settings-row')!.querySelector('button')).toBeNull()
   })
+  it('detects only on entering maintenance and coalesces re-entry while the same detection is pending',async()=>{
+    let finish!:()=>void
+    const refresh=vi.fn(()=>new Promise<void>(done=>{finish=done}))
+    const render=(active:boolean)=>root.render(<SettingsMaintenance active={active} onRefreshSwitchPumpStatus={refresh}/>)
+    await act(async()=>render(false));expect(refresh).not.toHaveBeenCalled()
+    await act(async()=>render(true));expect(refresh).toHaveBeenCalledTimes(1)
+    await act(async()=>render(false));await act(async()=>render(true));expect(refresh).toHaveBeenCalledTimes(1)
+    await act(async()=>finish())
+    await act(async()=>render(false));await act(async()=>render(true));expect(refresh).toHaveBeenCalledTimes(2)
+    await act(async()=>finish())
+  })
+
 })

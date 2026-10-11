@@ -1,5 +1,5 @@
 import { DisclosureChevron } from './DisclosureSummary'
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ProcessBlock } from '../../domain/conversation-entry'
 import { MessageImage } from './AttachmentImageViewer'
 import { tokenizeCodeLine } from './code-tokenizer'
@@ -35,6 +35,15 @@ interface ProcessTurnCardProps {
    * 这个退化判据会把观看者眼前到达的第一帧当成历史，所以会话视图应显式传入。
    */
   hydratedBlockIds?: ReadonlySet<string>
+}
+
+/** Archived, never-opened turns need a summary, not thousands of hidden DOM
+ * nodes. Once visible (including live/pending-question states), retain the
+ * children so folding never resets per-step expansion, playback or scroll. */
+function RetainedProcessFlow({ visible, children }: { visible: boolean; children: React.ReactNode }): React.JSX.Element {
+  const [mounted, setMounted] = useState(visible)
+  useLayoutEffect(() => { if (visible && !mounted) setMounted(true) }, [visible, mounted])
+  return <div className="cursor-native-process__flow" hidden={!visible}>{visible || mounted ? children : null}</div>
 }
 
 function formatDuration(milliseconds?: number): string {
@@ -704,14 +713,14 @@ function ProcessTurnCardImpl({
             {turnState === 'worked' && !pendingQuestion ? <DisclosureChevron open={flowOpen} /> : null}
           </button>
         ) : null}
-        <div className="cursor-native-process__flow" hidden={!flowOpen}>
+        <RetainedProcessFlow visible={flowOpen}>
           {truncatedItemCount > 0 ? (
             <div className="cursor-native-process__truncated" role="note">原生回合过长，较早的 {truncatedItemCount} 个步骤已折叠</div>
           ) : null}
           {items.map((item, index) => item.kind === 'group'
             ? renderGroup(item, index === items.length - 1)
             : renderStep(item.step, false))}
-        </div>
+        </RetainedProcessFlow>
       </section>
     )
   }

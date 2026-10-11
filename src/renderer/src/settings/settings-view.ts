@@ -191,8 +191,10 @@ export interface SettingsPageProps {
   onClearProcessingCredential?: (providerId: ProcessingProviderId) => Promise<void>
   onRefreshProcessingBalance?: (providerId: ProcessingProviderId) => Promise<void>
   onProcessAccount?: (providerId: ProcessingProviderId, accountId: string) => Promise<void>
-  /** 手动模式：用户粘贴任意 Session Token 直接提交处理（独立于自动化，不触发加固/删除/换号；token 不持久化）。 */
-  onProcessToken?: (providerId: ProcessingProviderId, token: string) => Promise<void>
+  /** 手动处理独立于自动化，不触发加固/删除/换号，token 不持久化。
+   * 返回 false 表示父级已展示失败，表单保留输入以便重试；void 兼容原成功回调。 */
+  onProcessToken?: (providerId: ProcessingProviderId, token: string) => Promise<boolean | void>
+  automationSettingsSaveError?: string
   automationSettings?: AccountAutomationSettings
   automationRun?: AccountAutomationRun
   /** 指纹浏览器窗口列表（账号自动化链的浏览器宿主，用户按当次网络选择）。 */

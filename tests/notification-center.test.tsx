@@ -48,6 +48,27 @@ describe('notification center real-ledger interactions', () => {
       } else expect(frame.selected).toBe('全部')
     }
   })
+  it('refreshes relative clocks when returning to the window without reloading data or replacing rows', async () => {
+    const time = Date.now(), page = repository.page()
+    vi.mocked(api.getNotificationPage).mockResolvedValueOnce({...page, records:page.records.map(record=>({...record,occurredAt:time}))})
+    const visibility = Object.getOwnPropertyDescriptor(document, 'visibilityState')
+    Object.defineProperty(document, 'visibilityState', {configurable:true,value:'visible'})
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(time)
+    try {
+      await act(async () => root.render(<NotificationCenter key="clock" store={store} workspaceId="a" onClose={() => {}} onNavigate={async () => {}} />))
+      const label = host.querySelector('.notification-row time')!, calls = vi.mocked(api.getNotificationPage).mock.calls.length
+      expect(label.textContent).toBe('刚刚')
+      clock.mockReturnValue(time + 90_000)
+      await act(async () => document.dispatchEvent(new Event('visibilitychange')))
+      expect(label.textContent).toBe('1 分钟前')
+      expect(host.querySelector('.notification-row time')).toBe(label)
+      expect(api.getNotificationPage).toHaveBeenCalledTimes(calls)
+    } finally {
+      clock.mockRestore()
+      if (visibility) Object.defineProperty(document, 'visibilityState', visibility)
+      else Reflect.deleteProperty(document, 'visibilityState')
+    }
+  })
   it('keeps the settled tab, exact opened body and scope label during a slow switch, but freezes old actions', async () => {
     await click('批量发起结束')
     const panel = host.querySelector('.notification-panel'), detail = host.querySelector('.notification-row__detail')
@@ -204,6 +225,39 @@ describe('notification center real-ledger interactions', () => {
     await click('清理已读…'); await click('清理已读')
     expect(api.clearReadNotifications).toHaveBeenCalledWith({ query: {}, confirmed: true })
     expect(repository.page().summary.total).toBe(1); expect(repository.page().summary.pending).toBe(1)
+    expect(document.activeElement).toBe(button('提醒设置'))
+  })
+  it('focuses cancel in clear confirmation and Escape returns to its opener without clearing or escaping the center', async () => {
+    await click('全部已读')
+    await click('清理已读…')
+    expect(document.activeElement).toBe(button('取消'))
+    const outside = vi.fn()
+    document.addEventListener('keydown', outside)
+    try {
+      await act(async () => button('取消').dispatchEvent(new KeyboardEvent('keydown', {key:'Escape',bubbles:true,cancelable:true})))
+      expect(host.querySelector('.notification-confirm')).toBeNull()
+      expect(document.activeElement).toBe(button('清理已读…'))
+      expect(outside).not.toHaveBeenCalled()
+      expect(api.clearReadNotifications).not.toHaveBeenCalled()
+    } finally { document.removeEventListener('keydown', outside) }
+  })
+  it('closing a confirmation after a filter switch does not steal focus from that filter', async () => {
+    await click('全部已读'); await click('清理已读…')
+    const tab = button('待处理'); tab.focus()
+    await click('待处理')
+    expect(host.querySelector('.notification-confirm')).toBeNull()
+    expect(document.activeElement).toBe(tab)
+    expect(api.clearReadNotifications).not.toHaveBeenCalled()
+  })
+  it('an older archive completion cannot collapse the different notification the user is now reading', async () => {
+    const archived = repository.page().records.find(record => record.title === '批量发起结束')!
+    let finish!: (value: Awaited<ReturnType<NotificationApi['archiveNotification']>>) => void
+    vi.mocked(api.archiveNotification).mockImplementationOnce(() => new Promise(resolve => {finish=resolve}))
+    await click('批量发起结束'); await click('归档')
+    await click('请回答问卷')
+    expect(button('请回答问卷').getAttribute('aria-expanded')).toBe('true')
+    await act(async () => finish(repository.archive(archived.id, Date.now())))
+    expect(button('请回答问卷').getAttribute('aria-expanded')).toBe('true')
   })
   it('tabs support arrow-key navigation and only the selected tab is in the normal Tab order', async () => {
     const tabs = [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
@@ -218,6 +272,29 @@ describe('notification center real-ledger interactions', () => {
     await act(async () => checkbox.click())
     expect(repository.preferences().quiet).toBe(true)
     expect(vi.mocked(api.getNotificationPage).mock.calls.length).toBe(count)
+  })
+  it('keeps keyboard focus in the list when the last-page button disappears without moving scroll', async () => {
+    for (let index = 0; index < 40; index++) repository.put(draft({ key: `focus:${index}`, title: `结果 ${index}` }), Date.now())
+    await click('未读')
+    const list = host.querySelector<HTMLElement>('[role="tabpanel"]')!
+    list.scrollTop = 320
+    button('查看更多').focus()
+    await click('查看更多')
+    expect(host.querySelectorAll('.notification-row')).toHaveLength(42)
+    expect(button('查看更多')).toBeUndefined()
+    expect(document.activeElement).toBe(list)
+    expect(list.scrollTop).toBe(320)
+  })
+  it('a last page arriving late does not steal focus from another control', async () => {
+    for (let index = 0; index < 40; index++) repository.put(draft({ key: `focus-late:${index}`, title: `结果 ${index}` }), Date.now())
+    await click('未读')
+    let resolve!: (value: NotificationPage) => void, held!: NotificationPage
+    vi.mocked(api.getNotificationPage).mockImplementationOnce(query => { held = repository.page(query); return new Promise(done => { resolve = done }) })
+    button('查看更多').focus()
+    await click('查看更多')
+    button('提醒设置').focus()
+    await act(async () => resolve(held))
+    expect(document.activeElement).toBe(button('提醒设置'))
   })
   it('a delayed second page cannot erase the confirmed read count/style of a row already on the first page', async () => {
     for (let index = 0; index < 40; index++) repository.put(draft({ key: `large:${index}`, title: `原结果 ${index}` }), Date.now())

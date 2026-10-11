@@ -63,8 +63,8 @@ export function SettingsAozai({
     const token = manualToken.trim()
     if (!token) return
     try {
-      await onProcessToken(providerId, token)
-      setManualToken('')
+      const succeeded = await onProcessToken(providerId, token)
+      if (succeeded !== false) setManualToken('')
     } catch {
       // 错误由父级展示
     }

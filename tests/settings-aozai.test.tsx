@@ -111,4 +111,11 @@ describe('处理服务设置', () => {
     await render(propsFor({ onProcessToken: undefined }))
     expect(container.querySelector('.account-aozai__manual')).toBeNull()
   })
+  it('preserves the manual token when the parent reports a handled unsuccessful result',async()=>{
+    const onProcess=vi.fn().mockResolvedValue(false)
+    await render(propsFor({onProcessToken:onProcess}));await typeToken('user_abc::jwt-token')
+    await act(async()=>manualButton().click())
+    expect(manualTextarea().value).toBe('user_abc::jwt-token')
+  })
+
 })

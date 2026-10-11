@@ -92,13 +92,19 @@ export function InspectorSkeleton({ rows = 3, mono = false }: { rows?: number; m
 export function useTransientFeedback(): [string, (message: string) => void] {
   const [value, setValue] = useState('')
   const timer = useRef<number | undefined>(undefined)
-  useEffect(() => () => {
-    if (timer.current) window.clearTimeout(timer.current)
+  const alive = useRef(true)
+  useEffect(() => {
+    alive.current = true
+    return () => {
+      alive.current = false
+      if (timer.current !== undefined) window.clearTimeout(timer.current)
+    }
   }, [])
   const flash = (message: string): void => {
+    if (!alive.current) return
     setValue(message)
-    if (timer.current) window.clearTimeout(timer.current)
-    if (message) timer.current = window.setTimeout(() => setValue(''), 1_600)
+    if (timer.current !== undefined) window.clearTimeout(timer.current)
+    timer.current = message ? window.setTimeout(() => setValue(''), 1_600) : undefined
   }
   return [value, flash]
 }

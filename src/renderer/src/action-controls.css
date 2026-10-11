@@ -10,7 +10,7 @@
   .account-browser__key-input > button:not(.is-secondary),
   .account-aozai__setup button, .account-aozai__manual button,
   .handoff-dialog > footer button:last-child, .handoff-done footer button:last-child,
-  .task-review-actions button:first-child, .attachment-lightbox__actions button.is-primary,
+  .attachment-lightbox__actions button.is-primary,
   .memory-inspection button.memory-review-primary
 ):not(.is-danger):not(:disabled):not([aria-disabled="true"]):not([aria-busy="true"]) {
   &:hover { color:var(--action-primary-text); background:var(--action-primary-hover-bg); border-color:var(--action-primary-hover-bg); filter:none; opacity:1; }
@@ -23,8 +23,7 @@
    replacements still win. Never suppress keyboard focus without replacement. */
 button:focus-visible, a[href]:focus-visible { outline:2px solid var(--color-ring-primary); outline-offset:2px; box-shadow:0 0 0 2px var(--surface-solid); }
 
-:where(.run-sheet__confirm.is-danger, .task-cancel.is-confirming,
-  .task-reject-box button:last-child, .inspector-confirm button.is-danger):not(:disabled):not([aria-disabled="true"]):not([aria-busy="true"]) {
+:where(.run-sheet__confirm.is-danger, .inspector-confirm button.is-danger):not(:disabled):not([aria-disabled="true"]):not([aria-busy="true"]) {
   &:hover { color:var(--action-danger-text); background:var(--action-danger-hover-bg); border-color:var(--action-danger-hover-bg); }
   &:active { color:var(--action-danger-text); background:var(--action-danger-pressed-bg); border-color:var(--action-danger-pressed-bg); }
   &:focus-visible { outline:2px solid var(--color-text-danger); outline-offset:3px; box-shadow:0 0 0 3px var(--surface-solid); }

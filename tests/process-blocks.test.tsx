@@ -459,6 +459,32 @@ describe('ProcessBlocks', () => {
     await act(async () => { await requestReveal({ blockId: 'read-1' }) })
     expect(flow.hidden).toBe(false)
   })
+  it('does not mount untouched completed history, then retains its exact DOM after opening and refolding', async () => {
+    const blocks: ProcessBlock[] = Array.from({length:1000},(_,index)=>({kind:'tool',id:`history-${index}`,toolName:'read_file',toolKind:'read',summary:`src/fixture-${index}.ts`,status:'done'}))
+    await act(async () => root.render(<ProcessTurnCard id="long-history" compact turnState="worked" blocks={blocks}/>))
+    const flow = container.querySelector<HTMLElement>('.cursor-native-process__flow')!
+    expect(flow.hidden).toBe(true)
+    expect(flow.childElementCount).toBe(0)
+    expect(container.querySelector('.process-turn')?.getAttribute('aria-label')).toContain('1000 步')
+    await act(async () => container.querySelector<HTMLButtonElement>('.cursor-native-process__summary')!.click())
+    const contents = [...flow.children]
+    expect(contents.length).toBeGreaterThan(0)
+    await act(async () => container.querySelector<HTMLButtonElement>('.cursor-native-process__summary')!.click())
+    expect(flow.hidden).toBe(true)
+    expect([...flow.children]).toEqual(contents)
+    await act(async () => container.querySelector<HTMLButtonElement>('.cursor-native-process__summary')!.click())
+    expect([...flow.children]).toEqual(contents)
+    await act(async () => { await requestReveal({blockId:'history-999'}) })
+    expect(flow.textContent).toContain('src/fixture-999.ts')
+  })
+  it('the right-pane locator can mount and reveal an untouched archived step', async () => {
+    await act(async () => root.render(<ProcessTurnCard id="unopened-history" compact turnState="worked" blocks={[{kind:'tool',id:'unopened-read',toolName:'read_file',toolKind:'read',summary:'history.ts',status:'done'}]}/>))
+    const flow = container.querySelector<HTMLElement>('.cursor-native-process__flow')!
+    expect(flow.childElementCount).toBe(0)
+    await act(async () => { await requestReveal({blockId:'unopened-read'}) })
+    expect(flow.hidden).toBe(false)
+    expect(flow.textContent).toContain('history.ts')
+  })
 
   it('keeps a pending question visible even if the reply is already sealed', () => {
     const html = renderToStaticMarkup(<ProcessTurnCard id="question" compact turnState="worked" updatedAt={10_000} blocks={[{

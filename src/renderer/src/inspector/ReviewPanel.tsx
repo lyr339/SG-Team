@@ -377,7 +377,10 @@ export function ReviewPanel({ workspaceKey, turnPaths, turnFiles, turnEdits, onQ
   const [diffs, setDiffs] = useState<Record<string, WorkspaceReviewFileDiff | 'loading'>>({})
   const [confirm, setConfirm] = useState<PendingConfirm>()
   const confirmOpener = useRef<HTMLButtonElement | null>(null)
-  const [busyPath, setBusyPath] = useState('')
+  const [busyPaths, setBusyPaths] = useState<ReadonlySet<string>>(new Set())
+  const pendingActions = useRef(new Set<string>())
+  const alive = useRef(true)
+  useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
   /** 中栏文件栏点进来要定位的文件；摘要里出现它时展开并滚到它，随后清空。 */
   const [focusPath, setFocusPath] = useState('')
   /** 定位后短暂高亮的文件：走 React 状态而不是直接改 class——同一提交里 className 会被重新赋值，手改的类名会被冲掉。 */
@@ -435,6 +438,9 @@ export function ReviewPanel({ workspaceKey, turnPaths, turnFiles, turnEdits, onQ
       summaryInFlight.current = false
     }
   }, [scope])
+
+  const loadCurrentSummary = useRef(loadSummary)
+  loadCurrentSummary.current = loadSummary
 
   /**
    * 读取单文件差异。`keepStale`（revision 刷新时）让旧差异留在屏幕上直到新差异到达——
@@ -629,17 +635,21 @@ export function ReviewPanel({ workspaceKey, turnPaths, turnFiles, turnEdits, onQ
   )
 
   const runAction = async (path: string, action: WorkspaceReviewAction, hunkHeader?: string): Promise<void> => {
-    setBusyPath(path)
+    if (pendingActions.current.has(path)) return
+    pendingActions.current.add(path)
+    setBusyPaths(new Set(pendingActions.current))
     try {
       const api = inspectorDesktopApi()
       if (!api?.applyWorkspaceReviewAction) throw new Error('当前环境不支持 Git 操作')
       const result = await api.applyWorkspaceReviewAction({ path, action, ...(hunkHeader ? { hunkHeader } : {}) })
+      if (!alive.current) return
       flash(result.message)
-      if (result.ok) void loadSummary()
+      if (result.ok) void loadCurrentSummary.current()
     } catch (reason) {
       flash(reason instanceof Error ? reason.message : String(reason))
     } finally {
-      setBusyPath('')
+      pendingActions.current.delete(path)
+      if (alive.current) setBusyPaths(new Set(pendingActions.current))
     }
   }
 
@@ -792,7 +802,7 @@ export function ReviewPanel({ workspaceKey, turnPaths, turnFiles, turnEdits, onQ
             const edits = turnEdits?.get(file.path) ?? []
             const git = gitFileFor(file.path)
             const availability = git ? fileActionAvailability(git) : { stage: false, unstage: false, revert: false }
-            const busy = git ? busyPath === git.path : false
+            const busy = git ? busyPaths.has(git.path) : false
             const confirming = git ? confirm?.path === git.path : false
             const estimated = file.source === 'process'
             const counts = describeLineCounts(file.additions, file.deletions, file.binary)
@@ -866,7 +876,7 @@ export function ReviewPanel({ workspaceKey, turnPaths, turnFiles, turnEdits, onQ
             const { dir, stem, ext } = splitPath(file.path)
             const availability = fileActionAvailability(file)
             const hunkActions = scope === 'branch' ? { stage: false, unstage: false, revert: false } : hunkActionAvailability(file)
-            const busy = busyPath === file.path
+            const busy = busyPaths.has(file.path)
             const confirming = confirm?.path === file.path
             const touchedThisTurn = highlightTurn && fileTouchedBy(file, turnPaths)
             const stateLabel = file.committed ? '已提交' : file.staged && file.unstaged ? '部分暂存' : file.staged ? '已暂存' : ''

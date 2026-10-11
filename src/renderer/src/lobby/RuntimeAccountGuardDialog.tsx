@@ -1,3 +1,4 @@
+import { useModalInteraction } from '../use-modal-interaction'
 import type { CursorRuntimeAccountMatch } from '../../../domain/cursor-account'
 
 export interface RuntimeAccountGuardDialogProps {
@@ -28,12 +29,13 @@ export function RuntimeAccountGuardDialog({
   onProceed,
   onSwitchAndRestart
 }: RuntimeAccountGuardDialogProps): React.JSX.Element {
+  const dialog = useModalInteraction(onClose, busy)
   const isMismatch = verify.status === 'mismatch'
   return (
     <div className="handoff-dialog-backdrop" role="presentation" onMouseDown={(event) => {
       if (event.target === event.currentTarget && !busy && allowProceed) onClose()
     }}>
-      <section className="handoff-dialog" role="dialog" aria-modal="true" aria-labelledby="runtime-guard-title">
+      <section {...dialog} className="handoff-dialog" role="dialog" aria-modal="true" aria-labelledby="runtime-guard-title">
         <header>
           <div>
             <strong id="runtime-guard-title">{isMismatch ? 'Cursor 登录账号不一致' : 'Cursor 未登录'}</strong>

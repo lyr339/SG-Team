@@ -8,7 +8,7 @@ import { resolveMessageImageSource } from '../../shared/local-image'
 /**
  * 图片附件的查看与操作（输入区芯片与时间线共用）：
  * - 点击缩略图 → 大图查看（Esc / 点击遮罩关闭）；
- * - 右键 → 上下文菜单：查看大图 / 复制图片 / 另存为… /（已落盘的）在 Finder 中显示 /（输入区的）移除；
+ * - 右键 → 上下文菜单：查看大图 / 复制图片 / 另存为… /（已落盘的）在文件夹中显示 /（输入区的）移除；
  * - 复制与另存经主进程 IPC（Electron clipboard / 保存对话框），渲染层只传 data URL。
  */
 
@@ -49,8 +49,18 @@ export interface AttachmentActionState {
 export function useAttachmentActions(attachment: MessageAttachment): AttachmentActionState {
   const [feedback, setFeedback] = useState('')
   const timer = useRef<number | undefined>(undefined)
-  useEffect(() => () => { if (timer.current) window.clearTimeout(timer.current) }, [])
+  const identity = useMemo(() => ({}), [attachment.id, attachment.path, attachment.previewUrl, attachment.data, attachment.mimeType, attachment.name])
+  const current = useRef<object | undefined>(identity)
+  useLayoutEffect(() => {
+    current.current = identity
+    setFeedback('')
+    return () => {
+      current.current = undefined
+      if (timer.current !== undefined) window.clearTimeout(timer.current)
+    }
+  }, [identity])
   const flash = (text: string): void => {
+    if (current.current !== identity) return
     setFeedback(text)
     if (timer.current) window.clearTimeout(timer.current)
     timer.current = window.setTimeout(() => setFeedback(''), 1_600)
@@ -108,26 +118,50 @@ function AttachmentContextMenu({ x, y, items, onClose }: { x: number; y: number;
       top: Math.max(4, Math.min(y, window.innerHeight - rect.height - 4))
     })
   }, [x, y])
+  useLayoutEffect(() => {
+    const opener = document.activeElement, element = ref.current
+    element?.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true })
+    return () => {
+      if (opener instanceof HTMLElement && opener.isConnected
+        && (document.activeElement === document.body || element?.contains(document.activeElement))) opener.focus({ preventScroll: true })
+    }
+  }, [])
   useEffect(() => {
     const onPointer = (event: MouseEvent): void => {
       if (!ref.current?.contains(event.target as Node | null)) onClose()
     }
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') onClose()
+      if (event.key !== 'Escape' || event.defaultPrevented) return
+      event.preventDefault(); event.stopPropagation(); onClose()
     }
     document.addEventListener('mousedown', onPointer)
-    document.addEventListener('keydown', onKey)
+    document.addEventListener('keydown', onKey, true)
     window.addEventListener('blur', onClose)
-    window.addEventListener('scroll', onClose, true)
+    const onScroll = (event: Event): void => { if (!ref.current?.contains(event.target as Node | null)) onClose() }
+    const onFocus = (event: FocusEvent): void => { if (!ref.current?.contains(event.target as Node | null)) onClose() }
+    window.addEventListener('scroll', onScroll, true)
+    window.addEventListener('resize', onClose)
+    document.addEventListener('focusin', onFocus)
     return () => {
       document.removeEventListener('mousedown', onPointer)
-      document.removeEventListener('keydown', onKey)
+      document.removeEventListener('keydown', onKey, true)
       window.removeEventListener('blur', onClose)
-      window.removeEventListener('scroll', onClose, true)
+      window.removeEventListener('scroll', onScroll, true)
+      window.removeEventListener('resize', onClose)
+      document.removeEventListener('focusin', onFocus)
     }
   }, [onClose])
   return (
-    <div ref={ref} className="attachment-menu" role="menu" style={{ left: position.left, top: position.top }}>
+    <div ref={ref} className="attachment-menu" role="menu" aria-label="图片操作" style={{ left: position.left, top: position.top }}
+      onKeyDown={event => {
+        event.stopPropagation()
+        const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('button')]
+        const index = buttons.indexOf(document.activeElement as HTMLButtonElement)
+        const next = event.key === 'ArrowDown' ? (index + 1) % buttons.length
+          : event.key === 'ArrowUp' ? (index - 1 + buttons.length) % buttons.length
+          : event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : undefined
+        if (next !== undefined) { event.preventDefault(); buttons[next]?.focus() }
+      }}>
       {items.map((item) => (
         <button
           key={item.label}
@@ -153,12 +187,22 @@ export function AttachmentLightbox({
   onClose: () => void
 }): React.JSX.Element | null {
   const [dimensions, setDimensions] = useState<{ width: number; height: number }>()
+  const dialog = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const opener = document.activeElement, element = dialog.current
+    element?.querySelector<HTMLButtonElement>('.is-primary')?.focus({ preventScroll: true })
+    return () => {
+      if (opener instanceof HTMLElement && opener.isConnected
+        && (document.activeElement === document.body || element?.contains(document.activeElement))) opener.focus({ preventScroll: true })
+    }
+  }, [])
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') onClose()
+      if (event.key !== 'Escape' || event.defaultPrevented) return
+      event.preventDefault(); event.stopPropagation(); onClose()
     }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
+    document.addEventListener('keydown', onKey, true)
+    return () => document.removeEventListener('keydown', onKey, true)
   }, [onClose])
   const source = imageSource(attachment)
   if (!source) return null
@@ -170,8 +214,18 @@ export function AttachmentLightbox({
   ].filter(Boolean).join(' · ')
   return (
     <div
+      ref={dialog}
       className="attachment-lightbox"
       role="dialog"
+      onKeyDown={event => {
+        event.stopPropagation()
+        if (event.key !== 'Tab') return
+        const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')]
+        const first = buttons[0], last = buttons.at(-1)
+        if (event.shiftKey && document.activeElement === first || !event.shiftKey && document.activeElement === last) {
+          event.preventDefault(); (event.shiftKey ? last : first)?.focus()
+        }
+      }}
       aria-modal="true"
       aria-label={`查看图片 ${attachment.name}`}
       onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}
@@ -192,7 +246,7 @@ export function AttachmentLightbox({
             {actions.feedback ? <FeedbackText className="attachment-lightbox__feedback" role="status" tone={actions.feedback === '已保存' || actions.feedback === '已复制到剪贴板' ? 'success' : 'error'}>{actions.feedback}</FeedbackText> : null}
             <button type="button" onClick={() => void actions.copy()}>复制图片</button>
             <button type="button" onClick={() => void actions.save()}>另存为…</button>
-            {actions.canReveal ? <button type="button" onClick={() => void actions.reveal()}>在 Finder 中显示</button> : null}
+            {actions.canReveal ? <button type="button" onClick={() => void actions.reveal()}>在文件夹中显示</button> : null}
             <button type="button" className="is-primary" onClick={onClose}>关闭</button>
           </div>
         </figcaption>
@@ -220,7 +274,7 @@ export function AttachmentThumbnail({
     { label: '查看大图', onSelect: () => setViewerOpen(true) },
     { label: '复制图片', onSelect: () => void actions.copy() },
     { label: '另存为…', onSelect: () => void actions.save() },
-    ...(actions.canReveal ? [{ label: '在 Finder 中显示', onSelect: () => void actions.reveal() }] : []),
+    ...(actions.canReveal ? [{ label: '在文件夹中显示', onSelect: () => void actions.reveal() }] : []),
     ...(onRemove ? [{ label: '移除附件', onSelect: onRemove, danger: true }] : [])
   ]
   return (
@@ -233,6 +287,7 @@ export function AttachmentThumbnail({
         onContextMenu={(event) => {
           event.preventDefault()
           event.stopPropagation()
+          event.currentTarget.focus({ preventScroll: true })
           setMenu({ x: event.clientX, y: event.clientY })
         }}
       >
@@ -251,7 +306,7 @@ function fileNameOf(path: string): string {
 
 /**
  * Markdown 正文里的图片 `![说明](目标)`：
- * - 本地绝对路径 / file:// / data: → 经 sg-image 协议渲染，可点击查看、右键复制/另存/在 Finder 中显示；
+ * - 本地绝对路径 / file:// / data: → 经 sg-image 协议渲染，可点击查看、右键复制/另存/在文件夹中显示；
  * - http(s) → 只给外链（会话页不加载远程资源）；
  * - 无法识别的目标 → 原样文本，不留破图。
  */

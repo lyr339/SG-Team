@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useId, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { MoreIcon } from '../UiIcons'
 
@@ -34,10 +34,23 @@ export function AccountActionsMenu({ label, busyLabel, actions }: {
   const triggerRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const menuId = useId()
+  const initialFocus = useRef<'first' | 'last'>('first')
+  const menuOpen = open && !busyLabel && actions.length > 0
+  const close = useCallback((restore = false): void => {
+    setOpen(false)
+    if (restore) triggerRef.current?.focus({ preventScroll: true })
+  }, [])
+  const openMenu = (last = false): void => {
+    if (busyLabel || !actions.length) return
+    initialFocus.current = last ? 'last' : 'first'
+    const trigger = triggerRef.current?.getBoundingClientRect()
+    if (trigger) setPosition({ left: trigger.right, top: trigger.bottom + 6 })
+    setOpen(true)
+  }
+  useEffect(() => { if (busyLabel || !actions.length) setOpen(false) }, [busyLabel, actions.length])
 
   // 先按触发器右下角落位，再在 layout 阶段用实测菜单尺寸夹进视口（不猜菜单高度，也不会闪）。
-  useLayoutEffect(() => {
-    if (!open) return
+  const positionMenu = useCallback(() => {
     const trigger = triggerRef.current?.getBoundingClientRect()
     const menu = menuRef.current?.getBoundingClientRect()
     if (!trigger || !menu) return
@@ -47,37 +60,51 @@ export function AccountActionsMenu({ label, busyLabel, actions }: {
     const below = trigger.bottom + gap
     const top = below + menu.height + edge <= window.innerHeight ? below : Math.max(edge, trigger.top - gap - menu.height)
     setPosition((current) => (current?.left === left && current?.top === top ? current : { left, top }))
-  }, [open])
+  }, [])
+  useLayoutEffect(() => {
+    if (!menuOpen) return
+    positionMenu()
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(positionMenu) : undefined
+    if (menuRef.current) observer?.observe(menuRef.current)
+    window.addEventListener('resize', positionMenu)
+    return () => { observer?.disconnect(); window.removeEventListener('resize', positionMenu) }
+  }, [menuOpen, positionMenu])
 
   // 展开即把焦点送进菜单：否则键盘用户打开后无处可去（Escape 再交还给触发器）。
   useEffect(() => {
-    if (!open) return
-    menuRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus()
-  }, [open])
+    if (!menuOpen) return
+    const items = menuRef.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')
+    const target = items?.[initialFocus.current === 'last' ? items.length - 1 : 0]
+    ;(target ?? menuRef.current)?.focus({ preventScroll: true })
+  }, [menuOpen])
 
   useEffect(() => {
-    if (!open) return
-    const close = (): void => setOpen(false)
-    const onPointerDown = (event: PointerEvent): void => {
-      const target = event.target as Node
+    if (!menuOpen) return
+    const outside = (event: Event): void => {
+      const target = event.target as Node | null
       if (!triggerRef.current?.contains(target) && !menuRef.current?.contains(target)) close()
     }
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape') return
-      close()
-      triggerRef.current?.focus()
+      if (event.key !== 'Escape' || event.defaultPrevented) return
+      event.preventDefault(); event.stopPropagation(); close(true)
     }
-    document.addEventListener('pointerdown', onPointerDown)
-    document.addEventListener('keydown', onKeyDown)
-    window.addEventListener('blur', close)
-    document.addEventListener('scroll', close, true)
+    const onScroll = (event: Event): void => {
+      if (!menuRef.current?.contains(event.target as Node | null)) close(Boolean(menuRef.current?.contains(document.activeElement)))
+    }
+    const onBlur = (): void => close()
+    document.addEventListener('pointerdown', outside)
+    document.addEventListener('focusin', outside)
+    document.addEventListener('keydown', onKeyDown, true)
+    window.addEventListener('blur', onBlur)
+    document.addEventListener('scroll', onScroll, true)
     return () => {
-      document.removeEventListener('pointerdown', onPointerDown)
-      document.removeEventListener('keydown', onKeyDown)
-      window.removeEventListener('blur', close)
-      document.removeEventListener('scroll', close, true)
+      document.removeEventListener('pointerdown', outside)
+      document.removeEventListener('focusin', outside)
+      document.removeEventListener('keydown', onKeyDown, true)
+      window.removeEventListener('blur', onBlur)
+      document.removeEventListener('scroll', onScroll, true)
     }
-  }, [open])
+  }, [menuOpen, close])
 
   if (!actions.length) return null
 
@@ -86,26 +113,37 @@ export function AccountActionsMenu({ label, busyLabel, actions }: {
       <button
         ref={triggerRef}
         type="button"
-        className={`account-actions-menu__trigger${open ? ' is-open' : ''}${busyLabel ? ' is-busy' : ''}`}
+        className={`account-actions-menu__trigger${menuOpen ? ' is-open' : ''}${busyLabel ? ' is-busy' : ''}`}
         disabled={Boolean(busyLabel)}
         aria-label={label}
         title={busyLabel ?? label}
         aria-haspopup="menu"
-        aria-expanded={open}
-        aria-controls={open ? menuId : undefined}
-        onClick={() => {
-          const trigger = triggerRef.current?.getBoundingClientRect()
-          if (trigger) setPosition({ left: trigger.right, top: trigger.bottom + 6 })
-          setOpen((current) => !current)
+        aria-expanded={menuOpen}
+        aria-controls={menuOpen ? menuId : undefined}
+        onClick={() => { if (menuOpen) close(); else openMenu() }}
+        onKeyDown={event => {
+          if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+          event.preventDefault(); openMenu(event.key === 'ArrowUp')
         }}
       >
         {busyLabel ?? <MoreIcon className="account-actions-menu__glyph" />}
       </button>
-      {open && position ? createPortal(
+      {menuOpen && position ? createPortal(
         <div
           ref={menuRef}
           id={menuId}
           role="menu"
+          tabIndex={-1}
+          onKeyDown={event => {
+            const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')]
+            if (!items.length) return
+            const index = items.indexOf(document.activeElement as HTMLButtonElement)
+            const next = event.key === 'ArrowDown' ? (index + 1) % items.length
+              : event.key === 'ArrowUp' ? (index - 1 + items.length) % items.length
+              : event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : undefined
+            if (next === undefined) return
+            event.preventDefault(); items[next]?.focus()
+          }}
           aria-label={label}
           className="account-actions-menu"
           style={{ position: 'fixed', left: position.left, top: position.top }}
@@ -118,7 +156,7 @@ export function AccountActionsMenu({ label, busyLabel, actions }: {
               disabled={action.disabled}
               title={action.title}
               onClick={() => {
-                setOpen(false)
+                close(true)
                 action.onSelect()
               }}
             >

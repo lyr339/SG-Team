@@ -1,3 +1,4 @@
+import { useModalInteraction } from '../use-modal-interaction'
 import { FeedbackIcon } from '../feedback/FeedbackIcon'
 import { groupEffectsLines, groupEffectsProblem } from '../../../domain/group-effects'
 import { useRef, useState } from 'react'
@@ -22,6 +23,7 @@ interface TransferMembershipDialogProps {
  * 后投递，两者结果分别显示。入口有两个：会话页的「交接」按钮（离线入组席位）与组卡片离线成员行的「交接…」。
  */
 export function TransferMembershipDialog({ options, busy, error, onClose, onConfirm, onOpenSession }: TransferMembershipDialogProps): React.JSX.Element {
+  const dialog = useModalInteraction(onClose, busy)
   const [selected, setSelected] = useState(options.candidates[0]?.slotId ?? '')
   const [includeContext, setIncludeContext] = useState(true)
   const [outcome, setOutcome] = useState<{ candidate: MembershipTransferCandidate; result: MembershipTransferOutcome }>()
@@ -39,7 +41,7 @@ export function TransferMembershipDialog({ options, busy, error, onClose, onConf
     <div className="handoff-dialog-backdrop" role="presentation" onMouseDown={(event) => {
       if (event.target === event.currentTarget && !busy) onClose()
     }}>
-      <section className="handoff-dialog" role="dialog" aria-modal="true" aria-labelledby="handoff-title">
+      <section {...dialog} className="handoff-dialog" role="dialog" aria-modal="true" aria-labelledby="handoff-title">
         <header>
           <div>
             <strong id="handoff-title">迁移成员身份：{options.sourceRoleName} · 协作组「{options.groupName}」</strong>

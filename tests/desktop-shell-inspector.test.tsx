@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DesktopSnapshot } from '../src/shared/desktop-api'
 import { DesktopShell } from '../src/renderer/src/DesktopShell'
 
@@ -183,6 +183,24 @@ describe('DesktopShell right workspace dock', () => {
     expectSidebarCollapsed(true)
     await act(async () => root.unmount())
     expect(listeners.size).toBe(0)
+  })
+
+  it('does not navigate modules or toggle docks behind an open modal or a consumed key', async () => {
+    const root=createRoot(container), change=vi.fn()
+    await act(async()=>root.render(<DesktopShell snapshot={snapshot} activeModule="sessions" sidebar={<aside>会话栏</aside>}
+      rightPanel={()=> <aside>Review</aside>} cardOpacity={1} colorMode="light" onModuleChange={change}
+      onOpenProjectConfiguration={()=>{}} onCardOpacityChange={()=>{}} onColorModeChange={()=>{}}>内容</DesktopShell>))
+    const modal=document.createElement('section');modal.setAttribute('role','dialog');modal.setAttribute('aria-modal','true');document.body.append(modal)
+    try {
+      await act(async()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'2',ctrlKey:true,cancelable:true})))
+      await act(async()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'\\',ctrlKey:true,cancelable:true})))
+      expect(change).not.toHaveBeenCalled();expectInspectorCollapsed(true)
+      modal.remove()
+      const handled=new KeyboardEvent('keydown',{key:'2',ctrlKey:true,cancelable:true});handled.preventDefault()
+      await act(async()=>window.dispatchEvent(handled));expect(change).not.toHaveBeenCalled()
+      await act(async()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'2',ctrlKey:true,cancelable:true})))
+      expect(change).toHaveBeenCalledWith('run')
+    } finally {modal.remove();await act(async()=>root.unmount())}
   })
 
 })

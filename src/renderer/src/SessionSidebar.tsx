@@ -364,7 +364,7 @@ export function SessionSidebar({
   useEffect(() => {
     if ((!picked.size && !notice) || removal) return
     const handler = (event: globalThis.KeyboardEvent): void => {
-      if (event.key === 'Escape') clearPicks()
+      if (event.key === 'Escape' && !event.defaultPrevented && !document.querySelector('[role="dialog"][aria-modal="true"]')) clearPicks()
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)

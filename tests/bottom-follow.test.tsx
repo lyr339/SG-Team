@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useBottomFollow } from '../src/renderer/src/use-bottom-follow'
 
-function Harness({ contentKey }: { contentKey: string }): React.JSX.Element {
+function Harness({ contentKey, onExpand }: { contentKey: string; onExpand?: () => void }): React.JSX.Element {
   const follow = useBottomFollow('session-1', contentKey)
   return (
     <div>
@@ -12,14 +12,15 @@ function Harness({ contentKey }: { contentKey: string }): React.JSX.Element {
         data-testid="viewport"
         ref={follow.viewportRef}
         onScroll={follow.onScroll}
+        onClickCapture={follow.onClickCapture}
         onWheel={follow.onWheel}
         onPointerDown={follow.onPointerDown}
         onPointerUp={follow.onPointerUp}
       >
-        <div ref={follow.contentRef}>content</div>
+        <div ref={follow.contentRef}>content<button aria-expanded={false} onClick={onExpand}>expand</button></div>
       </div>
       <output>{follow.awayFromBottom ? 'away' : 'following'}</output>
-      <button onClick={follow.jumpToBottom}>bottom</button>
+      <button data-testid="resume" onClick={follow.jumpToBottom}>bottom</button>
     </div>
   )
 }
@@ -105,5 +106,16 @@ describe('useBottomFollow', () => {
     element.scrollTop = 800
     await act(async () => element.dispatchEvent(new Event('scroll', { bubbles: true })))
     expect(container.textContent).toContain('following')
+  })
+  it('pauses before an explicit disclosure grows the timeline, instead of throwing the reader to its end', async () => {
+    const onExpand = () => {height=50_000;resize?.()}
+    await act(async () => root.render(<Harness contentKey="a" onExpand={onExpand}/>))
+    const element = viewport(); element.scrollTop = 400
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-expanded]')!.click())
+    expect(element.scrollTop).toBe(400)
+    expect(container.querySelector('output')!.textContent).toBe('away')
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="resume"]')!.click())
+    expect(element.scrollTop).toBe(50_000)
+    expect(container.querySelector('output')!.textContent).toBe('following')
   })
 })

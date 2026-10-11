@@ -50,18 +50,20 @@ export function SettingsMaintenance({
   useNotificationResultRead(policyResultRef, policyFeedback?.notification?.key, policyFeedback?.notification?.eventId)
   useNotificationResultRead(patchResultRef, switchPumpFeedback?.notification?.key, switchPumpFeedback?.notification?.eventId)
   const [detectBusy, setDetectBusy] = useState(false)
+  const detecting = useRef(false)
   const compatibilityRef=useRef<HTMLDivElement>(null)
   useCompatibilityNotificationRead(compatibilityRef,switchPumpStatus,detectBusy||switchPumpBusy)
   const [detectError, setDetectError] = useState('')
   const detectVersion = useCallback(async (): Promise<void> => {
-    if (!onRefreshSwitchPumpStatus) return
+    if (!onRefreshSwitchPumpStatus || detecting.current) return
+    detecting.current = true
     setDetectBusy(true); setDetectError('')
     try { await onRefreshSwitchPumpStatus() }
     catch (reason) { setDetectError(reason instanceof Error ? reason.message : String(reason)) }
-    finally { setDetectBusy(false) }
+    finally { detecting.current = false; setDetectBusy(false) }
   }, [onRefreshSwitchPumpStatus])
   // Check again when entering maintenance: Cursor may have been upgraded since Shiguang started.
-  useEffect(() => { void detectVersion() }, [detectVersion])
+  useEffect(() => { if (active) void detectVersion() }, [active, detectVersion])
   const phase = automationRun?.phase ?? 'idle'
   const compatibility = switchPumpStatus?.compatibility
 

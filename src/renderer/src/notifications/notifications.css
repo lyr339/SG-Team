@@ -2,7 +2,7 @@
    no status rail, ornamental dot, glow or native platform-painted filter. */
 .topbar__actions .notification-trigger { display:inline-flex; align-items:center; justify-content:center; gap:5px; width:auto; min-width:28px; padding-inline:5px; }
 .notification-trigger > span { font:600 var(--font-text-xs-size)/1 var(--mono); font-variant-numeric:tabular-nums; }
-.notification-panel-anchor { --notification-action-ink:color-mix(in srgb,var(--accent-deep) 84%,var(--text) 16%); position:fixed; z-index:150; width:min(460px, calc(100vw - 24px)); max-height:calc(100dvh - 72px); }
+.notification-panel-anchor { --notification-action-ink:color-mix(in srgb,var(--accent-deep) 84%,var(--text) 16%); position:fixed; z-index:150; max-width:calc(100vw - 24px); }
 .notification-panel { display:flex; flex-direction:column; max-height:min(720px, var(--notification-panel-height, calc(100dvh - 72px))); min-height:min(220px, var(--notification-panel-height, calc(100dvh - 72px))); color:var(--text); background:var(--surface-solid); border:1px solid var(--color-border-secondary); border-radius:15px; box-shadow:var(--shadow-lg); overflow:hidden; animation:notification-enter 160ms ease-out; }
 .notification-panel:focus { outline:none; }
 .notification-panel :is(button,input):focus-visible, .notification-toast button:focus-visible { outline:2px solid var(--color-ring-primary); outline-offset:2px; }
@@ -60,7 +60,7 @@
 .notification-panel__footer-actions > button:last-child { margin-left:auto; }
 .notification-confirm { padding:4px 8px; }
 .notification-confirm p { margin:0 0 9px; color:var(--text-soft); font-size:var(--font-text-sm-size); line-height:1.65; }
-.notification-confirm > div { display:flex; justify-content:flex-end; gap:6px; }
+.notification-confirm > div { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:6px; }
 .notification-confirm button:last-child { color:var(--color-text-danger); }
 .notification-panel--settings .notification-panel__header { border-bottom:1px solid var(--line); padding-block:13px; }
 .notification-preferences { padding:16px 18px 0; }

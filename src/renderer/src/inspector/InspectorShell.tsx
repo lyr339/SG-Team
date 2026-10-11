@@ -112,7 +112,7 @@ export function InspectorShell({ tabs, activeTab, onTabChange, onClose, children
     const handler = (event: KeyboardEvent): void => {
       if (!event.altKey || event.metaKey || event.ctrlKey || event.shiftKey) return
       const match = /^Digit([1-9])$/.exec(event.code)
-      if (!match) return
+      if (!match || event.defaultPrevented || document.querySelector('[role="dialog"][aria-modal="true"]')) return
       const tab = tabs[Number(match[1]) - 1]
       if (!tab || isTypingTarget(event.target)) return
       if (tabRefs.current.get(tab.id)?.closest('[inert], [aria-hidden="true"]')) return

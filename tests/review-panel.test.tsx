@@ -520,4 +520,41 @@ describe('ReviewPanel', () => {
     expect(buildFileQuote({ path: 'src/a.ts', status: 'modified', staged: false, unstaged: true, additions: 3, deletions: 1 })).toBe('> 关于 `src/a.ts`（已修改 · +3 −1）：\n\n')
     expect(buildHunkQuote('src/a.ts', hunk)).toContain(hunk.header)
   })
+  it('a delayed Git action refreshes the currently selected scope, never its old closure',async()=>{
+    const api=installApi();let finish!:(value:{ok:boolean;message:string})=>void
+    api.applyWorkspaceReviewAction.mockImplementationOnce(()=>new Promise(done=>{finish=done}))
+    const root=createRoot(container)
+    try {
+      await act(async()=>root.render(<ReviewPanel workspaceKey="demo" turnPaths={[]} pollIntervalMs={{live:60_000,fallback:60_000}}/>))
+      await act(async()=>container.querySelector<HTMLButtonElement>('[aria-label="暂存 src/login.tsx"]')!.click())
+      await chooseScope('Branch')
+      await act(async()=>finish({ok:true,message:'已暂存'}))
+      expect(api.getWorkspaceReview.mock.calls.at(-1)?.[0]).toEqual({scope:'branch'})
+    }finally{await act(async()=>root.unmount())}
+  })
+  it('does not refresh a different workspace after the old panel unmounts',async()=>{
+    const api=installApi();let finish!:(value:{ok:boolean;message:string})=>void
+    api.applyWorkspaceReviewAction.mockImplementationOnce(()=>new Promise(done=>{finish=done}))
+    const root=createRoot(container)
+    await act(async()=>root.render(<ReviewPanel workspaceKey="demo" turnPaths={[]} pollIntervalMs={{live:60_000,fallback:60_000}}/>))
+    await act(async()=>container.querySelector<HTMLButtonElement>('[aria-label="暂存 src/login.tsx"]')!.click())
+    const before=api.getWorkspaceReview.mock.calls.length
+    await act(async()=>root.unmount())
+    await act(async()=>finish({ok:true,message:'已暂存'}))
+    expect(api.getWorkspaceReview).toHaveBeenCalledTimes(before)
+  })
+  it('keeps a second file busy when the first file operation finishes',async()=>{
+    const api=installApi();const finish:Array<(value:{ok:boolean;message:string})=>void>=[]
+    api.applyWorkspaceReviewAction.mockImplementation(()=>new Promise(done=>finish.push(done)))
+    const root=createRoot(container)
+    try{
+      await act(async()=>root.render(<ReviewPanel workspaceKey="demo" turnPaths={[]} pollIntervalMs={{live:60_000,fallback:60_000}}/>))
+      await act(async()=>container.querySelector<HTMLButtonElement>('[aria-label="暂存 src/login.tsx"]')!.click())
+      await act(async()=>container.querySelector<HTMLButtonElement>('[aria-label="取消暂存 src/theme.ts"]')!.click())
+      await act(async()=>finish[0]!({ok:false,message:'测试失败'}))
+      expect(container.querySelector<HTMLButtonElement>('[aria-label="取消暂存 src/theme.ts"]')!.disabled).toBe(true)
+      await act(async()=>finish[1]!({ok:false,message:'测试失败'}))
+    }finally{await act(async()=>root.unmount())}
+  })
+
 })

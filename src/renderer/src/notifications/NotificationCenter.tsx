@@ -12,6 +12,7 @@ import { NotificationPreferencesPanel } from './NotificationPreferencesPanel'
 import { notificationSessionMode } from '../../../domain/notification-delivery-policy'
 import { observeSourceNotificationRead } from './observe-source-read'
 import { NotificationCenterProjection } from './notification-center-projection'
+import { useNow } from '../inspector/use-now'
 
 export function NoticeIcon({ tone }: { tone: NotificationRecord['tone'] }): React.JSX.Element {
   return <FeedbackIcon tone={tone} className="notification-status-icon" />
@@ -35,6 +36,7 @@ interface CenterView {
 }
 
 export function NotificationCenter({ store, workspaceId, onClose, onNavigate, focusRecord, navigationError }: Props): React.JSX.Element {
+  const now = useNow()
   const panelId = useId()
   const [filter, setFilter] = useState<NotificationQuery['filter']>('all')
   const [currentWorkspace, setCurrentWorkspace] = useState(false)
@@ -50,6 +52,8 @@ export function NotificationCenter({ store, workspaceId, onClose, onNavigate, fo
   const mounted = useRef(true)
   const detail = useRef<HTMLDivElement>(null)
   const body = useRef<HTMLDivElement>(null)
+  const moreButton = useRef<HTMLButtonElement>(null)
+  const focusAfterLastPage = useRef(false)
   const projection = useMemo(() => new NotificationCenterProjection(), [store])
   const currentScope = JSON.stringify([filter, currentWorkspace ? workspaceId ?? null : null])
   const scopeRef = useRef(currentScope); scopeRef.current = currentScope
@@ -62,9 +66,24 @@ export function NotificationCenter({ store, workspaceId, onClose, onNavigate, fo
   const displayedPage = view?.page
   const activePageRef = useRef(activePage); activePageRef.current = activePage
   useLayoutEffect(() => {
+    if (!focusAfterLastPage.current) return
+    focusAfterLastPage.current = false
+    if (document.activeElement === document.body) body.current?.focus({ preventScroll: true })
+  }, [view])
+  useLayoutEffect(() => {
     if (body.current) body.current.scrollTop = 0
   }, [view?.scope, view?.store])
   const settingsButton = useRef<HTMLButtonElement>(null), settingsBack = useRef<HTMLButtonElement>(null), wasSettings = useRef(false)
+  const clearButton = useRef<HTMLButtonElement>(null), cancelClearButton = useRef<HTMLButtonElement>(null), wasConfirming = useRef(false)
+  useLayoutEffect(() => {
+    if (confirmation) cancelClearButton.current?.focus({ preventScroll: true })
+    else if (wasConfirming.current && document.activeElement === document.body) {
+      const opener = clearButton.current
+      const target = opener && !opener.disabled ? opener : settingsButton.current
+      target?.focus({ preventScroll: true })
+    }
+    wasConfirming.current = confirmation
+  }, [confirmation])
   useLayoutEffect(() => {
     if (settingsOpen) settingsBack.current?.focus({ preventScroll: true })
     else if (wasSettings.current) settingsButton.current?.focus({ preventScroll: true })
@@ -83,6 +102,9 @@ export function NotificationCenter({ store, workspaceId, onClose, onNavigate, fo
       // Commit the scope label, scoped counts and body as one view. Never clear
       // the previous body while IPC is pending, or label it as the new scope.
       if (viewRef.current && (viewRef.current.scope !== scope || viewRef.current.store !== store)) setExpanded(undefined)
+      // Removing the final "more" button must not drop keyboard focus outside
+      // the center. Preserve the reading position; never steal a moved focus.
+      focusAfterLastPage.current = more && !merged.page.nextCursor && document.activeElement === moreButton.current
       setDirty(merged.dirty); setView({ store, scope, filter, currentWorkspace, page: merged.page })
     } catch {
       if (mounted.current && sequence.current === version && scopeRef.current === scope && storeRef.current === store) {
@@ -156,7 +178,7 @@ export function NotificationCenter({ store, workspaceId, onClose, onNavigate, fo
     const open = expanded?.id === record.id
     const displayed = open ? expanded! : record
     return <li className={`notification-row${notificationIsUnread(record) ? ' is-unread' : ''}`} key={record.id}>
-      <div className="notification-row__meta"><span>{record.source}</span><time dateTime={new Date(record.occurredAt).toISOString()} title={`${record.timeBasis === 'observed' ? '观察时间：' : ''}${formatFullClock(record.occurredAt)}`}>{record.timeBasis === 'observed' ? '观察于 ' : ''}{formatRelativeClock(record.occurredAt)}</time></div>
+      <div className="notification-row__meta"><span>{record.source}</span><time dateTime={new Date(record.occurredAt).toISOString()} title={`${record.timeBasis === 'observed' ? '观察时间：' : ''}${formatFullClock(record.occurredAt)}`}>{record.timeBasis === 'observed' ? '观察于 ' : ''}{formatRelativeClock(record.occurredAt, now)}</time></div>
       <button type="button" className="notification-row__open" aria-expanded={open} disabled={switching} onClick={() => openDetail(record)}>
         <NoticeIcon tone={displayed.tone} /><strong>{displayed.title}</strong><DisclosureChevron open={open} />
       </button>
@@ -169,7 +191,8 @@ export function NotificationCenter({ store, workspaceId, onClose, onNavigate, fo
           {!notificationIsPending(record) ? <button type="button" className="notification-text-button is-muted" disabled={loading || !currentPage} onClick={() => void perform(async () => {
             const change = await store.api.archiveNotification(record.id, record.storageEpoch)
             store.accept({ change, ...(change.storageEpoch !== undefined ? { storageEpoch: change.storageEpoch } : {}), health: 'ready', historyIncomplete: store.snapshot().historyIncomplete })
-            if (mounted.current) setExpanded(undefined)
+            if (mounted.current && storeRef.current === store) setExpanded(current => current?.id === record.id
+              && (current.storageEpoch ?? 0) === (record.storageEpoch ?? 0) ? undefined : current)
           })}>归档</button> : null}
           {(displayed.revision !== record.revision || displayed.storageEpoch !== record.storageEpoch) ? <button type="button" className="notification-text-button" disabled={switching} onClick={() => {
             setExpanded(record); void store.read(record).catch(() => { if (mounted.current) setError('已读状态暂未保存，通知仍会保留。') })
@@ -220,7 +243,7 @@ export function NotificationCenter({ store, workspaceId, onClose, onNavigate, fo
     {navigationError ? <p className="notification-panel__feedback" role="status">{navigationError}</p> : null}
     <HistoryGapNotice store={store} />
     {settingsOpen && store.snapshot().preferencesError ? <p className="notification-panel__feedback" role="status">{store.snapshot().preferencesError}</p> : null}
-    <div ref={body} className="notification-panel__body" id={panelId} role="tabpanel" aria-labelledby={`${panelId}-${displayedFilter}`} aria-busy={loading || switching}>
+    <div ref={body} tabIndex={-1} className="notification-panel__body" id={panelId} role="tabpanel" aria-labelledby={`${panelId}-${displayedFilter}`} aria-busy={loading || switching}>
       {!displayedPage && !error ? <p className="notification-empty" role="status">正在读取通知…</p> : null}
       {!loading && !displayedPage && error ? <div className="notification-empty"><strong>读取未完成</strong><button className="notification-text-button" type="button" onClick={() => void load(false)}>重新读取</button></div> : null}
       {displayedPage && !displayedPage.records.length ? <div className="notification-empty"><strong>{displayedFilter === 'pending' ? '没有待处理事项' : displayedFilter === 'unread' ? '未读通知已看完' : '暂时没有通知'}</strong><p>重要结果会留在这里，日常操作不会反复打扰。</p></div> : null}
@@ -231,12 +254,16 @@ export function NotificationCenter({ store, workspaceId, onClose, onNavigate, fo
           <ol>{displayedPage.records.filter(record => record.attention === 'activity').map(renderRecord)}</ol>
         </details></li> : null}
       </ol>
-      {displayedPage?.nextCursor ? <button type="button" className="notification-more" disabled={loading || switching} onClick={() => void load(true)}>{loading ? '正在读取…' : '查看更多'}</button> : null}
+      {displayedPage?.nextCursor ? <button ref={moreButton} type="button" className="notification-more" disabled={loading || switching} onClick={() => void load(true)}>{loading ? '正在读取…' : '查看更多'}</button> : null}
     </div>
     <footer className="notification-panel__footer">
       <HistoryRetentionInfo store={store} />
-      {confirmation ? <div className="notification-confirm" role="group" aria-label="清理已读通知确认"><p>清理{displayedWorkspace ? '当前工作区及全局' : '所有工作区'}的已读记录？待处理事项保留。</p><div>
-        <button type="button" className="notification-text-button is-muted" disabled={loading} onClick={() => setConfirmation(false)}>取消</button>
+      {confirmation ? <div className="notification-confirm" role="group" aria-label="清理已读通知确认" onKeyDown={event => {
+        if (event.key !== 'Escape' || event.defaultPrevented) return
+        event.preventDefault(); event.stopPropagation()
+        if (!loading) setConfirmation(false)
+      }}><p>清理{displayedWorkspace ? '当前工作区及全局' : '所有工作区'}的已读记录？待处理事项保留。</p><div>
+        <button ref={cancelClearButton} type="button" className="notification-text-button is-muted" disabled={loading} onClick={() => setConfirmation(false)}>取消</button>
         <button type="button" className="notification-text-button" disabled={loading || !currentPage} onClick={() => void perform(async () => {
           const change = await store.api.clearReadNotifications({ query: { ...(currentWorkspace && workspaceId ? { workspaceId } : {}) }, confirmed: true, ...(activePage?.storageEpoch !== undefined ? { storageEpoch: activePage.storageEpoch } : {}) })
           store.accept({ change, ...(change.storageEpoch !== undefined ? { storageEpoch: change.storageEpoch } : {}), health: 'ready', historyIncomplete: store.snapshot().historyIncomplete })
@@ -246,7 +273,7 @@ export function NotificationCenter({ store, workspaceId, onClose, onNavigate, fo
           const change = await store.api.readAllNotifications({ query: query(), revision: summary!.revision, ...(activePage?.storageEpoch !== undefined ? { storageEpoch: activePage.storageEpoch } : {}) })
           store.accept({ change, ...(change.storageEpoch !== undefined ? { storageEpoch: change.storageEpoch } : {}), health: 'ready', historyIncomplete: store.snapshot().historyIncomplete })
         })}>全部已读</button>
-        <button type="button" className="notification-text-button is-muted" disabled={loading || !summary?.clearable || !currentPage} onClick={() => setConfirmation(true)}>清理已读…</button>
+        <button ref={clearButton} type="button" className="notification-text-button is-muted" disabled={loading || !summary?.clearable || !currentPage} onClick={() => setConfirmation(true)}>清理已读…</button>
         <button ref={settingsButton} type="button" className="notification-text-button is-muted" aria-expanded={settingsOpen} onClick={() => setSettingsOpen(value => !value)}>提醒设置</button>
       </div>}
     </footer>

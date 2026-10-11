@@ -184,6 +184,8 @@ export function DesktopShell({
 
   useEffect(() => {
     const handler = (event: KeyboardEvent): void => {
+      if (event.defaultPrevented) return
+      if ((event.key === 'Escape' || event.metaKey || event.ctrlKey) && document.querySelector('[role="dialog"][aria-modal="true"]')) return
       if (event.key === 'Escape') {
         setShowConnection(false)
         setShowAppearance(false)

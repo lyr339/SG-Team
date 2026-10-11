@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type UIEvent, type WheelEvent } from 'react'
+import { useCallback, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent, type UIEvent, type WheelEvent } from 'react'
 
 const BOTTOM_THRESHOLD_PX = 72
 
@@ -18,6 +18,15 @@ export function useBottomFollow(resetKey: string, contentKey: string) {
   const downwardIntent = useRef(false)
   const lastScrollTop = useRef(0)
   const [awayFromBottom, setAwayFromBottom] = useState(false)
+  const pauseFollowing = useCallback((): void => {
+    following.current = false
+    downwardIntent.current = false
+    setAwayFromBottom(true)
+  }, [])
+  const onClickCapture = useCallback((event: MouseEvent<HTMLDivElement>): void => {
+    const control = event.target instanceof Element ? event.target.closest('button[aria-expanded], summary') : null
+    if (control && event.currentTarget.contains(control) && !control.matches(':disabled,[aria-disabled="true"]')) pauseFollowing()
+  }, [pauseFollowing])
 
   const scrollToBottom = useCallback((): void => {
     const element = viewportRef.current
@@ -122,8 +131,10 @@ export function useBottomFollow(resetKey: string, contentKey: string) {
     onWheel,
     onPointerDown,
     onPointerUp,
+    onClickCapture,
     onKeyDown,
     jumpToBottom,
-    beginFollowing
+    beginFollowing,
+    pauseFollowing
   }
 }

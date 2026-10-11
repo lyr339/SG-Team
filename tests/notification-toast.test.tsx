@@ -44,6 +44,71 @@ describe('single calm notification toast', () => {
     await act(async () => store.accept({ change: { changed: true, summary: { revision, total: revision, unread: revision, pending: 0, clearable: 0 }, record: record(id) },
       announcement: { id, expiresAt: Date.now() + 60_000 }, health: 'ready', historyIncomplete: false }))
   }
+  it.each(['textarea','plaintext-only'])('does not let the post-dismissal path show a queued card while the user is editing %s', async kind => {
+    await push('first'); await push('second', 2)
+    const editor = document.createElement(kind === 'textarea' ? 'textarea' : 'div')
+    if (kind !== 'textarea') { editor.setAttribute('contenteditable','plaintext-only'); editor.tabIndex = 0 }
+    document.body.append(editor); editor.focus()
+    try {
+      await act(async () => (document.querySelector('[aria-label="收起提醒"]') as HTMLButtonElement).click())
+      expect(document.querySelector('.notification-toast')).toBeNull()
+      expect(store.snapshot().toasts.map(item => item.key)).toContain('second')
+      expect(api.readNotification).not.toHaveBeenCalled()
+    } finally { editor.remove() }
+  })
+  it('defers a new card when a modal is already in the DOM but the outer blocked prop has not caught up', async () => {
+    const modal = document.createElement('section'); modal.setAttribute('role','dialog'); modal.setAttribute('aria-modal','true'); document.body.append(modal)
+    try {
+      await push('wait-for-modal')
+      expect(document.querySelector('.notification-toast')).toBeNull()
+      expect(store.snapshot().toasts.map(item => item.key)).toContain('wait-for-modal')
+    } finally { modal.remove() }
+  })
+  it('a late successful snooze from a replaced private history cannot dismiss the new same-key update', async () => {
+    let done!: () => void
+    const snooze = vi.fn(() => new Promise<void>(resolve => {done=resolve}))
+    await act(async () => root.render(<NotificationToast store={store} blocked={false} onOpen={()=>{}} onSnoozeUpdate={snooze}/>))
+    const update = (epoch:number,title:string) => store.accept({health:'ready',historyIncomplete:epoch>0,storageEpoch:epoch,preferences:DEFAULT_NOTIFICATION_PREFERENCES,
+      change:{changed:true,storageEpoch:epoch,record:{...record('update'),storageEpoch:epoch,category:'updates',eventId:`update:available:${title}`,title},summary:{revision:1,total:1,unread:1,pending:0,clearable:0}},
+      announcement:{id:'same-key',expiresAt:Date.now()+60_000}})
+    await act(async () => update(0,'旧更新'))
+    await act(async () => [...document.querySelectorAll<HTMLButtonElement>('.notification-toast button')].find(button=>button.textContent==='稍后')!.click())
+    await act(async () => update(1,'新更新'))
+    await act(async () => done())
+    expect(document.querySelector('.notification-toast')?.textContent).toContain('新更新')
+    expect(store.snapshot().toasts.map(item=>item.key)).toContain('same-key')
+  })
+  it('retires an active old-generation card, but does not discard a new opportunity that reuses its key', async () => {
+    await push('reused')
+    await act(async () => store.accept({ health:'ready', historyIncomplete:true, storageEpoch:1, historyReload:true,
+      preferences:DEFAULT_NOTIFICATION_PREFERENCES,
+      change:{ changed:true, storageEpoch:1, record:{...record('new-record'),storageEpoch:1},
+        summary:{revision:1,total:1,unread:1,pending:0,clearable:0} },
+      announcement:{id:'reused',expiresAt:Date.now()+60_000} }))
+    expect(document.querySelector('.notification-toast')?.textContent).toContain('new-record 清理完成')
+    expect(document.querySelector('.notification-toast')?.textContent).not.toContain('reused 清理完成')
+    expect(api.readNotification).not.toHaveBeenCalled()
+  })
+  it('dismissing a pending snooze lets the next update act independently; the old rejection cannot unlock its busy state', async () => {
+    const requests: Array<{resolve:()=>void;reject:(reason:Error)=>void}> = []
+    const snooze = vi.fn(() => new Promise<void>((resolve,reject) => requests.push({resolve,reject})))
+    await act(async () => root.render(<NotificationToast store={store} blocked={false} onOpen={()=>{}} onSnoozeUpdate={snooze}/>))
+    const update = async (id:string,revision:number) => act(async () => store.accept({health:'ready',historyIncomplete:false,
+      change:{changed:true,record:{...record(id),category:'updates',eventId:`update:available:${id}`},summary:{revision,total:revision,unread:revision,pending:0,clearable:0}},
+      announcement:{id,expiresAt:Date.now()+60_000}}))
+    const later = () => [...document.querySelectorAll<HTMLButtonElement>('.notification-toast button')].find(button => ['稍后','保存中…'].includes(button.textContent!))!
+    await update('v1',1); await update('v2',2)
+    await act(async () => later().click())
+    await act(async () => (document.querySelector('[aria-label="收起提醒"]') as HTMLButtonElement).click())
+    expect(document.querySelector('.notification-toast')?.textContent).toContain('v2 清理完成')
+    expect(later().disabled).toBe(false)
+    await act(async () => later().click()); expect(snooze).toHaveBeenCalledTimes(2)
+    await act(async () => requests[0]!.reject(Error('old write failed')))
+    expect(later().disabled).toBe(true)
+    expect(document.querySelector('.notification-toast__error')).toBeNull()
+    await act(async () => requests[1]!.resolve())
+    expect(document.querySelector('.notification-toast')).toBeNull()
+  })
   it('presents one card and quiet mode closes it without recursive listener updates or marking it read', async () => {
     await push('first'); await push('second', 2)
     expect(document.querySelectorAll('.notification-toast')).toHaveLength(1)
@@ -102,7 +167,8 @@ describe('single calm notification toast', () => {
       expect(document.querySelector('.notification-toast')).toBeNull()
     } finally { result.remove() }
   })
-  it('expanded exact native outputs suppress a grouped reminder only when every underlying result is visible; a collapsed header is not reading', async () => {
+  it.each([false, true])('expanded exact native outputs suppress a grouped reminder only when every underlying result is visible; resume from blocked=%s', async resume => {
+    if (resume) await act(async () => root.render(<NotificationToast store={store} blocked={true} onOpen={() => {}} />))
     const scope = { sessionId: 'session', channelId: '1', generation: '0', composerId: 'composer', bindingGeneration: 'binding' }
     const proof: McpWriteObservation = { tool: 'team_memory', action: 'propose', channelId: '1', agentSessionId: 'native-agent', status: 'unconfirmed', reason: 'storage' }
     const container = document.createElement('div')
@@ -119,7 +185,9 @@ describe('single calm notification toast', () => {
         announcement: { id, expiresAt: Date.now() + 60000, group: { title: '2 项结果待核对', source: '协作工具', detail: '摘要', recordIds: originals.map(r => r.id), target: { kind: 'session', scope } } } }))
     }
     try {
-      await grouped('group-1', 1); expect(document.querySelector('.notification-toast')).toBeNull()
+      await grouped('group-1', 1)
+      if (resume) await act(async () => root.render(<NotificationToast store={store} blocked={false} onOpen={() => {}} />))
+      expect(document.querySelector('.notification-toast')).toBeNull()
       hidden = true; await grouped('group-2', 2); expect(document.querySelector('.notification-toast')!.textContent).toContain('2 项结果待核对')
       expect(api.readNotification).not.toHaveBeenCalled() // Suppression itself is not a receipt.
     } finally { container.remove() }

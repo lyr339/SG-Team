@@ -1,7 +1,8 @@
+import { AutomationSettingsWriter } from './settings/automation-settings-writer'
 import { TeamMemoryInspectionDialog } from './notifications/TeamMemoryInspectionDialog'
 import type { TeamMemoryInspection,TeamMemoryInspectionRequest } from '../../domain/team-memory-inspection'
 import { memoryInspectionMatches } from '../../domain/team-memory-inspection'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { flushSync } from 'react-dom'
 import { createAppearanceTransition } from './appearance-transition'
 import type { QuestionActions } from './QuestionCard'
@@ -53,7 +54,7 @@ import type {
 } from '../../domain/processing-provider'
 import type { AgentLaunchPlan, AgentLaunchRequest } from '../../domain/agent-launch'
 import type { SessionWarmupRun } from '../../domain/session-warmup'
-import type { AccountAutomationRun, AccountAutomationSettings } from '../../domain/account-automation'
+import type { AccountAutomationRun } from '../../domain/account-automation'
 import type { CdpAutoHealEvent } from '../../domain/cursor-cdp'
 import type { MessageAttachment } from '../../domain/conversation-entry'
 import type { WorkspaceReviewSummary } from '../../domain/workspace-review'
@@ -138,6 +139,8 @@ function cursorWorkspaceFingerprint(detection?: CursorWorkspaceDetection): strin
 }
 
 // 会话对象指纹与快照结构共享：见 snapshot-sharing.ts（独立模块，含单测）。
+const AUTOMATION_SETTINGS_READ_ERROR = '设置暂未读取，当前显示默认值。修改前会重新读取，不会覆盖未知配置。'
+
 export function App(): React.JSX.Element {
   const [snapshot, setSnapshot] = useState(EMPTY_SNAPSHOT)
   const [taskPool, setTaskPool] = useState(emptyTaskPoolSnapshot())
@@ -199,7 +202,18 @@ export function App(): React.JSX.Element {
   // 会话预热探针：批量发起前用最低成本模型验证账号能真实跑通响应（绝不触发账号自动化）。
   const [sessionWarmupRun, setSessionWarmupRun] = useState<SessionWarmupRun | undefined>(undefined)
   const [sessionWarmupEnabled, setSessionWarmupEnabled] = useState<boolean>(() => readSessionWarmupEnabled())
-  const [accountAutomationSettings, setAccountAutomationSettings] = useState<AccountAutomationSettings>({ enabled: false, delaySec: 30, postProcessDelaySec: 30, processingProvider: 'aozai' })
+  const [automationSettingsWriter] = useState(() => new AutomationSettingsWriter(
+    { enabled: false, delaySec: 30, postProcessDelaySec: 30, processingProvider: 'aozai' },
+    () => window.sgDesktop.getAccountAutomationSettings(),
+    settings => window.sgDesktop.saveAccountAutomationSettings(settings)
+  ))
+  const [automationSettingsSaveError, setAutomationSettingsSaveError] = useState('')
+  const accountAutomationSettings = useSyncExternalStore(automationSettingsWriter.subscribe, automationSettingsWriter.snapshot, automationSettingsWriter.snapshot)
+  const flushAutomationSettings = useCallback(async () => {
+    const saved = await automationSettingsWriter.flush()
+    setAutomationSettingsSaveError(current => current === AUTOMATION_SETTINGS_READ_ERROR ? '' : current)
+    return saved
+  }, [automationSettingsWriter])
   const [accountAutomationRun, setAccountAutomationRun] = useState<AccountAutomationRun | undefined>(undefined)
   // 指纹浏览器窗口列表（账号自动化链的浏览器宿主；用户按当次网络选「代理/直连」窗口。
   // 提供方恒 RoxyBrowser，与平台无关）
@@ -238,7 +252,10 @@ export function App(): React.JSX.Element {
    * 透明度滑杆连续拖动不拍快照（见 isDiscreteAppearanceChange）。
    */
   const changeAppearance = useCallback((patch: Partial<AppearancePreferences>): void => {
-    const next = { ...appearanceIntent.current, ...patch }
+    const current = appearanceIntent.current
+    const next = { ...current, ...patch }
+    if (next.accent === current.accent && next.colorMode === current.colorMode
+      && next.background === current.background && next.cardOpacity === current.cardOpacity) return
     appearanceIntent.current = next
     const reduced = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
     appearanceTransition.commit(() => {
@@ -387,9 +404,7 @@ export function App(): React.JSX.Element {
     void window.sgDesktop.getSessionWarmupRun()
       .then((run) => { if (run) setSessionWarmupRun(run) })
       .catch(() => {})
-    void window.sgDesktop.getAccountAutomationSettings()
-      .then(setAccountAutomationSettings)
-      .catch(() => {})
+    void automationSettingsWriter.load().catch(() => setAutomationSettingsSaveError(AUTOMATION_SETTINGS_READ_ERROR))
     void window.sgDesktop.getAccountAutomationRun()
       .then((run) => { if (run.phase !== 'idle') setAccountAutomationRun(run) })
       .catch(() => {})
@@ -453,7 +468,7 @@ export function App(): React.JSX.Element {
       unsubscribeCdpAutoHeal()
       unsubscribeAccountAutomation()
     }
-  }, [refreshRuntimeMatch, refreshMembership, refreshAccountMemberships])
+  }, [refreshRuntimeMatch, refreshMembership, refreshAccountMemberships, automationSettingsWriter])
 
   const selectSession = useCallback((channelId: string) => {
     persistLastSessionChannel(channelId)
@@ -493,6 +508,8 @@ export function App(): React.JSX.Element {
   }, [refreshRuntimeMatch, refreshMembership])
 
   const performAgentLaunch = useCallback(async (requests: AgentLaunchRequest[]): Promise<AgentLaunchPlan> => {
+    // Wait for actual settings writes. Once loaded, this adds no read or preflight.
+    await flushAutomationSettings()
     // 预热探针（闸门之后、批量之前）：低成本模型先跑一次「只回复：1」，
     // 未通过则中止批量——不消耗自动化配额，不让 N 个会话干等 180s 超时。
     if (readSessionWarmupEnabled()) {
@@ -519,19 +536,21 @@ export function App(): React.JSX.Element {
     const plan = await window.sgDesktop.launchAgentSessions(requests)
     setAgentLaunchPlan(plan)
     return plan
-  }, [])
+  }, [flushAutomationSettings])
 
   const runSessionWarmupNow = useCallback(async (): Promise<void> => {
+    await flushAutomationSettings()
     const warmup = await window.sgDesktop.runSessionWarmup()
     setSessionWarmupRun(warmup)
-  }, [])
+  }, [flushAutomationSettings])
 
   const launchAgentSessions = useCallback(async (requests: AgentLaunchRequest[]): Promise<AgentLaunchPlan> => {
+    const savedSettings = await flushAutomationSettings()
     // 闸门一（身份）在真正创建会话之前：Cursor 登录 ≠ 活跃账号时拦截（防删错官网账号/僵尸会话）。
     const verify = await window.sgDesktop.verifyCursorRuntimeAccount().catch(() => undefined)
     const gate = resolveRuntimeLaunchGate({
       verify,
-      automationEnabled: accountAutomationSettings.enabled,
+      automationEnabled: savedSettings.enabled,
       hasActiveAccount: cursorAccounts.some((account) => account.active)
     })
     if (gate.action === 'proceed') {
@@ -575,7 +594,7 @@ export function App(): React.JSX.Element {
     }
     setAgentLaunchPlan(blocked)
     return blocked
-  }, [accountAutomationSettings.enabled, cursorAccounts, performAgentLaunch, refreshMembership])
+  }, [flushAutomationSettings, cursorAccounts, performAgentLaunch, refreshMembership])
 
   const createIndependentSessions = useCallback(async (
     input: CreateIndependentSessionsInput
@@ -743,7 +762,7 @@ export function App(): React.JSX.Element {
   }, [refreshMembership])
 
   // 手动模式：token 由用户粘贴，不属于库内账号——不触发档位重查，其余状态流与账号处理一致。
-  const processToken = useCallback(async (providerId: ProcessingProviderId, token: string): Promise<void> => {
+  const processToken = useCallback(async (providerId: ProcessingProviderId, token: string): Promise<boolean> => {
     setProcessingBusy(true)
     setProcessingError(null)
     setProcessingFeedback(null)
@@ -755,8 +774,10 @@ export function App(): React.JSX.Element {
       if (result.balance) {
         setProcessingStatuses((current) => ({ ...current, [providerId]: { ...current[providerId], ...result.balance } }))
       }
+      return result.ok
     } catch (reason) {
       setProcessingFeedback({ providerId, ok: false, message: userFacingErrorMessage(reason), originSection: 'aozai', notification: { key: `processing:${providerId}:${requestId}`, eventId: `processing:${requestId}:result` } })
+      return false
     } finally {
       setProcessingBusy(false)
       setProcessingProgress(null)
@@ -1223,6 +1244,7 @@ export function App(): React.JSX.Element {
       setCursorAccountBusy(true); setCursorAccountNotice(undefined)
       const display = pageOperationDisplay('import-card')
       try {
+        await flushAutomationSettings()
         const result = await window.sgDesktop.saveCursorAccountCard({ ...input, ...display.request })
         setCursorAccounts(result.accounts)
         // 与 onSave 同理：卡号导入默认活跃，一致性锚点与档位同步重查
@@ -1239,6 +1261,7 @@ export function App(): React.JSX.Element {
       // 失败走账号区错误条，成功后列表刷新（maskedToken 变化即可见确认）。
       const display = pageOperationDisplay('account-login')
       try {
+        await flushAutomationSettings()
         const result = await window.sgDesktop.loginCursorAccount(accountId, display.request)
         setCursorAccounts(result.accounts)
         setCursorAccountNotice({ tone: 'success', title: result.outcome === 'already_logged_in' ? '原窗口已登录，凭据已更新' : '网页登录已完成，凭据已更新',
@@ -1253,6 +1276,7 @@ export function App(): React.JSX.Element {
       setProUpgradeFeedback(null)
       const display = pageOperationDisplay('checkout')
       try {
+        await flushAutomationSettings()
         const result = await window.sgDesktop.startCursorProUpgrade(accountId, display.request)
         setProUpgradeFeedback({ ok: true, pending: true, message: result.detail, notification: result.notification ?? display.reference })
       }
@@ -1307,6 +1331,7 @@ export function App(): React.JSX.Element {
       setCursorAccountBusy(true); setCursorAccountNotice(undefined)
       const display = pageOperationDisplay('import-browser')
       try {
+        await flushAutomationSettings()
         setCursorAccounts(await window.sgDesktop.importCursorAccountFromBrowser(display.request))
         setCursorAccountNotice({ tone: 'success', title: '浏览器账号已导入', detail: '当前 Cursor 运行账号未被本次导入切换。', section: 'import', notification: display.reference })
         void refreshRuntimeMatch()
@@ -1320,6 +1345,7 @@ export function App(): React.JSX.Element {
       setCursorAccountBusy(true); setCursorAccountNotice(undefined)
       const display = pageOperationDisplay('import-fingerprint')
       try {
+        await flushAutomationSettings()
         setCursorAccounts(await window.sgDesktop.importCursorAccountFromFingerprint(display.request))
         setCursorAccountNotice({ tone: 'success', title: '指纹浏览器账号已导入', detail: '绑定以保存账号卡片中的实际窗口为准。当前 Cursor 运行账号未被切换。', section: 'import', notification: display.reference })
         void refreshRuntimeMatch()
@@ -1333,7 +1359,8 @@ export function App(): React.JSX.Element {
     onOpenFingerprintLogin: async () => {
       setCursorAccountBusy(true); setCursorAccountNotice(undefined)
       const display = pageOperationDisplay('login-window')
-      try { await window.sgDesktop.openFingerprintLoginPage(display.request)
+      try { await flushAutomationSettings()
+        await window.sgDesktop.openFingerprintLoginPage(display.request)
         setCursorAccountNotice({ tone: 'warning', title: '登录窗口已打开，尚待登录', detail: '请在原窗口完成登录；打开窗口本身不代表已经登录。', section: 'import', notification: display.reference }) }
       catch (reason) { reportCursorAccountError('登录窗口未能打开', reason, 'import', display.reference) }
       finally { setCursorAccountBusy(false) }
@@ -1341,6 +1368,7 @@ export function App(): React.JSX.Element {
     onCleanupFingerprintEnvironment: async () => {
       // 清理只影响指纹浏览器 profile，不锁账号操作（面板内自有 busy/反馈态）。
       const display = pageOperationDisplay('fingerprint-cleanup')
+      await flushAutomationSettings()
       await window.sgDesktop.cleanupFingerprintEnvironment(display.request)
       setCursorAccountNotice({ tone: 'success', title: '浏览器环境清理已返回', detail: '处理范围以原确认入口为准。', section: 'import', notification: display.reference })
     },
@@ -1427,6 +1455,7 @@ export function App(): React.JSX.Element {
     onProcessAccount: processAccount,
     onProcessToken: processToken,
     automationSettings: accountAutomationSettings,
+    automationSettingsSaveError,
     automationRun: accountAutomationRun,
     bitProfiles,
     bitProfilesMessage,
@@ -1445,7 +1474,7 @@ export function App(): React.JSX.Element {
         .catch(() => {})
     },
     onRefreshBitProfiles: () => {
-      return window.sgDesktop.listAccountAutomationBitProfiles()
+      return flushAutomationSettings().then(() => window.sgDesktop.listAccountAutomationBitProfiles())
         .then((result) => {
           if (result.ok) {
             setBitProfiles(result.profiles ?? [])
@@ -1550,6 +1579,7 @@ export function App(): React.JSX.Element {
       let message = '已关闭自动确认；官网已有确认保持不变'
       let notification: NotificationReference | undefined
       if (enabled) {
+        await flushAutomationSettings()
         const display = pageOperationDisplay('model-policy')
         const result = await window.sgDesktop.acknowledgeCursorModelDataPolicies(display.request)
         notification = result.notification ?? display.reference
@@ -1557,18 +1587,16 @@ export function App(): React.JSX.Element {
         if (result.tokenUpdated) setCursorAccounts(await window.sgDesktop.listCursorAccounts())
         message = `${result.message}；后续新账号将自动检查`
       }
-      const saved = await window.sgDesktop.saveAccountAutomationSettings({
-        ...accountAutomationSettings,
-        autoAcknowledgeModelDataPolicies: enabled
-      })
-      setAccountAutomationSettings(saved)
+      const current = automationSettingsWriter.snapshot()
+      await automationSettingsWriter.save(current, { ...current, autoAcknowledgeModelDataPolicies: enabled })
       return { message, notification }
     },
     onSaveAutomationSettings: (settings) => {
-      return window.sgDesktop.saveAccountAutomationSettings(settings)
-        .then((saved) => { setAccountAutomationSettings(saved); return true })
-        .catch((reason: unknown) => {
-          setProcessingError({ providerId: settings.processingProvider, message: userFacingErrorMessage(reason) })
+      setAutomationSettingsSaveError('')
+      return automationSettingsWriter.save(accountAutomationSettings, settings)
+        .then(() => true)
+        .catch(() => {
+          setAutomationSettingsSaveError('部分设置未保存。失败的修改已恢复，其他已保存设置不受影响；请核对后重试。')
           return false
         })
     },

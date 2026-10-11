@@ -591,6 +591,27 @@ if (previewParameters.get('continuation') === 'archived') {
     ? { ...session, status: 'waiting', waiting: true, connectionPhase: 'waiting', online: true }
     : session)
 }
+// Isolated renderer load cases. These are completed, in-memory tool records;
+// no command, model request or source workflow is executed.
+const processStress = previewParameters.get('processStress')
+if (processStress === '100' || processStress === '1000') {
+  const count = Number(processStress), startedAt = previewNow - count * 1000 - 60_000
+  const blocks: ProcessBlock[] = Array.from({length:count}, (_,index) => ({
+    kind:'tool', id:`stress-tool-${index}`, toolName:index % 3 === 2 ? 'run_terminal_command_v2' : 'read_file_v2',
+    toolKind:index % 3 === 2 ? 'command' : 'read', toolCase:index % 3 === 2 ? 'shellToolCall' : 'readToolCall',
+    summary:index % 3 === 2 ? `fixture-check-${index}` : `src/fixture/module-${index}.ts`,
+    output:'Isolated preview output; no real command was run.', status:'done',
+    startedAt:startedAt + index * 1000, completedAt:startedAt + index * 1000 + 500
+  }))
+  state.desktop.conversations = {...state.desktop.conversations, '2':[
+    {id:'stress-user',channelId:'2',role:'user',source:'desktop',status:'complete',timestamp:startedAt-1000,deliveredAt:startedAt-900,text:`隔离验收：${count} 步已完成过程。`},
+    {id:'stress-reply',channelId:'2',role:'assistant',source:'cursor',status:'complete',timestamp:previewNow-60_000,replyToEntryId:'stress-user',processBlocks:blocks,text:'这是性能样本，未执行真实命令或模型请求。'}
+  ]}
+  state.desktop.liveProcess = undefined
+  state.desktop.liveAgentResponses = undefined
+  state.desktop.sessions = state.desktop.sessions.map(session => session.channelId === '2'
+    ? {...session,status:'waiting',waiting:true,connectionPhase:'waiting',online:true,currentTask:'隔离性能验收'} : session)
+}
 // 待投递托盘走查：?queued=1 —— Agent 正在处理上一条消息（过程流直播中），用户又发了两条：
 // 它们不进时间线，停在输入区上方的托盘里（一条带「等待新会话」保持位；另有 1 条内部静默消息只计数）。
 if (previewParameters.get('queued') === '1') {

@@ -191,4 +191,18 @@ describe('WorkspaceInspector shell', () => {
     expect(container.textContent).toContain('docs/new.md')
     await act(async () => root.unmount())
   })
+  it('does not switch background tabs under a modal or after a handled shortcut', async () => {
+    const root=createRoot(container),change=vi.fn()
+    await act(async()=>root.render(<InspectorShell tabs={[{id:'review',label:'变更',icon:null},{id:'plan',label:'计划',icon:null}]} activeTab="review" onTabChange={change} onClose={()=>{}}><div/></InspectorShell>))
+    const modal=document.createElement('section');modal.setAttribute('role','dialog');modal.setAttribute('aria-modal','true');document.body.append(modal)
+    try {
+      await act(async()=>window.dispatchEvent(new KeyboardEvent('keydown',{altKey:true,code:'Digit2',cancelable:true})))
+      expect(change).not.toHaveBeenCalled();modal.remove()
+      const key=new KeyboardEvent('keydown',{altKey:true,code:'Digit2',cancelable:true});key.preventDefault()
+      await act(async()=>window.dispatchEvent(key));expect(change).not.toHaveBeenCalled()
+      await act(async()=>window.dispatchEvent(new KeyboardEvent('keydown',{altKey:true,code:'Digit2',cancelable:true})))
+      expect(change).toHaveBeenCalledWith('plan')
+    } finally{modal.remove();await act(async()=>root.unmount())}
+  })
+
 })

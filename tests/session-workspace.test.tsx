@@ -131,9 +131,9 @@ describe('SessionWorkspace', () => {
         startedAt: 180_000, updatedAt: 180_100
       }
     })
-    // 已完成的思考折叠成一行「Thought」头（历史轻量，2026-09-18），过程卡与回答仍在同一回合行。
-    expect(html).toContain('<strong>Thought</strong>')
-    expect(html).toContain('data-step-id="block:thought-long"')
+    // 首次回放只挂摘要；展开后的内容与顺序由 archived-history DOM 用例验证。
+    expect(html).toContain('cursor-native-process__flow" hidden=""></div>')
+    expect(html).not.toContain('data-step-id="block:thought-long"')
     expect(html).not.toContain('长任务完整过程')
     expect(html).toContain('长任务最终回答')
     expect(html).toContain('>Worked</span>')
@@ -461,8 +461,8 @@ describe('SessionWorkspace', () => {
     expect(continuation).toContain('>Worked')
     expect(continuation).toContain('cursor-native-process__flow" hidden')
     expect(continuation).not.toContain('live-process-row')
-    expect(html).toContain('src/a.ts')
-    expect(html.indexOf('已接手。')).toBeLessThan(html.indexOf('src/a.ts'))
+    expect(html).not.toContain('src/a.ts')
+    expect(html.indexOf('已接手。')).toBeLessThan(html.indexOf('chat-row--continuation'))
   })
 
   it('stops an unsealed process when the seat is offline and all native blocks have settled', () => {
@@ -697,8 +697,8 @@ describe('SessionWorkspace', () => {
       })]
     })
     expect(html).toContain('process-turn')
-    expect(html).toContain('Read')
-    expect(html).toContain('src/App.tsx')
+    expect(html).toContain('过程记录，2 步')
+    expect(html).toContain('cursor-native-process__flow" hidden=""></div>')
     expect(html).toContain('chat-row--process')
     expect(html).not.toContain('process-turn__live-label')
   })
@@ -817,8 +817,8 @@ describe('统一回合时间线（阶段 F：RC-8 turn identity）', () => {
     expect(sealed).toContain('最终回答')
     expect(sealed).toContain('Worked for')
     expect(sealed).toContain('cursor-native-process__flow" hidden')
-    // 历史轻量（2026-09-18 审查项 2）：封口后的思考折叠成一行「Thought」头，正文点开再看。
-    expect(sealed).toContain('<strong>Thought</strong>')
+    // 冷启动历史不预挂细节；真实 live→sealed 的 DOM 保持由交互用例验证。
+    expect(sealed).not.toContain('<strong>Thought</strong>')
     expect(sealed).not.toContain('思考完成')
     expect(sealed.match(/chat-row chat-row--agent live-process-row[" ]/g)).toBe(null)
   })
@@ -965,8 +965,9 @@ describe('历史脏数据兜底：回复正文不得随过程卡重复渲染（2
         })
       ]
     })
-    // 中间过程消息（文本 ≠ 最终回复）保留；最终正文只出现一次。
-    expect(html).toContain('我先读取目标文件。')
+    // 默认折叠不挂过程正文；展开后的完整内容与去重由 DOM 用例验证。
+    expect(html).toContain('过程记录，2 步')
+    expect(html).not.toContain('我先读取目标文件。')
     expect(html.match(/这是微信（WeChat）的应用图标/g)).toHaveLength(1)
   })
 })

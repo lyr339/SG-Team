@@ -1,3 +1,4 @@
+import { FeedbackLine } from '../feedback/FeedbackLine'
 import { useEffect, useState } from 'react'
 import type { SettingsPageProps } from './settings-view'
 import { isActiveAutomationPhase } from './settings-view'
@@ -121,6 +122,8 @@ export function SettingsPage(props: SettingsPageProps): React.JSX.Element {
           <p>{active.description}</p>
         </header>
         {props.notice && group === (props.notice.section ?? 'accounts') ? <SettingsNotice message={props.notice} onDismiss={props.onDismissNotice} /> : null}
+        {props.automationSettingsSaveError && ['import', 'automation', 'aozai', 'maintenance'].includes(group)
+          ? <FeedbackLine tone="error">{props.automationSettingsSaveError}</FeedbackLine> : null}
         <div className="settings-groups">
           <div hidden={group !== 'stats'}><SettingsStats {...props} active={group === 'stats'} /></div>
           <div hidden={group !== 'protocol'}><SettingsProtocol active={group === 'protocol'} onAccounts={() => selectGroup('accounts')} onNative={props.onOpenNativeWorkspace} /></div>

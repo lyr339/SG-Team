@@ -1,3 +1,4 @@
+import { useModalInteraction } from '../use-modal-interaction'
 import type { CursorMembershipStatus } from '../../../domain/cursor-membership'
 import { cursorMembershipTierLabel } from '../../../domain/cursor-membership'
 
@@ -25,10 +26,11 @@ export function MembershipGuardDialog({
   onClose,
   onRefresh
 }: MembershipGuardDialogProps): React.JSX.Element {
+  const dialog = useModalInteraction(onClose, busy)
   const profile = status.state === 'ok' ? status.profile : undefined
   return (
     <div className="handoff-dialog-backdrop" role="presentation">
-      <section className="handoff-dialog" role="dialog" aria-modal="true" aria-labelledby="membership-guard-title">
+      <section {...dialog} className="handoff-dialog" role="dialog" aria-modal="true" aria-labelledby="membership-guard-title">
         <header>
           <div>
             <strong id="membership-guard-title">{profile?.tier === 'free' ? '账号档位不足' : '无法确认账号档位'}</strong>

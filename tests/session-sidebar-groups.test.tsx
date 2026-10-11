@@ -380,4 +380,16 @@ describe('SessionSidebar 名册多选与浮动条', () => {
     await act(async () => { headerOf('g1').dispatchEvent(dragEvent('dragover')) })
     expect(headerOf('g1').className).not.toContain('is-drop-target')
   })
+  it('a foreground modal protects the background selection and removal confirmation from Escape',async()=>{
+    await render({actions:actionsOf()});await clickRow('2',{ctrlKey:true})
+    const modal=document.createElement('section');modal.setAttribute('role','dialog');modal.setAttribute('aria-modal','true');document.body.append(modal)
+    try {
+      await act(async()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'})))
+      expect(pickedChannels()).toEqual(['2']);modal.remove()
+      await act(async()=>barButton('移出组（1）')!.click());document.body.append(modal)
+      await act(async()=>document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'})))
+      expect(container.querySelector('.run-sheet')).not.toBeNull()
+    }finally{modal.remove()}
+  })
+
 })

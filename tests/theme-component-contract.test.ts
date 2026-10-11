@@ -12,6 +12,11 @@ const luminance = (values: number[]) => values.map(value => value / 255).map(val
 const contrast = (fore: number[], back: number[]) => (Math.max(luminance(fore), luminance(back)) + .05) / (Math.min(luminance(fore), luminance(back)) + .05)
 
 describe('themes preserve complete component state contracts', () => {
+  it('does not retain orphaned task-board styles and action selectors after the page was retired', () => {
+    for (const source of [styles, actions, read('controls.css')]) {
+      expect(source).not.toMatch(/\.(?:task-page|task-card|task-board|task-column|task-events|task-create-panel|task-form-grid|task-reject-box|task-review-actions|task-cancel)(?:\b|__|--)/)
+    }
+  })
   it('keeps six theme dots in one compact row with separate selection and keyboard focus rings', () => {
     expect(styles).toMatch(/\.appearance-accent > div\[role="group"\]\s*\{[^}]*display:flex;[^}]*gap:10px/)
     expect(styles).toMatch(/\.appearance-accent__swatch\s*\{[^}]*width:32px;[^}]*height:32px;[^}]*place-items:center;[^}]*border-radius:50%/)
@@ -85,7 +90,7 @@ describe('themes preserve complete component state contracts', () => {
     expect(read('settings/settings.css')).toMatch(/\.account-row__actions > \.account-switch-live.is-busy:disabled\s*\{[^}]*var\(--color-text-info\)/)
   })
   it('keeps success and waiting status surfaces independent of a selectable theme, not just their text', () => {
-    for (const selector of ['.fresh-notice--success', '.status-pill--waiting', '.task-card__handoff.is-completed']) {
+    for (const selector of ['.fresh-notice--success', '.status-pill--waiting']) {
       const rule = styles.split(`${selector} {`)[1]!.split('}')[0]!
       expect(rule).toContain('--color-text-success')
       expect(rule).toContain('--color-background-success')

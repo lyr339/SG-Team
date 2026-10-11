@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, Profiler } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MenuSelect } from '../src/renderer/src/lobby/MenuSelect'
@@ -9,6 +9,7 @@ describe('MenuSelect（账号管线自绘下拉）', () => {
   let root: Root | undefined
 
   beforeEach(() => {
+    ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
@@ -41,6 +42,26 @@ describe('MenuSelect（账号管线自绘下拉）', () => {
     expect(container!.querySelector('.menu-select__swatch')).toBeNull()
     expect(document.body.querySelector('.menu-select__menu')).toBeNull()
     expect(buttonOf().getAttribute('aria-expanded')).toBe('false')
+  })
+  it('scrolling a long menu neither remeasures its stationary trigger nor commits identical positioning', async () => {
+    const commits = vi.fn(), change = vi.fn()
+    const options = Array.from({length:100}, (_,index)=>({value:String(index),label:`选项 ${index}`}))
+    await act(async () => root!.render(<Profiler id="menu-scroll" onRender={commits}><MenuSelect value="0" options={options} onChange={change}/></Profiler>))
+    let left = 20
+    const rect = vi.spyOn(buttonOf(), 'getBoundingClientRect').mockImplementation(() => ({x:left,y:40,left,right:left+180,top:40,bottom:72,width:180,height:32,toJSON:()=>({})}))
+    await act(async () => buttonOf().click())
+    const menu = document.querySelector<HTMLElement>('[role="listbox"]')!
+    commits.mockClear(); rect.mockClear()
+    for (let i=0;i<30;i++) await act(async () => menu.dispatchEvent(new Event('scroll')))
+    expect(rect).not.toHaveBeenCalled()
+    expect(commits).not.toHaveBeenCalled()
+    await act(async () => window.dispatchEvent(new Event('resize')))
+    expect(commits).not.toHaveBeenCalled()
+    left = 160
+    await act(async () => window.dispatchEvent(new Event('resize')))
+    expect(menu.style.left).toBe('160px')
+    expect(commits).toHaveBeenCalledOnce()
+    expect(change).not.toHaveBeenCalled()
   })
   it('a transient save lock blocks selection without dimming the trigger or removing focus', async () => {
     const change = vi.fn(), props = { value: 'a', options: [{ value: 'a', label: '当前' }], onChange: change }

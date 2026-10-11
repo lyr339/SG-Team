@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { NotificationCard } from './NotificationCard'
 import { notificationTargetLabel } from './notification-view'
@@ -60,19 +60,23 @@ export function NotificationToast({ store, blocked, onOpen, onSnoozeUpdate }: Pr
   const [within, setWithin] = useState(false)
   const [error, setError] = useState('')
   const [snoozing, setSnoozing] = useState(false)
-  const snoozeBusy = useRef(false), alive = useRef(true)
+  const snoozeRequest = useRef<symbol | undefined>(undefined), alive = useRef(true)
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
   const [placement, setPlacement] = useState({ bottom: 16, visible: true })
   const toastRef = useRef<HTMLElement>(null)
   const remaining = useRef({ key: '', ms: 5_000 })
   const choosing = useRef(false)
   const current = useRef(active); current.current = active
+  const currentStore = useRef(store)
   const blockedRef = useRef(blocked); blockedRef.current = blocked
   const finish = (): void => {
     const item = current.current
+    const owner = currentStore.current
     current.current = undefined
-    setActive(undefined); setError(''); setHovering(false); setWithin(false)
-    if (item) store.dismissToast(item.key)
+    snoozeRequest.current = undefined
+    setActive(undefined); setError(''); setHovering(false); setWithin(false); setSnoozing(false)
+    // An old view must not remove a new private-history opportunity reusing its key.
+    if (item && (item.record.storageEpoch ?? 0) === (owner.snapshot().storageEpoch ?? 0)) owner.dismissToast(item.key)
   }
   const finishRef = useRef(finish); finishRef.current = finish
   useLayoutEffect(() => {
@@ -93,13 +97,13 @@ export function NotificationToast({ store, blocked, onOpen, onSnoozeUpdate }: Pr
     window.addEventListener('resize', place)
     return () => { observer?.disconnect(); window.removeEventListener('resize', place) }
   }, [active, blocked])
-  useEffect(() => {
-    const choose = (event?: NotificationPush): void => {
-      if (choosing.current) return
-      choosing.current = true
-      try {
+  const choose = useCallback((event?: NotificationPush): void => {
+    if (choosing.current) return
+    choosing.current = true
+    try {
       const state = store.snapshot()
       if (current.current) {
+        if (currentStore.current !== store || (current.current.record.storageEpoch ?? 0) !== (state.storageEpoch ?? 0)) { finishRef.current(); return }
         if (event?.change?.record?.id === current.current.record.id && (!notificationIsUnread(event.change.record) || event.change.record.state === 'expired')) { finishRef.current(); return }
         const preferences = state.preferences
         if (notificationIsQuiet(preferences, Date.now()) || preferences.mutedCategories.includes(current.current.record.category)
@@ -107,16 +111,18 @@ export function NotificationToast({ store, blocked, onOpen, onSnoozeUpdate }: Pr
         return
       }
       if (!state.preferencesReady || notificationIsQuiet(state.preferences, Date.now()) || !document.hasFocus() || blockedRef.current) return
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return
       const element = document.activeElement
-      if (element instanceof HTMLElement && element.matches('textarea,input:not([type="checkbox"]):not([type="radio"]),[contenteditable="true"]')) return
+      if (element instanceof HTMLElement && (element.isContentEditable || element.matches('textarea,input:not([type="checkbox"]):not([type="radio"]),[contenteditable="true"],[contenteditable="plaintext-only"]'))) return
       for (const item of nextReminder(store)) {
         const visible = item.grouped ? Boolean(item.sourceRecords?.length && item.sourceRecords.every(sourceResultVisible)) : sourceResultVisible(item.record)
         if (item.expiresAt <= Date.now() || visible) { store.dismissToast(item.key); continue }
         remaining.current = { key: item.key, ms: item.record.category === 'updates' ? 15_000 : item.record.target ? 10_000 : 5_000 }
-        current.current = item; setActive(item); break
+        currentStore.current = store; current.current = item; setActive(item); break
       }
-      } finally { choosing.current = false }
-    }
+    } finally { choosing.current = false }
+  }, [store])
+  useEffect(() => {
     const stop = store.subscribe(choose)
     const onFocus = (): void => {
       setFocused(true)
@@ -127,7 +133,7 @@ export function NotificationToast({ store, blocked, onOpen, onSnoozeUpdate }: Pr
     window.addEventListener('focus', onFocus); window.addEventListener('blur', onBlur)
     choose()
     return () => { stop(); window.removeEventListener('focus', onFocus); window.removeEventListener('blur', onBlur) }
-  }, [store])
+  }, [store, choose])
   useEffect(() => {
     if (!active || blocked || !focused || hovering || within || snoozing || !placement.visible) return
     if (active.expiresAt <= Date.now()) { finishRef.current(); return }
@@ -137,20 +143,22 @@ export function NotificationToast({ store, blocked, onOpen, onSnoozeUpdate }: Pr
     return () => { clearTimeout(timer); duration.ms = Math.max(0, duration.ms - (performance.now() - started)) }
   }, [active, blocked, focused, hovering, within, placement.visible, snoozing])
   useEffect(() => {
-    if (active || blocked || !focused || !store.snapshot().preferencesReady || notificationIsQuiet(store.snapshot().preferences, Date.now())) return
-    // Dismissal may be the last queue change. Re-check pending candidates once after the old card unmounts.
-    const item = nextReminder(store).find(value => value.expiresAt > Date.now() && !sourceResultVisible(value.record))
-    if (item) { remaining.current = { key: item.key, ms: item.record.category === 'updates' ? 15_000 : item.record.target ? 10_000 : 5_000 }; current.current = item; setActive(item) }
-  }, [active, blocked, focused, store])
+    if (active || blocked || !focused) return
+    // Dismissal may be the last queue change. Reuse the same editor, scope and
+    // grouped-source checks when filling the newly available presentation slot.
+    choose()
+  }, [active, blocked, focused, choose])
   const snooze = async (): Promise<void> => {
     const item = current.current
-    if (!item || !onSnoozeUpdate || snoozeBusy.current) return
-    snoozeBusy.current = true; setSnoozing(true); setError('')
-    try { await onSnoozeUpdate(item.record); if (alive.current && current.current?.key === item.key) finishRef.current() }
-    catch { if (alive.current && current.current?.key === item.key) setError('更新状态可能已变化；未延后其他版本，请到软件更新查看。') }
-    finally { snoozeBusy.current = false; if (alive.current) setSnoozing(false) }
+    if (!item || !onSnoozeUpdate || snoozeRequest.current) return
+    const request = Symbol('toast-snooze')
+    snoozeRequest.current = request; setSnoozing(true); setError('')
+    try { await onSnoozeUpdate(item.record); if (alive.current && current.current === item) finishRef.current() }
+    catch { if (alive.current && current.current === item) setError('更新状态可能已变化；未延后其他版本，请到软件更新查看。') }
+    finally { if (snoozeRequest.current === request) { snoozeRequest.current = undefined; if (alive.current) setSnoozing(false) } }
   }
-  if (!active || blocked) return null
+  if (!active || blocked || currentStore.current !== store
+    || (active.record.storageEpoch ?? 0) !== (store.snapshot().storageEpoch ?? 0)) return null
   return createPortal(<NotificationCard ref={toastRef} title={active.record.title} source={active.record.source} detail={active.record.detail} tone={active.record.tone} error={error} onDismiss={finish}
     aria-hidden={!placement.visible} inert={!placement.visible} style={{ bottom: placement.bottom, visibility: placement.visible ? undefined : 'hidden' }} onMouseEnter={() => setHovering(true)} onMouseLeave={() => setHovering(false)}
     onFocusCapture={() => setWithin(true)} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setWithin(false) }}

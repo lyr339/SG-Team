@@ -14,13 +14,14 @@ export interface MenuSelectProps {
   className?: string
   onChange: (value: string) => void
 }
+interface MenuPosition { style: CSSProperties; owner?: string }
 /** Shared, theme-owned selection. Portal escapes clipped panels while retaining
  * the owning overlay, keyboard context and exact value semantics. */
 export function MenuSelect({ value, options, placeholder = '请选择…', disabled, busy, ariaLabel, menuMinWidth = 0, className = '', onChange }: MenuSelectProps): React.JSX.Element {
   const [open, setOpen] = useState(false)
-  const [menuStyle, setMenuStyle] = useState<CSSProperties>()
+  const [position, setPosition] = useState<MenuPosition>()
+  const positionRef = useRef<MenuPosition | undefined>(undefined)
   const [highlighted, setHighlighted] = useState(0)
-  const [owner, setOwner] = useState<string>()
   const rootRef = useRef<HTMLDivElement>(null), buttonRef = useRef<HTMLButtonElement>(null), menuRef = useRef<HTMLUListElement>(null)
   const menuId = useId()
   const search = useRef({ text: '', at: 0 })
@@ -35,14 +36,20 @@ export function MenuSelect({ value, options, placeholder = '请选择…', disab
     const left = Math.min(Math.max(padding, rect.left), Math.max(padding, window.innerWidth - padding - width))
     const below = window.innerHeight - rect.bottom - gap - padding, above = rect.top - gap - padding
     const placeAbove = below < 150 && above > below
-    setMenuStyle({ position: 'fixed', left, top: placeAbove ? undefined : rect.bottom + gap, bottom: placeAbove ? window.innerHeight - rect.top + gap : undefined,
-      width, maxHeight: Math.max(40, Math.min(224, placeAbove ? above : below)) })
-    setOwner(rootRef.current?.closest<HTMLElement>('[data-overlay-scope]')?.dataset.overlayScope)
+    const next: CSSProperties = { position: 'fixed', left, top: placeAbove ? undefined : rect.bottom + gap, bottom: placeAbove ? window.innerHeight - rect.top + gap : undefined,
+      width, maxHeight: Math.max(40, Math.min(224, placeAbove ? above : below)) }
+    const owner = rootRef.current?.closest<HTMLElement>('[data-overlay-scope]')?.dataset.overlayScope
+    const previous = positionRef.current
+    if (previous && previous.owner === owner && previous.style.left === next.left && previous.style.top === next.top
+      && previous.style.bottom === next.bottom && previous.style.width === next.width && previous.style.maxHeight === next.maxHeight) return
+    positionRef.current = { style: next, owner }
+    setPosition(positionRef.current)
   }, [menuMinWidth])
   const openMenu = (last = false): void => {
     if (disabled || busy) return
     search.current = { text: '', at: 0 }
-    positionMenu(); setHighlighted(Math.max(0, options.findIndex(option => option.value === value) >= 0 ? options.findIndex(option => option.value === value) : last ? options.length - 1 : 0)); setOpen(true)
+    const selectedIndex = options.findIndex(option => option.value === value)
+    positionMenu(); setHighlighted(Math.max(0, selectedIndex >= 0 ? selectedIndex : last ? options.length - 1 : 0)); setOpen(true)
   }
   const closeMenu = (restore = true): void => { setOpen(false); if (restore) buttonRef.current?.focus({ preventScroll: true }) }
   useLayoutEffect(() => {
@@ -62,13 +69,18 @@ export function MenuSelect({ value, options, placeholder = '请选择…', disab
       // one layer; never close the center and the menu in the same keystroke.
       event.preventDefault(); event.stopPropagation(); setOpen(false); buttonRef.current?.focus({ preventScroll: true })
     }
+    const scroll = (event: Event): void => {
+      // Scrolling the option list does not move its anchor. Avoid a forced
+      // geometry read and a React update on every internal scroll event.
+      if (!menuRef.current?.contains(event.target as Node | null)) positionMenu()
+    }
     document.addEventListener('pointerdown', outside)
     document.addEventListener('focusin', outside)
     document.addEventListener('keydown', escape, true)
-    window.addEventListener('resize', positionMenu); document.addEventListener('scroll', positionMenu, true)
+    window.addEventListener('resize', positionMenu); document.addEventListener('scroll', scroll, true)
     return () => {
       document.removeEventListener('pointerdown', outside); document.removeEventListener('focusin', outside); document.removeEventListener('keydown', escape, true)
-      window.removeEventListener('resize', positionMenu); document.removeEventListener('scroll', positionMenu, true)
+      window.removeEventListener('resize', positionMenu); document.removeEventListener('scroll', scroll, true)
     }
   }, [menuOpen, positionMenu])
   return <div className={`menu-select ${className}${menuOpen ? ' is-open' : ''}${disabled ? ' is-disabled' : ''}${selected?.tone ? ` ${selected.tone}` : ''}`} ref={rootRef}>
@@ -79,7 +91,7 @@ export function MenuSelect({ value, options, placeholder = '请选择…', disab
       }}>
       <span className="menu-select__value">{selected ? <>{selected.tone ? <i className="menu-select__swatch" aria-hidden="true" /> : null}{selected.label}</> : <em>{placeholder}</em>}</span><ChevronDownIcon className="menu-select__chevron" />
     </button>
-    {menuOpen && menuStyle ? createPortal(<ul className="menu-select__menu is-portal" id={menuId} role="listbox" aria-label={ariaLabel ?? '可选项'} data-overlay-owner={owner} ref={menuRef} style={menuStyle}
+    {menuOpen && position ? createPortal(<ul className="menu-select__menu is-portal" id={menuId} role="listbox" aria-label={ariaLabel ?? '可选项'} data-overlay-owner={position.owner} ref={menuRef} style={position.style}
       onKeyDown={event => {
         const count = options.length
         const next = event.key === 'ArrowDown' ? (highlighted + 1) % Math.max(1, count) : event.key === 'ArrowUp' ? (highlighted - 1 + count) % Math.max(1, count) : event.key === 'Home' ? 0 : event.key === 'End' ? Math.max(0, count - 1) : undefined

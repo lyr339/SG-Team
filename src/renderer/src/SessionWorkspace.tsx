@@ -302,9 +302,11 @@ export function SessionWorkspace({
   // 右栏「在时间线中定位」：滚到对应过程步骤 / 消息并短暂高亮；用户由此离开底部，
   // 贴底跟随按既有意图模型自动暂停。等过程卡把目标步骤展开提交后再定位，并把
   // 「是否找到」回给右栏——找不到时右栏会给出提示，而不是静默无事发生。
-  useEffect(() => subscribeReveal((target) => (
-    target.surface ? false : revealAfterPaint(() => follow.viewportRef.current, target)
-  )), [follow.viewportRef])
+  useEffect(() => subscribeReveal((target) => {
+    if (target.surface) return false
+    follow.pauseFollowing()
+    return revealAfterPaint(() => follow.viewportRef.current, target)
+  }), [follow.viewportRef, follow.pauseFollowing])
 
   const pendingBelow = follow.awayFromBottom ? Math.max(0, timelineEntries.length - seenCount.current) : 0
 
@@ -819,6 +821,7 @@ export function SessionWorkspace({
           data-notification-slot={mcpReadScopeReady ? questionActions?.notificationScope?.slotId : undefined}
           data-notification-group={mcpReadScopeReady ? questionActions?.notificationScope?.groupId : undefined}
           onScroll={follow.onScroll}
+          onClickCapture={follow.onClickCapture}
           onWheel={follow.onWheel}
           onPointerDown={follow.onPointerDown}
           onPointerUp={follow.onPointerUp}

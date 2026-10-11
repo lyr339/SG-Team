@@ -1,5 +1,6 @@
+import { useModalInteraction } from './use-modal-interaction'
 import { FeedbackIcon } from './feedback/FeedbackIcon'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { AgentSession } from '../../domain/agent-session'
 import {
   formatHandoffTime,
@@ -107,6 +108,7 @@ export function SessionHandoffDialog({
   const [choice, setChoice] = useState<TargetChoice>('self')
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
+  const dialog = useModalInteraction(onClose, busy)
   const [error, setError] = useState('')
   const [result, setResult] = useState<SessionHandoffResult>()
   const resultRef = useRef<HTMLDivElement>(null)
@@ -139,17 +141,40 @@ export function SessionHandoffDialog({
   }, [choice, context, others])
 
   const transcript = context?.transcript
-  const canDeliver = Boolean(context && transcript && !busy && (choice !== 'self' || context.holdSupported))
+  const targetAvailable = choice === 'self' || others.some(candidate => choice === `ch:${candidate.channelId}`)
+  const canDeliver = Boolean(context && transcript && !busy && targetAvailable && (choice !== 'self' || context.holdSupported))
   const targetLabel = choice === 'self' ? `CH-${session.channelId}（等待新会话）` : `CH-${choice.slice(3)}`
 
+  const actionContext = useRef<symbol | undefined>(undefined)
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  useLayoutEffect(() => {
+    actionContext.current = Symbol('handoff-file')
+    setCopied(false)
+    return () => {
+      actionContext.current = undefined
+      if (copyTimer.current !== undefined) clearTimeout(copyTimer.current)
+    }
+  }, [transcript?.path])
   const copyPath = async (): Promise<void> => {
     if (!transcript) return
+    const current = actionContext.current
     try {
       await navigator.clipboard.writeText(transcript.path)
+      if (current !== actionContext.current) return
       setCopied(true)
-      window.setTimeout(() => setCopied(false), 1_600)
+      if (copyTimer.current !== undefined) clearTimeout(copyTimer.current)
+      copyTimer.current = setTimeout(() => setCopied(false), 1_600)
     } catch {
-      setError('复制失败：请手动选择路径文本复制')
+      if (current === actionContext.current) setError('复制失败：请手动选择路径文本复制')
+    }
+  }
+  const showFile = async (): Promise<void> => {
+    if (!transcript || !revealPath) return
+    const current = actionContext.current
+    try {
+      if (!await revealPath(transcript.path) && current === actionContext.current) setError('无法定位文件：文件可能已移动或暂不可访问。')
+    } catch {
+      if (current === actionContext.current) setError('无法定位文件：文件可能已移动或暂不可访问。')
     }
   }
 
@@ -175,7 +200,7 @@ export function SessionHandoffDialog({
     <div className="handoff-dialog-backdrop" role="presentation" onMouseDown={(event) => {
       if (event.target === event.currentTarget && !busy) onClose()
     }}>
-      <section className="handoff-dialog session-handoff" role="dialog" aria-modal="true" aria-labelledby="session-handoff-title">
+      <section {...dialog} className="handoff-dialog session-handoff" role="dialog" aria-modal="true" aria-labelledby="session-handoff-title">
         <header>
           <div>
             <strong id="session-handoff-title">交接会话上下文</strong>
@@ -222,7 +247,7 @@ export function SessionHandoffDialog({
                     <div className="session-handoff__path-actions">
                       <button type="button" onClick={() => void copyPath()}>{copied ? '已复制' : '复制路径'}</button>
                       {revealPath && transcript.exists ? (
-                        <button type="button" onClick={() => void revealPath(transcript.path)}>在 Finder 中显示</button>
+                        <button type="button" onClick={() => void showFile()}>在文件夹中显示</button>
                       ) : null}
                     </div>
                     <ul className="session-handoff__facts">
@@ -303,6 +328,7 @@ export function SessionHandoffDialog({
               <section className="session-handoff__block" aria-label="交接说明">
                 <h4><span>交接说明</span><small>可选 · 随消息一并送达</small></h4>
                 <textarea
+                  aria-label="交接说明"
                   value={note}
                   maxLength={SESSION_HANDOFF_NOTE_MAX_CHARS}
                   disabled={busy}
@@ -311,7 +337,8 @@ export function SessionHandoffDialog({
                 />
               </section>
             </div>
-            {error ? <p className="handoff-dialog-error">{error}</p> : null}
+            {!targetAvailable ? <p className="handoff-dialog-error" role="status">所选会话已不在候选列表，请重新选择。</p> : null}
+            {error ? <p className="handoff-dialog-error" role="alert">{error}</p> : null}
             <footer>
               <button disabled={busy} onClick={onClose}>取消</button>
               <button disabled={!canDeliver} onClick={() => void submit()}>{busy ? '投递中…' : `投递到 ${targetLabel}`}</button>

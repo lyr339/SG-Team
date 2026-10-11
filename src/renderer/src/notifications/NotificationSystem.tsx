@@ -6,7 +6,7 @@ import { NotificationStore } from './notification-store'
 import { NotificationToast } from './NotificationToast'
 import './notifications.css'
 import { overlayOwnsTarget } from '../overlay-ownership'
-import { notificationPanelPlacement } from './notification-panel-placement'
+import { NOTIFICATION_PANEL_WIDTH, notificationPanelPlacement } from './notification-panel-placement'
 
 interface Props {
   workspaceId?: string
@@ -24,7 +24,7 @@ function NotificationEntry({ store, workspaceId, onNavigate, onAvailable, onSnoo
   const snapshot = useSyncExternalStore(store.subscribe, store.snapshot, store.snapshot)
   const [open, setOpen] = useState(false)
   const [focusRecord, setFocusRecord] = useState<NotificationRecord>()
-  const [position, setPosition] = useState({ top: 52, right: 16, height: 672 })
+  const [position, setPosition] = useState({ top: 52, right: 16, width: NOTIFICATION_PANEL_WIDTH, height: 672 })
   const [navigationError, setNavigationError] = useState('')
   const [otherModal, setOtherModal] = useState(false)
   const [blockingDialog, setBlockingDialog] = useState(false)
@@ -86,7 +86,7 @@ function NotificationEntry({ store, workspaceId, onNavigate, onAvailable, onSnoo
       const rect = trigger.current?.getBoundingClientRect()
       if (rect) {
         const next = notificationPanelPlacement({ width: innerWidth, height: innerHeight }, rect)
-        setPosition(old => old.top === next.top && old.right === next.right && old.height === next.height ? old : next)
+        setPosition(old => old.top === next.top && old.right === next.right && old.width === next.width && old.height === next.height ? old : next)
       }
     }
     place(); panel.current?.querySelector<HTMLElement>('.notification-panel')?.focus({ preventScroll: true })
@@ -141,7 +141,7 @@ function NotificationEntry({ store, workspaceId, onNavigate, onAvailable, onSnoo
       <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5.5 8a4.5 4.5 0 0 1 9 0v3.2l1.4 2.3H4.1l1.4-2.3V8ZM8.2 16a2 2 0 0 0 3.6 0" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
       {unread > 0 ? <span>{unread > 99 ? '99+' : unread}</span> : null}
     </button>
-    {open ? createPortal(<div ref={panel} data-overlay-scope={overlayScope} className="notification-panel-anchor" style={{ top: position.top, right: position.right, '--notification-panel-height': `${position.height}px` } as React.CSSProperties}>
+    {open ? createPortal(<div ref={panel} data-overlay-scope={overlayScope} className="notification-panel-anchor" style={{ top: position.top, right: position.right, width: position.width, '--notification-panel-height': `${position.height}px` } as React.CSSProperties}>
       <NotificationCenter key={nativeOpenToken} store={store} workspaceId={workspaceId} onClose={close} onNavigate={navigate} focusRecord={focusRecord} navigationError={navigationError} />
     </div>, document.body) : null}
     <NotificationToast store={store} blocked={open || otherModal} onOpen={(record, grouped) => {

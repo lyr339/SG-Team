@@ -24,6 +24,20 @@ beforeEach(async () => {
 afterEach(async () => { await act(async () => root.unmount()); ledger.close(); host.remove() })
 const confirm = () => host.querySelector<HTMLButtonElement>('button')!
 describe('quiet history facts and exact-version acknowledgement', () => {
+  it('Escape dismisses only the history explanation, returns focus and leaves parent dismissal available on the next Escape', async () => {
+    const details = host.querySelector<HTMLDetailsElement>('.notification-history-policy')!
+    const summary = details.querySelector('summary')!, content = details.querySelector<HTMLElement>('[role="region"]')!
+    const outside = vi.fn(); document.addEventListener('keydown', outside)
+    try {
+      await act(async () => summary.click()); content.focus()
+      await act(async () => content.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true})))
+      expect(details.open).toBe(false); expect(document.activeElement).toBe(summary)
+      expect(outside).not.toHaveBeenCalled()
+      expect(api.readNotification).not.toHaveBeenCalled()
+      await act(async () => summary.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true})))
+      expect(outside).toHaveBeenCalledOnce()
+    } finally { document.removeEventListener('keydown', outside) }
+  })
   it('opening and closing policy preserves the trigger/content nodes and never acknowledges or reads business history', async () => {
     const details = host.querySelector<HTMLDetailsElement>('.notification-history-policy')!
     const summary = details.querySelector('summary')!, content = details.querySelector<HTMLDivElement>('.notification-history-policy__content')!

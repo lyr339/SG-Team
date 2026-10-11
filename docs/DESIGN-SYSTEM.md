@@ -18,7 +18,7 @@ top product bar
 
 Two families that never mix: the **accent** (brand / selection) and the **status colours**.
 
-- **Accent** (default 拾光橙 `#ff6b35`, user-selectable — see below): brand marks, primary buttons, selection states (the roster's light-blade selected row, spectrum segment, filter chip, nav), single-series bars. In the roster the accent means exactly one thing — "you are here".
+- **Accent** (default 拾光橙 `#a64c2c`, user-selectable — see below): brand marks, primary buttons, selection states (the roster's light-blade selected row, spectrum segment, filter chip, nav), single-series bars. In the roster the accent means exactly one thing — "you are here".
 - **Status colours** (rail state dot, bookmark spine, state word; never decoration):
   - **green** (`--color-text-success`) = waiting — on duty, parked in the `check_messages` long poll;
   - **amber** (`--signal-busy`, a saturated hue ≈35° that is deliberately not the theme orange and does not follow the accent) = active — took a message, working; the only pulsing dot;
@@ -32,9 +32,12 @@ Surfaces use white, warm gray and pale tints of the accent (`--accent-wash` / `-
 
 ## Accent (theme colour)
 
-- One base variable, `--anthropic-orange`, feeds every brand use through `color-mix()` derivatives (`--accent-soft/wash/border*`, focus ring, brand shadow); `--accent-deep` / `--accent-bright` are the only hand-tuned anchors and travel with the preset.
-- Presets are curated (`ACCENT_PRESETS` in `appearance-preferences.ts`), not a free picker: hues stay clear of the status hues, and every preset's deep-on-wash contrast is checked in both colour modes. Choosing the default removes the overrides so the stylesheets remain the source of truth.
-- Background presets (`BACKGROUND_PRESETS`: 折光 / 极光 / 流体 / 棱镜) are wallpapers behind the translucent cards; they carry no meaning and never change any token.
+- `theme-palette.ts` owns six complete role palettes; `theme-palette.generated.css` is regenerated with `npm run theme:generate` and checked against its source in tests.
+- `foundation.css` owns typography, neutral surfaces and fixed semantic colours. Components consume `--accent-*` and `--action-primary-*` roles rather than deriving independent colours.
+- Choosing a theme applies `data-accent`; stable preset IDs and the existing preference storage key are preserved. Earlier three-variable inline overrides are removed during migration.
+- Body surfaces retain a readability floor even at low opacity; the UI explains this rather than promising fully transparent text surfaces.
+- Background presets (折光 / 极光 / 流体 / 棱镜) are independent wallpapers. They carry no status meaning.
+- See [THEME-SYSTEM.md](THEME-SYSTEM.md) for palette roles and verification requirements.
 
 ## Component rules
 

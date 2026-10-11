@@ -1,3 +1,4 @@
+import type { AccountAutomationSettings } from '../src/domain/account-automation'
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -310,4 +311,88 @@ describe('App 输入框草稿与附件按通道隔离', () => {
     expect(sendMessage).not.toHaveBeenCalled()
     expect(JSON.parse(localStorage.getItem('shiguang.appearance.v1')!)).toMatchObject({ accent: 'sg-orange', colorMode: 'dark' })
   })
+  it('reselecting the current or pending appearance does not trigger another snapshot', async () => {
+    await renderApp('#sessions:2')
+    await typeDraft('Keep this draft during repeated theme clicks.')
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="外观设置"]')!.click())
+    const descriptor = Object.getOwnPropertyDescriptor(document, 'startViewTransition')
+    let commit!: () => void
+    const start = vi.fn((update: () => void) => {
+      commit = update
+      return {ready:Promise.resolve(),finished:new Promise<void>(() => {}),skipTransition:vi.fn()}
+    })
+    Object.defineProperty(document, 'startViewTransition', {configurable:true,value:start})
+    try {
+      const orange = container.querySelector<HTMLButtonElement>('[data-accent-choice="sg-orange"]')!
+      const blue = container.querySelector<HTMLButtonElement>('[data-accent-choice="dai-blue"]')!
+      await act(async () => orange.click()); expect(start).not.toHaveBeenCalled()
+      await act(async () => {blue.click();blue.click()})
+      expect(start).toHaveBeenCalledOnce()
+      await act(async () => commit())
+      await act(async () => blue.click()); expect(start).toHaveBeenCalledOnce()
+      expect(document.documentElement.dataset.accent).toBe('dai-blue')
+      expect(composerTextarea().value).toBe('Keep this draft during repeated theme clicks.')
+    } finally {
+      if (descriptor) Object.defineProperty(document, 'startViewTransition', descriptor)
+      else Reflect.deleteProperty(document, 'startViewTransition')
+    }
+  })
+  it('persists concurrent automation form edits without overwriting sibling fields or flashing old input',async()=>{
+    const pending:Array<{value:AccountAutomationSettings;resolve:(value:AccountAutomationSettings)=>void}>=[]
+    window.sgDesktop.saveAccountAutomationSettings=vi.fn((value:AccountAutomationSettings)=>new Promise<AccountAutomationSettings>(resolve=>pending.push({value,resolve})))
+    await renderApp('#account:automation')
+    const fields=[...container.querySelectorAll<HTMLInputElement>('.settings-checkout-form input')]
+    const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')!.set!
+    await act(async()=>{setter.call(fields[0],'Alice');fields[0]!.dispatchEvent(new Event('input',{bubbles:true}))})
+    await act(async()=>{setter.call(fields[1],'广东省');fields[1]!.dispatchEvent(new Event('input',{bubbles:true}))})
+    expect(pending).toHaveLength(1)
+    expect(fields[0]!.value).toBe('Alice');expect(fields[1]!.value).toBe('广东省')
+    await act(async()=>pending[0]!.resolve(pending[0]!.value));expect(pending).toHaveLength(2)
+    expect(fields[0]!.value).toBe('Alice');expect(fields[1]!.value).toBe('广东省')
+    expect(pending[1]!.value.checkoutProfile).toMatchObject({name:'Alice',province:'广东省'})
+    await act(async()=>pending[1]!.resolve(pending[1]!.value))
+    expect(fields[0]!.value).toBe('Alice');expect(fields[1]!.value).toBe('广东省')
+  })
+
+  it('shows a local settings error and preserves an independent successful edit after one save fails',async()=>{
+    let fail!:(error:Error)=>void
+    window.sgDesktop.saveAccountAutomationSettings=vi.fn<(value:AccountAutomationSettings)=>Promise<AccountAutomationSettings>>()
+      .mockImplementationOnce(()=>new Promise((_done,reject)=>{fail=reject})).mockImplementation(async value=>value)
+    await renderApp('#account:automation')
+    const fields=[...container.querySelectorAll<HTMLInputElement>('.settings-checkout-form input')]
+    const oldName=fields[0]!.value,setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')!.set!
+    await act(async()=>{setter.call(fields[0],'Alice');fields[0]!.dispatchEvent(new Event('input',{bubbles:true}))})
+    await act(async()=>{setter.call(fields[1],'广东省');fields[1]!.dispatchEvent(new Event('input',{bubbles:true}))})
+    await act(async()=>fail(new Error('disk failure')))
+    expect(fields[0]!.value).toBe(oldName);expect(fields[1]!.value).toBe('广东省')
+    expect(container.querySelector('.settings-content [role="alert"]')?.textContent).toContain('部分设置未保存')
+  })
+
+  it.each([true,false])('a dependent browser refresh waits for real settings persistence (success=%s)',async(success)=>{
+    let resolve!:(value:AccountAutomationSettings)=>void,reject!:(reason:Error)=>void,saved!:AccountAutomationSettings
+    window.sgDesktop.saveAccountAutomationSettings=vi.fn((value:AccountAutomationSettings)=>{saved=value;return new Promise<AccountAutomationSettings>((done,fail)=>{resolve=done;reject=fail})})
+    const refresh=vi.fn(async()=>({ok:true,profiles:[]}));window.sgDesktop.listAccountAutomationBitProfiles=refresh
+    await renderApp('#account:automation')
+    const field=container.querySelector<HTMLInputElement>('.settings-checkout-form input')!,setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')!.set!
+    await act(async()=>{setter.call(field,'Alice');field.dispatchEvent(new Event('input',{bubbles:true}))})
+    await act(async()=>clickButtonWithText('导入来源'))
+    const calls=refresh.mock.calls.length
+    await act(async()=>container.querySelector<HTMLButtonElement>('[aria-label="刷新指纹浏览器窗口"]')!.click())
+    expect(refresh).toHaveBeenCalledTimes(calls)
+    await act(async()=>{if(success)resolve(saved);else reject(new Error('save failed'))})
+    expect(refresh).toHaveBeenCalledTimes(calls+(success?1:0))
+  })
+
+  it('a successful local-read retry clears only the initial settings read warning',async()=>{
+    const settings:AccountAutomationSettings={enabled:false,delaySec:30,postProcessDelaySec:30,processingProvider:'aozai'}
+    const read=vi.fn<()=>Promise<AccountAutomationSettings>>().mockRejectedValueOnce(new Error('read failed')).mockResolvedValue(settings)
+    window.sgDesktop.getAccountAutomationSettings=read
+    window.sgDesktop.listAccountAutomationBitProfiles=vi.fn(async()=>({ok:true,profiles:[]}))
+    await renderApp('#account:import')
+    expect(container.querySelector('.settings-content [role="alert"]')?.textContent).toContain('设置暂未读取')
+    await act(async()=>container.querySelector<HTMLButtonElement>('[aria-label="刷新指纹浏览器窗口"]')!.click())
+    expect(read).toHaveBeenCalledTimes(2)
+    expect(container.querySelector('.settings-content [role="alert"]')).toBeNull()
+  })
+
 })

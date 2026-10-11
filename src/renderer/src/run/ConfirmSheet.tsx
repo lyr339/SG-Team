@@ -36,7 +36,7 @@ export function ConfirmSheet({ consequence, busy, onCancel, onConfirm }: Confirm
 
   useEffect(() => {
     const handler = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape' || busy) return
+      if (event.key !== 'Escape' || busy || event.defaultPrevented || document.querySelector('[role="dialog"][aria-modal="true"]')) return
       const opener = openerRef.current
       if (opener?.isConnected && !(opener as HTMLButtonElement).disabled) opener.focus({ preventScroll: true })
       onCancel()
