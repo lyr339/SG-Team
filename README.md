@@ -1,88 +1,131 @@
-# 拾光
+<div align="center">
+  <img src="build/icon-shiguang-1024.png" width="80" height="80" alt="拾光图标" />
+  <h1>拾光 · SG Team</h1>
+  <p>把 Cursor 的多个 Agent 会话，放进一个清晰的协作工作台。</p>
+  <p><a href="https://github.com/lyr339/SG-Team/releases/latest">下载最新版</a> · <a href="https://github.com/lyr339/SG-Team/releases">更新记录</a> · <a href="https://github.com/lyr339/SG-Team/issues">反馈问题</a></p>
+</div>
 
-Independent Electron control plane for Cursor multi-Agent teamwork (macOS + Windows).
-通道消息与活性经拾光内嵌 MCP（SG Team 单条目）+ SQLite 队列直达 Cursor；
-本应用拥有会话投影、持久任务调度、带回执的 Agent 间协作、会话池内随建随拆的协作组、
-席位重建与上下文交接，以及进程绑定的 Agent MCP 接入。
+拾光是一款独立桌面应用，用于管理 Cursor 会话、查看执行过程，并让多个 Agent 围绕同一个项目分工协作。它不是 Cursor 插件，也不是 Cursor 官方产品。
+
+你可以只使用一个会话，也可以把已有会话组成团队：在同一个界面查看谁在工作、消息是否送达、代码改了什么，以及哪些事情需要你确认。
+
+## 能做什么
+
+- **管理会话**：创建独立会话、批量配置模型与参数，查看在线状态、消息队列和上下文占用。
+- **组织协作**：把会话组成协作组，设置角色和共同目标，通过任务、消息与共享记忆协作；协作图展示实际消息的收发关系。
+- **查看过程与结果**：执行时呈现思考、工具调用和代码差异；完成后收起过程，保留结果与手动展开入口。
+- **审查与交接**：在右栏查看变更、计划、活动和产物，把上下文交给另一个会话继续处理。
+- **集中处理提醒**：通知中心保留重要结果和待处理事项，支持分类、静音与提醒偏好，不必依赖一闪而过的提示。
+- **管理本机配置**：保存账号、选择导入来源、配置可选的账号自动化，查看用量统计、维护 Cursor 和管理软件更新。
+
+外观支持浅色、深色、六套主题色及透明度调整。左右工作区可调整宽度，按需要留出对话或审查空间。
+
+## 下载与安装
+
+安装包见 [最新 Release](https://github.com/lyr339/SG-Team/releases/latest)。正常使用安装包不需要安装 Node.js。
+
+| 系统 | 安装包 | 使用方式 |
+| --- | --- | --- |
+| macOS · Apple Silicon | `ShiGuang-<版本>-mac-arm64.zip` | 解压，将「拾光.app」放入「应用程序」后打开 |
+| Windows · x64 | `ShiGuang-Setup-<版本>.exe` | 运行安装程序，可选择安装目录 |
+
+当前发布流程提供上述两种架构，不提供 Intel Mac 安装包。macOS 包使用 ad-hoc 签名，未做 Apple 公证，首次打开可能遇到系统安全提示；请先确认下载来源是本仓库 Release。
+
+已安装的用户也可以在 **账号与 Cursor → 软件更新** 中检查、下载和安装更新。
+
+### Cursor 版本
+
+当前明确适配 **3.6.31、3.21.12**。软件会识别本机 Cursor 版本并选择对应适配；可在 **Cursor 维护** 中重新检测。其他版本不要默认视为兼容，尤其是在 Cursor 自动更新之后。
+
+Cursor 不要求安装在 C 盘。安装路径、文件权限或本地端口冲突仍可能影响检测和补丁操作，请以软件给出的检测结果为准。
+
+## 第一次使用
+
+1. **准备 Cursor**：打开目标项目，确认当前账号和模型可以正常使用。
+2. **选择工作区**：打开拾光，在顶栏核对当前 Cursor 工作区，避免把会话建到另一个项目。
+3. **从一个会话开始**：进入「运行」，选择模型与参数，创建会话并按界面提示完成接入。
+4. **在会话页发送任务**：查看执行过程、最终回复及右侧代码变更。消息显示为排队时，不代表 Agent 已经收到。
+5. **需要分工时再建组**：将已有会话加入协作组，填写目标、分配角色；独立会话与协作组可以共存。
+
+正常会话协作通过拾光提供的 **SG Team MCP** 接入 Cursor。保持对应 Cursor 会话可用；会话上线、进入待命和正在执行是不同状态。
+
+能否发起会话取决于当前 Cursor 账号权限和模型可用性。拾光不会替代 Cursor 的登录校验，也不会增加模型额度。
+
+## 可选功能与使用边界
+
+### 账号与自动化
+
+账号页提供本机账号管理、切换与重启入口；导入来源可配置指纹浏览器及其本地 API 端口。账号凭据在本机加密保存，不应写入日志、截图或问题反馈。
+
+账号自动化是可选功能，不是查看会话和组织协作的前提。它可能涉及第三方处理服务、账号加固、切换或删除：启用前请核对所选服务、目标账号与「后续操作」开关。处理结果以具体回执为准，已受理、已排队不等于最终完成。
+
+### 用量与协议
+
+统计页用于了解会话用量与产出，不能把所有本地估算直接等同于 Cursor 官方账单。
+
+「协议」页将采集记录、模型参数和只读额度依据分开呈现，并提供实验性的 Auto / Ask 协议直连入口。直连实验与日常 MCP 协作是两条路径，不代表所有模型和原生工具都已完整支持；发送实验请求可能消耗当前账号额度。
+
+### 清理与维护
+
+存储清理会区分可回收内容、存在代价的内容和不可恢复的会话记录。先查看清理范围；标记需要退出 Cursor 的项目，应退出后再处理。不要把数据清理当作普通刷新。
+
+## 遇到问题
+
+- **会话已上线，但消息仍排队**：上线不等于已进入接收消息的待命状态；查看对应 Cursor 会话与拾光中的连接提示。
+- **浏览器已登录，拾光仍无法读取**：核对 Roxy 本地 API、端口以及账号绑定的窗口。打开任意窗口不代表选中的窗口已有登录态。
+- **升级 Cursor 后功能异常**：先到 Cursor 维护重新检测版本，确认仍在当前适配范围内，再按提示操作。
+- **刚更新拾光，旧状态仍未恢复**：先检查通知中心与对应功能页的具体结果；不要直接重复执行账号处理或清理。
+
+提交 [Issue](https://github.com/lyr339/SG-Team/issues) 时，请附上：拾光版本、系统与架构、Cursor 版本、复现步骤、预期与实际结果。截图和日志请先遮盖 Token、密码、卡密及个人信息。
+
+## 从源码运行
+
+开发环境需要 **Node.js 24+**。以下命令在仓库根目录执行：
 
 ```bash
-npm install             # package.json 的 allowScripts 已放行 electron / esbuild 的安装脚本（npm 11）
+npm ci
+node node_modules/electron/install.js
 npm run dev
 ```
 
-Verification:
+第二条命令用于确保 Electron 本地运行时就绪，避免安装脚本未执行造成启动失败。
+
+### 验证与打包
 
 ```bash
-npm run typecheck       # 含 tests/**/*.tsx
-npm test
-npm run build
-npm run smoke:mcp       # 团队角色 stdio 冒烟（构建产物）
-npm run smoke:channel   # 通道角色 stdio 冒烟（构建产物）
-npm run verify:mac      # 或 verify:win：打包产物 + 真实多进程冒烟
+npm test                 # 单元与集成回归，包含独立 wire 测试
+npm run lint:dead        # 死代码检查
+npm run build            # 类型检查、主程序与 MCP 构建
+npm run smoke:channel    # 使用构建产物验证通道 MCP
+
+npm run dist:mac         # macOS arm64 ZIP，在 macOS 上执行
+npm run pack:win         # Windows x64 安装包，在 Windows 上执行
 ```
 
-Packaged output: `release/mac-arm64/拾光.app` (directory target, unsigned) and
-`release/ShiGuang-Setup-<version>.exe` (NSIS installer; `pack:win:dir` gives the
-bare `release/win-unpacked/ShiGuang.exe`). Both `pack:*` scripts reuse the Electron in
-`node_modules/electron/dist`, so no Electron download is needed at pack time —
-provided electron's postinstall actually ran; npm ≥ 12 skips dependency install
-scripts by default, so the CI packaging jobs run `node node_modules/electron/install.js`
-after `npm ci` (idempotent; do the same locally if `electronDist does not exist`).
+产物位于 `release/`。本地打包前请退出正在使用同一构建目录的拾光，避免原地改写运行中的应用文件。
 
-Handing a build to someone else:
-
-- `npm run dist:mac` → `release/ShiGuang-<version>-mac-arm64.zip`: re-signs the app
-  ad hoc (an unsigned Electron bundle that arrives with a quarantine flag is shown as
-  "damaged" by Gatekeeper) and zips it with `ditto` so the framework symlinks survive.
-  The recipient drags `拾光.app` into Applications and runs once
-  `xattr -dr com.apple.quarantine /Applications/拾光.app`.
-- Pushing a tag `v<version>` (must equal `package.json` `version`) runs
-  `.github/workflows/release.yml`: mac zip + Windows installer → GitHub Release with
-  `.github/release-notes.md` as the body. The repository is public, so recipients only
-  need the link. `pack:mac` / `dist:mac` rewrite `release/mac-arm64/拾光.app` in place —
-  quit 拾光 first if `~/.cursor/mcp.json` points at that build (its MCP server runs from it).
-On Windows, electron-builder shells out to `powershell.exe`; make sure
-`C:\Windows\System32\WindowsPowerShell\v1.0` is on `PATH` in the shell you run
-it from.
-
-Windows checklist (the items that have produced "many errors" before):
-
-- Node **24+** for every `npm` script: the MCP bundle and the smoke scripts use
-  `node:sqlite`, so an older Node fails with `ERR_UNKNOWN_BUILTIN_MODULE`.
-- Behind a slow GitHub connection set `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`
-  for `npm ci` and `ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/`
-  for the NSIS target; `pack:win` itself only needs the local Electron dist.
-- Cursor must be the pinned **3.6.31** build installed **per user**
-  (`%LOCALAPPDATA%\Programs\Cursor`). The hot account switch patches
-  `resources\app\out\vs\workbench\workbench.desktop.main.js`; an all-users install
-  under `Program Files` needs an elevated 拾光, and Cursor must be fully closed
-  while the patch is written (Windows refuses to replace an open file).
-- The hot-switch pump polls loopback port **51824**. Hyper-V / WSL2 / Docker
-  reserve dynamic port ranges; check `netsh int ipv4 show excludedportrange protocol=tcp`
-  before installing the patch, because the port is baked into the bundle.
-- Process probes go through PowerShell with UTF-8 output; Chinese user names and
-  install paths are supported, but `Cursor.exe` must not be renamed.
-
-Design walkthrough (pure-browser preview with a mocked desktop API, plus a
-headless screenshot matrix over the right-hand inspector and the 运行 page:
-panels / run states × light/dark × narrow × transparent × reduced-motion ×
-interactions):
+纯界面走查可使用：
 
 ```bash
-npm run preview:ui      # http://127.0.0.1:5174/preview.html
-npm run preview:shots   # writes preview-screenshots/*.png (needs Chrome or Edge)
-node scripts/preview-shots.mjs --only run-team-active-light,run-independent-mixed-dark
+npm run preview:ui
+# 打开 http://localhost:5174/preview.html
 ```
 
-If Vite binds to `localhost` only, point the shot script at it with
-`PREVIEW_BASE=http://localhost:5174`.
+预览使用模拟数据与桌面 API，不代表真实账号、Cursor 连接或业务执行结果。
 
-App icons are generated, not drawn by hand: `build/*.svg` come from the design source
-in `docs/design/sg-monogram/` (`node docs/design/sg-monogram/generate.cjs`), and
-`npm run icons` rasterizes them into `build/icon-shiguang-1024.png`, `.icns` (macOS only),
-`.ico`, the menu-bar `trayTemplate*.png` and the in-app `brand-shiguang.png` (needs
-Chrome or Edge, same lookup as the shot script).
+### 发布流程
 
-Architecture and protocol decisions live in `docs/`: `ARCHITECTURE.md` states the rules that hold now,
-`ARCHITECTURE-LOG.md` is the dated, append-only record of how they got there, `TASK-MCP.md` is the
-Agent tool contract; task books for work in flight are indexed in `.handoff/README.md`.
+版本号、锁文件与 `.github/release-notes.md` 同步更新后，推送对应的 `v<版本>` 标签。Release 工作流在 macOS、Windows 上分别验证并打包，两端成功后才发布安装包与应用内更新清单；无需手动上传散落的构建文件。
+
+## 技术文档
+
+| 文档 | 内容 |
+| --- | --- |
+| [架构](docs/ARCHITECTURE.md) | 进程边界、数据流与核心约束 |
+| [MCP 工具契约](docs/TASK-MCP.md) | 会话通信、任务与团队工具 |
+| [界面结构](docs/UI-STRUCTURE.md) | 页面组织与交互约定 |
+| [设计系统](docs/DESIGN-SYSTEM.md) · [主题系统](docs/THEME-SYSTEM.md) | 视觉规范、配色与控件规则 |
+| [通知系统](docs/NOTIFICATIONS-DESIGN.md) | 提醒、历史记录与读回语义 |
+| [协议研究](docs/CURSOR-PROTOCOL.md) | 已有证据、实验范围与限制 |
+
+历史实现记录保存在 [架构日志](docs/ARCHITECTURE-LOG.md)，不作为首次使用指南。
