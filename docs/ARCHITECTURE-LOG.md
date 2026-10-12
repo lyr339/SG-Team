@@ -1,5 +1,7 @@
 # 拾光 architecture · decision log
 
+> 历史记录：文中的 `.handoff/`、已退役诊断脚本及当时的路径不代表当前入口。旧交接材料可在 [v0.5.28](https://github.com/lyr339/SG-Team/tree/v0.5.28/.handoff) 查看；当前使用与开发入口见 [首页](../README.md)。
+
 Dated, append-only record of every non-trivial change: symptom → root cause → shape → what was deliberately not done → verification. One `###` heading per change, newest at the bottom, date in the heading. Stable architecture (dependency rules, run modes, the fence, the boundaries) lives in `ARCHITECTURE.md`; when a log entry changes a rule stated there, edit both. Split out of `ARCHITECTURE.md` on 2026-09-18 — the file had grown to 251 KB and every parallel seat appended to the same tail.
 
 ### Cursor process delivery hydration (2026-09-07)

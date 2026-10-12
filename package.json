@@ -1,6 +1,6 @@
 {
   "name": "shiguang-team",
-  "version": "0.5.28",
+  "version": "0.5.29",
   "private": true,
   "author": "拾光",
   "type": "module",
@@ -29,7 +29,7 @@
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run && npm run test:wire",
-    "lint:dead": "npx --yes knip@5",
+    "lint:dead": "npx --yes knip@5 && npx --yes knip@5 --production --include files",
     "test:wire": "node --test packages/cursor-wire-runtime/wire-client.test.mjs"
   },
   "dependencies": {

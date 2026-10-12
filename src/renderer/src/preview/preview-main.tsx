@@ -770,7 +770,7 @@ if (previewParameters.get('plan') === 'long') {
               ...block,
               summary: '任务清单 2/10',
               todos: [
-                { content: '恢复上下文：读任务书 DYNAMIC-GROUPS-PHASE3-UI-TODO 与已提交的检查点（PoolPage / GroupCard / ConfirmSheet）', status: 'completed' },
+                { content: '核对当前工作区、会话分组与待处理事项，保留已完成操作的结果', status: 'completed' },
                 { content: 'SessionSidebar：多选状态（picked / pickAnchor）+ ⌘/Ctrl 点击、Shift 范围、行首复选框', status: 'in_progress' },
                 { content: '底部浮动条：建组（N）/ 加入…（MenuSelect）/ 移出组（M）/ 取消，lead 挡移出要说明', status: 'pending' },
                 { content: '移出确认面复用 ConfirmSheet：文案走 removeMembersConsequence，与组卡片同源', status: 'pending' },

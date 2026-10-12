@@ -9,7 +9,7 @@
 - 1672×941 → 6688×3764（神经网络 4× 超分）→ 3840×2160（Pillow ImageOps.fit / Lanczos 缩采样，极少量比例裁边）。未做额外锐化或颗粒叠加。
 - 浅色：`src/renderer/src/assets/backgrounds/shiguang-light.png`，3840×2160，4,739,246 字节。
 - 深色：`src/renderer/src/assets/backgrounds/shiguang-dark.png`，3840×2160，4,946,058 字节。
-- 保留本目录两张原始设计稿供复现；下载工具包和 4× 中间结果在验收后清理，不进入项目依赖或安装包。
+- 原始概念图已从当前分支清理，可在 [v0.5.28 设计目录](https://github.com/lyr339/SG-Team/tree/v0.5.28/docs/design/background-refraction) 追溯；应用使用的 4K 背景仍保留。工具包与中间结果不进入项目依赖或安装包。
 - 生产引用路径未变，沿用现有主题切换与 `background-size: cover`；仅替换 PNG，不添加动画、计时器或运行时超分。
 
 ## Light — final generation prompt

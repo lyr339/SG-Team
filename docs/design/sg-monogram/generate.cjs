@@ -8,11 +8,11 @@
 //   - 大尺寸（主图 / Windows）：v12-master.png——选定的 V12 原板（光晕、渐变齐全）
 //   - 小尺寸（≤64px 两份）：v12-small.png——按小尺寸可读性专门生成的衍生版（纯平色、无光晕、粗光刃）
 //   - 底板：mac 内缩 86% 并带投影；Windows 放大到 1.135（≈98% 画布）、无投影
-// 托盘模板仍是矢量（icon-lib.cjs iconSvg 的单色模式）：系统要求纯黑 + alpha，字母贴满画布，
+// 托盘模板仍是矢量（icon-lib.cjs trayIconSvg 的单色模式）：系统要求纯黑 + alpha，字母贴满画布，
 // 光刃变成 3 倍宽的斜向缺口。矢量字形取自 macOS Futura Bold 轮廓（glyphs.json），不依赖字体。
 const fs = require('node:fs')
 const path = require('node:path')
-const { iconSvg, rasterIconSvg, RASTER_SRC } = require('./icon-lib.cjs')
+const { trayIconSvg, rasterIconSvg, RASTER_SRC } = require('./icon-lib.cjs')
 
 const BUILD = path.resolve(__dirname, '../../../build')
 const V12 = fs.readFileSync(path.join(__dirname, 'v12-master.png')).toString('base64')
@@ -30,7 +30,7 @@ const FILES = [
   ['icon-shiguang-small.svg', () => rasterIconSvg(V12_SMALL, SMALL), '小尺寸版（≤64px）', SMALL_NOTE],
   ['icon-shiguang-win.svg', () => rasterIconSvg(V12, WINDOWS), 'Windows 版（底板放大到约 98% 画布、无投影：Windows 图标不做 mac 式内缩）', MASTER_NOTE],
   ['icon-shiguang-win-small.svg', () => rasterIconSvg(V12_SMALL, { ...WINDOWS, src: RASTER_SRC.small }), 'Windows 小尺寸版（任务栏 / 通知区 16–64px）', SMALL_NOTE],
-  ['trayTemplate.svg', () => iconSvg(TRAY), 'macOS 菜单栏模板图（纯黑 + alpha，系统按明暗上色）：字母剪影贴满画布，光刃变成斜向缺口', TRAY_NOTE]
+  ['trayTemplate.svg', () => trayIconSvg(TRAY), 'macOS 菜单栏模板图（纯黑 + alpha，系统按明暗上色）：字母剪影贴满画布，光刃变成斜向缺口', TRAY_NOTE]
 ]
 
 for (const [name, build, what, how] of FILES) {

@@ -4,11 +4,19 @@ import { createRoot, type Root } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { ProcessBlock } from '../src/domain/conversation-entry'
-import { ProcessBlocks } from '../src/renderer/src/ProcessBlocks'
 import { ProcessTurnCard } from '../src/renderer/src/ProcessTurnCard'
 import { requestReveal } from '../src/renderer/src/inspector/reveal-bus'
 
-describe('ProcessBlocks', () => {
+/** The retired production wrapper is no longer an API. Keep its test scenarios
+ * against the real component, including the original timing and open state. */
+function ProcessFixture({ blocks }: { blocks: ProcessBlock[] }): React.JSX.Element {
+  return <ProcessTurnCard id={blocks[0]?.id ?? 'process-fixture'} blocks={blocks}
+    startedAt={blocks.map(block => block.startedAt).find(value => value !== undefined)}
+    updatedAt={blocks.map(block => block.completedAt).filter((value): value is number => value !== undefined).at(-1)}
+    defaultOpen compact />
+}
+
+describe('ProcessTurnCard block rendering', () => {
   let container: HTMLDivElement
   let root: Root
 
@@ -43,7 +51,7 @@ describe('ProcessBlocks', () => {
         toolKind: 'search',
         summary: 'rg process',
         status: 'done',
-        output: 'src/renderer/src/ProcessBlocks.tsx'
+        output: 'src/renderer/src/ProcessTurnCard.tsx'
       },
       {
         kind: 'thinking',
@@ -53,7 +61,7 @@ describe('ProcessBlocks', () => {
       }
     ]
 
-    const html = renderToStaticMarkup(<ProcessBlocks blocks={blocks} />)
+    const html = renderToStaticMarkup(<ProcessFixture blocks={blocks} />)
 
     // 动词随状态变化（Cursor 的 Running / Ran / Run 三态，错误态是原形动词 + 红色），不再是猜测性的「运行验证」。
     expect(html).toContain('<strong>Run</strong>')
@@ -73,7 +81,7 @@ describe('ProcessBlocks', () => {
   })
 
   it('inlines the generated image under the head of a finished image step and keeps the running one image-free', () => {
-    const html = renderToStaticMarkup(<ProcessBlocks blocks={[
+    const html = renderToStaticMarkup(<ProcessFixture blocks={[
       {
         kind: 'tool', id: 'img-done', toolName: 'generate_image', toolKind: 'image', toolCase: 'generateImageToolCall',
         summary: 'board-v1.png', status: 'done', input: { description: 'design board', filePath: 'board-v1.png' },
@@ -95,7 +103,7 @@ describe('ProcessBlocks', () => {
   })
 
   it('renders a shell as a standalone card with the $ command line and an inline output preview', () => {
-    const running = renderToStaticMarkup(<ProcessBlocks blocks={[{
+    const running = renderToStaticMarkup(<ProcessFixture blocks={[{
       kind: 'tool', id: 'sh-run', toolName: 'run_terminal_command_v2', toolKind: 'command', toolCase: 'shellToolCall',
       title: '跑回归', summary: 'npx vitest run tests/relay --reporter=dot && echo "done"', hint: 'npx, echo',
       status: 'running', output: 'tick 1\ntick 2\n'
@@ -114,14 +122,14 @@ describe('ProcessBlocks', () => {
     expect(running).toContain('tick 2')
     expect(running).not.toContain('process-turn-step__details')
 
-    const waiting = renderToStaticMarkup(<ProcessBlocks blocks={[{
+    const waiting = renderToStaticMarkup(<ProcessFixture blocks={[{
       kind: 'tool', id: 'sh-wait', toolName: 'run_terminal_command_v2', toolKind: 'command', toolCase: 'shellToolCall',
       summary: 'sleep 30', hint: 'sleep', status: 'running'
     }]} />)
     expect(waiting).toContain('cursor-native-shell__waiting')
     expect(waiting).not.toContain('cursor-native-shell__output')
 
-    const failed = renderToStaticMarkup(<ProcessBlocks blocks={[{
+    const failed = renderToStaticMarkup(<ProcessFixture blocks={[{
       kind: 'tool', id: 'sh-fail', toolName: 'run_terminal_command_v2', toolKind: 'command', toolCase: 'shellToolCall',
       summary: 'npm test', hint: 'npm · exit 1', status: 'failed', output: 'FAIL 1 test', error: 'Command exited with code 1'
     }]} />)
@@ -142,7 +150,7 @@ describe('ProcessBlocks', () => {
         { type: 'added', text: '.c { }', newLine: 12 }
       ], truncatedLineCount: 7 }
     }
-    const collapsed = renderToStaticMarkup(<ProcessBlocks blocks={[block]} />)
+    const collapsed = renderToStaticMarkup(<ProcessFixture blocks={[block]} />)
     expect(collapsed).toContain('<i data-kind="additions">+2</i>')
     expect(collapsed).toContain('<i data-kind="deletions">−1</i>')
     // Cursor 同款：完成态默认保留三行改动预览，点击头部再展开完整双行号 diff。
@@ -157,7 +165,7 @@ describe('ProcessBlocks', () => {
     expect(collapsed).not.toContain('The file has been updated.')
 
     await act(async () => {
-      root.render(<ProcessBlocks blocks={[block]} />)
+      root.render(<ProcessFixture blocks={[block]} />)
     })
     const head = container.querySelector<HTMLButtonElement>('.cursor-native-edit__head')!
     await act(async () => { head.click() })
@@ -180,14 +188,14 @@ describe('ProcessBlocks', () => {
         { type: 'added', text: 'after', newLine: 20124 }
       ] }
     }
-    await act(async () => { root.render(<ProcessBlocks blocks={[block]} />) })
+    await act(async () => { root.render(<ProcessFixture blocks={[block]} />) })
     await act(async () => { container.querySelector<HTMLButtonElement>('.cursor-native-edit__head')!.click() })
     expect(container.querySelector<HTMLElement>('.cursor-native-diff')?.style.getPropertyValue('--diff-num-width')).toBe('6.2ch')
     expect([...container.querySelectorAll('.cursor-native-diff__num')].map((node) => node.textContent)).toContain('17280')
   })
 
   it('shows the Cursor-style code preview for legacy persisted edits whose unified diff lives in output', () => {
-    const html = renderToStaticMarkup(<ProcessBlocks blocks={[{
+    const html = renderToStaticMarkup(<ProcessFixture blocks={[{
       kind: 'tool', id: 'legacy-edit', toolName: 'edit_file_v2', toolKind: 'edit', toolCase: 'editToolCall',
       summary: '/workspace/src/legacy.ts', hint: '+1 −1', status: 'done',
       output: [
@@ -222,7 +230,7 @@ describe('ProcessBlocks', () => {
         { type: 'context', text: '', oldLine: 41, newLine: 43 }
       ] }
     }
-    await act(async () => { root.render(<ProcessBlocks blocks={[liveBlock]} />) })
+    await act(async () => { root.render(<ProcessFixture blocks={[liveBlock]} />) })
     expect(container.querySelector('.cursor-native-diff.is-live')).not.toBeNull()
     expect(container.querySelector('.cursor-native-diff__line.is-streaming-tail .cursor-native-diff__text')?.textContent).toBe('tail')
     expect(container.querySelector('.cursor-native-diff')?.getAttribute('aria-label')).toBe('正在编辑文件')
@@ -230,7 +238,7 @@ describe('ProcessBlocks', () => {
     await act(async () => { container.querySelector<HTMLButtonElement>('.cursor-native-edit__toggle')!.click() })
     expect(container.querySelector('.cursor-native-diff.is-full')).not.toBeNull()
 
-    await act(async () => { root.render(<ProcessBlocks blocks={[{ ...liveBlock, status: 'done' }]} />) })
+    await act(async () => { root.render(<ProcessFixture blocks={[{ ...liveBlock, status: 'done' }]} />) })
     expect(container.querySelector('.cursor-native-diff.is-live')).toBeNull()
     expect(container.querySelector('.cursor-native-diff')?.getAttribute('aria-label')).toBe('文件改动')
   })
@@ -277,7 +285,7 @@ describe('ProcessBlocks', () => {
       summary: '/src/a.ts', error: 'DISK_FULL: write failed',
       diff: { lines: [{ type: 'added', text: 'const a = 1', newLine: 1 }] }
     }
-    await act(async () => { root.render(<ProcessBlocks blocks={[failed]} />) })
+    await act(async () => { root.render(<ProcessFixture blocks={[failed]} />) })
     const head = container.querySelector<HTMLButtonElement>('.cursor-native-edit__head')!
     expect(head.getAttribute('aria-label')).toBe('编辑失败 a.ts')
     expect(container.querySelector('.cursor-native-edit__error')?.textContent).toBe(failed.error)
@@ -292,7 +300,7 @@ describe('ProcessBlocks', () => {
       kind: 'tool', id: 'legacy-long', toolName: 'edit_file_v2', toolKind: 'edit', status: 'done', summary: '/a.ts',
       output: '@@ -0,0 +1,250 @@\n' + lines.map((line) => '+' + line).join('\n')
     }
-    await act(async () => { root.render(<ProcessBlocks blocks={[legacy]} />) })
+    await act(async () => { root.render(<ProcessFixture blocks={[legacy]} />) })
     expect(container.querySelectorAll('.cursor-native-diff__text')).toHaveLength(4)
     await act(async () => { container.querySelector<HTMLButtonElement>('.cursor-native-edit__toggle')!.click() })
     expect([...container.querySelectorAll('.cursor-native-diff__text')].map((node) => node.textContent)).toEqual(lines)
@@ -305,7 +313,7 @@ describe('ProcessBlocks', () => {
       { kind: 'tool', id: 'r3', toolName: 'read_file_v2', toolKind: 'read', toolCase: 'readToolCall', summary: '/c.ts', status: 'done' },
       { kind: 'tool', id: 'sh', toolName: 'run_terminal_command_v2', toolKind: 'command', toolCase: 'shellToolCall', title: '跑测试', summary: 'npm test', status: 'done', output: 'ok' }
     ]
-    const html = renderToStaticMarkup(<ProcessBlocks blocks={blocks} />)
+    const html = renderToStaticMarkup(<ProcessFixture blocks={blocks} />)
     expect(html).toContain('data-group-id="group:block:r1"')
     expect(html).toContain('<strong>Explored</strong>')
     expect(html).toContain('3 files')
@@ -316,14 +324,14 @@ describe('ProcessBlocks', () => {
     // 完成的命令收成一行 `$ 命令`（审查项 2）：输出不再常驻，点头部展开 200px 阅读区。
     expect(html).toContain('cursor-native-shell__command')
     expect(html).not.toContain('cursor-native-shell__output')
-    await act(async () => { root.render(<ProcessBlocks blocks={blocks} />) })
+    await act(async () => { root.render(<ProcessFixture blocks={blocks} />) })
     const shellHead = [...container.querySelectorAll<HTMLButtonElement>('.cursor-native-shell .cursor-native-tool__head')].at(-1)!
     await act(async () => { shellHead.click() })
     expect(container.querySelector('.cursor-native-shell__output.is-expanded')?.textContent).toBe('ok')
   })
 
   it('flips the thinking header to “Thought for Ns” once the block is done', () => {
-    const html = renderToStaticMarkup(<ProcessBlocks blocks={[
+    const html = renderToStaticMarkup(<ProcessFixture blocks={[
       { kind: 'thinking', id: 'th-done', text: '想清楚了。', status: 'done', durationMs: 38_429 }
     ]} />)
     expect(html).toContain('<strong>Thought</strong>')
@@ -333,7 +341,7 @@ describe('ProcessBlocks', () => {
   })
 
   it('does not expose disclosure aria on non-expandable disabled heads', () => {
-    const html = renderToStaticMarkup(<ProcessBlocks blocks={[{
+    const html = renderToStaticMarkup(<ProcessFixture blocks={[{
       kind: 'tool',
       id: 'tool-plain',
       toolName: 'team_check_in',
@@ -352,20 +360,20 @@ describe('ProcessBlocks', () => {
   it('leaves the state word to the verb itself; only questionnaire states get the right-side label', () => {
     // 审查项 6：动词随状态取词（Reading / Read），右侧不再挂重复的「进行中 / 失败」；
     // 进行中由行标题流光表达，失败由红色动词（Cursor 错误态原形）与红框表达。
-    const running = renderToStaticMarkup(<ProcessBlocks blocks={[
+    const running = renderToStaticMarkup(<ProcessFixture blocks={[
       { kind: 'tool', id: 'r', toolName: 'read_file_v2', toolKind: 'read', summary: '/a.ts', status: 'running' }
     ]} />)
     expect(running).toContain('<strong>Reading</strong>')
     expect(running).toContain('is-read is-running')
     expect(running).not.toContain('cursor-native-tool__state')
-    const failed = renderToStaticMarkup(<ProcessBlocks blocks={[
+    const failed = renderToStaticMarkup(<ProcessFixture blocks={[
       { kind: 'tool', id: 'f', toolName: 'read_file_v2', toolKind: 'read', summary: '/a.ts', status: 'failed', error: 'ENOENT' }
     ]} />)
     expect(failed).toContain('<strong>Read</strong>')
     expect(failed).toContain('is-read is-failed')
     expect(failed).not.toContain('cursor-native-tool__state')
     // 未知工具平时以工具名作标题，失败时回到动词（Cursor 错误态原形 Run），红色承担失败语义。
-    const failedOther = renderToStaticMarkup(<ProcessBlocks blocks={[
+    const failedOther = renderToStaticMarkup(<ProcessFixture blocks={[
       { kind: 'tool', id: 'o', toolName: 'custom_probe', toolKind: 'other', summary: 'probe', status: 'failed', error: 'boom' }
     ]} />)
     expect(failedOther).toContain('<strong>Run</strong>')
@@ -374,7 +382,7 @@ describe('ProcessBlocks', () => {
   })
 
   it('renders escaped newlines inside process text as real line breaks', () => {
-    const html = renderToStaticMarkup(<ProcessBlocks blocks={[
+    const html = renderToStaticMarkup(<ProcessFixture blocks={[
       {
         kind: 'thinking',
         id: 'think-escaped',
@@ -396,7 +404,7 @@ describe('ProcessBlocks', () => {
   })
 
   it('collapses earlier thoughts and keeps only the running thought expanded by default', () => {
-    const html = renderToStaticMarkup(<ProcessBlocks blocks={[
+    const html = renderToStaticMarkup(<ProcessFixture blocks={[
       { kind: 'thinking', id: 'thought-1', text: '较早的长思考', status: 'done' },
       { kind: 'thinking', id: 'thought-2', text: '当前最新思考', status: 'running' }
     ]} />)
@@ -497,11 +505,11 @@ describe('ProcessBlocks', () => {
   })
 
   it('returns null for an empty block list', () => {
-    expect(renderToStaticMarkup(<ProcessBlocks blocks={[]} />)).toBe('')
+    expect(renderToStaticMarkup(<ProcessFixture blocks={[]} />)).toBe('')
   })
 
   it('labels CDP-observed durations as approximate in the summary but never on tool rows', () => {
-    const html = renderToStaticMarkup(<ProcessBlocks blocks={[{
+    const html = renderToStaticMarkup(<ProcessFixture blocks={[{
       kind: 'tool', id: 'cursor:read', toolName: 'read_file', toolKind: 'read',
       summary: 'package.json', status: 'done', startedAt: 1_000, completedAt: 1_120,
       timingEstimated: true
@@ -513,7 +521,7 @@ describe('ProcessBlocks', () => {
   })
 
   it('keeps the Thought header duration (native or estimated) while tool rows stay duration-free', () => {
-    const html = renderToStaticMarkup(<ProcessBlocks blocks={[
+    const html = renderToStaticMarkup(<ProcessFixture blocks={[
       { kind: 'thinking', id: 'th', text: '想一想', status: 'done', startedAt: 1_000, completedAt: 13_400, timingEstimated: true },
       { kind: 'tool', id: 'r', toolName: 'read_file_v2', toolKind: 'read', summary: '/a.ts', status: 'done', startedAt: 13_400, completedAt: 13_500, timingEstimated: true }
     ]} />)
@@ -522,7 +530,7 @@ describe('ProcessBlocks', () => {
   })
 
   it('renders Cursor-native thinking duration and expandable browser/todo actions', () => {
-    const html = renderToStaticMarkup(<ProcessBlocks blocks={[
+    const html = renderToStaticMarkup(<ProcessFixture blocks={[
       { kind: 'thinking', id: 'thought', text: '分析页面', status: 'done', durationMs: 3_000 },
       { kind: 'tool', id: 'browser', toolName: 'browser_navigate', toolKind: 'browser', summary: 'http://localhost', output: '页面已加载', status: 'done' },
       { kind: 'tool', id: 'todo', toolName: 'todos', toolKind: 'todo', summary: '待办清单 0/1', todos: [{ content: '视觉验收', status: 'in_progress' }], status: 'running' }
@@ -539,7 +547,7 @@ describe('ProcessBlocks', () => {
 
   it('renders todos as a progress bar with circular status indicators', async () => {
     await act(async () => {
-      root.render(<ProcessBlocks blocks={[
+      root.render(<ProcessFixture blocks={[
         {
           kind: 'tool', id: 'todo', toolName: 'todos', toolKind: 'todo', summary: '待办清单 2/4', status: 'done',
           todos: [
@@ -572,7 +580,7 @@ describe('ProcessBlocks', () => {
 
   it('normalizes unknown todo statuses into the cancelled bucket instead of injecting raw class names', async () => {
     await act(async () => {
-      root.render(<ProcessBlocks blocks={[
+      root.render(<ProcessFixture blocks={[
         {
           kind: 'tool', id: 'todo', toolName: 'todos', toolKind: 'todo', summary: '待办清单 0/2', status: 'done',
           todos: [
